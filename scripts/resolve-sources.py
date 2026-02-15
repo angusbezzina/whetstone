@@ -1,0 +1,406 @@
+#!/usr/bin/env python3
+"""Resolve documentation URLs and fetch content for dependencies.
+
+Takes dependency list (JSON from detect-deps.py), resolves docs URLs via
+package registry APIs (PyPI, npm, crates.io), probes for llms.txt, fetches
+content, and outputs structured JSON with source content and content hashes.
+
+Usage:
+    python3 scripts/detect-deps.py | python3 scripts/resolve-sources.py
+    python3 scripts/resolve-sources.py --input deps.json
+    python3 scripts/resolve-sources.py --input deps.json --deps fastapi,pydantic
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import ssl
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+
+USER_AGENT = "whetstone/0.1.0 (https://github.com/whetstone)"
+DEFAULT_TIMEOUT = 15
+
+
+def _http_get(url: str, timeout: int = DEFAULT_TIMEOUT) -> str | None:
+    """Fetch URL content. Returns None on any error."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        ctx = ssl.create_default_context()
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            if resp.status == 200:
+                return resp.read().decode("utf-8", errors="replace")
+    except Exception:
+        pass
+    return None
+
+
+def _http_get_json(url: str, timeout: int = DEFAULT_TIMEOUT) -> dict | None:
+    """Fetch URL and parse as JSON. Returns None on error."""
+    body = _http_get(url, timeout)
+    if body:
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def _content_hash(content: str) -> str:
+    """SHA-256 hash of content, prefixed with sha256:."""
+    h = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return f"sha256:{h}"
+
+
+def _normalize_url(url: str) -> str:
+    """Ensure URL has no trailing slash."""
+    return url.rstrip("/")
+
+
+def _probe_llms_txt(base_url: str, timeout: int) -> tuple[str | None, str | None, str]:
+    """Probe for llms-full.txt and llms.txt at a base URL.
+
+    Returns (content, url, source_type) or (None, None, "none").
+    """
+    base = _normalize_url(base_url)
+
+    # Try llms-full.txt first
+    full_url = f"{base}/llms-full.txt"
+    content = _http_get(full_url, timeout)
+    if content and len(content) > 50:  # Sanity check
+        return content, full_url, "llms_full_txt"
+
+    # Try llms.txt
+    txt_url = f"{base}/llms.txt"
+    content = _http_get(txt_url, timeout)
+    if content and len(content) > 50:
+        return content, txt_url, "llms_txt"
+
+    return None, None, "none"
+
+
+# --- Registry resolvers ---
+
+
+def resolve_python(name: str, version: str, timeout: int) -> dict:
+    """Resolve documentation for a Python package via PyPI."""
+    api_url = f"https://pypi.org/pypi/{name}/json"
+    data = _http_get_json(api_url, timeout)
+
+    if not data:
+        return {"error": f"PyPI lookup failed for {name}"}
+
+    info = data.get("info", {})
+
+    # Extract docs URL from project_urls or home_page
+    docs_url = None
+    project_urls = info.get("project_urls") or {}
+    for key in (
+        "Documentation",
+        "Docs",
+        "documentation",
+        "docs",
+        "Homepage",
+        "homepage",
+        "Home",
+        "home",
+    ):
+        if key in project_urls and project_urls[key]:
+            docs_url = project_urls[key]
+            break
+
+    if not docs_url:
+        docs_url = info.get("home_page")
+
+    if not docs_url:
+        # Try project URL
+        docs_url = info.get("project_url")
+
+    if not docs_url:
+        return {"error": f"No documentation URL found for {name}"}
+
+    # Probe for llms.txt
+    content, llms_url, source_type = _probe_llms_txt(docs_url, timeout)
+
+    if content:
+        return {
+            "docs_url": docs_url,
+            "llms_txt_url": llms_url,
+            "source_type": source_type,
+            "content": content,
+            "content_hash": _content_hash(content),
+        }
+
+    # Fallback: just record the docs URL
+    return {
+        "docs_url": docs_url,
+        "llms_txt_url": None,
+        "source_type": "docs_url_only",
+        "content": None,
+        "content_hash": None,
+    }
+
+
+def resolve_typescript(name: str, version: str, timeout: int) -> dict:
+    """Resolve documentation for an npm package."""
+    api_url = f"https://registry.npmjs.org/{name}"
+    data = _http_get_json(api_url, timeout)
+
+    if not data:
+        return {"error": f"npm lookup failed for {name}"}
+
+    # Extract homepage
+    docs_url = data.get("homepage")
+
+    if not docs_url:
+        # Try repository URL
+        repo = data.get("repository")
+        if isinstance(repo, dict):
+            docs_url = repo.get("url", "")
+            # Clean up git URLs
+            docs_url = (
+                docs_url.replace("git+", "")
+                .replace("git://", "https://")
+                .rstrip(".git")
+            )
+        elif isinstance(repo, str):
+            docs_url = repo
+
+    if not docs_url:
+        return {"error": f"No documentation URL found for {name}"}
+
+    # Probe for llms.txt
+    content, llms_url, source_type = _probe_llms_txt(docs_url, timeout)
+
+    if content:
+        return {
+            "docs_url": docs_url,
+            "llms_txt_url": llms_url,
+            "source_type": source_type,
+            "content": content,
+            "content_hash": _content_hash(content),
+        }
+
+    return {
+        "docs_url": docs_url,
+        "llms_txt_url": None,
+        "source_type": "docs_url_only",
+        "content": None,
+        "content_hash": None,
+    }
+
+
+def resolve_rust(name: str, version: str, timeout: int) -> dict:
+    """Resolve documentation for a Rust crate via crates.io."""
+    api_url = f"https://crates.io/api/v1/crates/{name}"
+    data = _http_get_json(api_url, timeout)
+
+    if not data:
+        return {"error": f"crates.io lookup failed for {name}"}
+
+    crate = data.get("crate", {})
+
+    # Try multiple URL fields
+    docs_url = (
+        crate.get("documentation") or crate.get("homepage") or f"https://docs.rs/{name}"
+    )
+
+    # Probe for llms.txt at docs.rs
+    docsrs_url = f"https://docs.rs/{name}/latest"
+    content, llms_url, source_type = _probe_llms_txt(docsrs_url, timeout)
+
+    if not content and docs_url:
+        # Try the actual docs URL too
+        content, llms_url, source_type = _probe_llms_txt(docs_url, timeout)
+
+    if content:
+        return {
+            "docs_url": docs_url,
+            "llms_txt_url": llms_url,
+            "source_type": source_type,
+            "content": content,
+            "content_hash": _content_hash(content),
+        }
+
+    return {
+        "docs_url": docs_url,
+        "llms_txt_url": None,
+        "source_type": "docs_url_only",
+        "content": None,
+        "content_hash": None,
+    }
+
+
+RESOLVERS = {
+    "python": resolve_python,
+    "typescript": resolve_typescript,
+    "rust": resolve_rust,
+}
+
+
+def load_stored_hashes(project_dir: Path) -> dict[str, str]:
+    """Load content hashes from existing rule YAML files."""
+    hashes: dict[str, str] = {}
+    rules_dir = project_dir / "whetstone" / "rules"
+    if not rules_dir.exists():
+        return hashes
+
+    for yaml_file in rules_dir.rglob("*.yaml"):
+        text = yaml_file.read_text()
+        name_match = re.search(r"^\s*name:\s*(.+)$", text, re.MULTILINE)
+        hash_match = re.search(r"^\s*content_hash:\s*(.+)$", text, re.MULTILINE)
+        if name_match and hash_match:
+            hashes[name_match.group(1).strip()] = hash_match.group(1).strip()
+
+    return hashes
+
+
+def resolve_sources(
+    deps_data: dict,
+    filter_deps: set[str] | None = None,
+    changed_only: bool = False,
+    project_dir: Path = Path("."),
+    timeout: int = DEFAULT_TIMEOUT,
+) -> dict:
+    """Resolve documentation sources for all dependencies."""
+    sources: list[dict] = []
+    errors: list[dict] = []
+
+    stored_hashes = load_stored_hashes(project_dir) if changed_only else {}
+
+    for dep in deps_data.get("dependencies", []):
+        name = dep["name"]
+        language = dep["language"]
+        version = dep.get("version", "*")
+
+        # Filter by requested deps
+        if filter_deps and name not in filter_deps:
+            continue
+
+        # Skip dev dependencies for source resolution
+        if dep.get("dev", False):
+            continue
+
+        resolver = RESOLVERS.get(language)
+        if not resolver:
+            errors.append(
+                {
+                    "name": name,
+                    "language": language,
+                    "error": f"Unsupported language: {language}",
+                }
+            )
+            continue
+
+        try:
+            result = resolver(name, version, timeout)
+        except Exception as e:
+            errors.append(
+                {
+                    "name": name,
+                    "language": language,
+                    "error": str(e),
+                }
+            )
+            continue
+
+        if "error" in result:
+            errors.append(
+                {
+                    "name": name,
+                    "language": language,
+                    "error": result["error"],
+                }
+            )
+            continue
+
+        # Changed-only filter
+        if changed_only and result.get("content_hash"):
+            stored_hash = stored_hashes.get(name)
+            if stored_hash and stored_hash == result["content_hash"]:
+                continue  # Skip unchanged
+
+        sources.append(
+            {
+                "name": name,
+                "language": language,
+                "version": version,
+                **result,
+            }
+        )
+
+    return {
+        "sources": sources,
+        "errors": errors,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Resolve documentation URLs and fetch content for dependencies."
+    )
+    parser.add_argument(
+        "--input",
+        type=Path,
+        help="JSON input file from detect-deps.py (default: read from stdin)",
+    )
+    parser.add_argument(
+        "--deps",
+        type=str,
+        help="Comma-separated list of dependency names to resolve",
+    )
+    parser.add_argument(
+        "--changed-only",
+        action="store_true",
+        help="Only resolve deps whose content has changed since last extraction",
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project root directory (default: .)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT,
+        help=f"HTTP request timeout in seconds (default: {DEFAULT_TIMEOUT})",
+    )
+    args = parser.parse_args()
+
+    try:
+        # Read input
+        if args.input:
+            with open(args.input) as f:
+                deps_data = json.load(f)
+        else:
+            deps_data = json.load(sys.stdin)
+
+        filter_deps = set(args.deps.split(",")) if args.deps else None
+
+        result = resolve_sources(
+            deps_data,
+            filter_deps=filter_deps,
+            changed_only=args.changed_only,
+            project_dir=args.project_dir,
+            timeout=args.timeout,
+        )
+
+        json.dump(result, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+
+    except Exception as e:
+        json.dump({"error": str(e)}, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

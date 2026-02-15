@@ -1,0 +1,78 @@
+# Whetstone Rule YAML Schema
+# This defines the structure of rule files in whetstone/rules/{language}/{dep}.yaml
+#
+# Every rule file has two top-level keys:
+#   source: metadata about the dependency and its documentation
+#   rules:  list of extracted rules
+
+# --- Source metadata ---
+source:
+  name: string            # Required. Dependency name (e.g., "fastapi")
+  docs_url: string        # Required. Primary documentation URL
+  llms_txt: string        # Optional. URL to llms.txt or llms-full.txt if available
+  version: string         # Required. Dependency version at time of extraction
+  content_hash: string    # Required. SHA-256 hash of source content (sha256:...)
+
+# --- Rules list ---
+rules:
+  - id: string            # Required. Format: "{dependency}.{rule-name}" (e.g., "fastapi.async-routes")
+                           # Must be unique across the entire ruleset.
+
+    severity: enum         # Required. One of: must | should | may
+                           # Uses RFC 2119 keywords:
+                           #   must    — violation is always wrong
+                           #   should  — violation is wrong in most cases
+                           #   may     — recommendation, not a hard requirement
+
+    confidence: enum       # Required. One of: high | medium
+                           # high   — directly stated in documentation
+                           # medium — inferred from documentation patterns
+
+    category: enum         # Required. One of: migration | default | convention | breaking-change | semantic
+                           # migration       — deprecated APIs that still work but shouldn't be used
+                           # default         — insecure/slow unless explicitly configured
+                           # convention      — docs recommend X, most tutorials/LLMs default to Y
+                           # breaking-change — will fail in the next major version
+                           # semantic        — judgment-based, decomposable into mostly-deterministic signals
+
+    description: string    # Required. Rule description using RFC 2119 keywords.
+                           # Should be concise (1-3 sentences) and specific.
+
+    source_url: string     # Required. Specific URL in the dependency's documentation
+                           # that backs this rule. Must be a real, navigable link.
+
+    approved: boolean      # Required. Whether the user has approved this rule.
+                           # Only approved rules are used for generation.
+
+    approved_at: string    # Optional. ISO 8601 timestamp of when the rule was approved.
+
+    signals:               # Required. At least one signal must have strategy: ast or pattern.
+      - id: string         # Required. Unique within this rule (e.g., "is-sync-function").
+        strategy: enum     # Required. One of: ast | pattern | lint_proxy | ai
+                           #   ast        — verifiable via syntax tree analysis
+                           #   pattern    — verifiable via text/regex matching
+                           #   lint_proxy — maps to an existing linter rule
+                           #   ai         — requires LLM judgment (last resort)
+        description: string # Required. What this signal checks.
+        weight: enum       # Required. One of: required | strong | moderate
+                           #   required — rule fails if this signal fires
+                           #   strong   — significant indicator
+                           #   moderate — supporting evidence
+
+    golden_examples:       # Required. 3-5 examples (mix of pass and fail).
+      - code: string       # Required. Code snippet (use | for multiline YAML).
+        verdict: enum      # Required. One of: pass | fail
+        reason: string     # Optional. Brief explanation of why this is pass/fail.
+
+    # --- Optional fields for advanced eval ---
+
+    deterministic_pass_threshold: integer
+                           # Optional. Number of deterministic signals that auto-pass.
+
+    deterministic_fail_threshold: integer
+                           # Optional. Number of deterministic signals below which auto-fail.
+
+    ai_eval:               # Optional. AI evaluation configuration for ambiguous cases.
+      trigger: enum        # When to run AI eval: ambiguous | always
+      question: string     # Binary question for the AI judge
+      context_lines: integer # Lines of surrounding context to include
