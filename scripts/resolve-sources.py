@@ -29,14 +29,38 @@ USER_AGENT = "whetstone/0.1.0 (https://github.com/whetstone)"
 DEFAULT_TIMEOUT = 15
 
 
-def _http_get(url: str, timeout: int = DEFAULT_TIMEOUT) -> str | None:
-    """Fetch URL content. Returns None on any error."""
+def _http_get(
+    url: str,
+    timeout: int = DEFAULT_TIMEOUT,
+    expect_plain_text: bool = False,
+) -> str | None:
+    """Fetch URL content. Returns None on any error.
+
+    If expect_plain_text is True, rejects responses with HTML content-type
+    or content that looks like HTML (starts with <!DOCTYPE or <html).
+    """
     try:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         ctx = ssl.create_default_context()
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-            if resp.status == 200:
-                return resp.read().decode("utf-8", errors="replace")
+            if resp.status != 200:
+                return None
+
+            # Check Content-Type header for HTML when we expect plain text
+            if expect_plain_text:
+                content_type = resp.headers.get("Content-Type", "")
+                if "text/html" in content_type or "application/xhtml" in content_type:
+                    return None
+
+            body = resp.read().decode("utf-8", errors="replace")
+
+            # Secondary check: reject content that looks like HTML
+            if expect_plain_text and body:
+                stripped = body.lstrip()[:100].lower()
+                if stripped.startswith("<!doctype") or stripped.startswith("<html"):
+                    return None
+
+            return body
     except Exception:
         pass
     return None
@@ -71,17 +95,17 @@ def _probe_llms_txt(base_url: str, timeout: int) -> tuple[str | None, str | None
     """
     base = _normalize_url(base_url)
 
-    # Try llms-full.txt first
-    full_url = f"{base}/llms-full.txt"
-    content = _http_get(full_url, timeout)
-    if content and len(content) > 50:  # Sanity check
-        return content, full_url, "llms_full_txt"
+    # Build candidate URLs — try multiple common path patterns
+    candidates: list[tuple[str, str]] = []
+    for suffix in ("", "/latest", "/stable", "/en/latest", "/en/stable"):
+        root = base + suffix if suffix else base
+        candidates.append((f"{root}/llms-full.txt", "llms_full_txt"))
+        candidates.append((f"{root}/llms.txt", "llms_txt"))
 
-    # Try llms.txt
-    txt_url = f"{base}/llms.txt"
-    content = _http_get(txt_url, timeout)
-    if content and len(content) > 50:
-        return content, txt_url, "llms_txt"
+    for url, source_type in candidates:
+        content = _http_get(url, timeout, expect_plain_text=True)
+        if content and len(content) > 50:  # Sanity check
+            return content, url, source_type
 
     return None, None, "none"
 
