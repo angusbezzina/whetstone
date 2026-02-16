@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Detect project dependencies from manifest files.
 
-Parses pyproject.toml, requirements.txt, package.json, and Cargo.toml.
+Recursively discovers manifest files (pyproject.toml, requirements.txt,
+package.json, Cargo.toml) across the project tree, including monorepo
+workspaces. Deduplicates by (name, language) and tracks which subdirectories
+each dependency appears in.
+
 Outputs structured JSON to stdout with dependency name, version, language,
-dev flag, and source manifest.
+dev flag, and source locations.
 
 Usage:
     python3 scripts/detect-deps.py [--project-dir DIR] [--check-drift]
@@ -17,6 +21,38 @@ import os
 import re
 import sys
 from pathlib import Path
+
+# Directories to skip when recursively searching for manifests.
+# These are never project source — they're build artifacts, caches, or VCS internals.
+SKIP_DIRS = frozenset(
+    {
+        "node_modules",
+        ".git",
+        ".hg",
+        ".svn",
+        "__pycache__",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pytest_cache",
+        ".tox",
+        ".nox",
+        ".venv",
+        "venv",
+        "env",
+        ".env",
+        "target",  # Rust build output
+        "dist",
+        "build",
+        ".next",
+        ".nuxt",
+        ".turbo",
+        ".vercel",
+        ".output",
+        "coverage",
+        ".whetstone",
+        "whetstone",
+    }
+)
 
 # Try tomllib (3.11+), then tomli, then fall back to a minimal parser
 try:
@@ -203,23 +239,72 @@ def _load_toml(filepath: Path) -> dict:
     return _minimal_toml_load(filepath)
 
 
-def parse_pyproject_toml(filepath: Path) -> list[dict]:
+def find_manifests(project_dir: Path) -> list[tuple[Path, str]]:
+    """Recursively find all manifest files under project_dir.
+
+    Returns list of (absolute_path, relative_source_dir) tuples.
+    Skips directories in SKIP_DIRS (node_modules, .git, target, etc.).
+
+    The relative_source_dir is the directory containing the manifest,
+    relative to project_dir. For the root it's ".".
+    """
+    manifest_names = {
+        "pyproject.toml",
+        "requirements.txt",
+        "package.json",
+        "Cargo.toml",
+    }
+    results: list[tuple[Path, str]] = []
+
+    for dirpath, dirnames, filenames in os.walk(project_dir):
+        # Prune skipped directories in-place (modifying dirnames stops os.walk descending)
+        dirnames[:] = [
+            d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")
+        ]
+        # Sort for deterministic ordering
+        dirnames.sort()
+
+        for fname in filenames:
+            if fname in manifest_names:
+                full_path = Path(dirpath) / fname
+                rel_dir = os.path.relpath(dirpath, project_dir)
+                if rel_dir == ".":
+                    source = "root"
+                else:
+                    source = rel_dir
+                results.append((full_path, source))
+
+    return results
+
+
+def parse_pyproject_toml(filepath: Path, source: str = "root") -> list[dict]:
     """Parse dependencies from pyproject.toml (PEP 621 + Poetry)."""
     data = _load_toml(filepath)
 
     deps: list[dict] = []
 
+    # Collect workspace-internal deps to filter out.
+    # uv: [tool.uv.sources] with { workspace = true }
+    # Poetry: { path = "..." } deps
+    workspace_deps: set[str] = set()
+    uv_sources = data.get("tool", {}).get("uv", {}).get("sources", {})
+    for dep_name, spec in uv_sources.items():
+        if isinstance(spec, dict) and spec.get("workspace"):
+            workspace_deps.add(dep_name.lower())
+
     # PEP 621: [project].dependencies
     project = data.get("project", {})
     for dep_str in project.get("dependencies", []):
         name, version = _parse_pep508(dep_str)
+        if name.lower() in workspace_deps:
+            continue
         deps.append(
             {
                 "name": name,
                 "version": version,
                 "language": "python",
                 "dev": False,
-                "manifest": "pyproject.toml",
+                "source": source,
             }
         )
 
@@ -233,7 +318,7 @@ def parse_pyproject_toml(filepath: Path) -> list[dict]:
                     "version": version,
                     "language": "python",
                     "dev": True,
-                    "manifest": "pyproject.toml",
+                    "source": source,
                 }
             )
 
@@ -249,7 +334,7 @@ def parse_pyproject_toml(filepath: Path) -> list[dict]:
                 "version": version,
                 "language": "python",
                 "dev": False,
-                "manifest": "pyproject.toml",
+                "source": source,
             }
         )
 
@@ -262,7 +347,7 @@ def parse_pyproject_toml(filepath: Path) -> list[dict]:
                 "version": version,
                 "language": "python",
                 "dev": True,
-                "manifest": "pyproject.toml",
+                "source": source,
             }
         )
 
@@ -276,7 +361,7 @@ def parse_pyproject_toml(filepath: Path) -> list[dict]:
                     "version": version,
                     "language": "python",
                     "dev": group_name != "main",
-                    "manifest": "pyproject.toml",
+                    "source": source,
                 }
             )
 
@@ -306,7 +391,7 @@ def _poetry_version(spec: str | dict) -> str:
     return "*"
 
 
-def parse_requirements_txt(filepath: Path) -> list[dict]:
+def parse_requirements_txt(filepath: Path, source: str = "root") -> list[dict]:
     """Parse dependencies from requirements.txt."""
     deps: list[dict] = []
 
@@ -331,14 +416,14 @@ def parse_requirements_txt(filepath: Path) -> list[dict]:
                         "version": version.strip(),
                         "language": "python",
                         "dev": False,
-                        "manifest": "requirements.txt",
+                        "source": source,
                     }
                 )
 
     return deps
 
 
-def parse_package_json(filepath: Path) -> list[dict]:
+def parse_package_json(filepath: Path, source: str = "root") -> list[dict]:
     """Parse dependencies from package.json."""
     with open(filepath) as f:
         data = json.load(f)
@@ -346,37 +431,53 @@ def parse_package_json(filepath: Path) -> list[dict]:
     deps: list[dict] = []
 
     for name, version in data.get("dependencies", {}).items():
+        # Skip workspace references (internal packages, not real external deps)
+        if _is_workspace_ref(version):
+            continue
         deps.append(
             {
                 "name": name,
                 "version": version,
                 "language": "typescript",
                 "dev": False,
-                "manifest": "package.json",
+                "source": source,
             }
         )
 
     for name, version in data.get("devDependencies", {}).items():
+        if _is_workspace_ref(version):
+            continue
         deps.append(
             {
                 "name": name,
                 "version": version,
                 "language": "typescript",
                 "dev": True,
-                "manifest": "package.json",
+                "source": source,
             }
         )
 
     return deps
 
 
-def parse_cargo_toml(filepath: Path) -> list[dict]:
+def _is_workspace_ref(version: str) -> bool:
+    """Check if a version string is an internal workspace reference."""
+    if not isinstance(version, str):
+        return False
+    v = version.strip().lower()
+    return v.startswith("workspace:") or v.startswith("link:") or v.startswith("file:")
+
+
+def parse_cargo_toml(filepath: Path, source: str = "root") -> list[dict]:
     """Parse dependencies from Cargo.toml."""
     data = _load_toml(filepath)
 
     deps: list[dict] = []
 
     for name, spec in data.get("dependencies", {}).items():
+        # Skip path-only dependencies (workspace-internal)
+        if isinstance(spec, dict) and "path" in spec and "version" not in spec:
+            continue
         version = _cargo_version(spec)
         deps.append(
             {
@@ -384,11 +485,13 @@ def parse_cargo_toml(filepath: Path) -> list[dict]:
                 "version": version,
                 "language": "rust",
                 "dev": False,
-                "manifest": "Cargo.toml",
+                "source": source,
             }
         )
 
     for name, spec in data.get("dev-dependencies", {}).items():
+        if isinstance(spec, dict) and "path" in spec and "version" not in spec:
+            continue
         version = _cargo_version(spec)
         deps.append(
             {
@@ -396,7 +499,7 @@ def parse_cargo_toml(filepath: Path) -> list[dict]:
                 "version": version,
                 "language": "rust",
                 "dev": True,
-                "manifest": "Cargo.toml",
+                "source": source,
             }
         )
 
@@ -459,51 +562,78 @@ def check_drift(deps: list[dict], project_dir: Path) -> list[dict]:
 
 
 def detect_deps(project_dir: Path, do_check_drift: bool = False) -> dict:
-    """Main detection logic. Returns structured JSON-ready dict."""
+    """Main detection logic. Returns structured JSON-ready dict.
+
+    Recursively discovers all manifest files under project_dir,
+    parses each, deduplicates by (name, language, dev), and merges
+    source locations.
+    """
     all_deps: list[dict] = []
     warnings: list[str] = []
+    manifests_found: list[str] = []
 
-    # Detect manifests
-    manifests = {
+    # Map filename to parser
+    parsers = {
         "pyproject.toml": parse_pyproject_toml,
         "requirements.txt": parse_requirements_txt,
         "package.json": parse_package_json,
         "Cargo.toml": parse_cargo_toml,
     }
 
-    found_any = False
-    for filename, parser in manifests.items():
-        filepath = project_dir / filename
-        if filepath.exists():
-            found_any = True
-            try:
-                deps = parser(filepath)
-                all_deps.extend(deps)
-            except Exception as e:
-                warnings.append(f"Error parsing {filename}: {e}")
+    # Recursively find all manifest files
+    manifest_files = find_manifests(project_dir)
 
-    if not found_any:
+    if not manifest_files:
         result: dict = {
             "languages": [],
             "dependencies": [],
+            "manifests": [],
             "error": "No manifest files found",
         }
         return result
 
-    # Deduplicate by (name, language, manifest)
-    seen = set()
-    unique_deps = []
-    for dep in all_deps:
-        key = (dep["name"], dep["language"], dep["manifest"])
-        if key not in seen:
-            seen.add(key)
-            unique_deps.append(dep)
+    for filepath, source in manifest_files:
+        filename = filepath.name
+        parser = parsers.get(filename)
+        if parser is None:
+            continue
+        rel_path = os.path.relpath(filepath, project_dir)
+        manifests_found.append(rel_path)
+        try:
+            deps = parser(filepath, source)
+            all_deps.extend(deps)
+        except Exception as e:
+            warnings.append(f"Error parsing {rel_path}: {e}")
 
+    # Deduplicate by (name, language, dev).
+    # When the same dep appears in multiple workspaces, merge sources and
+    # keep the most specific (non-wildcard) version.
+    merged: dict[tuple[str, str, bool], dict] = {}
+    for dep in all_deps:
+        key = (dep["name"], dep["language"], dep["dev"])
+        if key not in merged:
+            merged[key] = {
+                "name": dep["name"],
+                "version": dep["version"],
+                "language": dep["language"],
+                "dev": dep["dev"],
+                "sources": [dep["source"]],
+            }
+        else:
+            entry = merged[key]
+            if dep["source"] not in entry["sources"]:
+                entry["sources"].append(dep["source"])
+            # Prefer a more specific version over "*"
+            if entry["version"] == "*" and dep["version"] != "*":
+                entry["version"] = dep["version"]
+
+    unique_deps = sorted(merged.values(), key=lambda d: (d["dev"], d["name"]))
     languages = sorted(set(d["language"] for d in unique_deps))
 
     result = {
         "languages": languages,
         "dependencies": unique_deps,
+        "manifests": manifests_found,
     }
 
     if warnings:
