@@ -5,11 +5,10 @@ description: >-
   generates native tests, lint configs, and agent context files. Use when the
   user asks to extract rules, update standards, or run whetstone commands.
 license: MIT
-compatibility: Requires python3, git, and internet access for registry lookups.
+compatibility: Requires python3 (3.9+), git, and internet access for registry lookups.
 metadata:
   author: whetstone
   version: "0.1.0"
-allowed-tools: Bash(python3:*) Bash(git:*) Read Write
 ---
 
 # Whetstone
@@ -24,25 +23,23 @@ Activate when the user says any of: "whetstone", "extract rules", "update standa
 
 ## Script Paths
 
-All scripts live in this skill's `scripts/` directory. Before running any script, determine the absolute path to this skill's directory (the directory containing this SKILL.md file). Then invoke scripts using that path:
+All scripts live in the `scripts/` directory relative to this SKILL.md file. When running scripts, use the absolute path based on where this skill is installed. For example, if this SKILL.md is at `/path/to/whetstone/SKILL.md`, run:
 
-```bash
-# Determine SKILL_DIR (the directory containing this SKILL.md)
-# Then run scripts as:
-python3 "$SKILL_DIR/scripts/detect-deps.py" --project-dir .
+```
+python3 /path/to/whetstone/scripts/detect-deps.py --project-dir .
 ```
 
-Throughout this document, `$SKILL_DIR` refers to this skill's installation directory.
+In the workflow steps below, script paths are written as `scripts/detect-deps.py` — always resolve these relative to this SKILL.md's directory.
 
 ## Quick Reference
 
 | Script | Purpose | Input | Output |
 |--------|---------|-------|--------|
-| `$SKILL_DIR/scripts/detect-deps.py` | Detect dependencies | Manifest files | JSON: deps list |
-| `$SKILL_DIR/scripts/resolve-sources.py` | Resolve docs URLs | JSON from detect-deps | JSON: source content |
-| `$SKILL_DIR/scripts/detect-patterns.py` | Mine style patterns | Transcripts, git, PRs | JSON: candidate patterns |
-| `$SKILL_DIR/scripts/generate-agent-context.py` | Generate agent files | Rule YAML files | CLAUDE.md, AGENTS.md, etc. |
-| `$SKILL_DIR/scripts/generate-tests.py` | Generate tests + lint | Rule YAML files | pytest/vitest/cargo tests |
+| `scripts/detect-deps.py` | Detect dependencies | Manifest files | JSON: deps list |
+| `scripts/resolve-sources.py` | Resolve docs URLs | JSON from detect-deps | JSON: source content |
+| `scripts/detect-patterns.py` | Mine style patterns | Transcripts, git, PRs | JSON: candidate patterns |
+| `scripts/generate-agent-context.py` | Generate agent files | Rule YAML files | AGENTS.md, CLAUDE.md, etc. |
+| `scripts/generate-tests.py` | Generate tests + lint | Rule YAML files | pytest/vitest/cargo tests |
 
 ---
 
@@ -55,7 +52,7 @@ Run when the user says "whetstone init", "extract rules", or similar.
 **Step 1: Detect dependencies**
 
 ```bash
-python3 "$SKILL_DIR/scripts/detect-deps.py" --project-dir .
+python3 scripts/detect-deps.py --project-dir .
 ```
 
 Present the findings: "Found N dependencies across [languages]." List the dependencies with name, version, and language. Ask the user which dependencies to extract rules for. Default: all non-dev dependencies.
@@ -63,7 +60,7 @@ Present the findings: "Found N dependencies across [languages]." List the depend
 **Step 2: Resolve documentation sources**
 
 ```bash
-python3 "$SKILL_DIR/scripts/detect-deps.py" --project-dir . | python3 "$SKILL_DIR/scripts/resolve-sources.py" --deps dep1,dep2,dep3
+python3 scripts/detect-deps.py --project-dir . | python3 scripts/resolve-sources.py --deps dep1,dep2,dep3
 ```
 
 Pass only the user-confirmed dependencies. Present: "Resolved docs for N/M deps, K have llms.txt." For any deps where resolution failed, note why and ask if the user wants to provide a manual docs URL.
@@ -71,7 +68,7 @@ Pass only the user-confirmed dependencies. Present: "Resolved docs for N/M deps,
 **Step 3: Detect style patterns (optional)**
 
 ```bash
-python3 "$SKILL_DIR/scripts/detect-patterns.py" --project-dir .
+python3 scripts/detect-patterns.py --project-dir .
 ```
 
 Present any discovered patterns with evidence (occurrence count, example quotes). Ask the user which patterns to include as rule candidates.
@@ -100,15 +97,15 @@ Save approved rules to `whetstone/rules/{language}/{dependency}.yaml`.
 **Step 6: Generate outputs**
 
 ```bash
-python3 "$SKILL_DIR/scripts/generate-agent-context.py" --project-dir .
-python3 "$SKILL_DIR/scripts/generate-tests.py" --project-dir .
+python3 scripts/generate-agent-context.py --project-dir .
+python3 scripts/generate-tests.py --project-dir .
 ```
 
 Present summary: "Generated N rules across M deps. Tests: whetstone/evals/. Agent context: CLAUDE.md, AGENTS.md."
 
 **Step 7: Create config (if first run)**
 
-If `whetstone/whetstone.yaml` doesn't exist, create it from `$SKILL_DIR/assets/whetstone.yaml.template` with the detected languages, confirmed agents list, and trigger mode (default: manual).
+If `whetstone/whetstone.yaml` doesn't exist, create it from `assets/whetstone.yaml.template` with the detected languages, confirmed agents list, and trigger mode (default: manual).
 
 ### Update (Subsequent Runs)
 
@@ -117,7 +114,7 @@ Run when the user says "update whetstone", "refresh rules", "check for rule upda
 **Step 1: Check for drift**
 
 ```bash
-python3 "$SKILL_DIR/scripts/detect-deps.py" --project-dir . --check-drift
+python3 scripts/detect-deps.py --project-dir . --check-drift
 ```
 
 Show which dependencies have changed version since last extraction.
@@ -125,7 +122,7 @@ Show which dependencies have changed version since last extraction.
 **Step 2: Re-resolve changed sources**
 
 ```bash
-python3 "$SKILL_DIR/scripts/detect-deps.py" --project-dir . | python3 "$SKILL_DIR/scripts/resolve-sources.py" --changed-only --project-dir .
+python3 scripts/detect-deps.py --project-dir . | python3 scripts/resolve-sources.py --changed-only --project-dir .
 ```
 
 Only re-fetch documentation for changed dependencies.
@@ -133,7 +130,7 @@ Only re-fetch documentation for changed dependencies.
 **Step 3: Check for new patterns**
 
 ```bash
-python3 "$SKILL_DIR/scripts/detect-patterns.py" --project-dir . --since-last-run
+python3 scripts/detect-patterns.py --project-dir . --since-last-run
 ```
 
 Show any new patterns discovered since the last run.
@@ -147,8 +144,8 @@ For changed dependencies, re-run extraction. Compare proposed rules against exis
 Same approval flow as init, but only for changes. After approval, regenerate:
 
 ```bash
-python3 "$SKILL_DIR/scripts/generate-agent-context.py" --project-dir .
-python3 "$SKILL_DIR/scripts/generate-tests.py" --project-dir .
+python3 scripts/generate-agent-context.py --project-dir .
+python3 scripts/generate-tests.py --project-dir .
 ```
 
 ### Generate Only
@@ -156,8 +153,8 @@ python3 "$SKILL_DIR/scripts/generate-tests.py" --project-dir .
 Run when the user says "regenerate tests", "regenerate agent context", or when rules have been manually edited.
 
 ```bash
-python3 "$SKILL_DIR/scripts/generate-agent-context.py" --project-dir .
-python3 "$SKILL_DIR/scripts/generate-tests.py" --project-dir .
+python3 scripts/generate-agent-context.py --project-dir .
+python3 scripts/generate-tests.py --project-dir .
 ```
 
 ---

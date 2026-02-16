@@ -2,7 +2,7 @@
 """Mine style patterns from conversation transcripts, git history, and PRs.
 
 Analyzes three data sources for recurring style/convention patterns:
-1. Claude Code conversation transcripts (JSONL)
+1. Agent conversation transcripts (JSONL from Claude Code, Cursor, Cline, etc.)
 2. Git commit history and diffs
 3. GitHub PR review comments (optional, requires gh CLI)
 
@@ -110,22 +110,44 @@ def _has_command(name: str) -> bool:
 
 # --- Source 1: Conversation Transcripts ---
 
+# Known agent transcript directories (relative to home)
+# Each agent stores conversation history in JSONL format at different paths.
+TRANSCRIPT_DIRS = [
+    ".claude/projects",  # Claude Code
+    ".cursor/projects",  # Cursor
+    ".cline/projects",  # Cline
+    ".continue/sessions",  # Continue
+    ".codex/sessions",  # Codex
+    ".goose/sessions",  # Goose
+    ".roo/projects",  # Roo Code
+    ".agents/sessions",  # Amp, Gemini CLI, GitHub Copilot (shared path)
+    ".config/opencode/sessions",  # OpenCode
+    ".windsurf/sessions",  # Windsurf
+]
+
 
 def mine_transcripts(
     project_dir: Path,
     since: datetime | None = None,
 ) -> tuple[list[dict], dict]:
-    """Mine Claude Code conversation transcripts for style patterns."""
+    """Mine agent conversation transcripts for style patterns.
+
+    Searches multiple known agent transcript directories for JSONL files.
+    """
     patterns: list[dict] = []
     stats = {"files": 0, "messages": 0}
 
-    # Claude Code stores transcripts at ~/.claude/projects/
-    claude_dir = Path.home() / ".claude" / "projects"
-    if not claude_dir.exists():
+    # Collect JSONL files from all known agent transcript locations
+    jsonl_files: list[Path] = []
+    home = Path.home()
+    for rel_dir in TRANSCRIPT_DIRS:
+        transcript_dir = home / rel_dir
+        if transcript_dir.exists():
+            jsonl_files.extend(transcript_dir.rglob("*.jsonl"))
+
+    if not jsonl_files:
         return patterns, stats
 
-    # Find JSONL files
-    jsonl_files = list(claude_dir.rglob("*.jsonl"))
     stats["files"] = len(jsonl_files)
 
     # Group style signals by rough description

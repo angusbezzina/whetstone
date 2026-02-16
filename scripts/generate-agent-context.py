@@ -303,7 +303,7 @@ def load_config(project_dir: Path) -> dict:
         if data:
             return data
     return {
-        "agents": ["claude.md", "agents.md"],
+        "agents": ["agents.md"],
     }
 
 
@@ -335,7 +335,7 @@ def generate_agent_context(
     # Determine formats
     if formats is None:
         config = load_config(project_dir)
-        formats = config.get("agents") or ["claude.md", "agents.md"]
+        formats = config.get("agents") or ["agents.md"]
 
     # Generate each format
     generated: list[str] = []
