@@ -630,8 +630,21 @@ def detect_deps(project_dir: Path, do_check_drift: bool = False) -> dict:
     unique_deps = sorted(merged.values(), key=lambda d: (d["dev"], d["name"]))
     languages = sorted(set(d["language"] for d in unique_deps))
 
+    # Build per-language counts so agents can present accurate summaries
+    runtime_deps = [d for d in unique_deps if not d["dev"]]
+    dev_deps = [d for d in unique_deps if d["dev"]]
+    counts: dict[str, dict[str, int]] = {"total": {}, "runtime": {}, "dev": {}}
+    for lang in languages:
+        counts["total"][lang] = sum(1 for d in unique_deps if d["language"] == lang)
+        counts["runtime"][lang] = sum(1 for d in runtime_deps if d["language"] == lang)
+        counts["dev"][lang] = sum(1 for d in dev_deps if d["language"] == lang)
+    counts["total"]["_all"] = len(unique_deps)
+    counts["runtime"]["_all"] = len(runtime_deps)
+    counts["dev"]["_all"] = len(dev_deps)
+
     result = {
         "languages": languages,
+        "counts": counts,
         "dependencies": unique_deps,
         "manifests": manifests_found,
     }
