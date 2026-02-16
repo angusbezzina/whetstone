@@ -113,6 +113,56 @@ def _probe_llms_txt(base_url: str, timeout: int) -> tuple[str | None, str | None
 # --- Registry resolvers ---
 
 
+def _extract_release_metadata(
+    registry: str, data: dict, name: str, version: str
+) -> dict:
+    """Extract latest version and release date from registry API response.
+
+    Returns dict with latest_version, latest_release_date (ISO), and
+    version_released_date (ISO) if available.
+    """
+    meta: dict[str, str | None] = {
+        "latest_version": None,
+        "latest_release_date": None,
+    }
+
+    try:
+        if registry == "pypi":
+            info = data.get("info", {})
+            meta["latest_version"] = info.get("version")
+            # Release date: look up the latest version's upload time
+            releases = data.get("releases", {})
+            latest_ver = meta["latest_version"]
+            if latest_ver and latest_ver in releases:
+                files = releases[latest_ver]
+                if files:
+                    # Take the earliest upload_time for this version
+                    upload_time = files[0].get("upload_time")
+                    if upload_time:
+                        meta["latest_release_date"] = upload_time
+
+        elif registry == "npm":
+            dist_tags = data.get("dist-tags", {})
+            meta["latest_version"] = dist_tags.get("latest")
+            time_data = data.get("time", {})
+            latest_ver = meta["latest_version"]
+            if latest_ver and latest_ver in time_data:
+                meta["latest_release_date"] = time_data[latest_ver]
+            elif "modified" in time_data:
+                meta["latest_release_date"] = time_data["modified"]
+
+        elif registry == "crates_io":
+            versions = data.get("versions", [])
+            if versions:
+                # First version in the list is the latest
+                meta["latest_version"] = versions[0].get("num")
+                meta["latest_release_date"] = versions[0].get("created_at")
+    except Exception:
+        pass  # Non-critical — metadata is best-effort
+
+    return {k: v for k, v in meta.items() if v is not None}
+
+
 def resolve_python(name: str, version: str, timeout: int) -> dict:
     """Resolve documentation for a Python package via PyPI."""
     api_url = f"https://pypi.org/pypi/{name}/json"
@@ -122,6 +172,7 @@ def resolve_python(name: str, version: str, timeout: int) -> dict:
         return {"error": f"PyPI lookup failed for {name}"}
 
     info = data.get("info", {})
+    release_meta = _extract_release_metadata("pypi", data, name, version)
 
     # Extract docs URL from project_urls or home_page
     docs_url = None
@@ -148,7 +199,7 @@ def resolve_python(name: str, version: str, timeout: int) -> dict:
         docs_url = info.get("project_url")
 
     if not docs_url:
-        return {"error": f"No documentation URL found for {name}"}
+        return {"error": f"No documentation URL found for {name}", **release_meta}
 
     # Probe for llms.txt
     content, llms_url, source_type = _probe_llms_txt(docs_url, timeout)
@@ -160,6 +211,7 @@ def resolve_python(name: str, version: str, timeout: int) -> dict:
             "source_type": source_type,
             "content": content,
             "content_hash": _content_hash(content),
+            **release_meta,
         }
 
     # Fallback: just record the docs URL
@@ -169,6 +221,7 @@ def resolve_python(name: str, version: str, timeout: int) -> dict:
         "source_type": "docs_url_only",
         "content": None,
         "content_hash": None,
+        **release_meta,
     }
 
 
@@ -179,6 +232,8 @@ def resolve_typescript(name: str, version: str, timeout: int) -> dict:
 
     if not data:
         return {"error": f"npm lookup failed for {name}"}
+
+    release_meta = _extract_release_metadata("npm", data, name, version)
 
     # Extract homepage
     docs_url = data.get("homepage")
@@ -198,7 +253,7 @@ def resolve_typescript(name: str, version: str, timeout: int) -> dict:
             docs_url = repo
 
     if not docs_url:
-        return {"error": f"No documentation URL found for {name}"}
+        return {"error": f"No documentation URL found for {name}", **release_meta}
 
     # Probe for llms.txt
     content, llms_url, source_type = _probe_llms_txt(docs_url, timeout)
@@ -210,6 +265,7 @@ def resolve_typescript(name: str, version: str, timeout: int) -> dict:
             "source_type": source_type,
             "content": content,
             "content_hash": _content_hash(content),
+            **release_meta,
         }
 
     return {
@@ -218,6 +274,7 @@ def resolve_typescript(name: str, version: str, timeout: int) -> dict:
         "source_type": "docs_url_only",
         "content": None,
         "content_hash": None,
+        **release_meta,
     }
 
 
@@ -229,6 +286,7 @@ def resolve_rust(name: str, version: str, timeout: int) -> dict:
     if not data:
         return {"error": f"crates.io lookup failed for {name}"}
 
+    release_meta = _extract_release_metadata("crates_io", data, name, version)
     crate = data.get("crate", {})
 
     # Try multiple URL fields
@@ -251,6 +309,7 @@ def resolve_rust(name: str, version: str, timeout: int) -> dict:
             "source_type": source_type,
             "content": content,
             "content_hash": _content_hash(content),
+            **release_meta,
         }
 
     return {
@@ -259,6 +318,7 @@ def resolve_rust(name: str, version: str, timeout: int) -> dict:
         "source_type": "docs_url_only",
         "content": None,
         "content_hash": None,
+        **release_meta,
     }
 
 

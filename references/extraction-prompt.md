@@ -8,13 +8,24 @@ The extraction prompt is what the agent uses to derive coding rules from depende
 
 ## Prompt Structure
 
-The prompt has five sections:
+The prompt has six sections:
 
-1. **Task framing** — what the agent is doing and for which dependency
-2. **Category definitions** — the five valid rule categories
-3. **Hard filters** — absolute requirements that reject bad rules
-4. **Signal decomposition** — how to break rules into testable checks
-5. **Output format** — the exact YAML structure to produce
+1. **Task framing** — what the agent is doing, for which dependency, with today's date and release metadata
+2. **Recency priority** — explicit instruction to focus on post-training-cutoff content (last 18 months)
+3. **Category definitions** — the five valid rule categories
+4. **Hard filters** — absolute requirements that reject bad rules
+5. **Signal decomposition** — how to break rules into testable checks
+6. **Output format** — the exact YAML structure to produce
+
+## Recency Priority
+
+LLMs are trained on documentation snapshots typically 1-2 years old. Whetstone's highest value is catching things the LLM doesn't already know. The extraction prompt includes:
+
+- **Today's date** — so the agent knows the current temporal context
+- **Latest version and release date** — from the resolve-sources output
+- **Explicit prioritization** — rules about changes from the last 18 months rank highest
+
+This means a migration footgun from 6 months ago is more valuable than a long-standing convention that every developer (and LLM) already knows. The ranking criteria put recency first.
 
 ## Hard Filters (Rejection Criteria)
 

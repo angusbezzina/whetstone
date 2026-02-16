@@ -75,7 +75,7 @@ Present any discovered patterns with evidence (occurrence count, example quotes)
 
 **Step 4: Extract rules**
 
-Read the source content from Step 2 and patterns from Step 3. For each dependency, apply the extraction prompt below. Propose rules following the rule YAML schema. Maximum 5 rules per dependency.
+Read the source content from Step 2 and patterns from Step 3. For each dependency, apply the extraction prompt below. When filling in the prompt template, use the `latest_version` and `latest_release_date` fields from the resolve-sources output. Set `{today}` to the current date. Propose rules following the rule YAML schema. Maximum 5 rules per dependency. **Prioritize rules about recent changes (last 18 months) that LLMs were likely not trained on.**
 
 **Step 5: Interactive approval**
 
@@ -165,7 +165,27 @@ When extracting rules from dependency documentation, follow these instructions e
 
 ### Your Task
 
-You are reading the documentation for **{dependency_name}** (version {version}, {language}). Extract the highest-value coding rules — the things developers commonly get wrong that aren't caught by standard linters.
+You are reading the documentation for **{dependency_name}** (version {version}, {language}).
+- **Today's date**: {today} (use the current date when running)
+- **Latest version**: {latest_version} (from resolve-sources output)
+- **Released**: {latest_release_date} (from resolve-sources output)
+
+Extract the highest-value coding rules — the things developers commonly get wrong that aren't caught by standard linters.
+
+### Recency Priority
+
+LLMs are trained on documentation snapshots that are typically 1-2 years old. Whetstone's highest value is catching things the LLM doesn't already know. **Prioritize rules about changes from the last 18 months** — these are the most likely to be missed.
+
+Focus on:
+- **API changes since the previous major/minor version** — new recommended patterns, deprecated old ones
+- **New defaults** that differ from what older docs/tutorials show
+- **Migration paths** that existing LLM training data wouldn't cover
+- **Breaking changes** announced for upcoming versions
+
+Deprioritize:
+- Patterns that have been stable for 2+ years (LLMs already know these)
+- Rules that any developer familiar with the 2024-era version would already follow
+- Advice that appears in the majority of tutorials and Stack Overflow answers
 
 ### Categories (only these are valid)
 
@@ -256,12 +276,13 @@ Provide 3-5 golden examples per rule (mix of pass and fail). These are used for 
 ### Ranking
 
 If you identify more than 5 candidate rules, rank by:
-1. **Frequency of mistake** — how often developers get this wrong
-2. **Severity of consequence** — what happens when they do
-3. **Detectability** — can it be caught with deterministic signals?
-4. **Novelty** — is this already caught by standard tooling?
+1. **Recency** — does this address a change from the last 18 months that LLMs likely don't know about?
+2. **Frequency of mistake** — how often developers get this wrong
+3. **Severity of consequence** — what happens when they do
+4. **Detectability** — can it be caught with deterministic signals?
+5. **Novelty** — is this already caught by standard tooling?
 
-Keep only the top 5.
+Keep only the top 5. Rules about recent changes (last 18 months) should rank above equally-severe rules about long-standing patterns.
 
 ---
 
