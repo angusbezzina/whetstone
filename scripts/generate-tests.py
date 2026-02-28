@@ -570,6 +570,7 @@ def generate_tests(
             "rules_processed": 0,
             "skipped_unapproved": skipped,
             "warnings": warnings or ["No approved rules found"],
+            "next_command": "Extract rules first: run whetstone doctor",
         }
 
     # Group by language
@@ -662,6 +663,20 @@ def generate_tests(
             clippy_path.write_text(clippy_content)
         generated_lint.append(str(clippy_path))
 
+    # Build appropriate next command based on what was generated
+    test_paths = []
+    if "python" in by_lang:
+        test_paths.append("pytest whetstone/evals/python/")
+    if "typescript" in by_lang:
+        test_paths.append("npx vitest run whetstone/evals/typescript/")
+    if "rust" in by_lang:
+        test_paths.append("cargo test --test whetstone")
+
+    if test_paths:
+        next_command = "Run tests: " + " && ".join(test_paths)
+    else:
+        next_command = "Check status: python3 scripts/status.py --project-dir ."
+
     result: dict = {
         "generated": {
             "tests": generated_tests,
@@ -669,6 +684,7 @@ def generate_tests(
         },
         "rules_processed": len(rules),
         "skipped_unapproved": skipped,
+        "next_command": next_command,
     }
     if warnings:
         result["warnings"] = warnings

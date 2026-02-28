@@ -19,7 +19,9 @@ Whetstone derives coding rules from the documentation of your actual dependencie
 
 ## Activation
 
-Activate when the user says any of: "whetstone", "extract rules", "update standards", "update rules", "init whetstone", "run whetstone", "check rules", "refresh rules", "generate tests from rules".
+Activate when the user says any of: "whetstone", "whetstone doctor", "extract rules", "update standards", "update rules", "init whetstone", "run whetstone", "check rules", "refresh rules", "generate tests from rules".
+
+If the user says "whetstone doctor", "doctor", "scan my project", or "bootstrap rules", use the **Doctor** workflow below — it's the fastest path from zero to working rules.
 
 ## Script Paths
 
@@ -35,19 +37,99 @@ In the workflow steps below, script paths are written as `scripts/detect-deps.py
 
 | Script | Purpose | Input | Output |
 |--------|---------|-------|--------|
+| `scripts/doctor.py` | **One-command bootstrap** | Project dir | JSON: extraction context |
+| `scripts/status.py` | **Project health summary** | Rule YAML files | JSON: health dimensions |
+| `scripts/ci-check.py` | **CI freshness check** | Project dir | JSON: CI outputs |
 | `scripts/detect-deps.py` | Detect dependencies | Manifest files | JSON: deps list |
 | `scripts/resolve-sources.py` | Resolve docs URLs | JSON from detect-deps | JSON: source content |
 | `scripts/detect-patterns.py` | Mine style patterns | Transcripts, git, PRs | JSON: candidate patterns |
 | `scripts/generate-agent-context.py` | Generate agent files | Rule YAML files | AGENTS.md, CLAUDE.md, etc. |
 | `scripts/generate-tests.py` | Generate tests + lint | Rule YAML files | pytest/vitest/cargo tests |
 
+### Common Flags
+
+All scripts accept `--project-dir` (default: `.`). User-facing scripts support these output modes:
+
+| Flag | Behavior | Available in |
+|------|----------|-------------|
+| `--json` | JSON only to stdout (suppress human output) | doctor, status, ci-check |
+| `--score` | Just the numeric score + label | status |
+| `--pr-comment` | GitHub PR comment markdown | ci-check |
+| `--changed-only` | Only process deps with drift | detect-deps, resolve-sources |
+| `--dry-run` | Preview without writing files | generate-agent-context, generate-tests |
+| `--check-drift` | Include drift info in output | detect-deps |
+
+Building-block scripts (detect-deps, resolve-sources, detect-patterns, generate-*) always output JSON to stdout. All scripts include a `next_command` field in their JSON output.
+
 ---
 
 ## Workflows
 
-### Init (First Run)
+### Doctor (Recommended First Run)
 
-Run when the user says "whetstone init", "extract rules", or similar.
+Run when the user says "whetstone doctor", "doctor", "scan my project", "bootstrap rules", or when they want the fastest path from zero to working rules. This is the **recommended** entry point — it chains detect → resolve → patterns → extract → generate in one flow.
+
+**Step 1: Run the doctor orchestrator**
+
+```bash
+python3 scripts/doctor.py --project-dir .
+```
+
+This runs dependency detection, source resolution, and pattern detection automatically. Progress is printed to stderr; the JSON result (including fetched source content) is printed to stdout.
+
+Review the summary output. It will show:
+- Dependencies found (runtime + dev, per language)
+- Sources resolved (how many deps have docs, how many have llms.txt)
+- Patterns found (recurring style signals from history)
+- Warnings (any deps whose docs couldn't be resolved)
+
+**Step 2: Extract rules from sources**
+
+Read the `extraction_context` from the doctor output. For each source in `extraction_context.sources`, apply the **Extraction Prompt** below. Also consider any patterns from `extraction_context.patterns` as additional rule candidates.
+
+Propose rules following the rule YAML schema. Maximum 5 rules per dependency. **Prioritize rules about recent changes (last 18 months) that LLMs were likely not trained on.**
+
+**Step 3: Interactive approval**
+
+Present proposed rules for approval. For each rule, show:
+- **Rule ID** and **Description** (with RFC 2119 severity)
+- **Category** and **Confidence**
+- **Source URL** with the relevant quote from documentation
+- **Signals** — how it will be checked (ast/pattern/lint_proxy/ai)
+- **Why this matters** — what goes wrong if this rule is ignored
+- **Why linters miss it** — brief note on why ruff/biome/clippy don't catch this
+- **Golden examples** — pass and fail code
+
+Batch option: offer to "approve all high-confidence rules" first, then review medium-confidence individually.
+
+For each rule, the user can: **Approve**, **Edit**, **Deny**, or **Skip**.
+
+Save approved rules to `whetstone/rules/{language}/{dependency}.yaml`.
+
+**Step 4: Generate outputs**
+
+```bash
+python3 scripts/generate-agent-context.py --project-dir .
+python3 scripts/generate-tests.py --project-dir .
+```
+
+**Step 5: Create config (if first run)**
+
+If `whetstone/whetstone.yaml` doesn't exist, create it from `assets/whetstone.yaml.template` with the detected languages, confirmed agents list, and trigger mode (default: manual).
+
+**Step 6: Summary**
+
+Present a final summary:
+- Rules: N approved across M dependencies + K style patterns
+- Tests: paths to generated test files
+- Agent context: which files were generated
+- Next: "Run your tests to verify: `pytest whetstone/evals/python/`" or equivalent
+
+---
+
+### Init (First Run — Step-by-Step)
+
+Run when the user says "whetstone init", "extract rules", or wants more control than the Doctor workflow provides. The Doctor workflow above is recommended for most users — use Init when you need to customize each step.
 
 **Step 1: Detect dependencies**
 
@@ -111,21 +193,23 @@ If `whetstone/whetstone.yaml` doesn't exist, create it from `assets/whetstone.ya
 
 Run when the user says "update whetstone", "refresh rules", "check for rule updates".
 
-**Step 1: Check for drift**
+By default, update only processes dependencies that have changed (diff-only mode). Use this unless the user explicitly requests a full re-extraction.
+
+**Step 1: Check for drift (changed deps only)**
 
 ```bash
-python3 scripts/detect-deps.py --project-dir . --check-drift
+python3 scripts/detect-deps.py --project-dir . --changed-only
 ```
 
-Show which dependencies have changed version since last extraction.
+This outputs only dependencies whose versions have drifted since last extraction. If no drift is found, inform the user and suggest running `whetstone status` instead. For a full check, use `--check-drift` (shows drift info but still outputs all deps).
 
-**Step 2: Re-resolve changed sources**
+**Step 2: Re-resolve changed sources only**
 
 ```bash
-python3 scripts/detect-deps.py --project-dir . | python3 scripts/resolve-sources.py --changed-only --project-dir .
+python3 scripts/detect-deps.py --project-dir . --changed-only | python3 scripts/resolve-sources.py --changed-only --project-dir .
 ```
 
-Only re-fetch documentation for changed dependencies.
+Only re-fetches documentation for dependencies with version drift AND content changes. This is fast and avoids unnecessary network calls.
 
 **Step 3: Check for new patterns**
 
@@ -147,6 +231,25 @@ Same approval flow as init, but only for changes. After approval, regenerate:
 python3 scripts/generate-agent-context.py --project-dir .
 python3 scripts/generate-tests.py --project-dir .
 ```
+
+### Status
+
+Run when the user says "whetstone status", "check health", "how are my rules", or similar.
+
+```bash
+python3 scripts/status.py --project-dir .
+```
+
+This outputs a compact health summary with five dimensions:
+- **Freshness** — days since last rule extraction
+- **Rules count** — total approved rules
+- **High confidence ratio** — % of rules backed directly by documentation
+- **Deterministic coverage** — % of signals that don't need AI (ast/pattern/lint_proxy)
+- **Pending updates** — deps with version drift since last extraction
+
+The output includes a status label (**Healthy**, **Needs Review**, **Stale**, **No Rules**) and specific recommendations with exact commands to run.
+
+Present the human-readable summary to the user. If they want detail, offer `--json` for the full breakdown or `--score` for just the numeric score.
 
 ### Generate Only
 
@@ -250,6 +353,15 @@ For each proposed rule, output valid YAML following this schema:
   description: >
     Concise description using RFC 2119 keywords (MUST, SHOULD, MAY).
   source_url: https://specific-page-in-docs.com/section
+  source_quote: >
+    Verbatim excerpt from the documentation that supports this rule.
+    Keep it short (1-3 sentences) and directly relevant.
+  risk: >
+    What goes wrong if this rule is ignored (e.g., "Blocks the event loop
+    under concurrent load, causing request timeouts").
+  linter_gap: >
+    Why standard linters (ruff/biome/clippy) don't catch this
+    (e.g., "ruff has no rule for async vs sync route handlers").
   approved: false
   signals:
     - id: signal-name
@@ -324,23 +436,35 @@ rules:
 
 ### Interactive Approval Protocol
 
-When presenting rules for approval:
+When presenting rules for approval, use the **rule card** format to help users make confident decisions quickly.
 
-1. Show one rule at a time (or group by dependency if the user prefers)
-2. For each rule, display:
-   - **ID**: `dependency.rule-name`
-   - **Severity**: MUST / SHOULD / MAY
-   - **Category**: migration / default / convention / breaking-change / semantic
-   - **Confidence**: high / medium
-   - **Description**: The rule text
-   - **Source**: Link to documentation
-   - **Signals**: How it will be checked (strategy + description)
-   - **Examples**: Pass and fail code blocks
-3. Ask: "Approve, edit, deny, or skip?"
-4. On **approve**: Set `approved: true`, `approved_at: <now>`, write to YAML file
-5. On **edit**: Let user modify any field, then save
-6. On **deny**: Do not save; optionally record denial reason
-7. On **skip**: Leave for later; do not save
+**Rule Card Format:**
+
+For each rule, present a structured card with these sections:
+
+1. **Header**: `[MUST/SHOULD/MAY] dependency.rule-name` — confidence: high/medium — category
+2. **Description**: The rule text (1-3 sentences)
+3. **Source quote**: Verbatim excerpt from the docs that backs this rule (builds trust)
+4. **Risk**: What goes wrong if ignored (makes severity tangible)
+5. **Linter gap**: Why ruff/biome/clippy doesn't catch this (justifies Whetstone's value)
+6. **Signals**: How it will be checked — show strategy + description, note deterministic coverage (e.g., "3/4 signals are deterministic")
+7. **Examples**: One pass and one fail code block (show the most illustrative pair)
+
+**Batch Approval:**
+
+When presenting rules for a dependency, first offer batch actions:
+- "Approve all N high-confidence rules for {dependency}?" — if user says yes, approve them all
+- Then present medium-confidence rules individually for review
+
+This reduces fatigue on projects with many dependencies.
+
+**Per-Rule Actions:**
+
+For each rule (or after batch), the user can:
+1. **Approve** — Set `approved: true`, `approved_at: <now>`, write to YAML
+2. **Edit** — Let user modify any field, then save
+3. **Deny** — Do not save; optionally record denial reason
+4. **Skip** — Defer to later; do not save
 
 After all rules are reviewed, show a summary: N approved, N denied, N skipped.
 
@@ -453,3 +577,78 @@ For detailed reference material, see:
 - [Rule YAML schema](references/rule-schema.yaml)
 - [Signal strategies guide](references/signal-strategies.md)
 - [Extraction prompt details](references/extraction-prompt.md)
+
+---
+
+## Quickstart Recipes
+
+### Local Quickstart
+
+```bash
+# 1. Install the skill
+npx skills add whetstone
+
+# 2. Ask your agent to bootstrap
+"Run whetstone doctor"
+
+# 3. Expected output:
+#    - Dependencies detected from manifest files
+#    - Documentation sources resolved (with llms.txt where available)
+#    - Style patterns mined from history
+#    - Rules proposed for approval → you approve/deny each
+#    - Agent context files generated (CLAUDE.md, AGENTS.md, etc.)
+#    - Test files generated (whetstone/evals/)
+
+# 4. Verify generated tests
+pytest whetstone/evals/python/           # Python
+npx vitest run whetstone/evals/typescript/  # TypeScript
+cargo test --test whetstone              # Rust
+```
+
+### CI Quickstart
+
+Add this to `.github/workflows/whetstone.yml`:
+
+```yaml
+name: Whetstone Check
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: whetstone/whetstone@main
+        id: whetstone
+        with:
+          fail-on: stale
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+Expected: posts a PR comment with health score, drift status, and recommendations.
+
+### Agent Hook Quickstart (Claude Code)
+
+Add to `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{
+      "matcher": "startup",
+      "hooks": [{
+        "type": "command",
+        "command": "python3 scripts/detect-patterns.py --since-last-run --quiet",
+        "async": true,
+        "statusMessage": "Whetstone: checking for new style patterns..."
+      }]
+    }]
+  }
+}
+```
+
+Expected: silently checks for new style patterns on every session start. Only surfaces output if new patterns are found.

@@ -1,0 +1,110 @@
+name: "Whetstone"
+description: "Check rule freshness and dependency drift for your coding standards"
+branding:
+  icon: "shield"
+  color: "orange"
+
+inputs:
+  directory:
+    description: "Project directory to check"
+    default: "."
+  changed-only:
+    description: "Only check dependencies that have changed (default: true)"
+    default: "true"
+  fail-on:
+    description: "Exit with error on: stale, needs_review, or none"
+    default: "none"
+  github-token:
+    description: "GitHub token for posting PR comments. When set on pull_request events, findings are posted as a PR comment."
+    required: false
+  python-version:
+    description: "Python version to use"
+    default: "3.11"
+
+outputs:
+  freshness_status:
+    description: "Status: healthy, needs_review, stale, no_rules, not_initialized"
+    value: ${{ steps.check.outputs.freshness_status }}
+  changed_sources_count:
+    description: "Number of dependencies with version drift"
+    value: ${{ steps.check.outputs.changed_sources_count }}
+  recommended_rules_count:
+    description: "Number of recommendations"
+    value: ${{ steps.check.outputs.recommended_rules_count }}
+  requires_review:
+    description: "Whether manual review is recommended (true/false)"
+    value: ${{ steps.check.outputs.requires_review }}
+  score:
+    description: "Health score (0-100)"
+    value: ${{ steps.check.outputs.score }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install dependencies
+      shell: bash
+      run: pip install pyyaml
+
+    - id: check
+      shell: bash
+      env:
+        INPUT_DIRECTORY: ${{ inputs.directory }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        SCRIPT_DIR="${{ github.action_path }}/scripts"
+        OUTPUT=$(python3 "$SCRIPT_DIR/ci-check.py" --project-dir "$INPUT_DIRECTORY" --json --fail-on "$INPUT_FAIL_ON" 2>/dev/null)
+        EXIT_CODE=$?
+
+        # Parse JSON outputs
+        echo "freshness_status=$(echo "$OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("freshness_status","unknown"))')" >> "$GITHUB_OUTPUT"
+        echo "changed_sources_count=$(echo "$OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("changed_sources_count",0))')" >> "$GITHUB_OUTPUT"
+        echo "recommended_rules_count=$(echo "$OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("recommended_rules_count",0))')" >> "$GITHUB_OUTPUT"
+        echo "requires_review=$(echo "$OUTPUT" | python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("requires_review",False)).lower())')" >> "$GITHUB_OUTPUT"
+        echo "score=$(echo "$OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("score",0))')" >> "$GITHUB_OUTPUT"
+
+        exit $EXIT_CODE
+
+    - name: Post PR comment
+      if: ${{ inputs.github-token != '' && github.event_name == 'pull_request' && always() }}
+      uses: actions/github-script@v7
+      env:
+        INPUT_DIRECTORY: ${{ inputs.directory }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const { execSync } = require("child_process");
+          const scriptDir = `${{ github.action_path }}/scripts`;
+          let comment;
+          try {
+            comment = execSync(
+              `python3 "${scriptDir}/ci-check.py" --project-dir "${process.env.INPUT_DIRECTORY}" --pr-comment --no-drift-check`,
+              { encoding: "utf8", timeout: 30000 }
+            ).trim();
+          } catch (e) {
+            comment = "<!-- whetstone-ci-check -->\n## Whetstone Status\n\nFailed to generate status report.";
+          }
+          if (!comment) return;
+
+          const marker = "<!-- whetstone-ci-check -->";
+          const { data: comments } = await github.rest.issues.listComments({
+            ...context.repo,
+            issue_number: context.issue.number,
+          });
+          const prev = comments.find((c) => c.body?.startsWith(marker));
+          if (prev) {
+            await github.rest.issues.updateComment({
+              ...context.repo,
+              comment_id: prev.id,
+              body: comment,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body: comment,
+            });
+          }

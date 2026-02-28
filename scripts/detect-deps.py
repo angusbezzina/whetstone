@@ -655,6 +655,17 @@ def detect_deps(project_dir: Path, do_check_drift: bool = False) -> dict:
     if do_check_drift:
         drift = check_drift(unique_deps, project_dir)
         result["drift"] = drift
+        if drift:
+            result["next_command"] = (
+                "Resolve changed sources: python3 scripts/resolve-sources.py --changed-only"
+            )
+        else:
+            result["next_command"] = "No drift detected. Rules are current."
+    else:
+        dep_names = ",".join(d["name"] for d in runtime_deps[:10])
+        result["next_command"] = (
+            f"Resolve docs: python3 scripts/resolve-sources.py --deps {dep_names}"
+        )
 
     return result
 
@@ -674,10 +685,31 @@ def main() -> None:
         action="store_true",
         help="Compare current deps against stored versions in whetstone rules",
     )
+    parser.add_argument(
+        "--changed-only",
+        action="store_true",
+        help="Only output dependencies that have drifted from stored versions",
+    )
     args = parser.parse_args()
 
     try:
-        result = detect_deps(args.project_dir, args.check_drift)
+        do_drift = args.check_drift or args.changed_only
+        result = detect_deps(args.project_dir, do_drift)
+
+        # --changed-only: filter to only drifted deps
+        if args.changed_only and "drift" in result:
+            drifted_names = {d["name"] for d in result["drift"]}
+            if drifted_names:
+                result["dependencies"] = [
+                    d for d in result["dependencies"] if d["name"] in drifted_names
+                ]
+                result["next_command"] = (
+                    "Resolve changed sources: python3 scripts/resolve-sources.py --changed-only"
+                )
+            else:
+                result["dependencies"] = []
+                result["next_command"] = "No changes detected. Rules are current."
+
         json.dump(result, sys.stdout, indent=2)
         sys.stdout.write("\n")
     except Exception as e:

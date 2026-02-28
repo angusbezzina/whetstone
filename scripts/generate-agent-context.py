@@ -295,16 +295,14 @@ def generate_format(
 # --- Config loading ---
 
 
-def load_config(project_dir: Path) -> dict:
-    """Load whetstone.yaml config. Returns defaults if not found."""
+def load_config(project_dir: Path) -> tuple[dict, str]:
+    """Load whetstone.yaml config. Returns (config, provenance) tuple."""
     config_path = project_dir / "whetstone" / "whetstone.yaml"
     if config_path.exists():
         data = load_yaml_file(config_path)
         if data:
-            return data
-    return {
-        "agents": ["agents.md"],
-    }
+            return data, f"Config: {config_path}"
+    return {"agents": ["agents.md"]}, "Config: defaults (no whetstone.yaml found)"
 
 
 # --- Main ---
@@ -330,12 +328,16 @@ def generate_agent_context(
             "dependencies": [],
             "skipped_unapproved": skipped,
             "warnings": warnings or ["No approved rules found"],
+            "next_command": "Extract rules first: run whetstone doctor",
         }
 
     # Determine formats
+    config_provenance = ""
     if formats is None:
-        config = load_config(project_dir)
+        config, config_provenance = load_config(project_dir)
         formats = config.get("agents") or ["agents.md"]
+    if config_provenance:
+        print(config_provenance, file=sys.stderr)
 
     # Generate each format
     generated: list[str] = []
@@ -355,6 +357,10 @@ def generate_agent_context(
     }
     if warnings:
         result["warnings"] = warnings
+
+    result["next_command"] = (
+        "Generate tests: python3 scripts/generate-tests.py --project-dir ."
+    )
 
     return result
 

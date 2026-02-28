@@ -589,9 +589,15 @@ def detect_patterns(
     except OSError:
         pass
 
+    if filtered:
+        next_command = "Review patterns and approve as rules during extraction"
+    else:
+        next_command = "No patterns found. Proceed to extraction."
+
     return {
         "patterns": filtered,
         "sources_analyzed": sources_analyzed,
+        "next_command": next_command,
     }
 
 

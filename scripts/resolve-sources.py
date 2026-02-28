@@ -420,9 +420,17 @@ def resolve_sources(
             }
         )
 
+    if sources:
+        next_command = "Extract rules: agent applies extraction prompt to each source"
+    else:
+        next_command = (
+            "No sources resolved. Provide manual docs URLs or check errors above."
+        )
+
     return {
         "sources": sources,
         "errors": errors,
+        "next_command": next_command,
     }
 
 

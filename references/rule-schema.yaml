@@ -41,6 +41,15 @@ rules:
     source_url: string     # Required. Specific URL in the dependency's documentation
                            # that backs this rule. Must be a real, navigable link.
 
+    source_quote: string   # Optional. Verbatim excerpt from documentation supporting
+                           # this rule. Shown during approval to build confidence.
+
+    risk: string           # Optional. What goes wrong if this rule is ignored.
+                           # Helps the user understand severity during approval.
+
+    linter_gap: string     # Optional. Why standard linters don't catch this.
+                           # Explains why Whetstone adds value for this specific rule.
+
     approved: boolean      # Required. Whether the user has approved this rule.
                            # Only approved rules are used for generation.
 

@@ -1,0 +1,56 @@
+# Example: Whetstone CI integration
+# Copy this to your project's .github/workflows/ and adjust as needed.
+
+name: Whetstone Check
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly full scan — Monday 9am UTC
+    - cron: "0 9 * * 1"
+
+jobs:
+  # PR check: fast, diff-only, posts comment
+  pr-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for drift detection
+
+      - uses: ./  # or: uses: whetstone/whetstone@main
+        id: whetstone
+        with:
+          changed-only: "true"
+          fail-on: stale
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check results
+        if: always()
+        run: |
+          echo "Status: ${{ steps.whetstone.outputs.freshness_status }}"
+          echo "Score: ${{ steps.whetstone.outputs.score }}"
+          echo "Drift: ${{ steps.whetstone.outputs.changed_sources_count }} deps"
+          echo "Review needed: ${{ steps.whetstone.outputs.requires_review }}"
+
+  # Scheduled: full scan, no PR comment
+  weekly-scan:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./  # or: uses: whetstone/whetstone@main
+        id: whetstone
+        with:
+          changed-only: "false"
+          fail-on: stale
+
+      - name: Report
+        if: always()
+        run: |
+          echo "Weekly Whetstone scan complete"
+          echo "Score: ${{ steps.whetstone.outputs.score }}/100"
+          echo "Status: ${{ steps.whetstone.outputs.freshness_status }}"

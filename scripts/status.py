@@ -1,0 +1,576 @@
+#!/usr/bin/env python3
+"""Whetstone Status — compact project health summary.
+
+Reads whetstone/rules/*.yaml and whetstone.yaml, computes health dimensions:
+  - freshness: days since last extraction
+  - rules_count: total approved rules
+  - high_confidence_ratio: % of rules with confidence=high
+  - deterministic_coverage: % of signals that are ast/pattern/lint_proxy (not ai)
+  - pending_updates: number of deps with version drift
+
+Outputs a status label: Healthy, Needs Review, or Stale.
+
+Usage:
+    python3 scripts/status.py --project-dir .
+    python3 scripts/status.py --project-dir . --json
+    python3 scripts/status.py --project-dir . --score
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def _parse_yaml_field(text: str, field: str) -> str | None:
+    """Extract a simple scalar field from YAML text."""
+    match = re.search(rf"^\s*{re.escape(field)}:\s*(.+)$", text, re.MULTILINE)
+    if match:
+        value = match.group(1).strip().strip("'\"")
+        return value if value else None
+    return None
+
+
+def _parse_yaml_list_field(text: str, field: str) -> list[str]:
+    """Extract a YAML list field (one item per indented line)."""
+    pattern = rf"^\s*{re.escape(field)}:\s*\n((?:\s+-\s+.+\n?)*)"
+    match = re.search(pattern, text, re.MULTILINE)
+    if not match:
+        return []
+    items = re.findall(r"^\s+-\s+(.+)$", match.group(1), re.MULTILINE)
+    return [item.strip().strip("'\"") for item in items]
+
+
+def load_rule_files(rules_dir: Path) -> list[dict]:
+    """Load metadata from all rule YAML files."""
+    rule_files = []
+
+    if not rules_dir.exists():
+        return rule_files
+
+    for yaml_file in sorted(rules_dir.rglob("*.yaml")):
+        text = yaml_file.read_text()
+
+        # Extract source metadata
+        source_name = _parse_yaml_field(text, "name")
+        source_version = _parse_yaml_field(text, "version")
+        content_hash = _parse_yaml_field(text, "content_hash")
+
+        # Count rules by parsing rule blocks
+        rules = []
+        rule_blocks = re.split(r"^  - id:", text, flags=re.MULTILINE)
+
+        for block in rule_blocks[1:]:  # Skip first split (before first rule)
+            rule_id = block.split("\n")[0].strip()
+
+            severity = _parse_yaml_field(block, "severity")
+            confidence = _parse_yaml_field(block, "confidence")
+            category = _parse_yaml_field(block, "category")
+            approved = _parse_yaml_field(block, "approved")
+            approved_at = _parse_yaml_field(block, "approved_at")
+
+            # Count signals by strategy
+            signal_strategies = re.findall(
+                r"^\s+strategy:\s+(\w+)", block, re.MULTILINE
+            )
+
+            rules.append(
+                {
+                    "id": rule_id,
+                    "severity": severity,
+                    "confidence": confidence,
+                    "category": category,
+                    "approved": approved == "true",
+                    "approved_at": approved_at,
+                    "signals": signal_strategies,
+                }
+            )
+
+        rule_files.append(
+            {
+                "file": str(yaml_file),
+                "source_name": source_name,
+                "source_version": source_version,
+                "content_hash": content_hash,
+                "rules": rules,
+            }
+        )
+
+    return rule_files
+
+
+def compute_freshness_days(rule_files: list[dict]) -> float | None:
+    """Compute days since the most recent rule approval."""
+    latest_approval: datetime | None = None
+
+    for rf in rule_files:
+        for rule in rf["rules"]:
+            if rule.get("approved_at"):
+                try:
+                    # Parse ISO 8601 timestamp
+                    ts = rule["approved_at"]
+                    if ts.endswith("Z"):
+                        ts = ts[:-1] + "+00:00"
+                    dt = datetime.fromisoformat(ts)
+                    if latest_approval is None or dt > latest_approval:
+                        latest_approval = dt
+                except (ValueError, TypeError):
+                    continue
+
+    if latest_approval is None:
+        return None
+
+    now = datetime.now(timezone.utc)
+    if latest_approval.tzinfo is None:
+        latest_approval = latest_approval.replace(tzinfo=timezone.utc)
+
+    return (now - latest_approval).total_seconds() / 86400
+
+
+def check_drift(project_dir: Path) -> dict:
+    """Run detect-deps --check-drift and return drift info."""
+    script = Path(__file__).resolve().parent / "detect-deps.py"
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--project-dir",
+                str(project_dir),
+                "--check-drift",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            drift = data.get("drift", {})
+            return drift
+    except Exception:
+        pass
+    return {}
+
+
+def compute_status(
+    project_dir: Path,
+    check_dep_drift: bool = True,
+) -> dict:
+    """Compute the full project health status."""
+    rules_dir = project_dir / "whetstone" / "rules"
+    config_path = project_dir / "whetstone" / "whetstone.yaml"
+
+    # Check if whetstone is initialized
+    if not rules_dir.exists() and not config_path.exists():
+        return {
+            "status": "not_initialized",
+            "label": "Not Initialized",
+            "message": "No whetstone directory found. Run 'whetstone doctor' to get started.",
+            "next_command": "whetstone doctor",
+        }
+
+    # Load rule files
+    rule_files = load_rule_files(rules_dir)
+
+    # Aggregate rule data
+    all_rules = []
+    dep_names = set()
+    for rf in rule_files:
+        dep_names.add(rf["source_name"])
+        all_rules.extend(rf["rules"])
+
+    approved_rules = [r for r in all_rules if r.get("approved")]
+    total_rules = len(approved_rules)
+
+    # Confidence breakdown
+    high_confidence = sum(1 for r in approved_rules if r.get("confidence") == "high")
+    medium_confidence = sum(
+        1 for r in approved_rules if r.get("confidence") == "medium"
+    )
+    high_confidence_ratio = (
+        (high_confidence / total_rules * 100) if total_rules > 0 else 0
+    )
+
+    # Signal coverage
+    all_signals = []
+    for r in approved_rules:
+        all_signals.extend(r.get("signals", []))
+
+    deterministic_signals = [
+        s for s in all_signals if s in ("ast", "pattern", "lint_proxy")
+    ]
+    ai_signals = [s for s in all_signals if s == "ai"]
+    total_signals = len(all_signals)
+    deterministic_coverage = (
+        (len(deterministic_signals) / total_signals * 100) if total_signals > 0 else 0
+    )
+
+    # Severity breakdown
+    must_count = sum(1 for r in approved_rules if r.get("severity") == "must")
+    should_count = sum(1 for r in approved_rules if r.get("severity") == "should")
+    may_count = sum(1 for r in approved_rules if r.get("severity") == "may")
+
+    # Category breakdown
+    categories: dict[str, int] = {}
+    for r in approved_rules:
+        cat = r.get("category", "unknown")
+        categories[cat] = categories.get(cat, 0) + 1
+
+    # Freshness
+    freshness_days = compute_freshness_days(rule_files)
+
+    # Drift check
+    drift_info: dict = {}
+    drifted_count = 0
+    if check_dep_drift:
+        drift_info = check_drift(project_dir)
+        drifted_count = len(drift_info.get("changed", []))
+
+    # Compute status label
+    label = _compute_label(
+        total_rules=total_rules,
+        freshness_days=freshness_days,
+        deterministic_coverage=deterministic_coverage,
+        drifted_count=drifted_count,
+    )
+
+    # Compute optional score
+    score = _compute_score(
+        total_rules=total_rules,
+        freshness_days=freshness_days,
+        deterministic_coverage=deterministic_coverage,
+        high_confidence_ratio=high_confidence_ratio,
+        drifted_count=drifted_count,
+        dep_count=len(dep_names),
+    )
+
+    # Build recommendations
+    recommendations = _build_recommendations(
+        total_rules=total_rules,
+        freshness_days=freshness_days,
+        deterministic_coverage=deterministic_coverage,
+        drifted_count=drifted_count,
+        drift_info=drift_info,
+        ai_signal_count=len(ai_signals),
+    )
+
+    # Next command
+    if drifted_count > 0:
+        next_command = "whetstone update --changed-only"
+    elif total_rules == 0:
+        next_command = "whetstone doctor"
+    elif freshness_days and freshness_days > 30:
+        next_command = "whetstone update"
+    else:
+        next_command = "whetstone generate  (if rules were edited manually)"
+
+    return {
+        "status": "ok",
+        "label": label,
+        "score": score,
+        "dimensions": {
+            "freshness_days": round(freshness_days, 1)
+            if freshness_days is not None
+            else None,
+            "rules_count": total_rules,
+            "high_confidence_ratio": round(high_confidence_ratio, 1),
+            "deterministic_coverage": round(deterministic_coverage, 1),
+            "pending_updates": drifted_count,
+        },
+        "breakdown": {
+            "confidence": {"high": high_confidence, "medium": medium_confidence},
+            "severity": {"must": must_count, "should": should_count, "may": may_count},
+            "categories": categories,
+            "signals": {
+                "deterministic": len(deterministic_signals),
+                "ai": len(ai_signals),
+                "total": total_signals,
+            },
+        },
+        "dependencies_covered": sorted(dep_names),
+        "drift": drift_info,
+        "recommendations": recommendations,
+        "next_command": next_command,
+    }
+
+
+def _compute_label(
+    total_rules: int,
+    freshness_days: float | None,
+    deterministic_coverage: float,
+    drifted_count: int,
+) -> str:
+    """Compute the human-readable status label."""
+    if total_rules == 0:
+        return "No Rules"
+
+    # Stale: no extraction in 60+ days, or significant drift
+    if (freshness_days and freshness_days > 60) or drifted_count >= 3:
+        return "Stale"
+
+    # Needs Review: some drift, or moderately old, or low deterministic coverage
+    if drifted_count > 0:
+        return "Needs Review"
+    if freshness_days and freshness_days > 30:
+        return "Needs Review"
+    if deterministic_coverage < 50:
+        return "Needs Review"
+
+    return "Healthy"
+
+
+def _compute_score(
+    total_rules: int,
+    freshness_days: float | None,
+    deterministic_coverage: float,
+    high_confidence_ratio: float,
+    drifted_count: int,
+    dep_count: int,
+) -> int:
+    """Compute a 0-100 health score. Secondary to the label and dimensions."""
+    if total_rules == 0:
+        return 0
+
+    # Freshness component (0-30 points)
+    # Full marks if <7 days, zero if >90 days
+    if freshness_days is None:
+        freshness_score = 15  # Unknown = middle
+    elif freshness_days <= 7:
+        freshness_score = 30
+    elif freshness_days <= 30:
+        freshness_score = 25
+    elif freshness_days <= 60:
+        freshness_score = 15
+    elif freshness_days <= 90:
+        freshness_score = 5
+    else:
+        freshness_score = 0
+
+    # Deterministic coverage component (0-30 points)
+    det_score = min(30, int(deterministic_coverage * 0.3))
+
+    # Confidence component (0-20 points)
+    conf_score = min(20, int(high_confidence_ratio * 0.2))
+
+    # Drift component (0-20 points)
+    # Full marks if no drift, decreasing with more drifted deps
+    if drifted_count == 0:
+        drift_score = 20
+    elif drifted_count <= 2:
+        drift_score = 10
+    elif drifted_count <= 5:
+        drift_score = 5
+    else:
+        drift_score = 0
+
+    return min(100, freshness_score + det_score + conf_score + drift_score)
+
+
+def _build_recommendations(
+    total_rules: int,
+    freshness_days: float | None,
+    deterministic_coverage: float,
+    drifted_count: int,
+    drift_info: dict,
+    ai_signal_count: int,
+) -> list[str]:
+    """Build actionable recommendations based on status."""
+    recs = []
+
+    if total_rules == 0:
+        recs.append("Run 'whetstone doctor' to extract rules from your dependencies.")
+        return recs
+
+    if drifted_count > 0:
+        changed = drift_info.get("changed", [])
+        dep_list = ", ".join(c.get("name", "?") for c in changed[:3])
+        suffix = f" (+{drifted_count - 3} more)" if drifted_count > 3 else ""
+        recs.append(
+            f"{drifted_count} deps have version drift: {dep_list}{suffix}. "
+            f"Run 'whetstone update --changed-only'."
+        )
+
+    if freshness_days and freshness_days > 30:
+        recs.append(
+            f"Last extraction was {freshness_days:.0f} days ago. "
+            f"Run 'whetstone update' to refresh."
+        )
+
+    if deterministic_coverage < 70 and total_rules > 0:
+        recs.append(
+            f"Deterministic signal coverage is {deterministic_coverage:.0f}%. "
+            f"Consider adding AST/pattern signals to reduce AI dependency."
+        )
+
+    if ai_signal_count > 0 and deterministic_coverage < 50:
+        recs.append(
+            f"{ai_signal_count} signals require AI judgment. "
+            f"Decompose into deterministic checks where possible."
+        )
+
+    if not recs:
+        recs.append("Everything looks good. No action needed.")
+
+    return recs
+
+
+def format_human_output(result: dict) -> str:
+    """Format status as human-readable text."""
+    lines = []
+    lines.append("")
+    lines.append("=" * 60)
+    lines.append("  Whetstone Status")
+    lines.append("=" * 60)
+
+    if result.get("status") == "not_initialized":
+        lines.append(f"  {result['message']}")
+        lines.append(f"  Next: {result['next_command']}")
+        lines.append("=" * 60)
+        return "\n".join(lines)
+
+    label = result.get("label", "Unknown")
+    score = result.get("score", 0)
+    dims = result.get("dimensions", {})
+
+    # Status line with label
+    label_indicator = {
+        "Healthy": "OK",
+        "Needs Review": "!!",
+        "Stale": "XX",
+        "No Rules": "--",
+    }.get(label, "??")
+
+    lines.append(f"  [{label_indicator}] {label}  (score: {score}/100)")
+    lines.append("")
+
+    # Dimensions
+    freshness = dims.get("freshness_days")
+    if freshness is not None:
+        lines.append(
+            f"  Freshness:              {freshness:.0f} days since last extraction"
+        )
+    else:
+        lines.append("  Freshness:              No extraction timestamps found")
+
+    lines.append(f"  Rules:                  {dims.get('rules_count', 0)} approved")
+    lines.append(
+        f"  High confidence:        {dims.get('high_confidence_ratio', 0):.0f}%"
+    )
+    lines.append(
+        f"  Deterministic coverage: {dims.get('deterministic_coverage', 0):.0f}%"
+    )
+    lines.append(
+        f"  Pending updates:        {dims.get('pending_updates', 0)} deps with drift"
+    )
+
+    # Breakdown
+    breakdown = result.get("breakdown", {})
+    severity = breakdown.get("severity", {})
+    if any(severity.values()):
+        lines.append("")
+        lines.append(
+            f"  Severity: {severity.get('must', 0)} must, {severity.get('should', 0)} should, {severity.get('may', 0)} may"
+        )
+
+    categories = breakdown.get("categories", {})
+    if categories:
+        cat_parts = [
+            f"{v} {k}" for k, v in sorted(categories.items(), key=lambda x: -x[1])
+        ]
+        lines.append(f"  Categories: {', '.join(cat_parts)}")
+
+    signals = breakdown.get("signals", {})
+    if signals.get("total", 0) > 0:
+        lines.append(
+            f"  Signals: {signals['deterministic']} deterministic, {signals['ai']} ai ({signals['total']} total)"
+        )
+
+    # Dependencies
+    deps = result.get("dependencies_covered", [])
+    if deps:
+        lines.append("")
+        lines.append(f"  Dependencies: {', '.join(deps)}")
+
+    # Recommendations
+    recs = result.get("recommendations", [])
+    if recs:
+        lines.append("")
+        lines.append("  Recommendations:")
+        for rec in recs:
+            lines.append(f"    - {rec}")
+
+    # Next command
+    next_cmd = result.get("next_command")
+    if next_cmd:
+        lines.append("")
+        lines.append(f"  Next: {next_cmd}")
+
+    lines.append("=" * 60)
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Whetstone Status — compact project health summary."
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path("."),
+        help="Project root directory (default: .)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_mode",
+        help="Output only JSON",
+    )
+    parser.add_argument(
+        "--score",
+        action="store_true",
+        help="Output only the numeric score and label",
+    )
+    parser.add_argument(
+        "--no-drift-check",
+        action="store_true",
+        help="Skip dependency drift check (faster)",
+    )
+    args = parser.parse_args()
+
+    try:
+        result = compute_status(
+            project_dir=args.project_dir,
+            check_dep_drift=not args.no_drift_check,
+        )
+
+        if args.score:
+            score = result.get("score", 0)
+            label = result.get("label", "Unknown")
+            print(f"{score} {label}")
+            return
+
+        if args.json_mode:
+            json.dump(result, sys.stdout, indent=2)
+            sys.stdout.write("\n")
+        else:
+            # Human-readable to stderr, JSON to stdout
+            print(format_human_output(result), file=sys.stderr)
+            json.dump(result, sys.stdout, indent=2)
+            sys.stdout.write("\n")
+
+    except Exception as e:
+        json.dump({"error": str(e)}, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
