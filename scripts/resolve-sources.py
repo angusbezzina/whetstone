@@ -489,7 +489,14 @@ def main() -> None:
         sys.stdout.write("\n")
 
     except Exception as e:
-        json.dump({"error": str(e)}, sys.stdout, indent=2)
+        json.dump(
+            {
+                "error": str(e),
+                "next_command": "Check input JSON format and network connectivity",
+            },
+            sys.stdout,
+            indent=2,
+        )
         sys.stdout.write("\n")
         sys.exit(1)
 

@@ -27,67 +27,118 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-
-def _parse_yaml_field(text: str, field: str) -> str | None:
-    """Extract a simple scalar field from YAML text."""
-    match = re.search(rf"^\s*{re.escape(field)}:\s*(.+)$", text, re.MULTILINE)
-    if match:
-        value = match.group(1).strip().strip("'\"")
-        return value if value else None
-    return None
+try:
+    import yaml
+except ImportError:
+    yaml = None  # type: ignore[assignment]
 
 
-def _parse_yaml_list_field(text: str, field: str) -> list[str]:
-    """Extract a YAML list field (one item per indented line)."""
-    pattern = rf"^\s*{re.escape(field)}:\s*\n((?:\s+-\s+.+\n?)*)"
-    match = re.search(pattern, text, re.MULTILINE)
-    if not match:
-        return []
-    items = re.findall(r"^\s+-\s+(.+)$", match.group(1), re.MULTILINE)
-    return [item.strip().strip("'\"") for item in items]
+# --- YAML loading ---
 
 
-def load_rule_files(rules_dir: Path) -> list[dict]:
-    """Load metadata from all rule YAML files."""
+def _load_yaml(filepath: Path) -> dict | None:
+    """Load a YAML file using PyYAML (preferred) or regex fallback."""
+    try:
+        text = filepath.read_text()
+        if yaml:
+            return yaml.safe_load(text)
+        # Fallback: minimal regex extraction for environments without PyYAML
+        return _regex_parse_rule_file(text)
+    except Exception:
+        return None
+
+
+def _regex_parse_rule_file(text: str) -> dict | None:
+    """Regex-based fallback for parsing rule YAML when PyYAML unavailable."""
+    source: dict = {}
+    for field in ("name", "version", "content_hash"):
+        match = re.search(rf"^\s*{field}:\s*(.+)$", text, re.MULTILINE)
+        if match:
+            source[field] = match.group(1).strip().strip("'\"")
+
+    rules = []
+    rule_blocks = re.split(r"^  - id:", text, flags=re.MULTILINE)
+    for block in rule_blocks[1:]:
+        rule_id = block.split("\n")[0].strip()
+        rule: dict = {"id": rule_id}
+        for field in ("severity", "confidence", "category", "approved_at"):
+            match = re.search(rf"^\s*{field}:\s*(.+)$", block, re.MULTILINE)
+            if match:
+                rule[field] = match.group(1).strip().strip("'\"")
+        approved_match = re.search(r"^\s*approved:\s*(.+)$", block, re.MULTILINE)
+        rule["approved"] = (
+            approved_match.group(1).strip().lower() == "true"
+            if approved_match
+            else False
+        )
+        rule["signals"] = [
+            {"strategy": s}
+            for s in re.findall(r"^\s+strategy:\s+(\w+)", block, re.MULTILINE)
+        ]
+        rules.append(rule)
+
+    return {"source": source, "rules": rules}
+
+
+def _validate_rule(rule: dict, filepath: str) -> list[str]:
+    """Validate required fields on a rule. Returns list of warnings."""
+    warnings = []
+    rule_id = rule.get("id", "unknown")
+    for field in ("id", "severity", "confidence"):
+        if not rule.get(field):
+            warnings.append(
+                f"{filepath}: rule '{rule_id}' missing required field '{field}'"
+            )
+    if not rule.get("signals"):
+        warnings.append(f"{filepath}: rule '{rule_id}' has no signals")
+    return warnings
+
+
+def load_rule_files(rules_dir: Path) -> tuple[list[dict], list[str]]:
+    """Load metadata from all rule YAML files.
+
+    Returns (rule_files, warnings).
+    """
     rule_files = []
+    warnings: list[str] = []
 
     if not rules_dir.exists():
-        return rule_files
+        return rule_files, warnings
 
     for yaml_file in sorted(rules_dir.rglob("*.yaml")):
-        text = yaml_file.read_text()
+        data = _load_yaml(yaml_file)
+        if data is None:
+            warnings.append(f"Failed to parse: {yaml_file}")
+            continue
 
-        # Extract source metadata
-        source_name = _parse_yaml_field(text, "name")
-        source_version = _parse_yaml_field(text, "version")
-        content_hash = _parse_yaml_field(text, "content_hash")
+        source = data.get("source", {})
+        source_name = source.get("name", yaml_file.stem)
+        source_version = source.get("version")
+        content_hash = source.get("content_hash")
 
-        # Count rules by parsing rule blocks
         rules = []
-        rule_blocks = re.split(r"^  - id:", text, flags=re.MULTILINE)
+        for rule_data in data.get("rules", []):
+            # Validate
+            rule_warnings = _validate_rule(rule_data, str(yaml_file))
+            warnings.extend(rule_warnings)
 
-        for block in rule_blocks[1:]:  # Skip first split (before first rule)
-            rule_id = block.split("\n")[0].strip()
-
-            severity = _parse_yaml_field(block, "severity")
-            confidence = _parse_yaml_field(block, "confidence")
-            category = _parse_yaml_field(block, "category")
-            approved = _parse_yaml_field(block, "approved")
-            approved_at = _parse_yaml_field(block, "approved_at")
-
-            # Count signals by strategy
-            signal_strategies = re.findall(
-                r"^\s+strategy:\s+(\w+)", block, re.MULTILINE
-            )
+            # Normalize signals to list of strategy strings
+            signals = rule_data.get("signals", [])
+            signal_strategies = []
+            for sig in signals:
+                if isinstance(sig, dict):
+                    signal_strategies.append(sig.get("strategy", "unknown"))
+                elif isinstance(sig, str):
+                    signal_strategies.append(sig)
 
             rules.append(
                 {
-                    "id": rule_id,
-                    "severity": severity,
-                    "confidence": confidence,
-                    "category": category,
-                    "approved": approved == "true",
-                    "approved_at": approved_at,
+                    "id": rule_data.get("id", "unknown"),
+                    "severity": rule_data.get("severity"),
+                    "confidence": rule_data.get("confidence"),
+                    "category": rule_data.get("category"),
+                    "approved": bool(rule_data.get("approved", False)),
+                    "approved_at": rule_data.get("approved_at"),
                     "signals": signal_strategies,
                 }
             )
@@ -102,7 +153,7 @@ def load_rule_files(rules_dir: Path) -> list[dict]:
             }
         )
 
-    return rule_files
+    return rule_files, warnings
 
 
 def compute_freshness_days(rule_files: list[dict]) -> float | None:
@@ -113,14 +164,19 @@ def compute_freshness_days(rule_files: list[dict]) -> float | None:
         for rule in rf["rules"]:
             if rule.get("approved_at"):
                 try:
-                    # Parse ISO 8601 timestamp
                     ts = rule["approved_at"]
-                    if ts.endswith("Z"):
-                        ts = ts[:-1] + "+00:00"
-                    dt = datetime.fromisoformat(ts)
+                    # PyYAML may parse timestamps to datetime objects directly
+                    if isinstance(ts, datetime):
+                        dt = ts
+                    else:
+                        # Parse ISO 8601 string
+                        ts_str = str(ts)
+                        if ts_str.endswith("Z"):
+                            ts_str = ts_str[:-1] + "+00:00"
+                        dt = datetime.fromisoformat(ts_str)
                     if latest_approval is None or dt > latest_approval:
                         latest_approval = dt
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, AttributeError):
                     continue
 
     if latest_approval is None:
@@ -134,7 +190,11 @@ def compute_freshness_days(rule_files: list[dict]) -> float | None:
 
 
 def check_drift(project_dir: Path) -> dict:
-    """Run detect-deps --check-drift and return drift info."""
+    """Run detect-deps --check-drift and return normalized drift info.
+
+    Returns: {"changed": [...], "count": N, "checked": M}
+    """
+    empty: dict = {"changed": [], "count": 0, "checked": 0}
     script = Path(__file__).resolve().parent / "detect-deps.py"
     try:
         result = subprocess.run(
@@ -151,11 +211,14 @@ def check_drift(project_dir: Path) -> dict:
         )
         if result.returncode == 0:
             data = json.loads(result.stdout)
-            drift = data.get("drift", {})
+            drift = data.get("drift", empty)
+            # Defensive: handle legacy list format
+            if isinstance(drift, list):
+                drift = {"changed": drift, "count": len(drift), "checked": 0}
             return drift
     except Exception:
         pass
-    return {}
+    return empty
 
 
 def compute_status(
@@ -176,7 +239,7 @@ def compute_status(
         }
 
     # Load rule files
-    rule_files = load_rule_files(rules_dir)
+    rule_files, load_warnings = load_rule_files(rules_dir)
 
     # Aggregate rule data
     all_rules = []
@@ -260,6 +323,17 @@ def compute_status(
         ai_signal_count=len(ai_signals),
     )
 
+    # Impact metrics — lightweight indicators of value over time
+    metrics = _compute_impact_metrics(
+        total_rules=total_rules,
+        approved_rules=approved_rules,
+        all_rules=all_rules,
+        dep_names=dep_names,
+        rule_files=rule_files,
+        deterministic_coverage=deterministic_coverage,
+        drifted_count=drifted_count,
+    )
+
     # Next command
     if drifted_count > 0:
         next_command = "whetstone update --changed-only"
@@ -295,8 +369,55 @@ def compute_status(
         },
         "dependencies_covered": sorted(dep_names),
         "drift": drift_info,
+        "metrics": metrics,
         "recommendations": recommendations,
+        "warnings": load_warnings,
         "next_command": next_command,
+    }
+
+
+def _compute_impact_metrics(
+    total_rules: int,
+    approved_rules: list[dict],
+    all_rules: list[dict],
+    dep_names: set,
+    rule_files: list[dict],
+    deterministic_coverage: float,
+    drifted_count: int,
+) -> dict:
+    """Compute lightweight impact metrics for value tracking.
+
+    These metrics help teams quantify the value of maintaining rules over time.
+    They are purely derived from current state — no persistent storage needed.
+    """
+    # Approval rate: approved / total proposed (including unapproved)
+    total_proposed = len(all_rules)
+    approval_rate = (total_rules / total_proposed * 100) if total_proposed > 0 else 0
+
+    # Must-severity rules count — these are the highest-impact rules
+    must_rules = sum(1 for r in approved_rules if r.get("severity") == "must")
+
+    # Dependencies with at least one approved rule
+    deps_with_rules = set()
+    for rf in rule_files:
+        if any(r.get("approved") for r in rf.get("rules", [])):
+            deps_with_rules.add(rf.get("source_name", ""))
+
+    # Coverage ratio: deps with rules / total deps tracked
+    deps_covered = len(deps_with_rules)
+    deps_total = len(dep_names)
+    dep_coverage = (deps_covered / deps_total * 100) if deps_total > 0 else 0
+
+    return {
+        "rules_approved": total_rules,
+        "rules_proposed": total_proposed,
+        "approval_rate": round(approval_rate, 1),
+        "must_rules": must_rules,
+        "dependencies_covered": deps_covered,
+        "dependencies_total": deps_total,
+        "dependency_coverage": round(dep_coverage, 1),
+        "deterministic_coverage": round(deterministic_coverage, 1),
+        "pending_drift": drifted_count,
     }
 
 
@@ -567,7 +688,14 @@ def main() -> None:
             sys.stdout.write("\n")
 
     except Exception as e:
-        json.dump({"error": str(e)}, sys.stdout, indent=2)
+        json.dump(
+            {
+                "error": str(e),
+                "next_command": "Check project directory and whetstone configuration",
+            },
+            sys.stdout,
+            indent=2,
+        )
         sys.stdout.write("\n")
         sys.exit(1)
 

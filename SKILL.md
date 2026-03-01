@@ -23,6 +23,21 @@ Activate when the user says any of: "whetstone", "whetstone doctor", "extract ru
 
 If the user says "whetstone doctor", "doctor", "scan my project", or "bootstrap rules", use the **Doctor** workflow below — it's the fastest path from zero to working rules.
 
+## Happy Path (TL;DR)
+
+Most users need three steps:
+
+1. **Bootstrap**: `python3 scripts/doctor.py --project-dir .` — detects deps, resolves docs, mines patterns
+2. **Extract + Approve**: Read the doctor's `extraction_context`, apply the Extraction Prompt below for each source, present rules for approval using the Rule Card format
+3. **Generate**: `python3 scripts/generate-tests.py --project-dir .` and `python3 scripts/generate-agent-context.py --project-dir .`
+
+After that, check health with `python3 scripts/status.py --project-dir .` anytime.  
+When deps update, run `python3 scripts/detect-deps.py --project-dir . --changed-only` to see what drifted, then re-extract only the changed ones.
+
+See the **Doctor** workflow below for the detailed version.
+
+---
+
 ## Script Paths
 
 All scripts live in the `scripts/` directory relative to this SKILL.md file. When running scripts, use the absolute path based on where this skill is installed. For example, if this SKILL.md is at `/path/to/whetstone/SKILL.md`, run:
@@ -55,7 +70,7 @@ All scripts accept `--project-dir` (default: `.`). User-facing scripts support t
 | `--json` | JSON only to stdout (suppress human output) | doctor, status, ci-check |
 | `--score` | Just the numeric score + label | status |
 | `--pr-comment` | GitHub PR comment markdown | ci-check |
-| `--changed-only` | Only process deps with drift | detect-deps, resolve-sources |
+| `--changed-only` | Only process deps with drift | detect-deps, resolve-sources, ci-check |
 | `--dry-run` | Preview without writing files | generate-agent-context, generate-tests |
 | `--check-drift` | Include drift info in output | detect-deps |
 
@@ -123,7 +138,8 @@ Present a final summary:
 - Rules: N approved across M dependencies + K style patterns
 - Tests: paths to generated test files
 - Agent context: which files were generated
-- Next: "Run your tests to verify: `pytest whetstone/evals/python/`" or equivalent
+
+**Next:** "Run your tests to verify: `pytest whetstone/evals/python/`" (or `npx vitest` / `cargo test` for the relevant language). Then run `python3 scripts/status.py --project-dir .` to confirm health.
 
 ---
 
@@ -189,6 +205,8 @@ Present summary: "Generated N rules across M deps. Tests: whetstone/evals/. Agen
 
 If `whetstone/whetstone.yaml` doesn't exist, create it from `assets/whetstone.yaml.template` with the detected languages, confirmed agents list, and trigger mode (default: manual).
 
+**Next:** "Run your tests to verify: `pytest whetstone/evals/python/`" (or the equivalent for your language). Then run `python3 scripts/status.py --project-dir .` to confirm health.
+
 ### Update (Subsequent Runs)
 
 Run when the user says "update whetstone", "refresh rules", "check for rule updates".
@@ -232,6 +250,8 @@ python3 scripts/generate-agent-context.py --project-dir .
 python3 scripts/generate-tests.py --project-dir .
 ```
 
+**Next:** "Run updated tests to verify: `pytest whetstone/evals/python/`". Then run `python3 scripts/status.py --project-dir .` to confirm the drift is resolved.
+
 ### Status
 
 Run when the user says "whetstone status", "check health", "how are my rules", or similar.
@@ -251,6 +271,8 @@ The output includes a status label (**Healthy**, **Needs Review**, **Stale**, **
 
 Present the human-readable summary to the user. If they want detail, offer `--json` for the full breakdown or `--score` for just the numeric score.
 
+**Next:** Follow the `next_command` from the status JSON output — it suggests the most relevant action (e.g., `whetstone update --changed-only` if drift is detected, or `whetstone doctor` if no rules exist).
+
 ### Generate Only
 
 Run when the user says "regenerate tests", "regenerate agent context", or when rules have been manually edited.
@@ -259,6 +281,8 @@ Run when the user says "regenerate tests", "regenerate agent context", or when r
 python3 scripts/generate-agent-context.py --project-dir .
 python3 scripts/generate-tests.py --project-dir .
 ```
+
+**Next:** "Run tests to verify the regenerated outputs." Then run `python3 scripts/status.py --project-dir .` to check overall health.
 
 ---
 
@@ -436,37 +460,46 @@ rules:
 
 ### Interactive Approval Protocol
 
-When presenting rules for approval, use the **rule card** format to help users make confident decisions quickly.
+Present rules using the **rule card** format. Goal: the user can approve or reject in under 10 seconds per rule.
 
 **Rule Card Format:**
 
-For each rule, present a structured card with these sections:
+```
+[MUST] fastapi.async-routes — high confidence — convention
 
-1. **Header**: `[MUST/SHOULD/MAY] dependency.rule-name` — confidence: high/medium — category
-2. **Description**: The rule text (1-3 sentences)
-3. **Source quote**: Verbatim excerpt from the docs that backs this rule (builds trust)
-4. **Risk**: What goes wrong if ignored (makes severity tangible)
-5. **Linter gap**: Why ruff/biome/clippy doesn't catch this (justifies Whetstone's value)
-6. **Signals**: How it will be checked — show strategy + description, note deterministic coverage (e.g., "3/4 signals are deterministic")
-7. **Examples**: One pass and one fail code block (show the most illustrative pair)
+  Route handlers MUST use async def.
+
+  Source: "Use async def for route operations that call async libraries."
+          — https://fastapi.tiangolo.com/async/
+
+  Risk:   Blocks the event loop under concurrent load, causing timeouts.
+  Gap:    ruff has no rule for async vs sync route handlers.
+
+  Signals: ast (required) — 1/1 deterministic
+  Example: async def get_users(): ...  [pass]
+           def get_users(): ...        [fail]
+
+  > Approve / Edit / Deny / Skip?
+```
+
+Keep each card compact. Only show the most illustrative pass/fail pair inline — full examples live in the YAML.
 
 **Batch Approval:**
 
-When presenting rules for a dependency, first offer batch actions:
-- "Approve all N high-confidence rules for {dependency}?" — if user says yes, approve them all
-- Then present medium-confidence rules individually for review
-
-This reduces fatigue on projects with many dependencies.
+Before showing individual cards, offer: **"Approve all N high-confidence rules for {dependency}?"**
+- If yes: approve all `confidence: high` rules, then show `confidence: medium` individually
+- If no: show all rules individually
 
 **Per-Rule Actions:**
 
-For each rule (or after batch), the user can:
-1. **Approve** — Set `approved: true`, `approved_at: <now>`, write to YAML
-2. **Edit** — Let user modify any field, then save
-3. **Deny** — Do not save; optionally record denial reason
-4. **Skip** — Defer to later; do not save
+| Action | Effect |
+|--------|--------|
+| **Approve** | Set `approved: true`, `approved_at: <now>`, write to YAML |
+| **Edit** | User modifies any field, then approve |
+| **Deny** | Discard (optionally record reason) |
+| **Skip** | Defer — do not write |
 
-After all rules are reviewed, show a summary: N approved, N denied, N skipped.
+After all rules: "N approved, N denied, N skipped."
 
 ---
 

@@ -54,9 +54,14 @@ runs:
       env:
         INPUT_DIRECTORY: ${{ inputs.directory }}
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
       run: |
         SCRIPT_DIR="${{ github.action_path }}/scripts"
-        OUTPUT=$(python3 "$SCRIPT_DIR/ci-check.py" --project-dir "$INPUT_DIRECTORY" --json --fail-on "$INPUT_FAIL_ON" 2>/dev/null)
+        CHANGED_FLAG=""
+        if [ "$INPUT_CHANGED_ONLY" = "true" ]; then
+          CHANGED_FLAG="--changed-only"
+        fi
+        OUTPUT=$(python3 "$SCRIPT_DIR/ci-check.py" --project-dir "$INPUT_DIRECTORY" --json --fail-on "$INPUT_FAIL_ON" $CHANGED_FLAG 2>/dev/null)
         EXIT_CODE=$?
 
         # Parse JSON outputs

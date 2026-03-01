@@ -111,6 +111,7 @@ def doctor(
             "error": error_msg,
             "step": "detect-deps",
             "steps": steps,
+            "next_command": "Check project directory has manifest files (pyproject.toml, package.json, Cargo.toml)",
         }
 
     deps_count = deps_result.get("counts", {}).get("runtime", {}).get("_all", 0)
@@ -193,6 +194,7 @@ def doctor(
             "error": error_msg,
             "step": "resolve-sources",
             "steps": steps,
+            "next_command": "Check network connectivity and dependency names",
         }
 
     sources = resolve_result.get("sources", [])
@@ -430,7 +432,14 @@ def main() -> None:
             sys.exit(1)
 
     except Exception as e:
-        json.dump({"error": str(e)}, sys.stdout, indent=2)
+        json.dump(
+            {
+                "error": str(e),
+                "next_command": "Check project directory and script dependencies",
+            },
+            sys.stdout,
+            indent=2,
+        )
         sys.stdout.write("\n")
         sys.exit(1)
 

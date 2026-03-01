@@ -49,9 +49,20 @@ def _run_script(name: str, args: list[str]) -> dict | None:
 def ci_check(
     project_dir: Path,
     check_drift: bool = True,
+    changed_only: bool = False,
 ) -> dict:
-    """Run CI freshness checks and return structured results."""
+    """Run CI freshness checks and return structured results.
+
+    Args:
+        project_dir: Root directory of the project.
+        check_drift: Whether to check for dependency version drift.
+        changed_only: If True, only check dependencies that have changed.
+            When set, drift checking is implicitly enabled.
+    """
     start = time.monotonic()
+
+    # changed-only implies drift checking
+    effective_drift = check_drift or changed_only
 
     # Get status
     status_result = _run_script(
@@ -60,7 +71,7 @@ def ci_check(
             "--project-dir",
             str(project_dir),
             "--json",
-            *(["--no-drift-check"] if not check_drift else []),
+            *(["--no-drift-check"] if not effective_drift else []),
         ],
     )
 
@@ -209,12 +220,18 @@ def main() -> None:
         action="store_true",
         help="Skip dependency drift check (faster)",
     )
+    parser.add_argument(
+        "--changed-only",
+        action="store_true",
+        help="Only check dependencies that have changed (implies drift check)",
+    )
     args = parser.parse_args()
 
     try:
         result = ci_check(
             project_dir=args.project_dir,
             check_drift=not args.no_drift_check,
+            changed_only=args.changed_only,
         )
 
         if args.pr_comment:
@@ -251,7 +268,14 @@ def main() -> None:
             sys.exit(1)
 
     except Exception as e:
-        json.dump({"error": str(e)}, sys.stdout, indent=2)
+        json.dump(
+            {
+                "error": str(e),
+                "next_command": "Check project directory and script dependencies",
+            },
+            sys.stdout,
+            indent=2,
+        )
         sys.stdout.write("\n")
         sys.exit(1)
 

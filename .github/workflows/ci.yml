@@ -1,0 +1,107 @@
+# Whetstone CI — runs contract tests and validates schema on every push/PR
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: pip install pyyaml pytest
+
+      - name: Run contract tests
+        run: python3 -m pytest tests/test_script_contracts.py -v
+
+  schema-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Validate rule schema fields
+        run: |
+          python3 -c "
+          import yaml, sys, pathlib
+
+          schema_path = pathlib.Path('references/rule-schema.yaml')
+          if not schema_path.exists():
+              print('FAIL: references/rule-schema.yaml not found')
+              sys.exit(1)
+
+          text = schema_path.read_text()
+          print('Schema file found and readable.')
+
+          # Verify required field names are documented
+          required_fields = ['id', 'severity', 'confidence', 'category', 'description', 'source_url', 'signals']
+          for field in required_fields:
+              if field not in text:
+                  print(f'FAIL: required field \"{field}\" not found in schema')
+                  sys.exit(1)
+              print(f'  OK: {field}')
+
+          # Verify fixture rules parse and match schema expectations
+          fixtures = list(pathlib.Path('tests/fixtures').rglob('*.yaml'))
+          print(f'Checking {len(fixtures)} fixture files...')
+          for f in fixtures:
+              try:
+                  data = yaml.safe_load(f.read_text())
+                  if data and 'rules' in data:
+                      for rule in data['rules']:
+                          assert 'id' in rule, f'{f}: rule missing id'
+                          assert 'severity' in rule, f'{f}: rule missing severity'
+                          assert 'confidence' in rule, f'{f}: rule missing confidence'
+                          print(f'  OK: {f}')
+              except Exception as e:
+                  print(f'FAIL: {f}: {e}')
+                  sys.exit(1)
+
+          print('All schema checks passed.')
+          "
+
+      - name: Validate action.yml outputs match ci-check fields
+        run: |
+          python3 -c "
+          import yaml, json, subprocess, sys
+
+          # Load action.yml outputs
+          with open('action.yml') as f:
+              action = yaml.safe_load(f)
+          action_outputs = set(action.get('outputs', {}).keys())
+          print(f'Action outputs: {action_outputs}')
+
+          # Run ci-check to get actual JSON fields
+          result = subprocess.run(
+              [sys.executable, 'scripts/ci-check.py', '--project-dir', 'tests/fixtures', '--json', '--no-drift-check'],
+              capture_output=True, text=True, timeout=60
+          )
+          ci_data = json.loads(result.stdout)
+
+          # Every action output must exist in ci-check JSON
+          for output_name in action_outputs:
+              if output_name not in ci_data:
+                  print(f'FAIL: action output \"{output_name}\" not in ci-check JSON')
+                  sys.exit(1)
+              print(f'  OK: {output_name} = {ci_data[output_name]}')
+
+          print('All action outputs verified.')
+          "

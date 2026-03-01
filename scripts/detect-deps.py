@@ -515,25 +515,21 @@ def _cargo_version(spec: str | dict) -> str:
     return "*"
 
 
-def check_drift(deps: list[dict], project_dir: Path) -> list[dict]:
-    """Compare current deps against stored versions in whetstone.yaml."""
-    config_path = project_dir / "whetstone" / "whetstone.yaml"
-    if not config_path.exists():
-        return []
+def check_drift(deps: list[dict], project_dir: Path) -> dict:
+    """Compare current deps against stored versions in whetstone rules.
+
+    Returns a normalized dict:
+        {"changed": [...], "count": N, "checked": M}
+    """
+    empty: dict = {"changed": [], "count": 0, "checked": 0}
+    rules_dir = project_dir / "whetstone" / "rules"
+    if not rules_dir.exists():
+        return empty
 
     try:
-        # Simple YAML parsing for the stored_versions section
-        # We avoid requiring PyYAML for this script
-        content = config_path.read_text()
-        # Look for stored dependency versions in rule files instead
-        rules_dir = project_dir / "whetstone" / "rules"
-        if not rules_dir.exists():
-            return []
-
         stored_versions: dict[str, str] = {}
         for yaml_file in rules_dir.rglob("*.yaml"):
             text = yaml_file.read_text()
-            # Simple extraction of source name and version
             name_match = re.search(r"^\s*name:\s*(.+)$", text, re.MULTILINE)
             ver_match = re.search(
                 r"^\s*version:\s*[\"']?(.+?)[\"']?\s*$", text, re.MULTILINE
@@ -543,11 +539,11 @@ def check_drift(deps: list[dict], project_dir: Path) -> list[dict]:
                     1
                 ).strip()
 
-        drifted = []
+        changed = []
         for dep in deps:
             stored_ver = stored_versions.get(dep["name"])
             if stored_ver and stored_ver != dep["version"]:
-                drifted.append(
+                changed.append(
                     {
                         "name": dep["name"],
                         "language": dep["language"],
@@ -556,9 +552,13 @@ def check_drift(deps: list[dict], project_dir: Path) -> list[dict]:
                     }
                 )
 
-        return drifted
+        return {
+            "changed": changed,
+            "count": len(changed),
+            "checked": len(stored_versions),
+        }
     except Exception:
-        return []
+        return empty
 
 
 def detect_deps(project_dir: Path, do_check_drift: bool = False) -> dict:
@@ -589,6 +589,7 @@ def detect_deps(project_dir: Path, do_check_drift: bool = False) -> dict:
             "dependencies": [],
             "manifests": [],
             "error": "No manifest files found",
+            "next_command": "Ensure project has pyproject.toml, package.json, or Cargo.toml",
         }
         return result
 
@@ -655,7 +656,7 @@ def detect_deps(project_dir: Path, do_check_drift: bool = False) -> dict:
     if do_check_drift:
         drift = check_drift(unique_deps, project_dir)
         result["drift"] = drift
-        if drift:
+        if drift.get("count", 0) > 0:
             result["next_command"] = (
                 "Resolve changed sources: python3 scripts/resolve-sources.py --changed-only"
             )
@@ -698,7 +699,8 @@ def main() -> None:
 
         # --changed-only: filter to only drifted deps
         if args.changed_only and "drift" in result:
-            drifted_names = {d["name"] for d in result["drift"]}
+            changed = result["drift"].get("changed", [])
+            drifted_names = {d["name"] for d in changed}
             if drifted_names:
                 result["dependencies"] = [
                     d for d in result["dependencies"] if d["name"] in drifted_names
@@ -713,7 +715,14 @@ def main() -> None:
         json.dump(result, sys.stdout, indent=2)
         sys.stdout.write("\n")
     except Exception as e:
-        json.dump({"error": str(e)}, sys.stdout, indent=2)
+        json.dump(
+            {
+                "error": str(e),
+                "next_command": "Check project directory and manifest files",
+            },
+            sys.stdout,
+            indent=2,
+        )
         sys.stdout.write("\n")
         sys.exit(1)
 
