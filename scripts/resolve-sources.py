@@ -16,14 +16,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import ssl
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-
 
 USER_AGENT = "whetstone/0.1.0 (https://github.com/whetstone)"
 DEFAULT_TIMEOUT = 15

@@ -65,15 +65,17 @@ def ci_check(
     effective_drift = check_drift or changed_only
 
     # Get status
-    status_result = _run_script(
-        "status.py",
-        [
-            "--project-dir",
-            str(project_dir),
-            "--json",
-            *(["--no-drift-check"] if not effective_drift else []),
-        ],
-    )
+    status_args = [
+        "--project-dir",
+        str(project_dir),
+        "--json",
+    ]
+    if changed_only:
+        status_args.append("--changed-only")
+    elif not effective_drift:
+        status_args.append("--no-drift-check")
+
+    status_result = _run_script("status.py", status_args)
 
     if status_result is None:
         return {
@@ -98,11 +100,9 @@ def ci_check(
     label = status_result.get("label", "Unknown")
     score = status_result.get("score", 0)
     dims = status_result.get("dimensions", {})
-    drift = status_result.get("drift", {})
     recommendations = status_result.get("recommendations", [])
 
     # Determine freshness status
-    freshness_days = dims.get("freshness_days")
     pending_updates = dims.get("pending_updates", 0)
 
     if label == "Healthy":

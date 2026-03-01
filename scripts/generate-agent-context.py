@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -184,7 +183,6 @@ def _format_rule_section(rule: dict) -> list[str]:
     lines: list[str] = []
     dep = rule.get("_dep_name", "Unknown")
     desc = rule.get("description", "").strip()
-    severity = _severity_text(rule.get("severity", "should"))
     source_url = rule.get("source_url", "")
     language = rule.get("_language", "")
     lang_tag = _lang_tag(language)

@@ -57,7 +57,7 @@ In the workflow steps below, script paths are written as `scripts/detect-deps.py
 | `scripts/ci-check.py` | **CI freshness check** | Project dir | JSON: CI outputs |
 | `scripts/detect-deps.py` | Detect dependencies | Manifest files | JSON: deps list |
 | `scripts/resolve-sources.py` | Resolve docs URLs | JSON from detect-deps | JSON: source content |
-| `scripts/detect-patterns.py` | Mine style patterns | Transcripts, git, PRs | JSON: candidate patterns |
+| `scripts/detect-patterns.py` | Mine style patterns | Transcripts, git, PRs | JSON: candidate patterns (project-scoped by default) |
 | `scripts/generate-agent-context.py` | Generate agent files | Rule YAML files | AGENTS.md, CLAUDE.md, etc. |
 | `scripts/generate-tests.py` | Generate tests + lint | Rule YAML files | pytest/vitest/cargo tests |
 
@@ -685,3 +685,12 @@ Add to `.claude/settings.json`:
 ```
 
 Expected: silently checks for new style patterns on every session start. Only surfaces output if new patterns are found.
+
+### Privacy: Transcript Scanning
+
+`detect-patterns.py` reads agent conversation transcripts from well-known locations under `$HOME`. **By default, scanning is scoped to the current project** — only transcripts whose path contains the project directory name are read.
+
+- **Default:** Project-scoped. Safe to run automatically.
+- **`--global-transcripts`:** Scans all projects. Emits a stderr warning. Use only when the user explicitly requests cross-project pattern analysis.
+- **No external calls:** All transcript processing is local. No content is sent anywhere.
+- **Opt out:** Use `--sources git,pr` to skip transcript scanning entirely.

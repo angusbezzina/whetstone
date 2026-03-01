@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import subprocess
 import sys
@@ -80,17 +79,63 @@ def _regex_parse_rule_file(text: str) -> dict | None:
     return {"source": source, "rules": rules}
 
 
+VALID_SEVERITIES = frozenset({"must", "should", "may"})
+VALID_CONFIDENCES = frozenset({"high", "medium"})
+VALID_CATEGORIES = frozenset(
+    {"migration", "default", "convention", "breaking-change", "semantic"}
+)
+VALID_STRATEGIES = frozenset({"ast", "pattern", "lint_proxy", "ai"})
+
+
 def _validate_rule(rule: dict, filepath: str) -> list[str]:
-    """Validate required fields on a rule. Returns list of warnings."""
+    """Validate required fields and enum values on a rule. Returns list of warnings."""
     warnings = []
     rule_id = rule.get("id", "unknown")
+
+    # Required fields
     for field in ("id", "severity", "confidence"):
         if not rule.get(field):
             warnings.append(
                 f"{filepath}: rule '{rule_id}' missing required field '{field}'"
             )
-    if not rule.get("signals"):
+
+    # Enum validation
+    severity = rule.get("severity")
+    if severity and severity not in VALID_SEVERITIES:
+        warnings.append(
+            f"{filepath}: rule '{rule_id}' has invalid severity '{severity}' "
+            f"(expected one of: {', '.join(sorted(VALID_SEVERITIES))})"
+        )
+
+    confidence = rule.get("confidence")
+    if confidence and confidence not in VALID_CONFIDENCES:
+        warnings.append(
+            f"{filepath}: rule '{rule_id}' has invalid confidence '{confidence}' "
+            f"(expected one of: {', '.join(sorted(VALID_CONFIDENCES))})"
+        )
+
+    category = rule.get("category")
+    if category and category not in VALID_CATEGORIES:
+        warnings.append(
+            f"{filepath}: rule '{rule_id}' has invalid category '{category}' "
+            f"(expected one of: {', '.join(sorted(VALID_CATEGORIES))})"
+        )
+
+    # Signals validation
+    signals = rule.get("signals")
+    if not signals:
         warnings.append(f"{filepath}: rule '{rule_id}' has no signals")
+    elif isinstance(signals, list):
+        for i, sig in enumerate(signals):
+            if isinstance(sig, dict):
+                strategy = sig.get("strategy")
+                if strategy and strategy not in VALID_STRATEGIES:
+                    warnings.append(
+                        f"{filepath}: rule '{rule_id}' signal {i} has invalid "
+                        f"strategy '{strategy}' "
+                        f"(expected one of: {', '.join(sorted(VALID_STRATEGIES))})"
+                    )
+
     return warnings
 
 
@@ -224,10 +269,22 @@ def check_drift(project_dir: Path) -> dict:
 def compute_status(
     project_dir: Path,
     check_dep_drift: bool = True,
+    changed_only: bool = False,
 ) -> dict:
-    """Compute the full project health status."""
+    """Compute the full project health status.
+
+    Args:
+        project_dir: Root directory of the project.
+        check_dep_drift: Whether to check for dependency version drift.
+        changed_only: If True, scope evaluation to only dependencies with
+            version drift. Implies drift checking.
+    """
     rules_dir = project_dir / "whetstone" / "rules"
     config_path = project_dir / "whetstone" / "whetstone.yaml"
+
+    # changed-only implies drift checking
+    if changed_only:
+        check_dep_drift = True
 
     # Check if whetstone is initialized
     if not rules_dir.exists() and not config_path.exists():
@@ -240,6 +297,60 @@ def compute_status(
 
     # Load rule files
     rule_files, load_warnings = load_rule_files(rules_dir)
+
+    # Initialize drift_info (may be populated below)
+    drift_info: dict = {}
+
+    # If changed-only, get drifted dep names and filter rule_files
+    if changed_only:
+        drift_info = check_drift(project_dir)
+        drifted_names = {
+            c.get("name", "").lower() for c in drift_info.get("changed", [])
+        }
+        if drifted_names:
+            rule_files = [
+                rf for rf in rule_files if rf["source_name"].lower() in drifted_names
+            ]
+        # If no drift found, return early with healthy status
+        if not drifted_names:
+            return {
+                "status": "ok",
+                "label": "Healthy",
+                "score": 100,
+                "changed_only": True,
+                "dimensions": {
+                    "freshness_days": None,
+                    "rules_count": 0,
+                    "high_confidence_ratio": 0,
+                    "deterministic_coverage": 0,
+                    "pending_updates": 0,
+                },
+                "breakdown": {
+                    "confidence": {"high": 0, "medium": 0},
+                    "severity": {"must": 0, "should": 0, "may": 0},
+                    "categories": {},
+                    "signals": {"deterministic": 0, "ai": 0, "total": 0},
+                },
+                "dependencies_covered": [],
+                "drift": {"changed": [], "count": 0, "checked": 0},
+                "metrics": {
+                    "rules_approved": 0,
+                    "rules_proposed": 0,
+                    "approval_rate": 0,
+                    "must_rules": 0,
+                    "dependencies_covered": 0,
+                    "dependencies_total": 0,
+                    "dependency_coverage": 0,
+                    "deterministic_coverage": 0,
+                    "pending_drift": 0,
+                },
+                "recommendations": [
+                    "No dependency drift detected. Everything is current."
+                ],
+                "warnings": [],
+                "next_command": "whetstone status  (full scan without --changed-only)",
+                "message": "No dependency drift detected.",
+            }
 
     # Aggregate rule data
     all_rules = []
@@ -289,11 +400,14 @@ def compute_status(
     freshness_days = compute_freshness_days(rule_files)
 
     # Drift check
-    drift_info: dict = {}
-    drifted_count = 0
-    if check_dep_drift:
-        drift_info = check_drift(project_dir)
-        drifted_count = len(drift_info.get("changed", []))
+    # When changed_only is True, drift_info was already computed above
+    # during the filtering step. Otherwise compute or skip.
+    if not changed_only:
+        if check_dep_drift:
+            drift_info = check_drift(project_dir)
+        else:
+            drift_info = {}
+    drifted_count = len(drift_info.get("changed", []))
 
     # Compute status label
     label = _compute_label(
@@ -638,6 +752,106 @@ def format_human_output(result: dict) -> str:
     return "\n".join(lines)
 
 
+def _snapshot_metrics(project_dir: Path, result: dict) -> None:
+    """Append a metric snapshot to whetstone/.metrics.jsonl.
+
+    Each line is a timestamped JSON object with the metrics and score.
+    The file is append-only — old entries are never modified or deleted.
+    """
+    metrics = result.get("metrics")
+    if not metrics:
+        return
+
+    snapshot = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "score": result.get("score", 0),
+        "label": result.get("label", "Unknown"),
+        **metrics,
+    }
+
+    metrics_file = project_dir / "whetstone" / ".metrics.jsonl"
+    try:
+        metrics_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(metrics_file, "a") as f:
+            f.write(json.dumps(snapshot) + "\n")
+    except OSError:
+        pass  # Non-fatal — metrics are optional
+
+
+def _load_metrics_history(project_dir: Path, limit: int = 20) -> list[dict]:
+    """Load the most recent metric snapshots from .metrics.jsonl.
+
+    Returns up to `limit` entries, most recent last.
+    """
+    metrics_file = project_dir / "whetstone" / ".metrics.jsonl"
+    if not metrics_file.exists():
+        return []
+
+    entries: list[dict] = []
+    try:
+        with open(metrics_file) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return []
+
+    return entries[-limit:]
+
+
+def format_history(entries: list[dict]) -> str:
+    """Format metric history as a human-readable trend table."""
+    if not entries:
+        return "No metric history found. Run 'whetstone status' to record snapshots."
+
+    lines = []
+    lines.append("")
+    lines.append("=" * 72)
+    lines.append("  Whetstone Metric History")
+    lines.append("=" * 72)
+    lines.append(
+        f"  {'Date':<12s} {'Score':>5s}  {'Label':<14s} {'Rules':>5s} "
+        f"{'Must':>4s} {'Det%':>5s} {'Drift':>5s}"
+    )
+    lines.append("  " + "-" * 64)
+
+    for entry in entries:
+        ts = entry.get("timestamp", "")[:10]  # YYYY-MM-DD
+        score = entry.get("score", 0)
+        label = entry.get("label", "?")
+        rules = entry.get("rules_approved", 0)
+        must = entry.get("must_rules", 0)
+        det = entry.get("deterministic_coverage", 0)
+        drift = entry.get("pending_drift", 0)
+        lines.append(
+            f"  {ts:<12s} {score:>5d}  {label:<14s} {rules:>5d} "
+            f"{must:>4d} {det:>4.0f}% {drift:>5d}"
+        )
+
+    # Trend summary
+    if len(entries) >= 2:
+        first = entries[0]
+        last = entries[-1]
+        score_delta = last.get("score", 0) - first.get("score", 0)
+        rules_delta = last.get("rules_approved", 0) - first.get("rules_approved", 0)
+        direction = "+" if score_delta >= 0 else ""
+        lines.append("  " + "-" * 64)
+        lines.append(
+            f"  Trend: score {direction}{score_delta}, "
+            f"rules {'+' if rules_delta >= 0 else ''}{rules_delta} "
+            f"over {len(entries)} snapshots"
+        )
+
+    lines.append("=" * 72)
+    lines.append("")
+    return "\n".join(lines)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Whetstone Status — compact project health summary."
@@ -664,13 +878,45 @@ def main() -> None:
         action="store_true",
         help="Skip dependency drift check (faster)",
     )
+    parser.add_argument(
+        "--changed-only",
+        action="store_true",
+        help="Only evaluate rules for dependencies with version drift",
+    )
+    parser.add_argument(
+        "--history",
+        action="store_true",
+        help="Show metric trend history instead of current status",
+    )
+    parser.add_argument(
+        "--no-snapshot",
+        action="store_true",
+        help="Skip recording a metric snapshot (default: record on every run)",
+    )
     args = parser.parse_args()
 
     try:
+        # History mode — show trends and exit
+        if args.history:
+            entries = _load_metrics_history(args.project_dir)
+            if args.json_mode:
+                json.dump({"history": entries}, sys.stdout, indent=2)
+                sys.stdout.write("\n")
+            else:
+                print(format_history(entries), file=sys.stderr)
+                json.dump({"history": entries}, sys.stdout, indent=2)
+                sys.stdout.write("\n")
+            return
+
         result = compute_status(
             project_dir=args.project_dir,
             check_dep_drift=not args.no_drift_check,
+            changed_only=args.changed_only,
         )
+
+        # Record metric snapshot (unless disabled or not initialized)
+        if not args.no_snapshot and result.get("status") != "not_initialized":
+            _snapshot_metrics(args.project_dir, result)
 
         if args.score:
             score = result.get("score", 0)

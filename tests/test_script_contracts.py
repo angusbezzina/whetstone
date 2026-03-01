@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
+import pytest  # noqa: F401
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -938,3 +938,727 @@ class TestImpactMetrics:
         assert result["status"] == "not_initialized"
         # metrics key should not be present for not-initialized
         assert "metrics" not in result
+
+
+# --- Changed-only end-to-end tests ---
+
+
+class TestChangedOnlySemantics:
+    """Verify --changed-only scopes evaluation — Epic 2 (whetstone-tkg)."""
+
+    def test_status_changed_only_accepted(self):
+        """status.py --changed-only flag is accepted without error."""
+        result = run_script(
+            "status.py",
+            ["--project-dir", str(FIXTURES_DIR), "--json", "--changed-only"],
+        )
+        assert result["status"] == "ok"
+
+    def test_changed_only_returns_subset(self):
+        """--changed-only should return <= rules vs full scan."""
+        full = run_script(
+            "status.py",
+            ["--project-dir", str(FIXTURES_DIR), "--json"],
+        )
+        scoped = run_script(
+            "status.py",
+            ["--project-dir", str(FIXTURES_DIR), "--json", "--changed-only"],
+        )
+        assert scoped["status"] == "ok"
+        # Scoped rules_count must be <= full rules_count
+        assert scoped["dimensions"]["rules_count"] <= full["dimensions"]["rules_count"]
+
+    def test_changed_only_no_drift_is_healthy(self, tmp_path):
+        """When no drift exists, --changed-only returns healthy with zero rules."""
+        rules_dir = tmp_path / "whetstone" / "rules" / "python"
+        rules_dir.mkdir(parents=True)
+        # Create a rule file for a dep that won't have drift (no manifests)
+        rule_file = rules_dir / "nodrift.yaml"
+        rule_file.write_text(
+            "source:\n"
+            "  name: nodrift\n"
+            "  version: '1.0.0'\n"
+            "rules:\n"
+            "  - id: nodrift.rule1\n"
+            "    severity: must\n"
+            "    confidence: high\n"
+            "    approved: true\n"
+            "    signals:\n"
+            "      - id: s1\n"
+            "        strategy: ast\n"
+        )
+        result = run_script(
+            "status.py",
+            ["--project-dir", str(tmp_path), "--json", "--changed-only"],
+        )
+        assert result["status"] == "ok"
+        # No manifests = no drift = 0 rules in changed-only mode
+        assert result["dimensions"]["rules_count"] == 0
+        assert result["dimensions"]["pending_updates"] == 0
+
+    def test_ci_check_changed_only_accepted(self):
+        """ci-check.py --changed-only flag is accepted."""
+        result = run_script(
+            "ci-check.py",
+            ["--project-dir", str(FIXTURES_DIR), "--json", "--changed-only"],
+        )
+        assert "freshness_status" in result
+        assert "score" in result
+
+
+# --- PR mining regression tests ---
+
+
+class TestPRMining:
+    """Regression tests for PR comment mining — Epic 3 (whetstone-n54)."""
+
+    def test_detect_patterns_pr_source_no_crash(self, tmp_path):
+        """detect-patterns with --sources pr doesn't crash even without gh/repo."""
+        result = run_script(
+            "detect-patterns.py",
+            ["--project-dir", str(tmp_path), "--sources", "pr"],
+        )
+        assert "patterns" in result
+        assert isinstance(result["patterns"], list)
+        assert "sources_analyzed" in result
+
+    def test_detect_patterns_all_sources_no_crash(self):
+        """detect-patterns with all sources doesn't crash."""
+        result = run_script(
+            "detect-patterns.py",
+            ["--project-dir", str(FIXTURES_DIR), "--sources", "transcript,git,pr"],
+        )
+        assert "patterns" in result
+        assert "sources_analyzed" in result
+        # PR source should be present in analyzed dict
+        assert "pr" in result["sources_analyzed"]
+
+    def test_detect_patterns_has_next_command(self):
+        """detect-patterns always includes next_command."""
+        result = run_script(
+            "detect-patterns.py",
+            ["--project-dir", str(FIXTURES_DIR)],
+        )
+        assert "next_command" in result
+        assert isinstance(result["next_command"], str)
+        assert len(result["next_command"]) > 0
+
+
+# --- Strict schema validation tests ---
+
+
+class TestStrictSchemaValidation:
+    """Tests for strict enum/type validation — Epic 4 (whetstone-ifa)."""
+
+    def test_invalid_severity_produces_warning(self, tmp_path):
+        """A rule with invalid severity value produces a validation warning."""
+        rules_dir = tmp_path / "whetstone" / "rules" / "python"
+        rules_dir.mkdir(parents=True)
+        rule_file = rules_dir / "badsev.yaml"
+        rule_file.write_text(
+            "source:\n"
+            "  name: badsev\n"
+            "rules:\n"
+            "  - id: badsev.rule1\n"
+            "    severity: critical\n"
+            "    confidence: high\n"
+            "    approved: true\n"
+            "    signals:\n"
+            "      - id: s1\n"
+            "        strategy: ast\n"
+        )
+        result = run_script(
+            "status.py",
+            ["--project-dir", str(tmp_path), "--json", "--no-drift-check"],
+        )
+        warnings = result.get("warnings", [])
+        assert any("severity" in w and "critical" in w for w in warnings)
+
+    def test_invalid_confidence_produces_warning(self, tmp_path):
+        """A rule with invalid confidence value produces a validation warning."""
+        rules_dir = tmp_path / "whetstone" / "rules" / "python"
+        rules_dir.mkdir(parents=True)
+        rule_file = rules_dir / "badconf.yaml"
+        rule_file.write_text(
+            "source:\n"
+            "  name: badconf\n"
+            "rules:\n"
+            "  - id: badconf.rule1\n"
+            "    severity: must\n"
+            "    confidence: low\n"
+            "    approved: true\n"
+            "    signals:\n"
+            "      - id: s1\n"
+            "        strategy: ast\n"
+        )
+        result = run_script(
+            "status.py",
+            ["--project-dir", str(tmp_path), "--json", "--no-drift-check"],
+        )
+        warnings = result.get("warnings", [])
+        assert any("confidence" in w and "low" in w for w in warnings)
+
+    def test_invalid_category_produces_warning(self, tmp_path):
+        """A rule with invalid category value produces a validation warning."""
+        rules_dir = tmp_path / "whetstone" / "rules" / "python"
+        rules_dir.mkdir(parents=True)
+        rule_file = rules_dir / "badcat.yaml"
+        rule_file.write_text(
+            "source:\n"
+            "  name: badcat\n"
+            "rules:\n"
+            "  - id: badcat.rule1\n"
+            "    severity: must\n"
+            "    confidence: high\n"
+            "    category: performance\n"
+            "    approved: true\n"
+            "    signals:\n"
+            "      - id: s1\n"
+            "        strategy: ast\n"
+        )
+        result = run_script(
+            "status.py",
+            ["--project-dir", str(tmp_path), "--json", "--no-drift-check"],
+        )
+        warnings = result.get("warnings", [])
+        assert any("category" in w and "performance" in w for w in warnings)
+
+    def test_invalid_signal_strategy_produces_warning(self, tmp_path):
+        """A signal with invalid strategy produces a validation warning."""
+        rules_dir = tmp_path / "whetstone" / "rules" / "python"
+        rules_dir.mkdir(parents=True)
+        rule_file = rules_dir / "badstrat.yaml"
+        rule_file.write_text(
+            "source:\n"
+            "  name: badstrat\n"
+            "rules:\n"
+            "  - id: badstrat.rule1\n"
+            "    severity: must\n"
+            "    confidence: high\n"
+            "    approved: true\n"
+            "    signals:\n"
+            "      - id: s1\n"
+            "        strategy: magic\n"
+        )
+        result = run_script(
+            "status.py",
+            ["--project-dir", str(tmp_path), "--json", "--no-drift-check"],
+        )
+        warnings = result.get("warnings", [])
+        assert any("strategy" in w and "magic" in w for w in warnings)
+
+    def test_valid_rule_produces_no_warnings(self, tmp_path):
+        """A fully valid rule produces zero validation warnings."""
+        rules_dir = tmp_path / "whetstone" / "rules" / "python"
+        rules_dir.mkdir(parents=True)
+        rule_file = rules_dir / "good.yaml"
+        rule_file.write_text(
+            "source:\n"
+            "  name: good\n"
+            "  version: '1.0.0'\n"
+            "  content_hash: sha256:abc\n"
+            "rules:\n"
+            "  - id: good.rule1\n"
+            "    severity: must\n"
+            "    confidence: high\n"
+            "    category: convention\n"
+            "    approved: true\n"
+            "    signals:\n"
+            "      - id: s1\n"
+            "        strategy: ast\n"
+        )
+        result = run_script(
+            "status.py",
+            ["--project-dir", str(tmp_path), "--json", "--no-drift-check"],
+        )
+        assert result.get("warnings", []) == []
+
+
+# --- Exhaustive output-contract tests ---
+
+
+class TestTranscriptPrivacy:
+    """Transcript mining is project-scoped by default — Epic 6 (whetstone-jve)."""
+
+    def test_default_scoped_to_project(self, tmp_path):
+        """detect-patterns without --global-transcripts reports scoped: true."""
+        result = run_script(
+            "detect-patterns.py",
+            ["--project-dir", str(tmp_path), "--sources", "transcript"],
+        )
+        assert "sources_analyzed" in result
+        if "transcript" in result["sources_analyzed"]:
+            assert result["sources_analyzed"]["transcript"]["scoped"] is True
+
+    def test_global_flag_disables_scoping(self, tmp_path):
+        """detect-patterns --global-transcripts reports scoped: false."""
+        result = run_script(
+            "detect-patterns.py",
+            [
+                "--project-dir",
+                str(tmp_path),
+                "--sources",
+                "transcript",
+                "--global-transcripts",
+            ],
+        )
+        assert "sources_analyzed" in result
+        if "transcript" in result["sources_analyzed"]:
+            assert result["sources_analyzed"]["transcript"]["scoped"] is False
+
+    def test_global_flag_emits_stderr_warning(self, tmp_path):
+        """--global-transcripts emits a privacy warning to stderr."""
+        script = SCRIPTS_DIR / "detect-patterns.py"
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--project-dir",
+                str(tmp_path),
+                "--sources",
+                "transcript",
+                "--global-transcripts",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert "WARNING" in proc.stderr
+        assert "global" in proc.stderr.lower()
+
+    def test_project_filter_matches_correctly(self):
+        """_project_transcript_filter matches project name in path."""
+        # Import the filter function directly
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "detect_patterns", SCRIPTS_DIR / "detect-patterns.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        project = Path("/home/user/code/my-project")
+        assert mod._project_transcript_filter(
+            project, Path("/home/user/.claude/projects/my-project/session.jsonl")
+        )
+        assert not mod._project_transcript_filter(
+            project, Path("/home/user/.claude/projects/other-project/session.jsonl")
+        )
+
+
+class TestTSRustTestGeneration:
+    """TS/Rust generators produce real checks, not just TODOs — Epic 7 (whetstone-kxo)."""
+
+    def _load_generate_tests_module(self):
+        """Import generate-tests.py as a module."""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "generate_tests", SCRIPTS_DIR / "generate-tests.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_ts_deprecated_signal_produces_real_check(self):
+        """TS generator with a pattern/deprecated signal produces scanning code."""
+        mod = self._load_generate_tests_module()
+        rule = {
+            "id": "react.deprecated-api",
+            "source_url": "https://react.dev/reference",
+            "description": "Use createRoot instead of ReactDOM.render",
+            "_dep_name": "react",
+            "_language": "typescript",
+            "signals": [
+                {
+                    "id": "deprecated-render",
+                    "strategy": "pattern",
+                    "description": "Uses deprecated `ReactDOM.render()`",
+                    "weight": "required",
+                }
+            ],
+        }
+        output = mod.generate_typescript_test(rule)
+        # Should contain real scanning code, not just a TODO
+        assert "for (let i = 0" in output or ".test(lines[i])" in output
+        assert "violations.push" in output
+
+    def test_ts_ast_async_signal_produces_real_check(self):
+        """TS generator with async/sync AST signal produces route handler check."""
+        mod = self._load_generate_tests_module()
+        rule = {
+            "id": "express.async-handlers",
+            "source_url": "https://expressjs.com/en/guide/error-handling.html",
+            "description": "Route handlers MUST use async functions",
+            "_dep_name": "express",
+            "_language": "typescript",
+            "signals": [
+                {
+                    "id": "sync-handler",
+                    "strategy": "ast",
+                    "description": "Function used as route handler is sync instead of async",
+                    "weight": "required",
+                }
+            ],
+        }
+        output = mod.generate_typescript_test(rule)
+        assert "routeDecorators" in output or "async" in output
+        assert "violations.push" in output
+
+    def test_rs_deprecated_signal_produces_real_check(self):
+        """Rust generator with a pattern/deprecated signal produces scanning code."""
+        mod = self._load_generate_tests_module()
+        rule = {
+            "id": "tokio.deprecated-api",
+            "source_url": "https://docs.rs/tokio/latest",
+            "description": "Use tokio::spawn instead of deprecated thread::spawn",
+            "_dep_name": "tokio",
+            "_language": "rust",
+            "signals": [
+                {
+                    "id": "deprecated-spawn",
+                    "strategy": "pattern",
+                    "description": "Uses deprecated `thread::spawn()`",
+                    "weight": "required",
+                }
+            ],
+        }
+        output = mod.generate_rust_test(rule)
+        assert "for (i, line) in content.lines()" in output
+        assert "violations.push" in output
+
+    def test_rs_unsafe_signal_produces_real_check(self):
+        """Rust generator with unsafe AST signal produces real check."""
+        mod = self._load_generate_tests_module()
+        rule = {
+            "id": "serde.no-unsafe",
+            "source_url": "https://docs.rs/serde/latest",
+            "description": "Avoid unsafe blocks in serialization code",
+            "_dep_name": "serde",
+            "_language": "rust",
+            "signals": [
+                {
+                    "id": "unsafe-block",
+                    "strategy": "ast",
+                    "description": "Uses unsafe block in serialization code",
+                    "weight": "required",
+                }
+            ],
+        }
+        output = mod.generate_rust_test(rule)
+        assert "unsafe" in output
+        assert "violations.push" in output
+
+    def test_rs_unwrap_signal_produces_real_check(self):
+        """Rust generator with unwrap AST signal produces .unwrap() check."""
+        mod = self._load_generate_tests_module()
+        rule = {
+            "id": "anyhow.no-unwrap",
+            "source_url": "https://docs.rs/anyhow/latest",
+            "description": "Use ? operator instead of .unwrap()",
+            "_dep_name": "anyhow",
+            "_language": "rust",
+            "signals": [
+                {
+                    "id": "unwrap-usage",
+                    "strategy": "ast",
+                    "description": "Uses .unwrap() which may panic at runtime",
+                    "weight": "required",
+                }
+            ],
+        }
+        output = mod.generate_rust_test(rule)
+        assert ".unwrap()" in output
+        assert "violations.push" in output
+
+    def test_rs_uses_mut_violations(self):
+        """Rust generator uses 'let mut violations' for real checks."""
+        mod = self._load_generate_tests_module()
+        rule = {
+            "id": "test.simple",
+            "source_url": "https://example.com",
+            "description": "Test rule",
+            "_dep_name": "test",
+            "_language": "rust",
+            "signals": [
+                {
+                    "id": "check",
+                    "strategy": "pattern",
+                    "description": "Uses deprecated `old_api()`",
+                    "weight": "required",
+                }
+            ],
+        }
+        output = mod.generate_rust_test(rule)
+        # Should use `let mut` since we push to violations
+        assert "let mut violations" in output
+
+    def test_generate_tests_fixture_produces_ts_checks(self, tmp_path):
+        """End-to-end: TS rule fixture produces real test file with checks."""
+        # Create a TS rule fixture
+        rules_dir = tmp_path / "whetstone" / "rules" / "typescript"
+        rules_dir.mkdir(parents=True)
+
+        rule_yaml = rules_dir / "react.yaml"
+        rule_yaml.write_text(
+            """source:
+  name: react
+  version: "19.0.0"
+  content_hash: sha256:abc123
+
+rules:
+  - id: react.use-create-root
+    severity: must
+    confidence: high
+    category: migration
+    description: Use createRoot instead of ReactDOM.render
+    source_url: https://react.dev/reference/react-dom/client/createRoot
+    approved: true
+    signals:
+      - id: deprecated-render
+        strategy: pattern
+        description: "Uses deprecated `ReactDOM.render()`"
+        weight: required
+"""
+        )
+
+        result = run_script(
+            "generate-tests.py",
+            ["--project-dir", str(tmp_path), "--lang", "typescript", "--dry-run"],
+        )
+        assert result["rules_processed"] == 1
+        assert len(result["generated"]["tests"]["typescript"]) == 1
+
+
+class TestCLIWrapper:
+    """CLI wrapper dispatches to scripts correctly — Epic 8 (whetstone-xpf)."""
+
+    def test_cli_help_exits_zero(self):
+        """CLI --help exits with 0."""
+        script = SCRIPTS_DIR / "cli.py"
+        result = subprocess.run(
+            [sys.executable, str(script), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0
+        assert "whetstone" in result.stderr.lower()
+
+    def test_cli_unknown_command_exits_nonzero(self):
+        """CLI with unknown command exits with 1."""
+        script = SCRIPTS_DIR / "cli.py"
+        result = subprocess.run(
+            [sys.executable, str(script), "nonexistent"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 1
+        assert "Unknown command" in result.stderr
+
+    def test_cli_dispatches_status(self):
+        """CLI 'status' dispatches to status.py."""
+        script = SCRIPTS_DIR / "cli.py"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "status",
+                "--project-dir",
+                str(FIXTURES_DIR),
+                "--score",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0
+        # status --score outputs "NN Label"
+        assert any(
+            label in result.stdout
+            for label in ["Healthy", "Needs Review", "Stale", "No Rules"]
+        )
+
+    def test_cli_alias_deps(self):
+        """CLI alias 'deps' dispatches to detect-deps.py."""
+        script = SCRIPTS_DIR / "cli.py"
+        result = subprocess.run(
+            [sys.executable, str(script), "deps", "--project-dir", str(FIXTURES_DIR)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0
+        data = json.loads(result.stdout)
+        assert "dependencies" in data
+
+    def test_cli_no_args_exits_nonzero(self):
+        """CLI with no args exits with 1 and shows help."""
+        script = SCRIPTS_DIR / "cli.py"
+        result = subprocess.run(
+            [sys.executable, str(script)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 1
+        assert "Usage" in result.stderr
+
+
+class TestLongitudinalMetrics:
+    """Metric snapshots and history — Epic 10 (whetstone-mzs)."""
+
+    def test_status_creates_metrics_snapshot(self, tmp_path):
+        """status.py records a metrics snapshot to .metrics.jsonl."""
+        # Create minimal whetstone dir so status doesn't return not_initialized
+        rules_dir = tmp_path / "whetstone" / "rules" / "python"
+        rules_dir.mkdir(parents=True)
+        (tmp_path / "whetstone" / "whetstone.yaml").write_text(
+            "languages:\n  - python\n"
+        )
+
+        run_script(
+            "status.py",
+            ["--project-dir", str(tmp_path), "--json", "--no-drift-check"],
+        )
+
+        metrics_file = tmp_path / "whetstone" / ".metrics.jsonl"
+        assert metrics_file.exists(), "Metrics snapshot file not created"
+        lines = metrics_file.read_text().strip().split("\n")
+        assert len(lines) >= 1
+        entry = json.loads(lines[0])
+        assert "timestamp" in entry
+        assert "score" in entry
+        assert "label" in entry
+
+    def test_status_no_snapshot_flag(self, tmp_path):
+        """status.py --no-snapshot skips recording."""
+        rules_dir = tmp_path / "whetstone" / "rules" / "python"
+        rules_dir.mkdir(parents=True)
+        (tmp_path / "whetstone" / "whetstone.yaml").write_text(
+            "languages:\n  - python\n"
+        )
+
+        run_script(
+            "status.py",
+            [
+                "--project-dir",
+                str(tmp_path),
+                "--json",
+                "--no-drift-check",
+                "--no-snapshot",
+            ],
+        )
+
+        metrics_file = tmp_path / "whetstone" / ".metrics.jsonl"
+        assert not metrics_file.exists()
+
+    def test_history_flag_returns_entries(self, tmp_path):
+        """status.py --history returns recorded snapshots."""
+        # Create metrics file with sample entries
+        metrics_dir = tmp_path / "whetstone"
+        metrics_dir.mkdir(parents=True)
+        metrics_file = metrics_dir / ".metrics.jsonl"
+        entry1 = json.dumps(
+            {
+                "timestamp": "2026-02-01T00:00:00+00:00",
+                "score": 80,
+                "label": "Needs Review",
+                "rules_approved": 3,
+            }
+        )
+        entry2 = json.dumps(
+            {
+                "timestamp": "2026-03-01T00:00:00+00:00",
+                "score": 90,
+                "label": "Healthy",
+                "rules_approved": 5,
+            }
+        )
+        metrics_file.write_text(entry1 + "\n" + entry2 + "\n")
+
+        result = run_script(
+            "status.py",
+            ["--project-dir", str(tmp_path), "--history", "--json"],
+        )
+        assert "history" in result
+        assert len(result["history"]) == 2
+        assert result["history"][0]["score"] == 80
+        assert result["history"][1]["score"] == 90
+
+    def test_history_empty_is_graceful(self, tmp_path):
+        """status.py --history with no metrics file returns empty list."""
+        result = run_script(
+            "status.py",
+            ["--project-dir", str(tmp_path), "--history", "--json"],
+        )
+        assert "history" in result
+        assert result["history"] == []
+
+    def test_snapshots_are_append_only(self, tmp_path):
+        """Multiple status runs append, not overwrite."""
+        rules_dir = tmp_path / "whetstone" / "rules" / "python"
+        rules_dir.mkdir(parents=True)
+        (tmp_path / "whetstone" / "whetstone.yaml").write_text(
+            "languages:\n  - python\n"
+        )
+
+        # Run status twice
+        run_script(
+            "status.py", ["--project-dir", str(tmp_path), "--json", "--no-drift-check"]
+        )
+        run_script(
+            "status.py", ["--project-dir", str(tmp_path), "--json", "--no-drift-check"]
+        )
+
+        metrics_file = tmp_path / "whetstone" / ".metrics.jsonl"
+        lines = [
+            line
+            for line in metrics_file.read_text().strip().split("\n")
+            if line.strip()
+        ]
+        assert len(lines) == 2, f"Expected 2 snapshots, got {len(lines)}"
+
+
+class TestExhaustiveOutputContracts:
+    """All scripts must always include next_command — Epic 5 (whetstone-zsn)."""
+
+    def test_detect_patterns_quiet_empty_has_next_command(self, tmp_path):
+        """detect-patterns --quiet with no patterns still has next_command."""
+        result = run_script(
+            "detect-patterns.py",
+            ["--project-dir", str(tmp_path), "--quiet"],
+        )
+        assert "next_command" in result
+        assert isinstance(result["next_command"], str)
+
+    def test_detect_patterns_normal_has_next_command(self):
+        """detect-patterns in normal mode has next_command."""
+        result = run_script(
+            "detect-patterns.py",
+            ["--project-dir", str(FIXTURES_DIR)],
+        )
+        assert "next_command" in result
+
+    def test_resolve_sources_empty_input_has_next_command(self):
+        """resolve-sources with empty deps has next_command."""
+        script = SCRIPTS_DIR / "resolve-sources.py"
+        result = subprocess.run(
+            [sys.executable, str(script), "--project-dir", str(FIXTURES_DIR)],
+            input='{"dependencies": [], "languages": []}',
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        data = json.loads(result.stdout)
+        assert "next_command" in data
+
+    def test_ci_check_error_path_has_expected_fields(self, tmp_path):
+        """ci-check on empty project returns structured output."""
+        result = run_script(
+            "ci-check.py",
+            ["--project-dir", str(tmp_path), "--json", "--no-drift-check"],
+        )
+        assert "freshness_status" in result
+        assert "score" in result or "freshness_status" in result

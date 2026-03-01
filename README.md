@@ -30,21 +30,23 @@ git clone https://github.com/yourusername/whetstone.git
 pip install pyyaml  # required dependency
 
 # 2. Run the doctor — one command from zero to working rules
-python3 whetstone/scripts/doctor.py --project-dir .
+python3 whetstone/scripts/cli.py doctor --project-dir .
 
 # 3. The doctor detects dependencies, resolves their docs, and
 #    outputs extraction context. Feed this to your agent to extract rules.
 #    The agent proposes rules; you approve each one.
 
 # 4. Generate tests and agent context from approved rules
-python3 whetstone/scripts/generate-tests.py --project-dir .
-python3 whetstone/scripts/generate-agent-context.py --project-dir .
+python3 whetstone/scripts/cli.py generate-tests --project-dir .
+python3 whetstone/scripts/cli.py generate-context --project-dir .
 
 # 5. Check project health anytime
-python3 whetstone/scripts/status.py --project-dir .
+python3 whetstone/scripts/cli.py status --project-dir .
 ```
 
 The doctor is the recommended entry point — it chains dependency detection, source resolution, and pattern mining into a single flow.
+
+> **Tip:** When using Whetstone as an agent skill, you say "whetstone doctor" or "whetstone status" and the agent runs the corresponding script. When running manually, use `python3 scripts/cli.py <command>` or call scripts directly with `python3 scripts/<name>.py`.
 
 ## How It Works
 
@@ -90,18 +92,26 @@ Monitor →  Whetstone detects version drift and tells you exactly
 
 ## Commands
 
-| Script | Purpose | Key Flags |
-|--------|---------|-----------|
-| `doctor.py` | One-command bootstrap | `--json`, `--skip-patterns` |
-| `status.py` | Project health summary | `--json`, `--score`, `--no-drift-check` |
-| `ci-check.py` | CI freshness check | `--json`, `--pr-comment`, `--fail-on`, `--changed-only` |
-| `detect-deps.py` | Detect dependencies | `--check-drift`, `--changed-only` |
-| `resolve-sources.py` | Resolve documentation URLs | `--changed-only` |
-| `detect-patterns.py` | Mine style patterns | `--sources` (transcripts, git, pr) |
-| `generate-agent-context.py` | Generate agent files | `--dry-run` |
-| `generate-tests.py` | Generate test + lint files | `--dry-run` |
+Use the CLI wrapper for a unified experience:
 
-All scripts accept `--project-dir` (default: `.`) and output JSON to stdout. Human-readable progress goes to stderr. Every JSON response includes a `next_command` field suggesting what to run next.
+```bash
+python3 scripts/cli.py <command> [options]
+```
+
+| Command | Alias | Purpose | Key Flags |
+|---------|-------|---------|-----------|
+| `doctor` | — | One-command bootstrap | `--json`, `--skip-patterns` |
+| `status` | — | Project health summary | `--json`, `--score`, `--history`, `--no-drift-check` |
+| `ci-check` | `check` | CI freshness check | `--json`, `--pr-comment`, `--fail-on`, `--changed-only` |
+| `detect-deps` | `deps` | Detect dependencies | `--check-drift`, `--changed-only` |
+| `resolve-sources` | — | Resolve documentation URLs | `--changed-only` |
+| `detect-patterns` | `patterns` | Mine style patterns | `--sources`, `--global-transcripts` |
+| `generate-context` | `context` | Generate agent files | `--dry-run` |
+| `generate-tests` | `tests` | Generate test + lint files | `--dry-run` |
+
+All commands accept `--project-dir` (default: `.`) and output JSON to stdout. Human-readable progress goes to stderr. JSON responses include a `next_command` field suggesting what to run next.
+
+You can also call scripts directly: `python3 scripts/<name>.py --project-dir .`
 
 ## Outputs
 
@@ -170,7 +180,17 @@ Labels: **Healthy**, **Needs Review**, **Stale**, **No Rules**.
 | `deterministic_coverage` | % of signals using ast/pattern/lint_proxy |
 | `pending_drift` | Dependencies with version drift |
 
-These are derived from current state — no persistent storage needed. Track them over time to measure Whetstone's value to your team.
+### Metric history
+
+Every `status.py` run automatically appends a timestamped snapshot to `whetstone/.metrics.jsonl`. Use `--history` to see trends:
+
+```bash
+python3 scripts/cli.py status --history
+```
+
+This shows a table of score, label, rules count, and drift over time. Use `--no-snapshot` to skip recording (e.g., in scripts that poll status without wanting to inflate history).
+
+**Anti-gaming guidance:** Metrics reflect the state of your rules, not your code quality. A high score with 5 well-chosen rules is better than a high score with 50 trivial rules. Focus on the `must_rules` and `deterministic_coverage` metrics — these indicate rules that catch real mistakes with real checks. The `approval_rate` metric helps calibrate extraction quality: if it's consistently low, your extraction prompt may need tuning.
 
 ## CI Integration
 
@@ -213,11 +233,32 @@ Action outputs: `freshness_status`, `changed_sources_count`, `recommended_rules_
 
 ## Languages
 
-| Language | Manifest | Registry | Tests | Linter |
-|----------|----------|----------|-------|--------|
-| Python | `pyproject.toml`, `requirements.txt` | PyPI | pytest | ruff |
-| TypeScript | `package.json` | npm | vitest | biome |
-| Rust | `Cargo.toml` | crates.io | cargo test | clippy |
+| Language | Manifest | Registry | Tests | Linter | Status |
+|----------|----------|----------|-------|--------|--------|
+| Python | `pyproject.toml`, `requirements.txt` | PyPI | pytest | ruff | Full |
+| TypeScript | `package.json` | npm | vitest | biome | Experimental |
+| Rust | `Cargo.toml` | crates.io | cargo test | clippy | Experimental |
+
+> **Note:** Python test generation produces working AST/pattern checks. TypeScript and Rust generation produces real scanning logic for common signal types (deprecated APIs, pattern matching, unsafe blocks, unwrap usage) but may produce TODO scaffolds for less common signal patterns. See generated file headers for details.
+
+## Privacy
+
+Whetstone's `detect-patterns.py` mines agent conversation transcripts (Claude Code, Cursor, Cline, etc.) for recurring style patterns. **By default, transcript scanning is scoped to the current project only** — it filters transcripts by matching the project directory name in the file path.
+
+This means Whetstone will NOT read conversations from unrelated projects unless you explicitly opt in.
+
+| Mode | Behavior | Flag |
+|------|----------|------|
+| **Default (scoped)** | Only reads transcripts whose path contains the current project name | None needed |
+| **Global** | Reads all agent transcripts across `$HOME` | `--global-transcripts` |
+
+**What is read:** Only `user`/`human` role messages from JSONL transcript files. Agent responses are ignored. No transcript content is sent to any external service — all processing is local.
+
+**What is stored:** Nothing from transcripts is persisted. Pattern results are ephemeral JSON output. The only file Whetstone writes is `whetstone/.last-run` (a timestamp).
+
+**Directories scanned:** `~/.claude/projects`, `~/.cursor/projects`, `~/.cline/projects`, `~/.continue/sessions`, `~/.codex/sessions`, `~/.goose/sessions`, `~/.roo/projects`, `~/.agents/sessions`, `~/.config/opencode/sessions`, `~/.windsurf/sessions`.
+
+If you're concerned about privacy, use the default scoped mode (no flag needed) or exclude transcript mining entirely with `--sources git,pr`.
 
 ## FAQ
 
@@ -231,7 +272,7 @@ No. Whetstone is an Agent Skill — the agent running it (Claude, Cursor, etc.) 
 That's correct behavior. If the documentation doesn't clearly state practices worth enforcing, Whetstone stays silent. You can always add rules manually.
 
 **Can I add custom sources beyond dependency docs?**
-Yes. You can point Whetstone at any URL — team style guides, blog posts, migration guides. It extracts rules from whatever sources you trust.
+The extraction prompt works with any documentation content — team style guides, blog posts, migration guides. Currently, you provide custom source content to the agent manually during extraction. Automated custom URL ingestion is planned for a future release.
 
 **What happens if I don't install Whetstone?**
 Nothing breaks. The generated tests, lint configs, and agent context files are standard files in your repo. They run with your existing CI and work with any agent that reads `AGENTS.md` or `.cursorrules`.

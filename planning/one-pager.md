@@ -43,9 +43,11 @@ Update     → Re-extracts only what changed, you approve, everything regenerate
 
 Python, TypeScript, and Rust. Each with native test generation and native linter integration (ruff, biome, clippy).
 
-## Built In Rust
+## Implementation
 
-Single binary, no runtime dependencies, fast startup. Install via `brew install whetstone`, `cargo install whetstone`, or `curl | sh`.
+Currently shipped as an **Agent Skill** with Python helper scripts — install via `npx skills add whetstone` or `git clone`. Requires Python 3.9+ and PyYAML.
+
+> **Roadmap:** A Rust CLI binary is planned for a future phase. The YAML rule format and file structure are designed to carry over unchanged.
 
 ## Future
 

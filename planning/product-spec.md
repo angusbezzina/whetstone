@@ -436,16 +436,18 @@ reason: Completely generic, no actionable information
 
 ### Language
 
-Rust. Distributed as a single binary with no runtime dependencies.
+> **Current (MVP):** Python scripts shipped as an Agent Skill. Requires Python 3.9+ and PyYAML. Any skills-compatible agent acts as the LLM — no separate API key or binary needed.
+>
+> **Planned (future phase):** Rust CLI binary. The YAML rule format and file structure carry over unchanged.
 
-Benefits:
+Rationale for future Rust target:
 - Fast startup for a CLI that developers run frequently
-- Single binary distribution — no Python/Node runtime required on the user’s machine
+- Single binary distribution — no Python/Node runtime required on the user's machine
 - Cross-platform (Linux, macOS, Windows) via cross-compilation
 - Can use `tree-sitter` bindings natively for AST analysis across all three target languages
 - Rust ecosystem has strong libraries for YAML (serde), HTTP (reqwest), and CLI (clap)
 
-The tool generates Python, TypeScript, and Rust test files but is itself written in Rust.
+The tool generates Python, TypeScript, and Rust test files. The current implementation is Python; the planned Rust CLI will internalize the same logic.
 
 ### Architecture
 
@@ -553,38 +555,33 @@ Everything else is deterministic.
 
 ## Distribution
 
-### Binary Releases
-
-Pre-built binaries for Linux (x86_64, aarch64), macOS (x86_64, aarch64), and Windows (x86_64) via GitHub Releases.
-
-### Install Methods
+### Current (MVP) — Agent Skill
 
 ```bash
-# Homebrew (macOS/Linux)
-brew install whetstone
+# Install as an agent skill
+npx skills add whetstone
 
-# Cargo
-cargo install whetstone
-
-# Direct download
-curl -fsSL https://whetstone.dev/install.sh | sh
-
-# Nix
-nix profile install github:your-org/whetstone
+# Or clone directly
+git clone https://github.com/yourusername/whetstone.git
+pip install pyyaml
 ```
 
-### CI Usage
+### CI Usage (Current)
 
-The binary is small and fast to download. For GitHub Actions:
+Uses the GitHub Action composite wrapper:
 
 ```yaml
--name: Install Whetstone
-run: curl -fsSL https://whetstone.dev/install.sh | sh
-
--name: Check rule freshness
-run: whetstone update --check
-continue-on-error:true
+- uses: whetstone/whetstone@main
+  with:
+    fail-on: stale
+    github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
+
+### Planned — Binary Releases (Future Phase)
+
+> The following is planned for the Rust CLI phase, not currently shipped.
+
+Pre-built binaries for Linux (x86_64, aarch64), macOS (x86_64, aarch64), and Windows (x86_64) via GitHub Releases. Install via `brew install whetstone`, `cargo install whetstone`, or `curl -fsSL https://whetstone.dev/install.sh | sh`.
 
 But note: Whetstone is only needed in CI for `update --check` (freshness) and `check --ai-only` (AI evals). The generated tests and lint configs run without Whetstone installed.
 

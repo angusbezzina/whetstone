@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import subprocess
 import sys
@@ -126,16 +125,30 @@ TRANSCRIPT_DIRS = [
 ]
 
 
+def _project_transcript_filter(project_dir: Path, transcript_path: Path) -> bool:
+    """Check if a transcript file is likely for the given project.
+
+    Matches on project directory name appearing in the transcript path.
+    This is a heuristic — agents typically store transcripts under
+    paths like ~/.claude/projects/<project-name>/...
+    """
+    project_name = project_dir.resolve().name.lower()
+    # Check if the project name appears in the transcript path
+    return project_name in str(transcript_path).lower()
+
+
 def mine_transcripts(
     project_dir: Path,
     since: datetime | None = None,
+    global_transcripts: bool = False,
 ) -> tuple[list[dict], dict]:
     """Mine agent conversation transcripts for style patterns.
 
-    Searches multiple known agent transcript directories for JSONL files.
+    By default, only scans transcripts matching the current project directory
+    name for privacy. Use global_transcripts=True to scan all projects.
     """
     patterns: list[dict] = []
-    stats = {"files": 0, "messages": 0}
+    stats = {"files": 0, "messages": 0, "scoped": not global_transcripts}
 
     # Collect JSONL files from all known agent transcript locations
     jsonl_files: list[Path] = []
@@ -143,7 +156,9 @@ def mine_transcripts(
     for rel_dir in TRANSCRIPT_DIRS:
         transcript_dir = home / rel_dir
         if transcript_dir.exists():
-            jsonl_files.extend(transcript_dir.rglob("*.jsonl"))
+            for f in transcript_dir.rglob("*.jsonl"):
+                if global_transcripts or _project_transcript_filter(project_dir, f):
+                    jsonl_files.append(f)
 
     if not jsonl_files:
         return patterns, stats
@@ -347,7 +362,11 @@ def mine_git_history(
             cmd.insert(4, f"--since={since}")
         output = _run_cmd(cmd, cwd=cwd)
         if output and output.strip():
-            changes = [l for l in output.strip().split("\n") if l.strip()]
+            changes = [
+                line_text
+                for line_text in output.strip().split("\n")
+                if line_text.strip()
+            ]
             if len(changes) >= 2:
                 patterns.append(
                     {
@@ -367,6 +386,20 @@ def mine_git_history(
 # --- Source 3: GitHub PR Comments ---
 
 
+def _resolve_gh_repo(project_dir: Path) -> str | None:
+    """Resolve the GitHub owner/repo from git remote.
+
+    Returns 'owner/repo' string or None if not a GitHub repo.
+    """
+    output = _run_cmd(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
+        cwd=str(project_dir),
+    )
+    if output:
+        return output.strip()
+    return None
+
+
 def mine_pr_comments(
     project_dir: Path,
     since: str | None = None,
@@ -379,6 +412,11 @@ def mine_pr_comments(
         return patterns, stats
 
     cwd = str(project_dir)
+
+    # Resolve repo identity
+    repo_slug = _resolve_gh_repo(project_dir)
+    if not repo_slug:
+        return patterns, stats
 
     # Get recent closed PRs
     cmd = [
@@ -412,7 +450,7 @@ def mine_pr_comments(
         cmd = [
             "gh",
             "api",
-            f"repos/{{owner}}/{{repo}}/pulls/{pr_num}/comments",
+            f"repos/{repo_slug}/pulls/{pr_num}/comments",
             "--jq",
             ".[].body",
         ]
@@ -522,6 +560,7 @@ def detect_patterns(
     since_last_run: bool = False,
     quiet: bool = False,
     min_occurrences: int = 2,
+    global_transcripts: bool = False,
 ) -> dict:
     """Main pattern detection logic."""
     # Resolve --since-last-run
@@ -559,7 +598,16 @@ def detect_patterns(
     sources_analyzed: dict[str, dict] = {}
 
     if "transcript" in sources:
-        pats, stats = mine_transcripts(project_dir, since=since_dt)
+        if global_transcripts:
+            print(
+                "WARNING: --global-transcripts scans ALL agent transcripts across "
+                "your home directory. This may include conversations from other "
+                "projects. Use with care.",
+                file=sys.stderr,
+            )
+        pats, stats = mine_transcripts(
+            project_dir, since=since_dt, global_transcripts=global_transcripts
+        )
         all_patterns.extend(pats)
         sources_analyzed["transcript"] = stats
 
@@ -579,7 +627,11 @@ def detect_patterns(
 
     # Quiet mode: only output if patterns found
     if quiet and not filtered:
-        return {"patterns": [], "sources_analyzed": sources_analyzed}
+        return {
+            "patterns": [],
+            "sources_analyzed": sources_analyzed,
+            "next_command": "No patterns found. Proceed to extraction.",
+        }
 
     # Update .last-run timestamp
     try:
@@ -638,6 +690,12 @@ def main() -> None:
         default=2,
         help="Minimum occurrences to report (default: 2)",
     )
+    parser.add_argument(
+        "--global-transcripts",
+        action="store_true",
+        help="Scan all agent transcripts, not just those matching this project "
+        "(privacy: by default only project-scoped transcripts are read)",
+    )
     args = parser.parse_args()
 
     try:
@@ -661,6 +719,7 @@ def main() -> None:
             since_last_run=args.since_last_run,
             quiet=args.quiet,
             min_occurrences=args.min_occurrences,
+            global_transcripts=args.global_transcripts,
         )
 
         json.dump(result, sys.stdout, indent=2)

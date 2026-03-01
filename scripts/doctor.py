@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 import time
@@ -158,8 +157,6 @@ def doctor(
             },
             "next_command": "Add dependencies to your project, then run whetstone doctor again",
         }
-
-    dep_names = [d["name"] for d in target_deps]
 
     # ── Step 2: Resolve documentation sources ────────────────────────────
     _log(

@@ -74,7 +74,7 @@ def _minimal_toml_load(filepath: Path) -> dict:
     Not a full TOML parser — just enough for dependency extraction.
     Falls back to this only when tomllib/tomli are unavailable.
     """
-    import ast as _ast
+    import ast as _ast  # noqa: F401
 
     text = filepath.read_text()
     result: dict = {}
