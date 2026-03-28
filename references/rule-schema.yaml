@@ -12,6 +12,12 @@ source:
   llms_txt: string        # Optional. URL to llms.txt or llms-full.txt if available
   version: string         # Required. Dependency version at time of extraction
   content_hash: string    # Required. SHA-256 hash of source content (sha256:...)
+  resolved_at: string     # Required. ISO 8601 timestamp of when source was resolved
+  registry: enum          # Required. One of: pypi | npm | crates_io | manual
+                           #   pypi     — Python Package Index
+                           #   npm      — Node Package Manager
+                           #   crates_io — Rust crate registry
+                           #   manual   — manually provided source
 
 # --- Rules list ---
 rules:
@@ -55,6 +61,31 @@ rules:
 
     approved_at: string    # Optional. ISO 8601 timestamp of when the rule was approved.
 
+    # --- Lifecycle state ---
+
+    status: enum           # Required. One of: candidate | approved | denied | deprecated
+                           #   candidate  — proposed but not yet reviewed
+                           #   approved   — reviewed and accepted for enforcement
+                           #   denied     — reviewed and rejected (persisted for audit)
+                           #   deprecated — previously approved, now superseded or invalid
+
+    # --- Provenance ---
+
+    proposed_at: string    # Required. ISO 8601 timestamp of when rule was first proposed.
+    proposed_by: string    # Optional. Who/what proposed the rule
+                           #   (e.g., "whetstone-extraction", "manual")
+    denied_reason: string  # Optional. Why the rule was denied (for status: denied).
+    deprecated_reason: string  # Optional. Why the rule was deprecated.
+    superseded_by: string  # Optional. Rule ID that replaces this one.
+
+    # --- Quality markers ---
+
+    last_validated: string # Optional. ISO 8601 timestamp of last validation against current docs.
+    validation_status: enum # Optional. One of: current | stale | unknown
+                           #   current — source_url still contains the backing content
+                           #   stale   — source content has changed since rule was approved
+                           #   unknown — not yet validated
+
     signals:               # Required. At least one signal must have strategy: ast or pattern.
       - id: string         # Required. Unique within this rule (e.g., "is-sync-function").
         strategy: enum     # Required. One of: ast | pattern | lint_proxy | ai
@@ -71,7 +102,9 @@ rules:
     golden_examples:       # Required. 3-5 examples (mix of pass and fail).
       - code: string       # Required. Code snippet (use | for multiline YAML).
         verdict: enum      # Required. One of: pass | fail
-        reason: string     # Optional. Brief explanation of why this is pass/fail.
+        reason: string     # Required. Brief explanation of why this is pass/fail.
+        language: string   # Optional. Override language for polyglot examples
+                           #   (defaults to the source language of the rule file).
 
     # --- Optional fields for advanced eval ---
 

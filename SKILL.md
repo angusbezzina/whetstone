@@ -386,7 +386,10 @@ For each proposed rule, output valid YAML following this schema:
   linter_gap: >
     Why standard linters (ruff/biome/clippy) don't catch this
     (e.g., "ruff has no rule for async vs sync route handlers").
+  status: candidate
   approved: false
+  proposed_at: {iso8601_now}
+  proposed_by: whetstone-extraction
   signals:
     - id: signal-name
       strategy: ast | pattern | lint_proxy | ai
@@ -397,14 +400,17 @@ For each proposed rule, output valid YAML following this schema:
         # Correct usage
         ...
       verdict: pass
+      reason: Brief explanation of why this passes
     - code: |
         # Incorrect usage
         ...
       verdict: fail
+      reason: Brief explanation of why this fails
     - code: |
         # Another correct usage
         ...
       verdict: pass
+      reason: Brief explanation of why this passes
 ```
 
 Provide 3-5 golden examples per rule (mix of pass and fail). These are used for test generation and AI eval calibration.
@@ -432,7 +438,9 @@ source:
   docs_url: https://docs.example.com
   llms_txt: https://docs.example.com/llms.txt    # if available
   version: "1.0.0"
-  content_hash: abc123...
+  content_hash: sha256:abc123...
+  resolved_at: "2026-03-28T10:00:00Z"
+  registry: pypi            # pypi | npm | crates_io | manual
 
 rules:
   - id: dependency.rule-name
@@ -442,8 +450,11 @@ rules:
     description: >
       Rule description using RFC 2119 keywords.
     source_url: https://docs.example.com/specific-page
+    status: approved        # candidate | approved | denied | deprecated
     approved: true
     approved_at: 2026-02-15T12:00:00Z
+    proposed_at: 2026-02-15T11:30:00Z
+    proposed_by: whetstone-extraction
     signals:
       - id: signal-name
         strategy: ast       # ast | pattern | lint_proxy | ai
@@ -453,9 +464,11 @@ rules:
       - code: |
           # pass example
         verdict: pass
+        reason: Uses the recommended pattern
       - code: |
           # fail example
         verdict: fail
+        reason: Uses the deprecated pattern
 ```
 
 ### Interactive Approval Protocol
@@ -465,9 +478,10 @@ Present rules using the **rule card** format. Goal: the user can approve or reje
 **Rule Card Format:**
 
 ```
-[MUST] fastapi.async-routes — high confidence — convention
+[MUST] fastapi.async-routes — high confidence — convention — candidate
 
   Route handlers MUST use async def.
+  Proposed: 2026-03-28T10:00:00Z by whetstone-extraction
 
   Source: "Use async def for route operations that call async libraries."
           — https://fastapi.tiangolo.com/async/
@@ -494,12 +508,31 @@ Before showing individual cards, offer: **"Approve all N high-confidence rules f
 
 | Action | Effect |
 |--------|--------|
-| **Approve** | Set `approved: true`, `approved_at: <now>`, write to YAML |
+| **Approve** | Set `approved: true`, `status: approved`, `approved_at: <now>`, write to YAML |
 | **Edit** | User modifies any field, then approve |
-| **Deny** | Discard (optionally record reason) |
-| **Skip** | Defer — do not write |
+| **Deny** | Set `status: denied`, `denied_reason: <reason>`, write to YAML (prevents re-proposal) |
+| **Skip** | Keep as `status: candidate` — defer decision to later |
 
 After all rules: "N approved, N denied, N skipped."
+
+### Rule Lifecycle States
+
+Rules persist through these states:
+
+| State | Meaning | Stored in YAML? | Used for generation? |
+|-------|---------|------------------|---------------------|
+| `candidate` | Proposed, awaiting review | Yes | No |
+| `approved` | Reviewed and accepted | Yes | Yes |
+| `denied` | Reviewed and rejected | Yes (prevents re-proposal) | No |
+| `deprecated` | Previously approved, now invalid | Yes | No |
+
+When saving rules to YAML, always set:
+- `status` to the current lifecycle state
+- `proposed_at` to the extraction timestamp
+- `proposed_by` to `"whetstone-extraction"` (or `"manual"` for hand-written rules)
+- `approved_at` only when transitioning to `approved`
+
+Denied rules stay in the YAML with `denied_reason` so they aren't re-proposed on the next extraction run.
 
 ---
 

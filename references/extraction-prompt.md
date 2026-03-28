@@ -136,3 +136,58 @@ Every rule requires 3-5 golden examples — code snippets with known pass/fail v
 - Include at least one "close call" example
 - Provide a `reason` field explaining the verdict
 - Use the actual APIs and patterns from the dependency
+
+## Candidate Rule Format
+
+When the extraction prompt produces rules, they are initially in **candidate** status. The candidate format differs from the final approved format in these ways:
+
+| Field | Candidate | Approved |
+|-------|-----------|----------|
+| `status` | `candidate` | `approved` |
+| `approved` | `false` | `true` |
+| `approved_at` | absent | ISO 8601 timestamp |
+| `proposed_at` | ISO 8601 timestamp | preserved from candidate |
+| `proposed_by` | `"whetstone-extraction"` | preserved from candidate |
+
+### Candidate Artifacts
+
+Candidate rules are stored in `whetstone/rules/{language}/{dependency}.yaml` with `status: candidate`. They remain there until the user reviews them.
+
+### Lifecycle Transitions
+
+```
+candidate → approved   (user approves during review)
+candidate → denied     (user rejects with optional reason)
+approved  → deprecated (rule is superseded or source becomes invalid)
+```
+
+Denied rules are kept in the YAML file with `status: denied` so the same rule isn't re-proposed on the next extraction run. The `denied_reason` field captures why, so future extraction can respect the decision.
+
+## Stale Rule Detection
+
+Whetstone detects rule staleness through two mechanisms:
+
+### 1. Content Hash Drift
+
+Each rule's source has a `content_hash` (SHA-256 of the fetched documentation content). When `resolve-sources.py` re-fetches documentation:
+
+- If the hash matches: source is unchanged, rules are **current**
+- If the hash differs: source has changed, rules are **stale** and should be re-evaluated
+
+The `--changed-only` flag on `resolve-sources.py` and `detect-deps.py` uses this mechanism to identify which dependencies need re-extraction.
+
+### 2. Version Drift
+
+When a dependency's version in the manifest differs from the version recorded in the rule YAML's `source.version`, that's version drift. `detect-deps.py --check-drift` identifies these.
+
+### 3. Time-based Freshness
+
+Rules older than 60 days are flagged as potentially stale regardless of hash/version, since documentation may have been updated between major releases.
+
+### Validation Workflow
+
+When drift is detected:
+1. Re-resolve the source (`resolve-sources.py --changed-only`)
+2. Compare new content against existing rules
+3. Propose updates, additions, or deprecations
+4. Mark validated rules with `last_validated` and `validation_status: current`
