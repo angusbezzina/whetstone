@@ -143,7 +143,9 @@ class TestStatus:
         recs = result["recommendations"]
         assert len(recs) > 0
         for rec in recs:
-            assert isinstance(rec, dict), f"recommendation should be dict, got {type(rec).__name__}"
+            assert isinstance(rec, dict), (
+                f"recommendation should be dict, got {type(rec).__name__}"
+            )
             assert "priority" in rec, "recommendation missing 'priority'"
             assert "action" in rec, "recommendation missing 'action'"
             assert "message" in rec, "recommendation missing 'message'"
@@ -909,7 +911,13 @@ class TestDiscoveryMetadata:
         result = run_script("detect-deps.py", ["--project-dir", str(FIXTURES_DIR)])
         excluded = result["discovery"]["excluded"]
         # Check a sample of hardcoded defaults
-        for expected in ("node_modules", "vendor", "fixtures", "examples", "third_party"):
+        for expected in (
+            "node_modules",
+            "vendor",
+            "fixtures",
+            "examples",
+            "third_party",
+        ):
             assert expected in excluded, f"{expected} not in excluded list"
 
     def test_discovery_key_present_on_error(self, tmp_path):
@@ -1043,7 +1051,11 @@ class TestSourceFreshness:
 
         # High confidence for llms_txt
         result_high = mod._compute_freshness(
-            {"source_type": "llms_txt", "content": "some content", "content_hash": "sha256:abc"},
+            {
+                "source_type": "llms_txt",
+                "content": "some content",
+                "content_hash": "sha256:abc",
+            },
         )
         assert result_high["confidence"] == "high"
 
@@ -1055,7 +1067,11 @@ class TestSourceFreshness:
 
         # Medium confidence for docs_url with content
         result_med = mod._compute_freshness(
-            {"source_type": "other", "content": "fetched content", "content_hash": "sha256:def"},
+            {
+                "source_type": "other",
+                "content": "fetched content",
+                "content_hash": "sha256:def",
+            },
         )
         assert result_med["confidence"] == "medium"
 
@@ -1202,6 +1218,25 @@ class TestImpactMetrics:
         assert 0 <= metrics["dependency_coverage"] <= 100
         assert 0 <= metrics["deterministic_coverage"] <= 100
         assert metrics["pending_drift"] >= 0
+
+    def test_metrics_use_real_project_dependency_denominator(self):
+        """Dependency coverage reflects actual detected project deps, not just rule files."""
+        result = run_script(
+            "status.py",
+            ["--project-dir", str(FIXTURES_DIR), "--json", "--no-drift-check"],
+        )
+        metrics = result["metrics"]
+        assert metrics["dependencies_total"] == 4
+        assert metrics["dependencies_covered"] == 1
+        assert metrics["dependency_coverage"] == 25.0
+
+    def test_status_next_command_uses_real_cli_commands(self):
+        """next_command should be executable guidance, not prose or phantom commands."""
+        result = run_script(
+            "status.py",
+            ["--project-dir", str(FIXTURES_DIR), "--json", "--no-drift-check"],
+        )
+        assert result["next_command"] == "whetstone doctor"
 
     def test_metrics_absent_when_not_initialized(self, tmp_path):
         """Not-initialized projects don't have metrics (no crash)."""
@@ -1783,7 +1818,15 @@ rules:
         assert isinstance(linter_rules, dict)
         # Should have group keys like 'suspicious', 'correctness', 'style'
         for group_name, group_rules in linter_rules.items():
-            assert group_name in ("suspicious", "correctness", "style", "nursery", "performance", "a11y", "security")
+            assert group_name in (
+                "suspicious",
+                "correctness",
+                "style",
+                "nursery",
+                "performance",
+                "a11y",
+                "security",
+            )
             assert isinstance(group_rules, dict)
             for rule_name, severity in group_rules.items():
                 assert severity == "error"
