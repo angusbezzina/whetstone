@@ -303,7 +303,7 @@ The output includes a status label (**Healthy**, **Needs Review**, **Stale**, **
 
 Present the human-readable summary to the user. If they want detail, offer `--json` for the full breakdown or `--score` for just the numeric score.
 
-**Next:** Follow the `next_command` from the status JSON output — it suggests the most relevant action (e.g., `whetstone update --changed-only` if drift is detected, or `whetstone doctor` if no rules exist).
+**Next:** Follow the `next_command` from the status JSON output — it suggests the most relevant action (e.g., `whetstone doctor` to re-resolve sources when drift is detected, or `whetstone doctor` for initial setup).
 
 ### Generate Only
 

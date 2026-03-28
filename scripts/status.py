@@ -278,36 +278,48 @@ def _compute_last_extraction_date(rule_files: list[dict]) -> str | None:
     return latest.isoformat()
 
 
+def _run_detect_deps(project_dir: Path, extra_args: list[str] | None = None) -> dict | None:
+    """Run detect-deps.py and return parsed JSON output, or None on failure."""
+    script = Path(__file__).resolve().parent / "detect-deps.py"
+    cmd = [sys.executable, str(script), "--project-dir", str(project_dir)]
+    if extra_args:
+        cmd.extend(extra_args)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            return json.loads(result.stdout)
+    except Exception:
+        pass
+    return None
+
+
 def check_drift(project_dir: Path) -> dict:
     """Run detect-deps --check-drift and return normalized drift info.
 
     Returns: {"changed": [...], "count": N, "checked": M}
     """
     empty: dict = {"changed": [], "count": 0, "checked": 0}
-    script = Path(__file__).resolve().parent / "detect-deps.py"
-    try:
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(script),
-                "--project-dir",
-                str(project_dir),
-                "--check-drift",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode == 0:
-            data = json.loads(result.stdout)
-            drift = data.get("drift", empty)
-            # Defensive: handle legacy list format
-            if isinstance(drift, list):
-                drift = {"changed": drift, "count": len(drift), "checked": 0}
-            return drift
-    except Exception:
-        pass
+    data = _run_detect_deps(project_dir, ["--check-drift"])
+    if data is not None:
+        drift = data.get("drift", empty)
+        # Defensive: handle legacy list format
+        if isinstance(drift, list):
+            drift = {"changed": drift, "count": len(drift), "checked": 0}
+        return drift
     return empty
+
+
+def _count_project_deps(project_dir: Path) -> int:
+    """Get the total number of runtime dependencies from detect-deps.
+
+    Returns 0 if detection fails — callers should treat 0 as "unknown".
+    """
+    data = _run_detect_deps(project_dir)
+    if data is None:
+        return 0
+    deps = data.get("dependencies", [])
+    # Count only runtime (non-dev) deps
+    return sum(1 for d in deps if not d.get("dev", False))
 
 
 def compute_status(
@@ -497,6 +509,9 @@ def compute_status(
         score=score,
     )
 
+    # Get the real project dependency count from manifests
+    project_dep_count = _count_project_deps(project_dir)
+
     # Impact metrics — lightweight indicators of value over time
     metrics = _compute_impact_metrics(
         total_rules=total_rules,
@@ -506,15 +521,16 @@ def compute_status(
         rule_files=rule_files,
         deterministic_coverage=deterministic_coverage,
         drifted_count=drifted_count,
+        project_dep_count=project_dep_count,
     )
 
     # Next command
     if drifted_count > 0:
-        next_command = "whetstone update --changed-only"
+        next_command = "whetstone doctor  (re-resolve changed sources, then re-extract)"
     elif total_rules == 0:
         next_command = "whetstone doctor"
     elif freshness_days and freshness_days > 30:
-        next_command = "whetstone update"
+        next_command = "whetstone doctor  (re-resolve sources and refresh rules)"
     else:
         next_command = "whetstone generate  (if rules were edited manually)"
 
@@ -560,11 +576,17 @@ def _compute_impact_metrics(
     rule_files: list[dict],
     deterministic_coverage: float,
     drifted_count: int,
+    project_dep_count: int = 0,
 ) -> dict:
     """Compute lightweight impact metrics for value tracking.
 
     These metrics help teams quantify the value of maintaining rules over time.
     They are purely derived from current state — no persistent storage needed.
+
+    Args:
+        project_dep_count: Total runtime deps from manifest scanning.
+            When > 0, used as the denominator for dependency coverage.
+            When 0 (unknown), falls back to deps with rule files.
     """
     # Approval rate: approved / total proposed (including unapproved)
     total_proposed = len(all_rules)
@@ -579,9 +601,11 @@ def _compute_impact_metrics(
         if any(r.get("approved") for r in rf.get("rules", [])):
             deps_with_rules.add(rf.get("source_name", ""))
 
-    # Coverage ratio: deps with rules / total deps tracked
+    # Coverage ratio: deps with rules / total project deps
+    # Use actual manifest dep count as denominator when available,
+    # falling back to deps-with-rule-files when detection fails.
     deps_covered = len(deps_with_rules)
-    deps_total = len(dep_names)
+    deps_total = project_dep_count if project_dep_count > 0 else len(dep_names)
     dep_coverage = (deps_covered / deps_total * 100) if deps_total > 0 else 0
 
     return {
@@ -699,9 +723,12 @@ def _build_recommendations(
         suffix = f" (+{drifted_count - 3} more)" if drifted_count > 3 else ""
         recs.append({
             "priority": "high",
-            "action": "update",
-            "message": f"{drifted_count} deps have version drift: {dep_list}{suffix}",
-            "command": "whetstone update --changed-only",
+            "action": "refresh",
+            "message": (
+                f"{drifted_count} deps have version drift: {dep_list}{suffix}. "
+                f"Re-run doctor to resolve updated sources, then re-extract."
+            ),
+            "command": "whetstone doctor",
         })
 
     if freshness_days and freshness_days > 30:
@@ -711,9 +738,9 @@ def _build_recommendations(
             "action": "refresh",
             "message": (
                 f"Last extraction was {freshness_days:.0f} days ago{date_str}. "
-                f"Run 'whetstone update' to refresh."
+                f"Re-run doctor to check for documentation changes."
             ),
-            "command": "whetstone update",
+            "command": "whetstone doctor",
         })
 
     if deterministic_coverage < 70 and total_rules > 0:

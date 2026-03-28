@@ -23,6 +23,9 @@ env/
 .DS_Store
 Thumbs.db
 
+# Agent tooling worktrees and coordination artifacts
+.claude/
+
 # Test artifacts
 .pytest_cache/
 .coverage
