@@ -11,6 +11,7 @@ Usage:
     python3 scripts/doctor.py --project-dir .
     python3 scripts/doctor.py --project-dir . --skip-patterns --skip-dev
     python3 scripts/doctor.py --project-dir . --json
+    python3 scripts/doctor.py --project-dir . --verbose
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import json
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -80,18 +82,303 @@ def _log(msg: str, json_mode: bool = False) -> None:
         print(msg, file=sys.stderr)
 
 
+def _count_existing_rules(project_dir: Path) -> int:
+    """Count existing approved rules in whetstone/rules/."""
+    rules_dir = project_dir / "whetstone" / "rules"
+    if not rules_dir.exists():
+        return 0
+
+    count = 0
+    try:
+        import re
+
+        for yaml_file in rules_dir.rglob("*.yaml"):
+            text = yaml_file.read_text()
+            # Count approved: true entries
+            count += len(re.findall(r"^\s*approved:\s*true\s*$", text, re.MULTILINE))
+    except Exception:
+        pass
+    return count
+
+
+def _build_source_details(
+    sources: list[dict], errors: list[dict]
+) -> list[dict]:
+    """Build per-source detail list sorted by confidence."""
+    details = []
+
+    for s in sources:
+        source_type = s.get("source_type", "unknown")
+        if source_type in ("llms_txt", "llms_full_txt"):
+            confidence = "high"
+        elif source_type in ("docs_url", "readme"):
+            confidence = "medium"
+        else:
+            confidence = "low"
+        details.append({
+            "name": s.get("name", "unknown"),
+            "source_type": source_type,
+            "confidence": confidence,
+            "status": "resolved",
+        })
+
+    for e in errors:
+        details.append({
+            "name": e.get("name", "unknown"),
+            "source_type": None,
+            "confidence": None,
+            "status": "failed",
+            "error": e.get("error", "unknown"),
+        })
+
+    # Sort: resolved high first, then medium, then low, then failed
+    confidence_order = {"high": 0, "medium": 1, "low": 2, None: 3}
+    details.sort(key=lambda d: confidence_order.get(d.get("confidence"), 3))
+
+    return details
+
+
+def _build_recommendations(
+    sources: list[dict],
+    errors: list[dict],
+    llms_txt_count: int,
+    existing_rules: int,
+) -> list[dict]:
+    """Build structured recommendations based on doctor findings."""
+    recs = []
+
+    if sources:
+        recs.append({
+            "priority": "high",
+            "action": "extract",
+            "message": f"Extract rules for {len(sources)} dependencies with resolved docs",
+        })
+
+    if llms_txt_count > 0:
+        recs.append({
+            "priority": "high",
+            "action": "prioritize",
+            "message": (
+                f"{llms_txt_count} deps have llms.txt — "
+                "these will produce highest quality rules"
+            ),
+        })
+
+    if errors:
+        recs.append({
+            "priority": "medium",
+            "action": "resolve",
+            "message": (
+                f"Consider providing manual docs URLs for "
+                f"{len(errors)} unresolved dependencies"
+            ),
+        })
+
+    if existing_rules > 0:
+        recs.append({
+            "priority": "low",
+            "action": "review",
+            "message": f"{existing_rules} existing rules found — doctor will update them",
+        })
+
+    if not sources and not errors:
+        recs.append({
+            "priority": "high",
+            "action": "add-deps",
+            "message": "No dependencies found. Add dependencies to your project first.",
+        })
+
+    return recs
+
+
+def _format_report(
+    result: dict,
+    project_dir: Path,
+    verbose: bool = False,
+) -> str:
+    """Build a structured box-drawing report for stderr output."""
+    W = 62  # inner width (between ║ markers)
+
+    def line(text: str = "") -> str:
+        """Format a content line with box borders."""
+        return f"\u2551  {text:<{W - 2}}\u2551"
+
+    def section_header(title: str) -> str:
+        """Format a section header."""
+        padded = f"\u2550\u2550 {title} "
+        return f"\u2560{padded}{'=' * (W - len(padded))}\u2563"
+
+    lines = []
+
+    # Top border
+    lines.append(f"\u2554{'=' * W}\u2557")
+
+    # Title
+    summary = result.get("summary", {})
+    existing_rules = result.get("_existing_rules", 0)
+    if existing_rules > 0:
+        lines.append(line(f"Whetstone Doctor Report (Update — {existing_rules} existing rules)"))
+    else:
+        lines.append(line("Whetstone Doctor Report"))
+
+    # Project + date header
+    lines.append(section_header(""))
+    lines.append(line())
+    lines.append(line(f"Project: {project_dir.resolve()}"))
+    lines.append(line(f"Date:    {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"))
+    lines.append(line())
+
+    # Dependencies section
+    lines.append(section_header("Dependencies"))
+    lines.append(line())
+
+    deps_found = summary.get("dependencies_found", 0)
+    dev_count = result.get("_dev_count", 0)
+    languages = summary.get("languages", [])
+
+    lines.append(line(f"Found {deps_found} runtime + {dev_count} dev dependencies"))
+    lines.append(line(f"Languages: {', '.join(languages) if languages else 'none'}"))
+    lines.append(line())
+
+    # Per-language counts
+    lang_counts = result.get("_lang_counts", {})
+    if lang_counts:
+        lines.append(line("Runtime deps by language:"))
+        for lang, count in sorted(lang_counts.items()):
+            lines.append(line(f"  {lang + ':':14s} {count} deps"))
+        lines.append(line())
+
+    # Documentation Sources section
+    lines.append(section_header("Documentation Sources"))
+    lines.append(line())
+
+    sources_resolved = summary.get("sources_resolved", 0)
+    deps_targeted = summary.get("dependencies_targeted", 0)
+    llms_count = summary.get("sources_with_llms_txt", 0)
+    source_details = result.get("source_details", [])
+    failed_count = sum(1 for d in source_details if d.get("status") == "failed")
+    docs_only = sources_resolved - llms_count
+
+    lines.append(line(f"Resolved: {sources_resolved}/{deps_targeted} dependencies"))
+    lines.append(line(f"With llms.txt: {llms_count}"))
+    lines.append(line(f"Docs URL only: {docs_only}"))
+    if failed_count > 0:
+        lines.append(line(f"Failed: {failed_count} (see warnings below)"))
+    lines.append(line())
+
+    # Top sources
+    if source_details:
+        lines.append(line("Top sources:"))
+        show_count = len(source_details) if verbose else min(5, len(source_details))
+        for detail in source_details[:show_count]:
+            name = detail.get("name", "unknown")
+            if detail.get("status") == "resolved":
+                stype = detail.get("source_type", "unknown")
+                conf = detail.get("confidence", "unknown")
+                lines.append(line(f"  + {name:<16s} -- {stype} ({conf} confidence)"))
+            else:
+                lines.append(line(f"  x {name:<16s} -- no docs found"))
+        if not verbose and len(source_details) > 5:
+            lines.append(line(f"  ... and {len(source_details) - 5} more (use --verbose to show all)"))
+        lines.append(line())
+
+    # Style Patterns section
+    patterns_count = summary.get("patterns_found", 0)
+    lines.append(section_header("Style Patterns"))
+    lines.append(line())
+    if patterns_count > 0:
+        lines.append(line(f"Found {patterns_count} recurring patterns from project history"))
+    else:
+        lines.append(line("No patterns detected (or pattern detection skipped)"))
+    lines.append(line())
+
+    # Recommendations section
+    recommendations = result.get("recommendations", [])
+    if recommendations:
+        lines.append(section_header("Recommendations"))
+        lines.append(line())
+        for i, rec in enumerate(recommendations, 1):
+            msg = rec.get("message", str(rec)) if isinstance(rec, dict) else str(rec)
+            # Wrap long messages
+            if len(msg) > W - 6:
+                # Split into multiple lines
+                words = msg.split()
+                current = f"{i}. "
+                for word in words:
+                    if len(current) + len(word) + 1 > W - 4:
+                        lines.append(line(current))
+                        current = "   " + word
+                    else:
+                        current += (" " if len(current) > 3 else "") + word
+                if current.strip():
+                    lines.append(line(current))
+            else:
+                lines.append(line(f"{i}. {msg}"))
+        lines.append(line())
+
+        next_cmd = result.get("next_command", "")
+        if next_cmd:
+            lines.append(line(f"Next: {next_cmd}"))
+            lines.append(line())
+
+    # Warnings section
+    warnings = result.get("warnings", [])
+    if warnings:
+        lines.append(section_header("Warnings"))
+        lines.append(line())
+        for w in warnings:
+            # Wrap long warnings
+            if len(w) > W - 6:
+                words = w.split()
+                current = "* "
+                for word in words:
+                    if len(current) + len(word) + 1 > W - 4:
+                        lines.append(line(current))
+                        current = "  " + word
+                    else:
+                        current += (" " if len(current) > 2 else "") + word
+                if current.strip():
+                    lines.append(line(current))
+            else:
+                lines.append(line(f"* {w}"))
+        lines.append(line())
+
+    # Timing
+    elapsed = summary.get("elapsed_seconds", 0)
+    steps = result.get("steps", [])
+    lines.append(section_header("Timing"))
+    lines.append(line())
+    for step in steps:
+        step_name = step.get("name", "unknown")
+        step_time = step.get("elapsed_seconds", 0)
+        step_status = step.get("status", "?")
+        indicator = "+" if step_status == "ok" else ("~" if step_status == "skipped" else "x")
+        lines.append(line(f"  {indicator} {step_name:<22s} {step_time:>5.1f}s"))
+    lines.append(line(f"  {'Total:':<24s} {elapsed:>5.1f}s"))
+    lines.append(line())
+
+    # Bottom border
+    lines.append(f"\u255a{'=' * W}\u255d")
+
+    return "\n".join(lines)
+
+
 def doctor(
     project_dir: Path,
     skip_patterns: bool = False,
     skip_dev: bool = True,
     json_mode: bool = False,
     deps_filter: str | None = None,
+    verbose: bool = False,
 ) -> dict:
     """Run the full doctor flow and return a structured result."""
 
     total_start = time.monotonic()
     steps: list[dict] = []
     warnings: list[str] = []
+
+    # Check for existing rules (repeat run detection)
+    existing_rules = _count_existing_rules(project_dir)
 
     # ── Step 1: Detect dependencies ──────────────────────────────────────
     _log("Step 1/4: Detecting dependencies...", json_mode)
@@ -110,12 +397,20 @@ def doctor(
             "error": error_msg,
             "step": "detect-deps",
             "steps": steps,
+            "recommendations": [],
+            "source_details": [],
             "next_command": "Check project directory has manifest files (pyproject.toml, package.json, Cargo.toml)",
         }
 
     deps_count = deps_result.get("counts", {}).get("runtime", {}).get("_all", 0)
     dev_count = deps_result.get("counts", {}).get("dev", {}).get("_all", 0)
     languages = deps_result.get("languages", [])
+
+    # Compute per-language runtime counts
+    lang_counts: dict[str, int] = {}
+    runtime_counts = deps_result.get("counts", {}).get("runtime", {})
+    for lang in languages:
+        lang_counts[lang] = runtime_counts.get(lang, 0)
 
     steps.append(
         {
@@ -155,6 +450,8 @@ def doctor(
                 "patterns_found": 0,
                 "languages": languages,
             },
+            "recommendations": [],
+            "source_details": [],
             "next_command": "Add dependencies to your project, then run whetstone doctor again",
         }
 
@@ -191,6 +488,8 @@ def doctor(
             "error": error_msg,
             "step": "resolve-sources",
             "steps": steps,
+            "recommendations": [],
+            "source_details": [],
             "next_command": "Check network connectivity and dependency names",
         }
 
@@ -302,49 +601,11 @@ def doctor(
 
     total_elapsed = time.monotonic() - total_start
 
-    _log("", json_mode)
-    _log("=" * 60, json_mode)
-    _log("  Whetstone Doctor — Summary", json_mode)
-    _log("=" * 60, json_mode)
-    _log(f"  Dependencies found:  {deps_count} runtime, {dev_count} dev", json_mode)
-    _log(f"  Languages:           {', '.join(languages)}", json_mode)
-    _log(
-        f"  Sources resolved:    {len(sources)}/{len(target_deps)} ({llms_txt_count} llms.txt)",
-        json_mode,
+    # Build source details and recommendations
+    source_details = _build_source_details(sources, errors)
+    recommendations = _build_recommendations(
+        sources, errors, llms_txt_count, existing_rules
     )
-    _log(f"  Patterns found:      {patterns_count}", json_mode)
-    _log(f"  Total time:          {total_elapsed:.1f}s", json_mode)
-    _log("=" * 60, json_mode)
-    _log("", json_mode)
-
-    if sources:
-        _log(
-            "  Ready for extraction. The agent will now read each source,",
-            json_mode,
-        )
-        _log(
-            "  propose high-confidence rules, and ask you to approve them.",
-            json_mode,
-        )
-        _log("", json_mode)
-        _log(
-            "  Next: Agent applies extraction prompt to each source",
-            json_mode,
-        )
-    else:
-        _log("  No sources resolved. Check warnings for details.", json_mode)
-        _log("", json_mode)
-        _log(
-            "  Next: Add --deps to target specific dependencies, or "
-            "provide manual docs URLs",
-            json_mode,
-        )
-
-    if warnings:
-        _log("", json_mode)
-        _log("  Warnings:", json_mode)
-        for w in warnings:
-            _log(f"    - {w}", json_mode)
 
     # Determine next command
     if sources:
@@ -354,7 +615,7 @@ def doctor(
     else:
         next_command = "Resolve source issues above, then re-run whetstone doctor"
 
-    return {
+    result = {
         "status": "ok",
         "steps": steps,
         "summary": {
@@ -366,10 +627,23 @@ def doctor(
             "languages": languages,
             "elapsed_seconds": round(total_elapsed, 1),
         },
+        "source_details": source_details,
+        "recommendations": recommendations,
         "extraction_context": extraction_context,
         "warnings": warnings,
         "next_command": next_command,
+        # Private fields for report formatting (not part of public contract)
+        "_existing_rules": existing_rules,
+        "_dev_count": dev_count,
+        "_lang_counts": lang_counts,
     }
+
+    # Format and print human-readable report
+    if not json_mode:
+        report = _format_report(result, project_dir, verbose=verbose)
+        print(report, file=sys.stderr)
+
+    return result
 
 
 def main() -> None:
@@ -409,6 +683,11 @@ def main() -> None:
         dest="json_mode",
         help="Output only JSON (suppress progress messages)",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show full source list instead of top N in report",
+    )
     args = parser.parse_args()
 
     skip_dev = not args.include_dev
@@ -420,9 +699,12 @@ def main() -> None:
             skip_dev=skip_dev,
             json_mode=args.json_mode,
             deps_filter=args.deps,
+            verbose=args.verbose,
         )
 
-        json.dump(result, sys.stdout, indent=2)
+        # Remove private fields before JSON output
+        output = {k: v for k, v in result.items() if not k.startswith("_")}
+        json.dump(output, sys.stdout, indent=2)
         sys.stdout.write("\n")
 
         if result.get("status") == "error":
@@ -432,6 +714,8 @@ def main() -> None:
         json.dump(
             {
                 "error": str(e),
+                "recommendations": [],
+                "source_details": [],
                 "next_command": "Check project directory and script dependencies",
             },
             sys.stdout,

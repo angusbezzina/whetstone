@@ -182,7 +182,7 @@ def generate_python_test(rule: dict) -> str:
         elif strategy == "pattern":
             checks.append(_generate_pattern_check(sig_desc))
         elif strategy == "lint_proxy":
-            checks.append(f"        # Handled in linter config, not test")
+            checks.append("        # Handled in linter config, not test")
             continue
         elif strategy == "ai":
             checks.append(f"        # AI signal (not auto-testable): {sig_desc}")
@@ -456,7 +456,7 @@ def _generate_ast_check_kwarg(description: str, dep_name: str) -> str:
             "        elif isinstance(node.func, ast.Name):",
             "            call_name = node.func.id",
             f"        if call_name == '{func_name}':",
-            f"            kwarg_names = [kw.arg for kw in node.keywords if kw.arg]",
+            "            kwarg_names = [kw.arg for kw in node.keywords if kw.arg]",
             f"            if '{kwarg_name}' not in kwarg_names:",
             f'                violations.append(f"{{filepath}}:{{node.lineno}} - {func_name}() called without {kwarg_name} kwarg")',
             f'                violations_by_file[filepath].append(f"line {{node.lineno}}: {func_name}() called without {kwarg_name} kwarg")',
@@ -897,7 +897,6 @@ def generate_rust_test(rule: dict) -> str:
     rule_id = rule.get("id", "unknown")
     source_url = rule.get("source_url", "")
     dep_name = rule.get("_dep_name", "unknown")
-    description = rule.get("description", "").strip()
     func_name = _sanitize_name(rule_id)
     signals = rule.get("signals", [])
 

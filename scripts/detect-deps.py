@@ -51,6 +51,13 @@ SKIP_DIRS = frozenset(
         "coverage",
         ".whetstone",
         "whetstone",
+        # Fixture / vendored / example directories — not project source
+        "tests/fixtures",
+        "fixtures",
+        "examples",
+        "vendor",
+        "third_party",
+        "third-party",
     }
 )
 
@@ -239,11 +246,68 @@ def _load_toml(filepath: Path) -> dict:
     return _minimal_toml_load(filepath)
 
 
-def find_manifests(project_dir: Path) -> list[tuple[Path, str]]:
+def _load_discovery_config(project_dir: Path) -> dict:
+    """Load discovery include/exclude from whetstone.yaml if present."""
+    config_path = project_dir / "whetstone" / "whetstone.yaml"
+    if not config_path.exists():
+        config_path = project_dir / "whetstone.yaml"
+    if not config_path.exists():
+        return {}
+
+    try:
+        import yaml  # type: ignore[import-untyped]
+
+        with open(config_path) as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("discovery", {}) or {}
+    except Exception:
+        return {}
+
+
+def _should_skip_dir(
+    dir_name: str,
+    rel_path: str,
+    skip_dirs: frozenset[str],
+    extra_excludes: list[str],
+    extra_includes: list[str],
+) -> bool:
+    """Determine whether a directory should be pruned during manifest walk.
+
+    Checks dir name against SKIP_DIRS, then rel_path against multi-segment
+    exclude patterns (e.g. 'tests/fixtures'). Include patterns override both.
+    """
+    # Check if explicitly included — include overrides exclude
+    for inc in extra_includes:
+        if rel_path == inc or rel_path.startswith(inc + "/") or dir_name == inc:
+            return False
+
+    # Check single-segment SKIP_DIRS
+    if dir_name in skip_dirs:
+        return True
+
+    # Check multi-segment exclude patterns against relative path
+    for excl in extra_excludes:
+        if "/" in excl:
+            # Multi-segment: match as prefix or exact
+            if rel_path == excl or rel_path.startswith(excl + "/"):
+                return True
+        else:
+            if dir_name == excl:
+                return True
+
+    return False
+
+
+def find_manifests(
+    project_dir: Path,
+    extra_excludes: list[str] | None = None,
+    extra_includes: list[str] | None = None,
+) -> list[tuple[Path, str]]:
     """Recursively find all manifest files under project_dir.
 
     Returns list of (absolute_path, relative_source_dir) tuples.
-    Skips directories in SKIP_DIRS (node_modules, .git, target, etc.).
+    Skips directories in SKIP_DIRS (node_modules, .git, target, etc.)
+    plus any extra_excludes patterns. extra_includes override excludes.
 
     The relative_source_dir is the directory containing the manifest,
     relative to project_dir. For the root it's ".".
@@ -255,23 +319,42 @@ def find_manifests(project_dir: Path) -> list[tuple[Path, str]]:
         "Cargo.toml",
     }
     results: list[tuple[Path, str]] = []
+    excludes = extra_excludes or []
+    includes = extra_includes or []
+
+    # Split SKIP_DIRS into single-segment (for fast name check) and
+    # multi-segment (for rel-path check)
+    single_seg_skips = frozenset(s for s in SKIP_DIRS if "/" not in s)
+    multi_seg_skips = [s for s in SKIP_DIRS if "/" in s]
+    all_excludes = multi_seg_skips + [e for e in excludes if "/" in e]
+    single_excludes = frozenset(e for e in excludes if "/" not in e)
+    combined_singles = single_seg_skips | single_excludes
 
     for dirpath, dirnames, filenames in os.walk(project_dir):
-        # Prune skipped directories in-place (modifying dirnames stops os.walk descending)
-        dirnames[:] = [
-            d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")
-        ]
-        # Sort for deterministic ordering
-        dirnames.sort()
+        rel_dir = os.path.relpath(dirpath, project_dir)
+        if rel_dir == ".":
+            rel_dir_str = ""
+        else:
+            rel_dir_str = rel_dir
+
+        # Prune skipped directories in-place
+        new_dirnames = []
+        for d in dirnames:
+            child_rel = f"{rel_dir_str}/{d}" if rel_dir_str else d
+            if d.startswith(".") and d not in (".whetstone", ".env"):
+                continue  # skip hidden dirs
+            if _should_skip_dir(d, child_rel, combined_singles, all_excludes, includes):
+                continue
+            new_dirnames.append(d)
+        dirnames[:] = sorted(new_dirnames)
 
         for fname in filenames:
             if fname in manifest_names:
                 full_path = Path(dirpath) / fname
-                rel_dir = os.path.relpath(dirpath, project_dir)
-                if rel_dir == ".":
+                if rel_dir_str == "" or rel_dir_str == ".":
                     source = "root"
                 else:
-                    source = rel_dir
+                    source = rel_dir_str
                 results.append((full_path, source))
 
     return results
@@ -561,7 +644,12 @@ def check_drift(deps: list[dict], project_dir: Path) -> dict:
         return empty
 
 
-def detect_deps(project_dir: Path, do_check_drift: bool = False) -> dict:
+def detect_deps(
+    project_dir: Path,
+    do_check_drift: bool = False,
+    cli_excludes: list[str] | None = None,
+    cli_includes: list[str] | None = None,
+) -> dict:
     """Main detection logic. Returns structured JSON-ready dict.
 
     Recursively discovers all manifest files under project_dir,
@@ -572,6 +660,15 @@ def detect_deps(project_dir: Path, do_check_drift: bool = False) -> dict:
     warnings: list[str] = []
     manifests_found: list[str] = []
 
+    # Load discovery config from whetstone.yaml
+    discovery_cfg = _load_discovery_config(project_dir)
+    cfg_excludes = discovery_cfg.get("exclude", []) or []
+    cfg_includes = discovery_cfg.get("include", []) or []
+
+    # Merge CLI and config: CLI values extend config values
+    merged_excludes = list(cfg_excludes) + (cli_excludes or [])
+    merged_includes = list(cfg_includes) + (cli_includes or [])
+
     # Map filename to parser
     parsers = {
         "pyproject.toml": parse_pyproject_toml,
@@ -581,13 +678,24 @@ def detect_deps(project_dir: Path, do_check_drift: bool = False) -> dict:
     }
 
     # Recursively find all manifest files
-    manifest_files = find_manifests(project_dir)
+    manifest_files = find_manifests(
+        project_dir,
+        extra_excludes=merged_excludes,
+        extra_includes=merged_includes,
+    )
 
     if not manifest_files:
+        effective_excluded = sorted(set(list(SKIP_DIRS) + merged_excludes))
         result: dict = {
             "languages": [],
             "dependencies": [],
             "manifests": [],
+            "discovery": {
+                "excluded": effective_excluded,
+                "included": merged_includes,
+                "monorepo": False,
+                "workspaces": [],
+            },
             "error": "No manifest files found",
             "next_command": "Ensure project has pyproject.toml, package.json, or Cargo.toml",
         }
@@ -643,11 +751,29 @@ def detect_deps(project_dir: Path, do_check_drift: bool = False) -> dict:
     counts["runtime"]["_all"] = len(runtime_deps)
     counts["dev"]["_all"] = len(dev_deps)
 
+    # Monorepo detection: >1 manifest in different directories
+    manifest_dirs = sorted(set(os.path.dirname(m) for m in manifests_found))
+    is_monorepo = len(manifest_dirs) > 1
+    if is_monorepo:
+        print(
+            f"Monorepo detected: {len(manifest_dirs)} workspaces found",
+            file=sys.stderr,
+        )
+
+    # Build effective excluded list (deduped, sorted)
+    effective_excluded = sorted(set(list(SKIP_DIRS) + merged_excludes))
+
     result = {
         "languages": languages,
         "counts": counts,
         "dependencies": unique_deps,
         "manifests": manifests_found,
+        "discovery": {
+            "excluded": effective_excluded,
+            "included": merged_includes,
+            "monorepo": is_monorepo,
+            "workspaces": manifest_dirs if is_monorepo else [],
+        },
     }
 
     if warnings:
@@ -691,11 +817,31 @@ def main() -> None:
         action="store_true",
         help="Only output dependencies that have drifted from stored versions",
     )
+    parser.add_argument(
+        "--exclude",
+        type=str,
+        default=None,
+        help="Comma-separated directory patterns to exclude from discovery",
+    )
+    parser.add_argument(
+        "--include",
+        type=str,
+        default=None,
+        help="Comma-separated directory patterns to include even if normally skipped",
+    )
     args = parser.parse_args()
+
+    cli_excludes = [e.strip() for e in args.exclude.split(",") if e.strip()] if args.exclude else None
+    cli_includes = [i.strip() for i in args.include.split(",") if i.strip()] if args.include else None
 
     try:
         do_drift = args.check_drift or args.changed_only
-        result = detect_deps(args.project_dir, do_drift)
+        result = detect_deps(
+            args.project_dir,
+            do_drift,
+            cli_excludes=cli_excludes,
+            cli_includes=cli_includes,
+        )
 
         # --changed-only: filter to only drifted deps
         if args.changed_only and "drift" in result:

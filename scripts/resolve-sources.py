@@ -21,6 +21,7 @@ import ssl
 import sys
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 USER_AGENT = "whetstone/0.1.0 (https://github.com/whetstone)"
@@ -327,6 +328,58 @@ RESOLVERS = {
 }
 
 
+def _compute_freshness(
+    result: dict,
+    stored_hash: str | None = None,
+) -> dict:
+    """Compute freshness metadata for a resolved source entry.
+
+    Returns a dict with source_age_days, content_stale, and confidence.
+    """
+    freshness: dict[str, int | bool | str | None] = {
+        "source_age_days": None,
+        "content_stale": False,
+        "confidence": "low",
+    }
+
+    # Compute source_age_days from latest_release_date
+    release_date_str = result.get("latest_release_date")
+    if release_date_str:
+        try:
+            # Handle multiple ISO formats (with/without timezone, with T or space)
+            cleaned = release_date_str.replace("Z", "+00:00")
+            # Try parsing with timezone
+            try:
+                release_dt = datetime.fromisoformat(cleaned)
+            except ValueError:
+                # Fallback: strip to date portion
+                release_dt = datetime.fromisoformat(cleaned[:10])
+            if release_dt.tzinfo is None:
+                release_dt = release_dt.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            freshness["source_age_days"] = (now - release_dt).days
+        except Exception:
+            pass
+
+    # Determine confidence based on source_type
+    source_type = result.get("source_type", "")
+    if source_type in ("llms_full_txt", "llms_txt"):
+        freshness["confidence"] = "high"
+    elif source_type == "docs_url_only":
+        freshness["confidence"] = "low"
+    elif result.get("content"):
+        freshness["confidence"] = "medium"
+    else:
+        freshness["confidence"] = "low"
+
+    # Content staleness: compare current hash against stored hash
+    current_hash = result.get("content_hash")
+    if stored_hash and current_hash:
+        freshness["content_stale"] = stored_hash != current_hash
+
+    return freshness
+
+
 def load_stored_hashes(project_dir: Path) -> dict[str, str]:
     """Load content hashes from existing rule YAML files."""
     hashes: dict[str, str] = {}
@@ -355,7 +408,8 @@ def resolve_sources(
     sources: list[dict] = []
     errors: list[dict] = []
 
-    stored_hashes = load_stored_hashes(project_dir) if changed_only else {}
+    # Always load stored hashes — needed for freshness.content_stale
+    stored_hashes = load_stored_hashes(project_dir)
 
     for dep in deps_data.get("dependencies", []):
         name = dep["name"]
@@ -404,10 +458,13 @@ def resolve_sources(
             continue
 
         # Changed-only filter
+        stored_hash = stored_hashes.get(name)
         if changed_only and result.get("content_hash"):
-            stored_hash = stored_hashes.get(name)
             if stored_hash and stored_hash == result["content_hash"]:
                 continue  # Skip unchanged
+
+        # Compute freshness metadata
+        freshness = _compute_freshness(result, stored_hash=stored_hash)
 
         sources.append(
             {
@@ -415,6 +472,7 @@ def resolve_sources(
                 "language": language,
                 "version": version,
                 **result,
+                "freshness": freshness,
             }
         )
 

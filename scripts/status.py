@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -234,6 +235,49 @@ def compute_freshness_days(rule_files: list[dict]) -> float | None:
     return (now - latest_approval).total_seconds() / 86400
 
 
+def _compute_freshness_label(freshness_days: float | None) -> str:
+    """Compute a human-readable freshness label."""
+    if freshness_days is None:
+        return "Unknown"
+    if freshness_days < 7:
+        return "Fresh"
+    if freshness_days < 30:
+        return "Current"
+    if freshness_days < 60:
+        return "Aging"
+    return "Stale"
+
+
+def _compute_last_extraction_date(rule_files: list[dict]) -> str | None:
+    """Compute the ISO 8601 date string of the most recent extraction."""
+    latest: datetime | None = None
+
+    for rf in rule_files:
+        for rule in rf["rules"]:
+            if rule.get("approved_at"):
+                try:
+                    ts = rule["approved_at"]
+                    if isinstance(ts, datetime):
+                        dt = ts
+                    else:
+                        ts_str = str(ts)
+                        if ts_str.endswith("Z"):
+                            ts_str = ts_str[:-1] + "+00:00"
+                        dt = datetime.fromisoformat(ts_str)
+                    if latest is None or dt > latest:
+                        latest = dt
+                except (ValueError, TypeError, AttributeError):
+                    continue
+
+    if latest is None:
+        return None
+
+    if latest.tzinfo is None:
+        latest = latest.replace(tzinfo=timezone.utc)
+
+    return latest.isoformat()
+
+
 def check_drift(project_dir: Path) -> dict:
     """Run detect-deps --check-drift and return normalized drift info.
 
@@ -318,6 +362,8 @@ def compute_status(
                 "label": "Healthy",
                 "score": 100,
                 "changed_only": True,
+                "freshness_label": "Unknown",
+                "last_extraction_date": None,
                 "dimensions": {
                     "freshness_days": None,
                     "rules_count": 0,
@@ -345,7 +391,12 @@ def compute_status(
                     "pending_drift": 0,
                 },
                 "recommendations": [
-                    "No dependency drift detected. Everything is current."
+                    {
+                        "priority": "low",
+                        "action": "info",
+                        "message": "No dependency drift detected. Everything is current.",
+                        "command": None,
+                    }
                 ],
                 "warnings": [],
                 "next_command": "whetstone status  (full scan without --changed-only)",
@@ -361,6 +412,9 @@ def compute_status(
 
     approved_rules = [r for r in all_rules if r.get("approved")]
     total_rules = len(approved_rules)
+
+    # Unapproved (proposed) rules
+    unapproved_rules = [r for r in all_rules if not r.get("approved")]
 
     # Confidence breakdown
     high_confidence = sum(1 for r in approved_rules if r.get("confidence") == "high")
@@ -398,6 +452,8 @@ def compute_status(
 
     # Freshness
     freshness_days = compute_freshness_days(rule_files)
+    freshness_label = _compute_freshness_label(freshness_days)
+    last_extraction_date = _compute_last_extraction_date(rule_files)
 
     # Drift check
     # When changed_only is True, drift_info was already computed above
@@ -431,10 +487,14 @@ def compute_status(
     recommendations = _build_recommendations(
         total_rules=total_rules,
         freshness_days=freshness_days,
+        freshness_label=freshness_label,
+        last_extraction_date=last_extraction_date,
         deterministic_coverage=deterministic_coverage,
         drifted_count=drifted_count,
         drift_info=drift_info,
         ai_signal_count=len(ai_signals),
+        unapproved_count=len(unapproved_rules),
+        score=score,
     )
 
     # Impact metrics — lightweight indicators of value over time
@@ -462,6 +522,8 @@ def compute_status(
         "status": "ok",
         "label": label,
         "score": score,
+        "freshness_label": freshness_label,
+        "last_extraction_date": last_extraction_date,
         "dimensions": {
             "freshness_days": round(freshness_days, 1)
             if freshness_days is not None
@@ -610,70 +672,149 @@ def _compute_score(
 def _build_recommendations(
     total_rules: int,
     freshness_days: float | None,
+    freshness_label: str,
+    last_extraction_date: str | None,
     deterministic_coverage: float,
     drifted_count: int,
     drift_info: dict,
     ai_signal_count: int,
-) -> list[str]:
-    """Build actionable recommendations based on status."""
-    recs = []
+    unapproved_count: int = 0,
+    score: int = 0,
+) -> list[dict]:
+    """Build actionable structured recommendations based on status."""
+    recs: list[dict] = []
 
     if total_rules == 0:
-        recs.append("Run 'whetstone doctor' to extract rules from your dependencies.")
+        recs.append({
+            "priority": "high",
+            "action": "init",
+            "message": "No rules found. Run 'whetstone doctor' to get started.",
+            "command": "whetstone doctor",
+        })
         return recs
 
     if drifted_count > 0:
         changed = drift_info.get("changed", [])
         dep_list = ", ".join(c.get("name", "?") for c in changed[:3])
         suffix = f" (+{drifted_count - 3} more)" if drifted_count > 3 else ""
-        recs.append(
-            f"{drifted_count} deps have version drift: {dep_list}{suffix}. "
-            f"Run 'whetstone update --changed-only'."
-        )
+        recs.append({
+            "priority": "high",
+            "action": "update",
+            "message": f"{drifted_count} deps have version drift: {dep_list}{suffix}",
+            "command": "whetstone update --changed-only",
+        })
 
     if freshness_days and freshness_days > 30:
-        recs.append(
-            f"Last extraction was {freshness_days:.0f} days ago. "
-            f"Run 'whetstone update' to refresh."
-        )
+        date_str = f" (last: {last_extraction_date[:10]})" if last_extraction_date else ""
+        recs.append({
+            "priority": "high" if freshness_days > 60 else "medium",
+            "action": "refresh",
+            "message": (
+                f"Last extraction was {freshness_days:.0f} days ago{date_str}. "
+                f"Run 'whetstone update' to refresh."
+            ),
+            "command": "whetstone update",
+        })
 
     if deterministic_coverage < 70 and total_rules > 0:
-        recs.append(
-            f"Deterministic signal coverage is {deterministic_coverage:.0f}%. "
-            f"Consider adding AST/pattern signals to reduce AI dependency."
-        )
+        recs.append({
+            "priority": "medium",
+            "action": "review",
+            "message": (
+                f"Deterministic signal coverage is {deterministic_coverage:.0f}%. "
+                f"Consider adding AST/pattern signals."
+            ),
+            "command": None,
+        })
 
     if ai_signal_count > 0 and deterministic_coverage < 50:
-        recs.append(
-            f"{ai_signal_count} signals require AI judgment. "
-            f"Decompose into deterministic checks where possible."
-        )
+        recs.append({
+            "priority": "medium",
+            "action": "decompose",
+            "message": (
+                f"{ai_signal_count} signals use AI — "
+                f"consider decomposing into deterministic checks."
+            ),
+            "command": None,
+        })
+
+    if unapproved_count > 0:
+        recs.append({
+            "priority": "medium",
+            "action": "approve",
+            "message": (
+                f"{unapproved_count} proposed rules await approval. "
+                f"Run extraction to review."
+            ),
+            "command": None,
+        })
 
     if not recs:
-        recs.append("Everything looks good. No action needed.")
+        # Compute recommended next check
+        if freshness_days is not None:
+            days_until_check = max(1, int(30 - freshness_days))
+            recs.append({
+                "priority": "low",
+                "action": "none",
+                "message": f"Everything looks good. Next check recommended in {days_until_check} days.",
+                "command": None,
+            })
+        else:
+            recs.append({
+                "priority": "low",
+                "action": "none",
+                "message": "Everything looks good. No action needed.",
+                "command": None,
+            })
 
     return recs
 
 
+def _supports_color() -> bool:
+    """Check if the terminal likely supports ANSI color codes."""
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("FORCE_COLOR"):
+        return True
+    return hasattr(sys.stderr, "isatty") and sys.stderr.isatty()
+
+
 def format_human_output(result: dict) -> str:
-    """Format status as human-readable text."""
+    """Format status as human-readable text with box-drawing characters."""
+    W = 62  # inner width between borders
+    use_color = _supports_color()
+
+    def _color(text: str, code: str) -> str:
+        if not use_color:
+            return text
+        return f"\033[{code}m{text}\033[0m"
+
+    def line(text: str = "") -> str:
+        return f"\u2551  {text:<{W - 2}}\u2551"
+
+    def section_header(title: str) -> str:
+        padded = f"\u2550\u2550 {title} "
+        return f"\u2560{padded}{'=' * (W - len(padded))}\u2563"
+
     lines = []
-    lines.append("")
-    lines.append("=" * 60)
-    lines.append("  Whetstone Status")
-    lines.append("=" * 60)
 
     if result.get("status") == "not_initialized":
-        lines.append(f"  {result['message']}")
-        lines.append(f"  Next: {result['next_command']}")
-        lines.append("=" * 60)
+        lines.append(f"\u2554{'=' * W}\u2557")
+        lines.append(line("Whetstone Status"))
+        lines.append(section_header(""))
+        lines.append(line())
+        lines.append(line(result["message"]))
+        lines.append(line(f"Next: {result['next_command']}"))
+        lines.append(line())
+        lines.append(f"\u255a{'=' * W}\u255d")
         return "\n".join(lines)
 
     label = result.get("label", "Unknown")
     score = result.get("score", 0)
     dims = result.get("dimensions", {})
+    freshness_label = result.get("freshness_label", "Unknown")
 
-    # Status line with label
+    # Status indicator
     label_indicator = {
         "Healthy": "OK",
         "Needs Review": "!!",
@@ -681,36 +822,88 @@ def format_human_output(result: dict) -> str:
         "No Rules": "--",
     }.get(label, "??")
 
-    lines.append(f"  [{label_indicator}] {label}  (score: {score}/100)")
-    lines.append("")
+    # Color the indicator
+    indicator_colors = {
+        "OK": "32",    # green
+        "!!": "33",    # yellow
+        "XX": "31",    # red
+        "--": "90",    # gray
+    }
+    colored_indicator = _color(label_indicator, indicator_colors.get(label_indicator, "0"))
+
+    # Top border
+    lines.append(f"\u2554{'=' * W}\u2557")
+    lines.append(line("Whetstone Status"))
+    lines.append(section_header(""))
+    lines.append(line())
+
+    # Status bar
+    rules_count = dims.get("rules_count", 0)
+    drifted = dims.get("pending_updates", 0)
+    deps = result.get("dependencies_covered", [])
+
+    status_parts = [f"[{colored_indicator}] {label}"]
+    status_parts.append(f"Score: {score}/100")
+    status_parts.append(f"{rules_count} rules")
+    if drifted > 0:
+        status_parts.append(f"{drifted} deps drifted")
+    status_line = " \u00b7 ".join(status_parts)
+    # For box alignment, use the non-colored version for padding
+    raw_status = f"[{label_indicator}] {label} \u00b7 Score: {score}/100 \u00b7 {rules_count} rules"
+    if drifted > 0:
+        raw_status += f" \u00b7 {drifted} deps drifted"
+
+    if use_color:
+        # Manually pad because ANSI codes mess up len()
+        padding = W - 2 - len(raw_status)
+        lines.append(f"\u2551  {status_line}{' ' * max(0, padding)}\u2551")
+    else:
+        lines.append(line(raw_status))
+
+    lines.append(line())
 
     # Dimensions
+    lines.append(section_header("Health Dimensions"))
+    lines.append(line())
+
     freshness = dims.get("freshness_days")
     if freshness is not None:
         lines.append(
-            f"  Freshness:              {freshness:.0f} days since last extraction"
+            line(f"Freshness:              {freshness:.0f} days ({freshness_label})")
         )
     else:
-        lines.append("  Freshness:              No extraction timestamps found")
+        lines.append(line(f"Freshness:              No timestamps found ({freshness_label})"))
 
-    lines.append(f"  Rules:                  {dims.get('rules_count', 0)} approved")
+    lines.append(line(f"Rules:                  {rules_count} approved"))
+
+    # Dependency coverage
+    if deps:
+        # Try to figure out total deps from metrics
+        metrics = result.get("metrics", {})
+        total_deps = metrics.get("dependencies_total", len(deps))
+        if total_deps > 0:
+            coverage_pct = len(deps) / total_deps * 100
+            lines.append(line(f"Dep coverage:           {len(deps)} of {total_deps} deps have rules ({coverage_pct:.0f}%)"))
+        else:
+            lines.append(line(f"Dependencies:           {', '.join(deps)}"))
+
     lines.append(
-        f"  High confidence:        {dims.get('high_confidence_ratio', 0):.0f}%"
+        line(f"High confidence:        {dims.get('high_confidence_ratio', 0):.0f}%")
     )
     lines.append(
-        f"  Deterministic coverage: {dims.get('deterministic_coverage', 0):.0f}%"
+        line(f"Deterministic coverage: {dims.get('deterministic_coverage', 0):.0f}%")
     )
     lines.append(
-        f"  Pending updates:        {dims.get('pending_updates', 0)} deps with drift"
+        line(f"Pending updates:        {drifted} deps with drift")
     )
 
     # Breakdown
     breakdown = result.get("breakdown", {})
     severity = breakdown.get("severity", {})
     if any(severity.values()):
-        lines.append("")
+        lines.append(line())
         lines.append(
-            f"  Severity: {severity.get('must', 0)} must, {severity.get('should', 0)} should, {severity.get('may', 0)} may"
+            line(f"Severity: {severity.get('must', 0)} must, {severity.get('should', 0)} should, {severity.get('may', 0)} may")
         )
 
     categories = breakdown.get("categories", {})
@@ -718,36 +911,76 @@ def format_human_output(result: dict) -> str:
         cat_parts = [
             f"{v} {k}" for k, v in sorted(categories.items(), key=lambda x: -x[1])
         ]
-        lines.append(f"  Categories: {', '.join(cat_parts)}")
+        lines.append(line(f"Categories: {', '.join(cat_parts)}"))
 
     signals = breakdown.get("signals", {})
     if signals.get("total", 0) > 0:
         lines.append(
-            f"  Signals: {signals['deterministic']} deterministic, {signals['ai']} ai ({signals['total']} total)"
+            line(f"Signals: {signals['deterministic']} deterministic, {signals['ai']} ai ({signals['total']} total)")
         )
-
-    # Dependencies
-    deps = result.get("dependencies_covered", [])
-    if deps:
-        lines.append("")
-        lines.append(f"  Dependencies: {', '.join(deps)}")
 
     # Recommendations
     recs = result.get("recommendations", [])
     if recs:
-        lines.append("")
-        lines.append("  Recommendations:")
+        lines.append(line())
+        lines.append(section_header("Recommendations"))
+        lines.append(line())
         for rec in recs:
-            lines.append(f"    - {rec}")
+            if isinstance(rec, dict):
+                priority = rec.get("priority", "medium")
+                msg = rec.get("message", "")
+                cmd = rec.get("command")
+
+                # Priority marker
+                if use_color:
+                    priority_markers = {
+                        "high": _color("[HIGH]", "31"),
+                        "medium": _color("[MED]", "33"),
+                        "low": _color("[LOW]", "32"),
+                    }
+                else:
+                    priority_markers = {
+                        "high": "[HIGH]",
+                        "medium": "[MED]",
+                        "low": "[LOW]",
+                    }
+                marker = priority_markers.get(priority, f"[{priority.upper()}]")
+                raw_marker = f"[{priority.upper()[:4]}]"
+
+                # Wrap long messages
+                prefix = f"{marker} "
+                raw_prefix = f"{raw_marker} "
+                full_msg = f"{raw_prefix}{msg}"
+                if len(full_msg) > W - 4:
+                    # First line with marker
+                    lines.append(line(f"{prefix}{msg[:W - 4 - len(raw_prefix)]}"))
+                    remaining = msg[W - 4 - len(raw_prefix):]
+                    while remaining:
+                        chunk = remaining[:W - 8]
+                        lines.append(line(f"       {chunk}"))
+                        remaining = remaining[W - 8:]
+                else:
+                    if use_color:
+                        padding = W - 2 - len(full_msg)
+                        lines.append(f"\u2551  {prefix}{msg}{' ' * max(0, padding)}\u2551")
+                    else:
+                        lines.append(line(f"{prefix}{msg}"))
+
+                if cmd:
+                    lines.append(line(f"       -> {cmd}"))
+            else:
+                # Legacy string recommendation
+                lines.append(line(f"  - {rec}"))
+        lines.append(line())
 
     # Next command
     next_cmd = result.get("next_command")
     if next_cmd:
-        lines.append("")
-        lines.append(f"  Next: {next_cmd}")
+        lines.append(line(f"Next: {next_cmd}"))
+        lines.append(line())
 
-    lines.append("=" * 60)
-    lines.append("")
+    # Bottom border
+    lines.append(f"\u255a{'=' * W}\u255d")
 
     return "\n".join(lines)
 
