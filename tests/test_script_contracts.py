@@ -1429,6 +1429,234 @@ rules:
         assert result["rules_processed"] == 1
         assert len(result["generated"]["tests"]["typescript"]) == 1
 
+    def test_ts_setup_file_generated(self, tmp_path):
+        """TypeScript generation produces a setup.ts with shared utilities."""
+        mod = self._load_generate_tests_module()
+        setup_content = mod.generate_typescript_setup()
+        assert "findSourceFiles" in setup_content
+        assert "readLines" in setup_content
+        assert "violation" in setup_content
+        assert "export function" in setup_content
+
+    def test_ts_real_check_removes_experimental_header(self):
+        """TS test with real check should NOT have EXPERIMENTAL header."""
+        mod = self._load_generate_tests_module()
+        rule = {
+            "id": "react.deprecated-api",
+            "source_url": "https://react.dev/reference",
+            "description": "Use createRoot instead of ReactDOM.render",
+            "_dep_name": "react",
+            "_language": "typescript",
+            "signals": [
+                {
+                    "id": "deprecated-render",
+                    "strategy": "pattern",
+                    "description": "Uses deprecated `ReactDOM.render()`",
+                    "weight": "required",
+                }
+            ],
+        }
+        output = mod.generate_typescript_test(rule)
+        assert "EXPERIMENTAL" not in output
+
+    def test_ts_import_signal_produces_check(self):
+        """TS generator with import-related pattern produces import check."""
+        mod = self._load_generate_tests_module()
+        rule = {
+            "id": "react.no-default-import",
+            "source_url": "https://react.dev/reference",
+            "description": "Avoid importing from legacy module",
+            "_dep_name": "react",
+            "_language": "typescript",
+            "signals": [
+                {
+                    "id": "legacy-import",
+                    "strategy": "pattern",
+                    "description": "Imports from `react-dom/render`",
+                    "weight": "required",
+                }
+            ],
+        }
+        output = mod.generate_typescript_test(rule)
+        assert "import" in output.lower()
+        assert "violations.push" in output
+
+    def test_biome_config_nested_groups(self):
+        """Biome config has proper nested group structure."""
+        mod = self._load_generate_tests_module()
+        rules = [
+            {
+                "id": "test.rule",
+                "signals": [
+                    {
+                        "strategy": "lint_proxy",
+                        "description": "Enable noExplicitAny",
+                    },
+                    {
+                        "strategy": "lint_proxy",
+                        "description": "Enable noUnusedVariables",
+                    },
+                    {
+                        "strategy": "lint_proxy",
+                        "description": "Enable useConst",
+                    },
+                ],
+            }
+        ]
+        config = mod.generate_biome_config(rules)
+        linter_rules = config["linter"]["rules"]
+        # Rules should be in nested groups, not flat
+        assert isinstance(linter_rules, dict)
+        # Should have group keys like 'suspicious', 'correctness', 'style'
+        for group_name, group_rules in linter_rules.items():
+            assert group_name in ("suspicious", "correctness", "style", "nursery", "performance", "a11y", "security")
+            assert isinstance(group_rules, dict)
+            for rule_name, severity in group_rules.items():
+                assert severity == "error"
+        # Check specific categorizations
+        assert "noExplicitAny" in linter_rules.get("suspicious", {})
+        assert "noUnusedVariables" in linter_rules.get("correctness", {})
+        assert "useConst" in linter_rules.get("style", {})
+
+    def test_clippy_config_has_lint_categories(self):
+        """Clippy config has lint category comments."""
+        mod = self._load_generate_tests_module()
+        rules = [
+            {
+                "id": "test.rule",
+                "signals": [
+                    {
+                        "strategy": "lint_proxy",
+                        "description": "Enable unwrap_used lint",
+                    },
+                    {
+                        "strategy": "lint_proxy",
+                        "description": "Enable expect_used lint",
+                    },
+                    {
+                        "strategy": "lint_proxy",
+                        "description": "Enable doc_markdown lint",
+                    },
+                ],
+            }
+        ]
+        config = mod.generate_clippy_config(rules)
+        # Should have category comments
+        assert "# Restriction" in config or "# Pedantic" in config
+        # Should have lint assignments
+        assert 'unwrap_used = "deny"' in config
+        assert 'expect_used = "deny"' in config
+        assert "[lints.clippy]" in config
+
+    def test_rs_use_check_produces_real_check(self):
+        """Rust generator with use statement signal produces use check."""
+        mod = self._load_generate_tests_module()
+        rule = {
+            "id": "tokio.old-runtime",
+            "source_url": "https://docs.rs/tokio/latest",
+            "description": "Use new tokio runtime API",
+            "_dep_name": "tokio",
+            "_language": "rust",
+            "signals": [
+                {
+                    "id": "old-use",
+                    "strategy": "pattern",
+                    "description": "Uses deprecated `use tokio::old_runtime`",
+                    "weight": "required",
+                }
+            ],
+        }
+        output = mod.generate_rust_test(rule)
+        assert "starts_with" in output or "contains" in output
+        assert "violations.push" in output
+
+    def test_python_import_check(self):
+        """Python generator with import signal produces AST import check."""
+        mod = self._load_generate_tests_module()
+        rule = {
+            "id": "flask.old-import",
+            "source_url": "https://flask.palletsprojects.com",
+            "description": "Use new import path",
+            "_dep_name": "flask",
+            "_language": "python",
+            "signals": [
+                {
+                    "id": "old-import",
+                    "strategy": "ast",
+                    "description": "Imports from `flask.ext`",
+                    "weight": "required",
+                }
+            ],
+        }
+        output = mod.generate_python_test(rule)
+        assert "ImportFrom" in output or "Import" in output
+        assert "violations" in output
+
+    def test_python_class_inheritance_check(self):
+        """Python generator with class inheritance signal produces class check."""
+        mod = self._load_generate_tests_module()
+        rule = {
+            "id": "django.old-view",
+            "source_url": "https://docs.djangoproject.com",
+            "description": "Use new base view class",
+            "_dep_name": "django",
+            "_language": "python",
+            "signals": [
+                {
+                    "id": "old-base",
+                    "strategy": "ast",
+                    "description": "Class inherits from DeprecatedView",
+                    "weight": "required",
+                }
+            ],
+        }
+        output = mod.generate_python_test(rule)
+        assert "ClassDef" in output
+        assert "DeprecatedView" in output
+
+    def test_python_kwarg_check(self):
+        """Python generator with kwarg signal produces keyword argument check."""
+        mod = self._load_generate_tests_module()
+        rule = {
+            "id": "sqlalchemy.missing-kwarg",
+            "source_url": "https://docs.sqlalchemy.org",
+            "description": "Pass pool_size keyword argument",
+            "_dep_name": "sqlalchemy",
+            "_language": "python",
+            "signals": [
+                {
+                    "id": "missing-pool-size",
+                    "strategy": "ast",
+                    "description": "create_engine() called without keyword argument pool_size",
+                    "weight": "required",
+                }
+            ],
+        }
+        output = mod.generate_python_test(rule)
+        assert "keywords" in output
+        assert "pool_size" in output
+
+    def test_python_signal_comments(self):
+        """Python tests include Signal: comments before each check."""
+        mod = self._load_generate_tests_module()
+        rule = {
+            "id": "fastapi.async-routes",
+            "source_url": "https://fastapi.tiangolo.com/async/",
+            "description": "Route handlers MUST use async def",
+            "_dep_name": "fastapi",
+            "_language": "python",
+            "signals": [
+                {
+                    "id": "is-sync-function",
+                    "strategy": "ast",
+                    "description": "Function decorated with route decorator uses def instead of async def",
+                    "weight": "required",
+                }
+            ],
+        }
+        output = mod.generate_python_test(rule)
+        assert "# Signal: is-sync-function (ast, required)" in output
+
 
 class TestCLIWrapper:
     """CLI wrapper dispatches to scripts correctly — Epic 8 (whetstone-xpf)."""

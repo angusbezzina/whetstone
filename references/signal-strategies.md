@@ -146,3 +146,36 @@ When decomposing a rule into signals:
 - [ ] AI signals have a clear binary question
 - [ ] All signals have descriptive `description` fields
 - [ ] Signal IDs are unique within the rule
+
+## Language Support Matrix
+
+| Strategy | Python | TypeScript | Rust |
+|----------|--------|------------|------|
+| `ast` | Full (`ast` stdlib) | Regex approximation | String matching |
+| `pattern` | Full (regex) | Full (regex) | Full (string/regex) |
+| `lint_proxy` | Ruff overlay | Biome config | Clippy config |
+| `ai` | Supplement only | Supplement only | Supplement only |
+
+### Supported Signal Patterns by Language
+
+#### Python (Reference Implementation)
+- Function signatures (async/sync, parameters, decorators)
+- Import statements and paths
+- Class inheritance and method overrides
+- Keyword argument presence/absence
+- String literal patterns
+- Deprecated API calls
+
+#### TypeScript (Baseline)
+- Deprecated API calls (pattern matching)
+- Import statement checks (pattern matching)
+- String literal checks (pattern matching)
+- Async/sync function detection (regex approximation)
+- Complex AST checks generate TODO scaffolds
+
+#### Rust (Baseline)
+- Deprecated API calls (string contains)
+- Unsafe block detection
+- .unwrap() usage detection
+- use statement checks
+- Complex AST checks generate TODO scaffolds with Dylint reference
