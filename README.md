@@ -2,7 +2,9 @@
 
 > Sharpen the tools that write your code.
 
-Whetstone derives coding rules from the documentation of your actual dependencies, decomposes them into deterministic checks, and generates native tests, lint configs, and agent context files. When your dependencies evolve, Whetstone tells you exactly what changed and proposes specific new rules.
+Whetstone is a **rule-intelligence layer** that derives coding rules from the documentation of your actual dependencies. It decomposes rules into deterministic checks and generates native tests, lint configs, and agent context files — all from the same approved ruleset.
+
+Other tools execute checks, review pull requests, or apply fixes. Whetstone decides **which rules are worth enforcing** in the first place, why they matter, and how they map to deterministic enforcement and agent guidance.
 
 It's a codegen tool, not a runtime dependency. A teammate who never installs Whetstone still gets every rule enforced through standard CI and every agent guided by current instructions.
 
@@ -10,9 +12,9 @@ It's a codegen tool, not a runtime dependency. A teammate who never installs Whe
 
 **Rules go stale.** Linter configs and coding conventions are written once at project setup. Dependencies ship new versions, deprecate APIs, and introduce better patterns. Nobody updates the rules. Agents keep writing code against outdated practices.
 
-**Semantic best practices are unenforced.** "Error messages should be actionable," "prefer composition over inheritance" — everyone agrees on these, no tool checks them.
+**Dependency-specific best practices are unenforced.** Standard linters catch syntax and formatting. They don't know that FastAPI docs recommend `async def` for route handlers, or that Pydantic deprecated `.schema()` in favor of `model_json_schema()`. These are the rules that matter most — and nothing catches them.
 
-**Agents aren't told what they need to know.** `AGENTS.md` and `.cursorrules` are written once by hand — if they're written at all — and never updated.
+**Agents aren't told what they need to know.** `AGENTS.md` and `.cursorrules` are written once by hand — if they're written at all — and never updated when dependencies evolve.
 
 Whetstone solves all three. It treats documentation as a living source of truth, converts it into enforceable checks, and keeps everything current as your dependencies evolve.
 
@@ -20,58 +22,107 @@ Whetstone solves all three. It treats documentation as a living source of truth,
 
 5 rules you trust completely beats 50 you have to review. Whetstone only proposes rules backed by specific documentation with deterministic signals. A project with 40 dependencies might get rules for 8 of them — those are the 8 that have something worth enforcing.
 
+### What Whetstone is NOT
+
+Whetstone is not a general AI code reviewer, a replacement for ruff/biome/clippy, or a broad semantic-eval platform. It complements existing tools by filling the gap between what linters catch and what dependency docs recommend.
+
 ## Quick Start
 
-**Prerequisites:** Python 3.9+, git, internet access for registry lookups.
+**Prerequisites:** Python 3.10+, git, internet access for registry lookups.
+
+### For Python projects
 
 ```bash
-# 1. Install (or clone) Whetstone as an agent skill
+# 1. Clone Whetstone
 git clone https://github.com/yourusername/whetstone.git
-pip install pyyaml  # required dependency
+pip install pyyaml  # only required dependency
 
 # 2. Run the doctor — one command from zero to working rules
 python3 whetstone/scripts/cli.py doctor --project-dir .
+# → detects dependencies from pyproject.toml / requirements.txt
+# → resolves documentation URLs from PyPI, probes for llms.txt
+# → outputs extraction context for the agent
 
-# 3. The doctor detects dependencies, resolves their docs, and
-#    outputs extraction context. Feed this to your agent to extract rules.
-#    The agent proposes rules; you approve each one.
+# 3. The agent reads the doctor output, proposes rules, you approve each one
 
 # 4. Generate tests and agent context from approved rules
 python3 whetstone/scripts/cli.py generate-tests --project-dir .
 python3 whetstone/scripts/cli.py generate-context --project-dir .
+# → pytest files in whetstone/evals/python/
+# → ruff overlay in whetstone/lint/ruff.whetstone.toml
+# → AGENTS.md, CLAUDE.md, .cursorrules at project root
 
 # 5. Check project health anytime
 python3 whetstone/scripts/cli.py status --project-dir .
 ```
 
-The doctor is the recommended entry point — it chains dependency detection, source resolution, and pattern mining into a single flow.
+### For TypeScript projects
 
-> **Tip:** When using Whetstone as an agent skill, you say "whetstone doctor" or "whetstone status" and the agent runs the corresponding script. When running manually, use `python3 scripts/cli.py <command>` or call scripts directly with `python3 scripts/<name>.py`.
+```bash
+python3 whetstone/scripts/cli.py doctor --project-dir .
+# → detects dependencies from package.json
+# → resolves documentation URLs from npm
+
+# After extraction and approval:
+python3 whetstone/scripts/cli.py generate-tests --project-dir .
+# → vitest files in whetstone/evals/typescript/
+# → biome overlay in whetstone/lint/biome.whetstone.json
+```
+
+### For Rust projects
+
+```bash
+python3 whetstone/scripts/cli.py doctor --project-dir .
+# → detects dependencies from Cargo.toml
+# → resolves documentation URLs from crates.io / docs.rs
+
+# After extraction and approval:
+python3 whetstone/scripts/cli.py generate-tests --project-dir .
+# → cargo test files in whetstone/evals/rust/
+# → clippy overlay in whetstone/lint/clippy.whetstone.toml
+```
+
+> **Agent skill mode:** When using Whetstone as an agent skill, say "whetstone doctor" or "whetstone status" and the agent runs the corresponding script. When running manually, use `python3 scripts/cli.py <command>` or call scripts directly.
+
+## Canonical Workflow
+
+Whetstone follows a six-step lifecycle. The doctor command handles steps 1-2 automatically.
+
+| Step | Command | What happens |
+|------|---------|-------------|
+| **1. Detect** | `doctor` (or `detect-deps`) | Scan manifests for dependencies |
+| **2. Resolve** | `doctor` (or `resolve-sources`) | Resolve docs URLs from registries, probe for llms.txt |
+| **3. Extract** | Agent-mediated | LLM reads docs, proposes candidate rules |
+| **4. Approve** | Agent-mediated | User reviews each rule (approve/edit/deny/skip) |
+| **5. Generate** | `generate-tests` + `generate-context` | Produce tests, lint configs, agent context |
+| **6. Monitor** | `status` / `ci-check` | Track freshness, drift, and health |
+
+When dependencies update, run `detect-deps --changed-only` to see what drifted, then re-extract only the changed sources.
 
 ## How It Works
 
 ```
-Detect  →  Your manifests (pyproject.toml, package.json, Cargo.toml)
-              are scanned for dependencies
-
-Resolve →  Documentation URLs are resolved from package registries
-              (PyPI, npm, crates.io), probing for llms.txt first
-
-Extract →  An LLM reads the docs and proposes high-confidence rules:
-              migration footguns, non-obvious defaults, convention
-              divergence, breaking changes, semantic practices
-
-Approve →  You review each rule. Whetstone never auto-approves.
-              Every rule cites a specific documentation URL.
-
-Generate → Approved rules produce:
-              - Native tests (pytest / vitest / cargo test)
-              - Lint configs (ruff / biome / clippy)
-              - Agent context (AGENTS.md, CLAUDE.md, .cursorrules)
-
-Monitor →  Whetstone detects version drift and tells you exactly
-              which deps changed and what new rules to consider
+┌─────────────────────────────────────────────────────────────┐
+│  Scripts (deterministic)           Agent (LLM-mediated)     │
+│                                                             │
+│  detect-deps.py ──────┐                                     │
+│  resolve-sources.py ──┤── doctor.py ──→  Extract rules      │
+│  detect-patterns.py ──┘       │          (agent reads docs, │
+│                               │           proposes rules)   │
+│                               │                ↓            │
+│                               │          Approve rules      │
+│                               │          (user reviews      │
+│                               │           each one)         │
+│                               │                ↓            │
+│  generate-tests.py ───────────┤── writes approved YAML      │
+│  generate-agent-context.py ───┘                             │
+│                                                             │
+│  status.py ── health score, drift detection, next actions   │
+│  ci-check.py ── CI gating, PR comments                     │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+**Scripts handle deterministic work:** dependency detection, URL resolution, file generation, health monitoring. **The agent handles judgment:** reading documentation, proposing rules, and presenting them for user approval. This separation means the agent can be Claude, Cursor, Copilot, or any LLM — the scripts don't care.
 
 ### What gets proposed
 
@@ -233,13 +284,17 @@ Action outputs: `freshness_status`, `changed_sources_count`, `recommended_rules_
 
 ## Languages
 
-| Language | Manifest | Registry | Tests | Linter | Status |
-|----------|----------|----------|-------|--------|--------|
-| Python | `pyproject.toml`, `requirements.txt` | PyPI | pytest | ruff | Full |
-| TypeScript | `package.json` | npm | vitest | biome | Experimental |
-| Rust | `Cargo.toml` | crates.io | cargo test | clippy | Experimental |
+| Language | Manifest | Registry | Tests | Linter | Support Tier |
+|----------|----------|----------|-------|--------|--------------|
+| Python | `pyproject.toml`, `requirements.txt` | PyPI | pytest | ruff | **Full** — reference implementation |
+| TypeScript | `package.json` | npm | vitest | biome | **Baseline** — common signals work, complex patterns scaffold |
+| Rust | `Cargo.toml` | crates.io | cargo test | clippy | **Baseline** — common signals work, complex patterns scaffold |
 
-> **Note:** Python test generation produces working AST/pattern checks. TypeScript and Rust generation produces real scanning logic for common signal types (deprecated APIs, pattern matching, unsafe blocks, unwrap usage) but may produce TODO scaffolds for less common signal patterns. See generated file headers for details.
+### What each tier means
+
+**Full (Python):** AST-based checks for function signatures, decorators, imports, class inheritance, keyword arguments. Pattern-based checks for string literals and naming conventions. Ruff overlay generation for lint_proxy signals. Generated tests are complete and runnable.
+
+**Baseline (TypeScript, Rust):** Pattern/string-matching checks for deprecated APIs, import statements, and common patterns. Generated tests work for these signal types. Complex AST patterns (e.g., type inference, trait bounds) produce TODO scaffolds that need manual implementation. Biome/clippy overlay generation works for lint_proxy signals.
 
 ## Privacy
 
@@ -260,6 +315,25 @@ This means Whetstone will NOT read conversations from unrelated projects unless 
 
 If you're concerned about privacy, use the default scoped mode (no flag needed) or exclude transcript mining entirely with `--sources git,pr`.
 
+## How Whetstone Fits with Existing Tools
+
+Whetstone is designed to complement — not replace — your existing toolchain.
+
+| Tool | What it does | How Whetstone complements it |
+|------|-------------|------------------------------|
+| **ruff / biome / clippy** | Enforces syntax, formatting, and general code quality rules | Whetstone catches dependency-specific practices these linters don't know about. Where a linter rule exists but isn't enabled, Whetstone generates a lint overlay to enable it. |
+| **PR review bots** (reviewdog, danger, etc.) | Automated checks on pull requests | Whetstone generates the rules these bots enforce. Run `ci-check.py` in CI for freshness gating alongside your existing checks. |
+| **AI code review** (CodeRabbit, Copilot review, etc.) | LLM-powered code review | Whetstone provides deterministic, source-backed rules that don't vary between runs. Use it for the checks you want to enforce consistently, AI review for everything else. |
+| **AGENTS.md / .cursorrules** | Static agent instructions | Whetstone auto-generates and keeps these files current. When dependencies update, your agent instructions update too. |
+| **Semgrep / CodeQL** | Custom static analysis rules | For TypeScript and Rust, Whetstone can generate signal patterns that map to Semgrep rules. For Python, Whetstone's pytest-based checks are simpler to maintain. |
+
+### What Whetstone adds that nothing else does
+
+1. **Source-backed provenance** — every rule cites a specific documentation URL
+2. **Drift detection** — knows when your dependencies updated and your rules didn't
+3. **Multi-output from single source** — same approved rule becomes a test, a lint config, and an agent instruction
+4. **Recency awareness** — prioritizes rules about recent changes that LLMs weren't trained on
+
 ## FAQ
 
 **How is this different from a linter?**
@@ -272,7 +346,7 @@ No. Whetstone is an Agent Skill — the agent running it (Claude, Cursor, etc.) 
 That's correct behavior. If the documentation doesn't clearly state practices worth enforcing, Whetstone stays silent. You can always add rules manually.
 
 **Can I add custom sources beyond dependency docs?**
-The extraction prompt works with any documentation content — team style guides, blog posts, migration guides. Currently, you provide custom source content to the agent manually during extraction. Automated custom URL ingestion is planned for a future release.
+The extraction prompt works with any documentation content — team style guides, blog posts, migration guides. Currently, you provide custom source content to the agent manually during extraction. *Planned: automated custom URL ingestion.*
 
 **What happens if I don't install Whetstone?**
 Nothing breaks. The generated tests, lint configs, and agent context files are standard files in your repo. They run with your existing CI and work with any agent that reads `AGENTS.md` or `.cursorrules`.
@@ -282,6 +356,46 @@ Run `status.py` or `ci-check.py` to see which dependencies have drifted. Then ru
 
 **What's the `next_command` field in every output?**
 Every script suggests what to do next. Agent clients can use this to chain commands automatically without reading documentation.
+
+## Self-Hosting (Dogfooding)
+
+Whetstone can be used on itself. The `tests/fixtures/` directory contains sample manifests that demonstrate the full workflow. To run the self-hosting workflow:
+
+```bash
+# Run doctor against the test fixtures
+python3 scripts/doctor.py --project-dir tests/fixtures --skip-patterns --json
+
+# Check status of existing rules
+python3 scripts/status.py --project-dir tests/fixtures
+
+# Generate test artifacts from the sample rules
+python3 scripts/generate-tests.py --project-dir tests/fixtures --dry-run
+python3 scripts/generate-agent-context.py --project-dir tests/fixtures --dry-run
+```
+
+The test fixtures include a `fastapi.yaml` rule file that demonstrates the full rule schema with lifecycle fields, provenance metadata, and golden examples. This serves as a reference for the quality bar Whetstone expects.
+
+## Current Capabilities vs Roadmap
+
+**Shipped today:**
+- Dependency detection across Python, TypeScript, and Rust (including monorepos)
+- Documentation resolution via registry APIs with llms.txt probing
+- Agent-mediated rule extraction with structured approval flow
+- Test generation (pytest, vitest, cargo test) and lint overlays (ruff, biome, clippy)
+- Agent context generation (AGENTS.md, CLAUDE.md, .cursorrules, and 3 more formats)
+- Health monitoring with drift detection, freshness scoring, and metric history
+- CI integration via GitHub Action with PR comments
+- Privacy-scoped transcript mining for style patterns
+
+**Planned (not yet implemented):**
+- AI eval runner for ambiguous signals (`check --ai-only`)
+- Layer system (personal → project → team → built-in)
+- Rule promotion across layers (`promote` command)
+- Automated custom URL ingestion for non-registry sources
+- Shared rule registry with community-ranked rules
+- Rust CLI binary (currently Python scripts)
+
+See `planning/roadmap.md` for the full phased delivery plan.
 
 ## Troubleshooting
 

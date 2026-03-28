@@ -5,7 +5,7 @@ description: >-
   generates native tests, lint configs, and agent context files. Use when the
   user asks to extract rules, update standards, or run whetstone commands.
 license: MIT
-compatibility: Requires python3 (3.9+), git, and internet access for registry lookups.
+compatibility: Requires python3 (3.10+), git, and internet access for registry lookups.
 metadata:
   author: whetstone
   version: "0.1.0"
@@ -75,6 +75,38 @@ All scripts accept `--project-dir` (default: `.`). User-facing scripts support t
 | `--check-drift` | Include drift info in output | detect-deps |
 
 Building-block scripts (detect-deps, resolve-sources, detect-patterns, generate-*) always output JSON to stdout. All scripts include a `next_command` field in their JSON output.
+
+### JSON Output Contract
+
+Every script follows this contract:
+
+| Field | Type | Present | Description |
+|-------|------|---------|-------------|
+| `status` | `"ok"` \| `"error"` | Sometimes | Overall result status |
+| `error` | string | On error | Human-readable error message |
+| `next_command` | string | Always | Suggested next command to run |
+| `warnings` | string[] | Sometimes | Non-fatal issues encountered |
+
+**Success responses** include domain-specific data (e.g., `dependencies`, `sources`, `generated`).
+**Error responses** always include `error` and `next_command` — never a traceback to stdout.
+
+Progress messages go to stderr so stdout stays clean for JSON piping.
+
+### Script vs Agent Responsibilities
+
+| Task | Handled by | Why |
+|------|-----------|-----|
+| Dependency detection | **Script** | Deterministic manifest parsing |
+| Source resolution | **Script** | Deterministic registry API calls |
+| Pattern detection | **Script** | Deterministic transcript/git mining |
+| Rule extraction | **Agent** | Requires reading and understanding documentation |
+| Rule approval | **Agent + User** | Requires judgment and user consent |
+| Test generation | **Script** | Deterministic code generation from approved YAML |
+| Agent context generation | **Script** | Deterministic markdown generation from approved YAML |
+| Health monitoring | **Script** | Deterministic metric computation |
+| CI gating | **Script** | Deterministic pass/fail decision |
+
+Scripts are interchangeable — they work regardless of which agent runs them. The agent brings judgment to steps 3 and 4; scripts handle everything else.
 
 ---
 

@@ -35,7 +35,7 @@ Update     → Re-extracts only what changed, you approve, everything regenerate
 
 **Semantic rules are decomposed.** Each rule is broken into the most deterministic signals possible — AST checks, pattern matching, lint mappings. AI judgment is the backstop for what's left, not the primary enforcement.
 
-**Three layers.** Personal preferences (local only, never committed), project standards (committed, enforced in CI), and team/org defaults (inherited across projects). They cascade like git config.
+**Three layers.** *(Planned)* Personal preferences (local only, never committed), project standards (committed, enforced in CI), and team/org defaults (inherited across projects). They cascade like git config. Currently, Whetstone operates at the project layer.
 
 **It stays current.** Whetstone monitors your sources and nudges you with specific recommendations when things change — not "your rules are stale" but "Pydantic deprecated `schema()`, here's a new rule for `model_json_schema()`, do you want to enforce it?"
 
@@ -45,7 +45,7 @@ Python, TypeScript, and Rust. Each with native test generation and native linter
 
 ## Implementation
 
-Currently shipped as an **Agent Skill** with Python helper scripts — install via `npx skills add whetstone` or `git clone`. Requires Python 3.9+ and PyYAML.
+Currently shipped as an **Agent Skill** with Python helper scripts — install via `npx skills add whetstone` or `git clone`. Requires Python 3.10+ and PyYAML.
 
 > **Roadmap:** A Rust CLI binary is planned for a future phase. The YAML rule format and file structure are designed to carry over unchanged.
 

@@ -1,24 +1,36 @@
 # Agent Instructions for Whetstone
 
-> Whetstone sharpens the tools that write your code. It derives coding rules from the documentation of your actual dependencies, decomposes them into deterministic checks, and generates native tests, lint configs, and agent context files.
+> Whetstone is the **rule-intelligence layer** for your codebase. It derives coding rules from the documentation of your actual dependencies, decomposes them into deterministic checks, and generates native tests, lint configs, and agent context files — all from the same approved ruleset.
 
 ## Project Overview
 
-Whetstone is an Agent Skill (agentskills.io format) with Python helper scripts. The agent acts as the LLM for rule extraction -- no separate API key or binary required. Scripts handle deterministic work (dep detection, URL resolution, file generation). See `planning/mvp.md` for the full architecture.
+Whetstone is an Agent Skill (agentskills.io format) with Python helper scripts. Scripts handle deterministic work (dependency detection, URL resolution, file generation, health monitoring). The agent handles judgment (reading documentation, proposing rules, presenting them for approval). No separate API key or binary required — the agent running Whetstone *is* the LLM.
 
-**Key files:**
-- `planning/one-pager.md` -- Product vision and positioning
-- `planning/product-spec.md` -- Full technical specification
-- `planning/roadmap.md` -- Phased delivery plan
-- `planning/mvp.md` -- MVP build plan (current focus)
+### Canonical Workflow
 
-**MVP deliverables:**
-- `SKILL.md` -- Core agent skill (workflow + extraction prompt)
-- `scripts/detect-deps.py` -- Dependency detection (Python/TS/Rust)
-- `scripts/resolve-sources.py` -- Source URL resolution + content fetching
-- `scripts/detect-patterns.py` -- Mine transcripts/git/PRs for style patterns
-- `scripts/generate-agent-context.py` -- Multi-format agent context generation
-- `scripts/generate-tests.py` -- Test + linter config generation
+| Step | Responsibility | Command |
+|------|---------------|---------|
+| 1. Detect | Script | `doctor` (or `detect-deps`) |
+| 2. Resolve | Script | `doctor` (or `resolve-sources`) |
+| 3. Extract | Agent | Read docs, propose candidate rules |
+| 4. Approve | Agent + User | Present rules for review, persist decisions |
+| 5. Generate | Script | `generate-tests` + `generate-context` |
+| 6. Monitor | Script | `status` / `ci-check` |
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `SKILL.md` | Core agent skill (workflow + extraction prompt) |
+| `scripts/doctor.py` | One-command bootstrap orchestrator |
+| `scripts/detect-deps.py` | Dependency detection (Python/TS/Rust) |
+| `scripts/resolve-sources.py` | Source URL resolution + content fetching |
+| `scripts/detect-patterns.py` | Mine transcripts/git/PRs for style patterns |
+| `scripts/generate-agent-context.py` | Multi-format agent context generation |
+| `scripts/generate-tests.py` | Test + linter config generation |
+| `scripts/status.py` | Health score, drift detection, recommendations |
+| `scripts/ci-check.py` | CI freshness gating + PR comments |
+| `scripts/cli.py` | Unified CLI wrapper for all commands |
 
 ---
 
@@ -86,13 +98,14 @@ Whetstone is not a linter. It catches the things that matter most and that nothi
 
 ## Languages and Ecosystems
 
-Whetstone supports three language ecosystems:
+| Language   | Manifest                          | Registry   | Tests    | Linter | Support |
+|------------|-----------------------------------|------------|----------|--------|---------|
+| Python     | `pyproject.toml`, `requirements.txt` | PyPI       | pytest   | ruff   | Full |
+| TypeScript | `package.json`                    | npm        | vitest   | biome  | Baseline |
+| Rust       | `Cargo.toml`                      | crates.io  | cargo test | clippy | Baseline |
 
-| Language   | Manifest                          | Registry   | Test Framework | Linter |
-|------------|-----------------------------------|------------|----------------|--------|
-| Python     | `pyproject.toml`, `requirements.txt` | PyPI       | pytest         | ruff   |
-| TypeScript | `package.json`                    | npm        | vitest         | biome  |
-| Rust       | `Cargo.toml`                      | crates.io  | cargo test     | clippy |
+**Full**: AST-based checks, pattern matching, lint overlays — all generated tests are complete and runnable.
+**Baseline**: Pattern/string matching for common signals (deprecated APIs, imports). Complex AST patterns generate TODO scaffolds.
 
 ---
 
@@ -101,29 +114,53 @@ Whetstone supports three language ecosystems:
 Rules follow a strict schema. See `references/rule-schema.yaml` for the full specification. Key fields:
 
 ```yaml
-- id: fastapi.async-routes
-  severity: must              # must | should | may
-  confidence: high            # high | medium
-  category: convention        # migration | default | convention | breaking-change | semantic
-  description: >
-    Route handlers MUST use async def.
-  source_url: https://fastapi.tiangolo.com/async/
-  approved: true
-  signals:
-    - id: is-sync-function
-      strategy: ast           # ast | pattern | lint_proxy | ai
-      description: Function decorated with route decorator uses def instead of async def
-      weight: required
-  golden_examples:
-    - code: |
-        @app.get("/users")
-        async def get_users(): ...
-      verdict: pass
-    - code: |
-        @app.get("/users")
-        def get_users(): ...
-      verdict: fail
+source:
+  name: fastapi
+  docs_url: https://fastapi.tiangolo.com
+  version: "0.115.0"
+  content_hash: sha256:abc123...
+  resolved_at: "2026-03-28T10:00:00Z"
+  registry: pypi
+
+rules:
+  - id: fastapi.async-routes
+    severity: must              # must | should | may
+    confidence: high            # high | medium
+    category: convention        # migration | default | convention | breaking-change | semantic
+    description: >
+      Route handlers MUST use async def.
+    source_url: https://fastapi.tiangolo.com/async/
+    status: approved            # candidate | approved | denied | deprecated
+    approved: true
+    approved_at: "2026-03-28T12:00:00Z"
+    proposed_at: "2026-03-28T11:30:00Z"
+    proposed_by: whetstone-extraction
+    signals:
+      - id: is-sync-function
+        strategy: ast           # ast | pattern | lint_proxy | ai
+        description: Function decorated with route decorator uses def instead of async def
+        weight: required
+    golden_examples:
+      - code: |
+          @app.get("/users")
+          async def get_users(): ...
+        verdict: pass
+        reason: Uses async def as recommended by FastAPI docs
+      - code: |
+          @app.get("/users")
+          def get_users(): ...
+        verdict: fail
+        reason: Sync function blocks the event loop under concurrent load
 ```
+
+### Rule Lifecycle
+
+| State | Meaning | Used for generation? |
+|-------|---------|---------------------|
+| `candidate` | Proposed, awaiting review | No |
+| `approved` | Reviewed and accepted | Yes |
+| `denied` | Reviewed and rejected (prevents re-proposal) | No |
+| `deprecated` | Previously approved, now invalid | No |
 
 ---
 

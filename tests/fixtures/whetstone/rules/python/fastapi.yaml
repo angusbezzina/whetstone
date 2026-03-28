@@ -3,6 +3,8 @@ source:
   docs_url: https://fastapi.tiangolo.com
   version: "0.115.0"
   content_hash: sha256:test123
+  resolved_at: "2026-02-25T11:00:00Z"
+  registry: pypi
 
 rules:
   - id: fastapi.async-routes
@@ -12,8 +14,17 @@ rules:
     description: >
       Route handlers MUST use async def.
     source_url: https://fastapi.tiangolo.com/async/
+    source_quote: >
+      Use async def for route operations that call async libraries.
+    risk: >
+      Blocks the event loop under concurrent load, causing request timeouts.
+    linter_gap: >
+      ruff has no rule for async vs sync route handlers.
+    status: approved
     approved: true
-    approved_at: 2026-02-25T12:00:00Z
+    approved_at: "2026-02-25T12:00:00Z"
+    proposed_at: "2026-02-25T11:30:00Z"
+    proposed_by: whetstone-extraction
     signals:
       - id: is-sync-function
         strategy: ast
@@ -24,7 +35,14 @@ rules:
           @app.get("/users")
           async def get_users(): ...
         verdict: pass
+        reason: Uses async def as recommended by FastAPI docs
       - code: |
           @app.get("/users")
           def get_users(): ...
         verdict: fail
+        reason: Sync function blocks the event loop under concurrent load
+      - code: |
+          @app.post("/items")
+          async def create_item(item: Item): ...
+        verdict: pass
+        reason: POST handler correctly uses async def

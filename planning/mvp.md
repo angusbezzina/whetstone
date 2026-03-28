@@ -1,5 +1,7 @@
 # Whetstone MVP: Agent Skill + Scripts
 
+> **Status: COMPLETE.** The MVP is fully implemented and shipped. See `planning/mvp-v2.md` for the current work phase focused on product sharpness and quality.
+
 > Build the core Whetstone experience as an Agent Skill with Python helper scripts. Deliverable in one focused day.
 
 ---

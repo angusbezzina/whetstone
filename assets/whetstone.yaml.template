@@ -24,6 +24,14 @@ agents:
   # - windsurfrules        # → .windsurfrules
   # - codex.md             # → codex.md
 
+# Discovery settings: control which directories are scanned for manifests
+# discovery:
+#   exclude:                    # Additional directories to skip during manifest search
+#     - "tests/fixtures"
+#     - "examples"
+#     - "vendor"
+#   include: []                 # Directories to include even if normally skipped
+
 # Source overrides (optional)
 # Add custom documentation sources beyond auto-detected dependencies
 # sources:
