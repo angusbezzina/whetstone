@@ -108,9 +108,13 @@ def _test_header_ts(rule_id: str, source_url: str, has_real_check: bool = False)
     #                string literal checks (pattern)
     #   Partial:     async/sync detection (regex approximation)
     #   Unsupported: complex AST patterns (generates TODO scaffold)
-    experimental = "" if has_real_check else (
-        "// EXPERIMENTAL: TypeScript test generation produces signal scaffolds that\n"
-        "// may require manual implementation for full enforcement. Review TODOs below.\n"
+    experimental = (
+        ""
+        if has_real_check
+        else (
+            "// EXPERIMENTAL: TypeScript test generation produces signal scaffolds that\n"
+            "// may require manual implementation for full enforcement. Review TODOs below.\n"
+        )
     )
     return f"""// Rule: {rule_id}
 // Source: {source_url}
@@ -124,9 +128,13 @@ def _test_header_rs(rule_id: str, source_url: str, has_real_check: bool = False)
     #                .unwrap() usage detection
     #   Partial:     import/use statement checks (string matching)
     #   Unsupported: complex AST patterns (generates TODO scaffold with Dylint reference)
-    experimental = "" if has_real_check else (
-        "// EXPERIMENTAL: Rust test generation produces signal scaffolds that\n"
-        "// may require manual implementation for full enforcement. Review TODOs below.\n"
+    experimental = (
+        ""
+        if has_real_check
+        else (
+            "// EXPERIMENTAL: Rust test generation produces signal scaffolds that\n"
+            "// may require manual implementation for full enforcement. Review TODOs below.\n"
+        )
     )
     return f"""// Rule: {rule_id}
 // Source: {source_url}
@@ -271,7 +279,11 @@ def _generate_ast_check(description: str, dep_name: str) -> str:
         return _generate_ast_check_import(description, dep_name)
 
     # Class inheritance check
-    if "inherit" in desc_lower or "subclass" in desc_lower or "base class" in desc_lower:
+    if (
+        "inherit" in desc_lower
+        or "subclass" in desc_lower
+        or "base class" in desc_lower
+    ):
         return _generate_ast_check_class(description, dep_name)
 
     # Keyword argument check
@@ -326,7 +338,10 @@ def _generate_ast_check_import(description: str, dep_name: str) -> str:
     INDENT = "        "
 
     # Try to extract module and name from description
-    from_match = re.search(r"from\s+[`'\"]?(\w+(?:\.\w+)*)[`'\"]?\s+import\s+[`'\"]?(\w+)[`'\"]?", description)
+    from_match = re.search(
+        r"from\s+[`'\"]?(\w+(?:\.\w+)*)[`'\"]?\s+import\s+[`'\"]?(\w+)[`'\"]?",
+        description,
+    )
     import_match = re.search(r"import\s+[`'\"]?(\w+(?:\.\w+)*)[`'\"]?", description)
 
     if from_match:
@@ -390,7 +405,11 @@ def _generate_ast_check_class(description: str, dep_name: str) -> str:
     INDENT = "        "
 
     # Try to extract base class name from description
-    base_match = re.search(r"(?:inherit|subclass|extend|derive)\w*\s+(?:from\s+)?[`'\"]?(\w+)[`'\"]?", description, re.IGNORECASE)
+    base_match = re.search(
+        r"(?:inherit|subclass|extend|derive)\w*\s+(?:from\s+)?[`'\"]?(\w+)[`'\"]?",
+        description,
+        re.IGNORECASE,
+    )
     base_name = base_match.group(1) if base_match else None
 
     if base_name:
@@ -435,7 +454,9 @@ def _generate_ast_check_kwarg(description: str, dep_name: str) -> str:
 
     # Try to extract function and kwarg names from description
     func_match = re.search(r"[`'\"]?(\w+(?:\.\w+)*)\(\)[`'\"]?", description)
-    kwarg_match = re.search(r"(?:keyword|kwarg|argument)\s+[`'\"]?(\w+)[`'\"]?", description, re.IGNORECASE)
+    kwarg_match = re.search(
+        r"(?:keyword|kwarg|argument)\s+[`'\"]?(\w+)[`'\"]?", description, re.IGNORECASE
+    )
 
     func_name = func_match.group(1).split(".")[-1] if func_match else None
     kwarg_name = kwarg_match.group(1) if kwarg_match else None
@@ -541,7 +562,9 @@ def project_python_files():
 def _generate_ts_pattern_import_check(sig_desc: str) -> str:
     """Generate a TypeScript import check from a signal description."""
     # Try to extract 'from X import Y' or 'import X' pattern
-    from_match = re.search(r"(?:from|import)\s+[`'\"]?(\w+(?:[/.]\w+)*)[`'\"]?", sig_desc)
+    from_match = re.search(
+        r"(?:from|import)\s+[`'\"]?(\w+(?:[/.]\w+)*)[`'\"]?", sig_desc
+    )
     if from_match:
         module = from_match.group(1)
         escaped = module.replace("/", "\\\\/").replace(".", "\\\\.")
@@ -570,7 +593,9 @@ def _generate_ts_signal_check(signal: dict, dep_name: str) -> str:
         return f"{prefix}      // AI signal (not auto-testable): {sig_desc}"
 
     if strategy == "lint_proxy":
-        return f"{prefix}      // lint_proxy signal (handled by biome config): {sig_desc}"
+        return (
+            f"{prefix}      // lint_proxy signal (handled by biome config): {sig_desc}"
+        )
 
     # Pattern-based checks
     if strategy == "pattern":
@@ -754,7 +779,6 @@ def generate_typescript_setup() -> str:
       return `${filepath}:${line} - ${message}`;
     }
     """)
-
 
 
 # --- Rust test generation ---
@@ -1013,22 +1037,40 @@ def _categorize_biome_rule(rule_name: str) -> str:
     """Categorize a biome rule into its group (suspicious, correctness, style, etc.)."""
     # Rules starting with 'no' that indicate suspicious code
     suspicious_rules = {
-        "noExplicitAny", "noDebugger", "noConsoleLog", "noDoubleEquals",
-        "noShadowRestrictedNames", "noImplicitAnyLet", "noArrayIndexKey",
-        "noAssignInExpressions", "noConfusingVoidType",
+        "noExplicitAny",
+        "noDebugger",
+        "noConsoleLog",
+        "noDoubleEquals",
+        "noShadowRestrictedNames",
+        "noImplicitAnyLet",
+        "noArrayIndexKey",
+        "noAssignInExpressions",
+        "noConfusingVoidType",
     }
     # Rules about correctness
     correctness_rules = {
-        "noUnusedVariables", "noUnusedImports", "noUndeclaredVariables",
-        "noInvalidConstructorSuper", "noConstAssign", "noEmptyPattern",
-        "noNewSymbol", "noUnsafeFinally", "noVoidTypeReturn",
-        "noChildrenProp", "noRenderReturnValue",
+        "noUnusedVariables",
+        "noUnusedImports",
+        "noUndeclaredVariables",
+        "noInvalidConstructorSuper",
+        "noConstAssign",
+        "noEmptyPattern",
+        "noNewSymbol",
+        "noUnsafeFinally",
+        "noVoidTypeReturn",
+        "noChildrenProp",
+        "noRenderReturnValue",
     }
     # Rules about style
     style_rules = {
-        "useConst", "useTemplate", "useSelfClosingElements",
-        "useImportType", "useEnumInitializers", "useExponentiationOperator",
-        "useNumericLiterals", "useSingleVarDeclarator",
+        "useConst",
+        "useTemplate",
+        "useSelfClosingElements",
+        "useImportType",
+        "useEnumInitializers",
+        "useExponentiationOperator",
+        "useNumericLiterals",
+        "useSingleVarDeclarator",
     }
     if rule_name in suspicious_rules:
         return "suspicious"
@@ -1078,20 +1120,39 @@ def _categorize_clippy_lint(lint_name: str) -> str:
     """Categorize a clippy lint into its group (Pedantic, Correctness, Restriction, etc.)."""
     # Well-known pedantic lints
     pedantic_lints = {
-        "doc_markdown", "missing_errors_doc", "missing_panics_doc",
-        "must_use_candidate", "module_name_repetitions", "redundant_closure_for_method_calls",
-        "needless_pass_by_value", "trivially_copy_pass_by_ref", "too_many_lines",
+        "doc_markdown",
+        "missing_errors_doc",
+        "missing_panics_doc",
+        "must_use_candidate",
+        "module_name_repetitions",
+        "redundant_closure_for_method_calls",
+        "needless_pass_by_value",
+        "trivially_copy_pass_by_ref",
+        "too_many_lines",
     }
     # Well-known correctness lints
     correctness_lints = {
-        "absurd_extreme_comparisons", "erasing_op", "almost_swapped",
-        "approx_constant", "deprecated_cfg_attr", "misrefactored_assign_op",
+        "absurd_extreme_comparisons",
+        "erasing_op",
+        "almost_swapped",
+        "approx_constant",
+        "deprecated_cfg_attr",
+        "misrefactored_assign_op",
     }
     # Well-known restriction lints
     restriction_lints = {
-        "unwrap_used", "expect_used", "print_stdout", "print_stderr",
-        "dbg_macro", "todo", "unimplemented", "panic", "unreachable",
-        "indexing_slicing", "as_conversions", "shadow_reuse",
+        "unwrap_used",
+        "expect_used",
+        "print_stdout",
+        "print_stderr",
+        "dbg_macro",
+        "todo",
+        "unimplemented",
+        "panic",
+        "unreachable",
+        "indexing_slicing",
+        "as_conversions",
+        "shadow_reuse",
     }
     if lint_name in pedantic_lints:
         return "Pedantic"

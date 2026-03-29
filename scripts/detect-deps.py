@@ -831,8 +831,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    cli_excludes = [e.strip() for e in args.exclude.split(",") if e.strip()] if args.exclude else None
-    cli_includes = [i.strip() for i in args.include.split(",") if i.strip()] if args.include else None
+    cli_excludes = (
+        [e.strip() for e in args.exclude.split(",") if e.strip()]
+        if args.exclude
+        else None
+    )
+    cli_includes = (
+        [i.strip() for i in args.include.split(",") if i.strip()]
+        if args.include
+        else None
+    )
 
     try:
         do_drift = args.check_drift or args.changed_only

@@ -101,9 +101,7 @@ def _count_existing_rules(project_dir: Path) -> int:
     return count
 
 
-def _build_source_details(
-    sources: list[dict], errors: list[dict]
-) -> list[dict]:
+def _build_source_details(sources: list[dict], errors: list[dict]) -> list[dict]:
     """Build per-source detail list sorted by confidence."""
     details = []
 
@@ -115,21 +113,25 @@ def _build_source_details(
             confidence = "medium"
         else:
             confidence = "low"
-        details.append({
-            "name": s.get("name", "unknown"),
-            "source_type": source_type,
-            "confidence": confidence,
-            "status": "resolved",
-        })
+        details.append(
+            {
+                "name": s.get("name", "unknown"),
+                "source_type": source_type,
+                "confidence": confidence,
+                "status": "resolved",
+            }
+        )
 
     for e in errors:
-        details.append({
-            "name": e.get("name", "unknown"),
-            "source_type": None,
-            "confidence": None,
-            "status": "failed",
-            "error": e.get("error", "unknown"),
-        })
+        details.append(
+            {
+                "name": e.get("name", "unknown"),
+                "source_type": None,
+                "confidence": None,
+                "status": "failed",
+                "error": e.get("error", "unknown"),
+            }
+        )
 
     # Sort: resolved high first, then medium, then low, then failed
     confidence_order = {"high": 0, "medium": 1, "low": 2, None: 3}
@@ -148,45 +150,55 @@ def _build_recommendations(
     recs = []
 
     if sources:
-        recs.append({
-            "priority": "high",
-            "action": "extract",
-            "message": f"Extract rules for {len(sources)} dependencies with resolved docs",
-        })
+        recs.append(
+            {
+                "priority": "high",
+                "action": "extract",
+                "message": f"Extract rules for {len(sources)} dependencies with resolved docs",
+            }
+        )
 
     if llms_txt_count > 0:
-        recs.append({
-            "priority": "high",
-            "action": "prioritize",
-            "message": (
-                f"{llms_txt_count} deps have llms.txt — "
-                "these will produce highest quality rules"
-            ),
-        })
+        recs.append(
+            {
+                "priority": "high",
+                "action": "prioritize",
+                "message": (
+                    f"{llms_txt_count} deps have llms.txt — "
+                    "these will produce highest quality rules"
+                ),
+            }
+        )
 
     if errors:
-        recs.append({
-            "priority": "medium",
-            "action": "resolve",
-            "message": (
-                f"Consider providing manual docs URLs for "
-                f"{len(errors)} unresolved dependencies"
-            ),
-        })
+        recs.append(
+            {
+                "priority": "medium",
+                "action": "resolve",
+                "message": (
+                    f"Consider providing manual docs URLs for "
+                    f"{len(errors)} unresolved dependencies"
+                ),
+            }
+        )
 
     if existing_rules > 0:
-        recs.append({
-            "priority": "low",
-            "action": "review",
-            "message": f"{existing_rules} existing rules found — doctor will update them",
-        })
+        recs.append(
+            {
+                "priority": "low",
+                "action": "review",
+                "message": f"{existing_rules} existing rules found — doctor will update them",
+            }
+        )
 
     if not sources and not errors:
-        recs.append({
-            "priority": "high",
-            "action": "add-deps",
-            "message": "No dependencies found. Add dependencies to your project first.",
-        })
+        recs.append(
+            {
+                "priority": "high",
+                "action": "add-deps",
+                "message": "No dependencies found. Add dependencies to your project first.",
+            }
+        )
 
     return recs
 
@@ -217,7 +229,9 @@ def _format_report(
     summary = result.get("summary", {})
     existing_rules = result.get("_existing_rules", 0)
     if existing_rules > 0:
-        lines.append(line(f"Whetstone Doctor Report (Update — {existing_rules} existing rules)"))
+        lines.append(
+            line(f"Whetstone Doctor Report (Update — {existing_rules} existing rules)")
+        )
     else:
         lines.append(line("Whetstone Doctor Report"))
 
@@ -279,7 +293,11 @@ def _format_report(
             else:
                 lines.append(line(f"  x {name:<16s} -- no docs found"))
         if not verbose and len(source_details) > 5:
-            lines.append(line(f"  ... and {len(source_details) - 5} more (use --verbose to show all)"))
+            lines.append(
+                line(
+                    f"  ... and {len(source_details) - 5} more (use --verbose to show all)"
+                )
+            )
         lines.append(line())
 
     # Style Patterns section
@@ -287,7 +305,9 @@ def _format_report(
     lines.append(section_header("Style Patterns"))
     lines.append(line())
     if patterns_count > 0:
-        lines.append(line(f"Found {patterns_count} recurring patterns from project history"))
+        lines.append(
+            line(f"Found {patterns_count} recurring patterns from project history")
+        )
     else:
         lines.append(line("No patterns detected (or pattern detection skipped)"))
     lines.append(line())
@@ -352,7 +372,9 @@ def _format_report(
         step_name = step.get("name", "unknown")
         step_time = step.get("elapsed_seconds", 0)
         step_status = step.get("status", "?")
-        indicator = "+" if step_status == "ok" else ("~" if step_status == "skipped" else "x")
+        indicator = (
+            "+" if step_status == "ok" else ("~" if step_status == "skipped" else "x")
+        )
         lines.append(line(f"  {indicator} {step_name:<22s} {step_time:>5.1f}s"))
     lines.append(line(f"  {'Total:':<24s} {elapsed:>5.1f}s"))
     lines.append(line())
