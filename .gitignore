@@ -41,6 +41,10 @@ htmlcov/
 tests/fixtures/whetstone/.last-run
 tests/fixtures/whetstone/.metrics.jsonl
 
+# Rust build artifacts
+target/
+Cargo.lock
+
 # Whetstone pipeline state cache (machine-local, not checked in)
 whetstone/.state/
 tests/fixtures/whetstone/.state/
