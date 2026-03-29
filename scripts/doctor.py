@@ -31,6 +31,9 @@ except ImportError:
     StateManager = None  # type: ignore[assignment,misc]
 
 
+DEFAULT_FAST_FIRST_MAX_DEPS = 10
+
+
 def _script_dir() -> Path:
     """Return the directory containing this script."""
     return Path(__file__).resolve().parent
@@ -246,6 +249,8 @@ def _build_recommendations(
     errors: list[dict],
     llms_txt_count: int,
     existing_rules: int,
+    auto_limited: bool = False,
+    remaining_count: int = 0,
 ) -> list[dict]:
     """Build structured recommendations based on doctor findings."""
     recs = []
@@ -298,6 +303,19 @@ def _build_recommendations(
                 "priority": "high",
                 "action": "add-deps",
                 "message": "No dependencies found. Add dependencies to your project first.",
+            }
+        )
+
+    if auto_limited and remaining_count > 0:
+        recs.append(
+            {
+                "priority": "high",
+                "action": "continue",
+                "message": (
+                    f"Fast-first mode resolved the top {len(sources)} dependencies; "
+                    f"resume to continue with {remaining_count} remaining"
+                ),
+                "command": "whetstone doctor --resume",
             }
         )
 
@@ -526,6 +544,7 @@ def doctor(
     max_deps: int | None = None,
     ready_only: bool = False,
     workers: int | None = None,
+    full_run: bool = False,
 ) -> dict:
     """Run the full doctor flow and return a structured result.
 
@@ -694,6 +713,26 @@ def doctor(
     resolve_deps = [
         resolve_dep_map[k] for k in ranked_key_order if k in resolve_dep_map
     ]
+
+    auto_limited = False
+    auto_limit_target = DEFAULT_FAST_FIRST_MAX_DEPS
+    if (
+        max_deps is None
+        and not full_run
+        and not changed_only
+        and not refresh
+        and not resume
+        and not ready_only
+        and not deps_filter
+        and len(cache_buckets["cached"]) == 0
+        and len(resolve_deps) > auto_limit_target
+    ):
+        resolve_deps = resolve_deps[:auto_limit_target]
+        auto_limited = True
+        _log(
+            f"  Fast-first: limiting initial resolution to top {auto_limit_target} deps; use --full-run or --resume to continue",
+            json_mode,
+        )
 
     if max_deps is not None:
         resolve_deps = resolve_deps[:max_deps]
@@ -891,11 +930,18 @@ def doctor(
     # Build source details and recommendations
     source_details = _build_source_details(sources, errors)
     recommendations = _build_recommendations(
-        sources, errors, llms_txt_count, existing_rules
+        sources,
+        errors,
+        llms_txt_count,
+        existing_rules,
+        auto_limited=auto_limited,
+        remaining_count=max(0, len(target_deps) - len(resolve_deps)),
     )
 
     # Determine next command
-    if extraction_sources:
+    if auto_limited:
+        next_command = "whetstone doctor --resume"
+    elif extraction_sources:
         next_command = "whetstone status --extraction-ready"
     elif sources:
         next_command = "whetstone status"
@@ -922,6 +968,11 @@ def doctor(
         "extraction_subsets": extraction_subsets,
         "warnings": warnings,
         "next_command": next_command,
+        "workflow": {
+            "fast_first": auto_limited,
+            "remaining_dependencies": max(0, len(target_deps) - len(resolve_deps)),
+            "resolved_this_run": len(resolve_deps),
+        },
         # Private fields for report formatting (not part of public contract)
         "_existing_rules": existing_rules,
         "_dev_count": dev_count,
@@ -1010,6 +1061,11 @@ def main() -> None:
         default=None,
         help="Number of parallel source-resolution workers (default: auto)",
     )
+    parser.add_argument(
+        "--full-run",
+        action="store_true",
+        help="Disable fast-first limiting and resolve the full dependency set now",
+    )
     args = parser.parse_args()
 
     skip_dev = not args.include_dev
@@ -1028,6 +1084,7 @@ def main() -> None:
             max_deps=args.max_deps,
             ready_only=args.ready_only,
             workers=args.workers,
+            full_run=args.full_run,
         )
 
         # Remove private fields before JSON output

@@ -33,6 +33,10 @@ def load_script_module(filename: str, module_name: str):
     return module
 
 
+def make_dep(name: str, language: str = "python") -> dict:
+    return {"name": name, "language": language, "version": ">=1.0", "dev": False}
+
+
 def run_script(name: str, args: list[str], stdin_data: str | None = None) -> dict:
     """Run a script and return parsed JSON output."""
     script = SCRIPTS_DIR / name
@@ -421,6 +425,137 @@ class TestStatePersistence:
         assert result["resolution_buckets"]["ready_now"] == [
             {"name": "requests", "source_type": "llms_txt"}
         ]
+        assert result["next_command"] == "whetstone status --extraction-ready"
+
+    def test_doctor_defaults_to_fast_first_on_large_uncached_repo(
+        self, tmp_path, monkeypatch
+    ):
+        """Large uncached repos should auto-limit first pass and suggest resume."""
+        mod = load_script_module("doctor.py", "doctor_fast_first_test")
+
+        deps = [make_dep(f"dep{i}") for i in range(12)]
+
+        detect_result = {
+            "dependencies": deps,
+            "languages": ["python"],
+            "counts": {"runtime": {"_all": 12, "python": 12}, "dev": {"_all": 0}},
+            "manifest_diff": {
+                "changed": [],
+                "added": [],
+                "removed": [],
+                "unchanged": ["pyproject.toml"],
+            },
+            "inventory_diff": {
+                "added": [f"python:dep{i}" for i in range(12)],
+                "changed": [],
+                "removed": [],
+                "unchanged": [],
+            },
+            "manifests_changed": True,
+        }
+
+        captured = {"resolve_args": None}
+
+        def fake_run_script(name: str, args: list[str], stdin_data: str | None = None):
+            if name == "detect-deps.py":
+                return detect_result, 0.0
+            if name == "resolve-sources.py":
+                captured["resolve_args"] = args
+                dep_names = [d["name"] for d in deps]
+                for idx, arg in enumerate(args):
+                    if arg == "--deps":
+                        dep_names = args[idx + 1].split(",")
+                return {
+                    "sources": [
+                        {
+                            "name": dep_names[0],
+                            "language": "python",
+                            "source_type": "llms_full_txt",
+                            "freshness": {"confidence": "high"},
+                            "content": "...",
+                        }
+                    ],
+                    "errors": [],
+                }, 0.0
+            return {"patterns": []}, 0.0
+
+        monkeypatch.setattr(mod, "_run_script", fake_run_script)
+
+        result = mod.doctor(project_dir=tmp_path, skip_patterns=True, json_mode=True)
+
+        assert captured["resolve_args"] is not None
+        dep_arg = captured["resolve_args"][captured["resolve_args"].index("--deps") + 1]
+        assert len(dep_arg.split(",")) == mod.DEFAULT_FAST_FIRST_MAX_DEPS
+        assert result["workflow"]["fast_first"] is True
+        assert result["workflow"]["remaining_dependencies"] == 2
+        assert result["next_command"] == "whetstone doctor --resume"
+        assert any(
+            rec.get("command") == "whetstone doctor --resume"
+            for rec in result["recommendations"]
+        )
+
+    def test_full_run_disables_fast_first_limiting(self, tmp_path, monkeypatch):
+        """--full-run should bypass default fast-first limiting."""
+        mod = load_script_module("doctor.py", "doctor_full_run_test")
+
+        deps = [make_dep(f"dep{i}") for i in range(12)]
+        detect_result = {
+            "dependencies": deps,
+            "languages": ["python"],
+            "counts": {"runtime": {"_all": 12, "python": 12}, "dev": {"_all": 0}},
+            "manifest_diff": {
+                "changed": [],
+                "added": [],
+                "removed": [],
+                "unchanged": ["pyproject.toml"],
+            },
+            "inventory_diff": {
+                "added": [f"python:dep{i}" for i in range(12)],
+                "changed": [],
+                "removed": [],
+                "unchanged": [],
+            },
+            "manifests_changed": True,
+        }
+
+        captured = {"resolve_args": None}
+
+        def fake_run_script(name: str, args: list[str], stdin_data: str | None = None):
+            if name == "detect-deps.py":
+                return detect_result, 0.0
+            if name == "resolve-sources.py":
+                captured["resolve_args"] = args
+                dep_names = [d["name"] for d in deps]
+                for idx, arg in enumerate(args):
+                    if arg == "--deps":
+                        dep_names = args[idx + 1].split(",")
+                return {
+                    "sources": [
+                        {
+                            "name": dep_names[0],
+                            "language": "python",
+                            "source_type": "llms_full_txt",
+                            "freshness": {"confidence": "high"},
+                            "content": "...",
+                        }
+                    ],
+                    "errors": [],
+                }, 0.0
+            return {"patterns": []}, 0.0
+
+        monkeypatch.setattr(mod, "_run_script", fake_run_script)
+
+        result = mod.doctor(
+            project_dir=tmp_path,
+            skip_patterns=True,
+            json_mode=True,
+            full_run=True,
+        )
+
+        assert (
+            captured["resolve_args"] is None or "--deps" not in captured["resolve_args"]
+        )
+        assert result["workflow"]["fast_first"] is False
         assert result["next_command"] == "whetstone status --extraction-ready"
 
     def test_refresh_log_records_manifest_changes(self, tmp_path):
