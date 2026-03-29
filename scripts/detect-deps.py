@@ -22,13 +22,6 @@ import re
 import sys
 from pathlib import Path
 
-# State management — optional import for incremental mode
-try:
-    from state import StateManager, ManifestStore
-except ImportError:
-    StateManager = None  # type: ignore[assignment,misc]
-    ManifestStore = None  # type: ignore[assignment,misc]
-
 # Directories to skip when recursively searching for manifests.
 # These are never project source — they're build artifacts, caches, or VCS internals.
 SKIP_DIRS = frozenset(
@@ -788,7 +781,16 @@ def detect_deps(
         result["warnings"] = warnings
 
     # --- Incremental mode: fingerprint manifests + persist inventory ---
-    if incremental and StateManager is not None:
+    if incremental:
+        try:
+            from state import ManifestStore, StateManager
+        except ImportError:
+            StateManager = None  # type: ignore[assignment]
+
+        if StateManager is None:
+            incremental = False
+
+    if incremental:
         sm = StateManager(project_dir)
         sm.ensure_dir()
         sm.manifests.load()

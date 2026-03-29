@@ -9,28 +9,22 @@ Run with: pytest tests/test_state.py -v
 from __future__ import annotations
 
 import json
-import os
-import time
-from datetime import datetime, timezone, timedelta
+
+# Add scripts/ to path for import
+import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-# Add scripts/ to path for import
-import sys
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 from state import (
-    StateManager,
-    ManifestStore,
     InventoryStore,
-    SourceCacheStore,
+    ManifestStore,
     RefreshLog,
-    ManifestDiff,
-    InventoryDiff,
-    CacheStats,
-    LIFECYCLE_STATES,
+    SourceCacheStore,
+    StateManager,
     _atomic_write,
     _load_json,
 )
