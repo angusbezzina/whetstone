@@ -11,21 +11,36 @@ use crate::state::StateManager;
 
 const DEFAULT_FAST_FIRST_MAX_DEPS: usize = 10;
 
-pub fn doctor(
-    project_dir: &Path,
-    _skip_patterns: bool,
-    skip_dev: bool,
-    json_mode: bool,
-    deps_filter: Option<&str>,
-    verbose: bool,
-    changed_only: bool,
-    refresh: bool,
-    resume: bool,
-    max_deps: Option<usize>,
-    ready_only: bool,
-    workers: Option<usize>,
-    full_run: bool,
-) -> Result<Value> {
+pub struct DoctorOptions<'a> {
+    pub project_dir: &'a Path,
+    pub skip_dev: bool,
+    pub json_mode: bool,
+    pub deps_filter: Option<&'a str>,
+    pub verbose: bool,
+    pub changed_only: bool,
+    pub refresh: bool,
+    pub resume: bool,
+    pub max_deps: Option<usize>,
+    pub ready_only: bool,
+    pub workers: Option<usize>,
+    pub full_run: bool,
+}
+
+pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
+    let DoctorOptions {
+        project_dir,
+        skip_dev,
+        json_mode,
+        deps_filter,
+        verbose,
+        changed_only,
+        refresh,
+        resume,
+        max_deps,
+        ready_only,
+        workers,
+        full_run,
+    } = options;
     let total_start = Instant::now();
     let mut steps: Vec<Value> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
@@ -59,20 +74,36 @@ pub fn doctor(
     }
 
     let deps_count = deps_result
-        .get("counts").and_then(|c| c.get("runtime")).and_then(|r| r.get("_all")).and_then(|v| v.as_i64()).unwrap_or(0);
+        .get("counts")
+        .and_then(|c| c.get("runtime"))
+        .and_then(|r| r.get("_all"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
     let dev_count = deps_result
-        .get("counts").and_then(|c| c.get("dev")).and_then(|r| r.get("_all")).and_then(|v| v.as_i64()).unwrap_or(0);
+        .get("counts")
+        .and_then(|c| c.get("dev"))
+        .and_then(|r| r.get("_all"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
     let languages: Vec<String> = deps_result
         .get("languages")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let lang_counts: BTreeMap<String, i64> = languages
         .iter()
         .map(|lang| {
             let count = deps_result
-                .get("counts").and_then(|c| c.get("runtime")).and_then(|r| r.get(lang.as_str())).and_then(|v| v.as_i64()).unwrap_or(0);
+                .get("counts")
+                .and_then(|c| c.get("runtime"))
+                .and_then(|r| r.get(lang.as_str()))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             (lang.clone(), count)
         })
         .collect();
@@ -87,7 +118,10 @@ pub fn doctor(
     log(
         &format!(
             "  Found {} runtime dependencies (+{} dev) across {}  [{:.1}s]",
-            deps_count, dev_count, languages.join(", "), deps_time
+            deps_count,
+            dev_count,
+            languages.join(", "),
+            deps_time
         ),
         json_mode,
     );
@@ -100,7 +134,11 @@ pub fn doctor(
         .unwrap_or_default();
 
     let mut target_deps: Vec<Value> = if skip_dev {
-        all_deps.iter().filter(|d| !d.get("dev").and_then(|v| v.as_bool()).unwrap_or(false)).cloned().collect()
+        all_deps
+            .iter()
+            .filter(|d| !d.get("dev").and_then(|v| v.as_bool()).unwrap_or(false))
+            .cloned()
+            .collect()
     } else {
         all_deps.clone()
     };
@@ -108,7 +146,10 @@ pub fn doctor(
     if let Some(filter) = deps_filter {
         let filter_set: Vec<&str> = filter.split(',').collect();
         target_deps.retain(|d| {
-            d.get("name").and_then(|v| v.as_str()).map(|n| filter_set.contains(&n)).unwrap_or(false)
+            d.get("name")
+                .and_then(|v| v.as_str())
+                .map(|n| filter_set.contains(&n))
+                .unwrap_or(false)
         });
     }
 
@@ -184,12 +225,22 @@ pub fn doctor(
         deps.extend(cache_buckets.missing.clone());
 
         // Include deps whose manifests changed
-        let inv_diff = deps_result.get("inventory_diff").cloned().unwrap_or(Value::Null);
+        let inv_diff = deps_result
+            .get("inventory_diff")
+            .cloned()
+            .unwrap_or(Value::Null);
         let changed_keys: Vec<String> = inv_diff
-            .get("changed").and_then(|v| v.as_array())
+            .get("changed")
+            .and_then(|v| v.as_array())
             .into_iter()
             .flatten()
-            .chain(inv_diff.get("added").and_then(|v| v.as_array()).into_iter().flatten())
+            .chain(
+                inv_diff
+                    .get("added")
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten(),
+            )
             .filter_map(|v| v.as_str().map(String::from))
             .collect();
 
@@ -252,7 +303,10 @@ pub fn doctor(
 
     // ── Step 2: Resolve sources ──
     log(
-        &format!("Step 2/3: Resolving documentation for {} dependencies...", resolve_deps.len()),
+        &format!(
+            "Step 2/3: Resolving documentation for {} dependencies...",
+            resolve_deps.len()
+        ),
         json_mode,
     );
 
@@ -263,30 +317,37 @@ pub fn doctor(
         .filter_map(|d| d.get("name").and_then(|v| v.as_str()).map(String::from))
         .collect();
 
-    let filter: Option<Vec<String>> = if !dep_names.is_empty() && dep_names.len() < target_deps.len() {
-        Some(dep_names)
-    } else {
-        None
-    };
+    let filter: Option<Vec<String>> =
+        if !dep_names.is_empty() && dep_names.len() < target_deps.len() {
+            Some(dep_names)
+        } else {
+            None
+        };
 
-    let resolve_result = resolve::resolve_sources(
-        &resolve_input,
-        filter.as_deref(),
-        false,
+    let resolve_result = resolve::resolve_sources(resolve::ResolveOptions {
+        deps_data: &resolve_input,
+        filter_deps: filter.as_deref(),
+        changed_only: false,
         project_dir,
-        15,
-        604800,
-        refresh,
+        timeout: 15,
+        ttl: 604800,
+        force_refresh: refresh,
         resume,
-        false,
+        retry_failed: false,
         workers,
-    )?;
+    })?;
     let resolve_time = resolve_start.elapsed().as_secs_f64();
 
     let sources: Vec<Value> = resolve_result
-        .get("sources").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        .get("sources")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     let errors: Vec<Value> = resolve_result
-        .get("errors").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        .get("errors")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     let llms_txt_count = sources
         .iter()
         .filter(|s| {
@@ -306,14 +367,20 @@ pub fn doctor(
 
     for err in &errors {
         let name = err.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-        let error = err.get("error").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let error = err
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         warnings.push(format!("Could not resolve docs for {name}: {error}"));
     }
 
     log(
         &format!(
             "  Resolved {}/{} deps ({} with llms.txt)  [{:.1}s]",
-            sources.len(), target_deps.len(), llms_txt_count, resolve_time
+            sources.len(),
+            target_deps.len(),
+            llms_txt_count,
+            resolve_time
         ),
         json_mode,
     );
@@ -325,8 +392,14 @@ pub fn doctor(
     let ready_now: Vec<&Value> = sources
         .iter()
         .filter(|s| {
-            matches!(s.get("source_type").and_then(|v| v.as_str()), Some("llms_full_txt" | "llms_txt"))
-                && s.get("freshness").and_then(|f| f.get("confidence")).and_then(|c| c.as_str()) == Some("high")
+            matches!(
+                s.get("source_type").and_then(|v| v.as_str()),
+                Some("llms_full_txt" | "llms_txt")
+            ) && s
+                .get("freshness")
+                .and_then(|f| f.get("confidence"))
+                .and_then(|c| c.as_str())
+                == Some("high")
         })
         .collect();
     let resolved_low: Vec<&Value> = sources.iter().filter(|s| !ready_now.contains(s)).collect();
@@ -368,7 +441,14 @@ pub fn doctor(
     let total_elapsed = total_start.elapsed().as_secs_f64();
     let source_details = build_source_details(&sources, &errors);
     let remaining_count = target_deps.len().saturating_sub(resolve_deps.len());
-    let recommendations = build_recommendations(&sources, &errors, llms_txt_count, existing_rules, auto_limited, remaining_count);
+    let recommendations = build_recommendations(
+        &sources,
+        &errors,
+        llms_txt_count,
+        existing_rules,
+        auto_limited,
+        remaining_count,
+    );
 
     let next_command = if auto_limited {
         "whetstone doctor --resume"
@@ -440,7 +520,12 @@ fn classify_deps(deps: &[Value], sm: &mut StateManager) -> CacheBuckets {
         match sm.cache.get(language, name, version) {
             None => missing.push(dep.clone()),
             Some(entry) => {
-                if entry.get("errors").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
+                if entry
+                    .get("errors")
+                    .and_then(|v| v.as_array())
+                    .map(|a| !a.is_empty())
+                    .unwrap_or(false)
+                {
                     failed.push(dep.clone());
                 } else if sm.cache.is_fresh(language, name, version, None) {
                     cached.push(dep.clone());
@@ -451,7 +536,12 @@ fn classify_deps(deps: &[Value], sm: &mut StateManager) -> CacheBuckets {
         }
     }
 
-    CacheBuckets { cached, stale, missing, failed }
+    CacheBuckets {
+        cached,
+        stale,
+        missing,
+        failed,
+    }
 }
 
 fn rank_dependencies(deps: &[Value], sm: &mut StateManager) -> Vec<Value> {
@@ -464,7 +554,9 @@ fn rank_dependencies(deps: &[Value], sm: &mut StateManager) -> Vec<Value> {
             let version = dep.get("version").and_then(|v| v.as_str()).unwrap_or("*");
             let is_dev = dep.get("dev").and_then(|v| v.as_bool()).unwrap_or(false);
 
-            if !is_dev { score += 100.0; }
+            if !is_dev {
+                score += 100.0;
+            }
 
             if let Some(cached) = sm.cache.get(language, name, version) {
                 match cached.get("source_type").and_then(|v| v.as_str()) {
@@ -475,7 +567,11 @@ fn rank_dependencies(deps: &[Value], sm: &mut StateManager) -> Vec<Value> {
                 }
             }
 
-            let sources_count = dep.get("sources").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            let sources_count = dep
+                .get("sources")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
             score += (sources_count.saturating_sub(1) * 20) as f64;
 
             if let Some(inv) = sm.inventory.get(language, name) {
@@ -516,7 +612,10 @@ fn build_source_details(sources: &[Value], errors: &[Value]) -> Vec<Value> {
     let mut details: Vec<Value> = Vec::new();
 
     for s in sources {
-        let source_type = s.get("source_type").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let source_type = s
+            .get("source_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let confidence = match source_type {
             "llms_txt" | "llms_full_txt" => "high",
             "docs_url" | "readme" => "medium",
@@ -540,13 +639,11 @@ fn build_source_details(sources: &[Value], errors: &[Value]) -> Vec<Value> {
         }));
     }
 
-    details.sort_by_key(|d| {
-        match d.get("confidence").and_then(|v| v.as_str()) {
-            Some("high") => 0,
-            Some("medium") => 1,
-            Some("low") => 2,
-            _ => 3,
-        }
+    details.sort_by_key(|d| match d.get("confidence").and_then(|v| v.as_str()) {
+        Some("high") => 0,
+        Some("medium") => 1,
+        Some("low") => 2,
+        _ => 3,
     });
 
     details
@@ -617,39 +714,84 @@ fn build_recommendations(
 fn format_report(result: &Value, project_dir: &Path, verbose: bool) -> String {
     let mut r = ReportBuilder::new();
     let summary = result.get("summary").cloned().unwrap_or(Value::Null);
-    let existing_rules = result.get("_existing_rules").and_then(|v| v.as_i64()).unwrap_or(0);
+    let existing_rules = result
+        .get("_existing_rules")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
 
     r.top_border();
     if existing_rules > 0 {
-        r.line(&format!("Whetstone Doctor Report (Update \u{2014} {} existing rules)", existing_rules));
+        r.line(&format!(
+            "Whetstone Doctor Report (Update \u{2014} {} existing rules)",
+            existing_rules
+        ));
     } else {
         r.line("Whetstone Doctor Report");
     }
     r.section_header("");
     r.empty_line();
-    r.line(&format!("Project: {}", project_dir.canonicalize().unwrap_or_else(|_| project_dir.to_path_buf()).display()));
-    r.line(&format!("Date:    {}", chrono::Utc::now().format("%Y-%m-%d")));
+    r.line(&format!(
+        "Project: {}",
+        project_dir
+            .canonicalize()
+            .unwrap_or_else(|_| project_dir.to_path_buf())
+            .display()
+    ));
+    r.line(&format!(
+        "Date:    {}",
+        chrono::Utc::now().format("%Y-%m-%d")
+    ));
     r.empty_line();
 
     // Dependencies
     r.section_header("Dependencies");
     r.empty_line();
-    let deps_found = summary.get("dependencies_found").and_then(|v| v.as_i64()).unwrap_or(0);
-    let dev_count = result.get("_dev_count").and_then(|v| v.as_i64()).unwrap_or(0);
-    let languages: Vec<&str> = summary.get("languages").and_then(|v| v.as_array())
+    let deps_found = summary
+        .get("dependencies_found")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let dev_count = result
+        .get("_dev_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let languages: Vec<&str> = summary
+        .get("languages")
+        .and_then(|v| v.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
-    r.line(&format!("Found {} runtime + {} dev dependencies", deps_found, dev_count));
-    r.line(&format!("Languages: {}", if languages.is_empty() { "none".to_string() } else { languages.join(", ") }));
+    r.line(&format!(
+        "Found {} runtime + {} dev dependencies",
+        deps_found, dev_count
+    ));
+    r.line(&format!(
+        "Languages: {}",
+        if languages.is_empty() {
+            "none".to_string()
+        } else {
+            languages.join(", ")
+        }
+    ));
     r.empty_line();
 
     // Sources
     r.section_header("Documentation Sources");
     r.empty_line();
-    let sources_resolved = summary.get("sources_resolved").and_then(|v| v.as_i64()).unwrap_or(0);
-    let deps_targeted = summary.get("dependencies_targeted").and_then(|v| v.as_i64()).unwrap_or(0);
-    let llms_count = summary.get("sources_with_llms_txt").and_then(|v| v.as_i64()).unwrap_or(0);
-    r.line(&format!("Resolved: {}/{} dependencies", sources_resolved, deps_targeted));
+    let sources_resolved = summary
+        .get("sources_resolved")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let deps_targeted = summary
+        .get("dependencies_targeted")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let llms_count = summary
+        .get("sources_with_llms_txt")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    r.line(&format!(
+        "Resolved: {}/{} dependencies",
+        sources_resolved, deps_targeted
+    ));
     r.line(&format!("With llms.txt: {}", llms_count));
     r.line(&format!("Docs URL only: {}", sources_resolved - llms_count));
     r.empty_line();
@@ -659,19 +801,38 @@ fn format_report(result: &Value, project_dir: &Path, verbose: bool) -> String {
     if let Some(details) = source_details {
         if !details.is_empty() {
             r.line("Top sources:");
-            let show_count = if verbose { details.len() } else { 5.min(details.len()) };
+            let show_count = if verbose {
+                details.len()
+            } else {
+                5.min(details.len())
+            };
             for detail in details.iter().take(show_count) {
-                let name = detail.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let name = detail
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
                 if detail.get("status").and_then(|v| v.as_str()) == Some("resolved") {
-                    let stype = detail.get("source_type").and_then(|v| v.as_str()).unwrap_or("unknown");
-                    let conf = detail.get("confidence").and_then(|v| v.as_str()).unwrap_or("unknown");
-                    r.line(&format!("  + {:<16} -- {} ({} confidence)", name, stype, conf));
+                    let stype = detail
+                        .get("source_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let conf = detail
+                        .get("confidence")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    r.line(&format!(
+                        "  + {:<16} -- {} ({} confidence)",
+                        name, stype, conf
+                    ));
                 } else {
                     r.line(&format!("  x {:<16} -- no docs found", name));
                 }
             }
             if !verbose && details.len() > 5 {
-                r.line(&format!("  ... and {} more (use --verbose to show all)", details.len() - 5));
+                r.line(&format!(
+                    "  ... and {} more (use --verbose to show all)",
+                    details.len() - 5
+                ));
             }
             r.empty_line();
         }
@@ -682,14 +843,27 @@ fn format_report(result: &Value, project_dir: &Path, verbose: bool) -> String {
     r.empty_line();
     if let Some(steps) = result.get("steps").and_then(|v| v.as_array()) {
         for step in steps {
-            let name = step.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-            let time = step.get("elapsed_seconds").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let name = step
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let time = step
+                .get("elapsed_seconds")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
             let status = step.get("status").and_then(|v| v.as_str()).unwrap_or("?");
-            let indicator = match status { "ok" => "+", "skipped" => "~", _ => "x" };
+            let indicator = match status {
+                "ok" => "+",
+                "skipped" => "~",
+                _ => "x",
+            };
             r.line(&format!("  {} {:<22} {:>5.1}s", indicator, name, time));
         }
     }
-    let elapsed = summary.get("elapsed_seconds").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let elapsed = summary
+        .get("elapsed_seconds")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     r.line(&format!("  {:<24} {:>5.1}s", "Total:", elapsed));
     r.empty_line();
     r.bottom_border();

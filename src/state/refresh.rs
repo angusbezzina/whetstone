@@ -61,10 +61,7 @@ impl RefreshLog {
             "detail": detail,
         });
 
-        let signals = self
-            .data
-            .get_mut("signals")
-            .and_then(|v| v.as_array_mut());
+        let signals = self.data.get_mut("signals").and_then(|v| v.as_array_mut());
 
         match signals {
             Some(arr) => {

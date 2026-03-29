@@ -23,7 +23,9 @@ fn whetstone_bin() -> PathBuf {
 }
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
 }
 
 fn run_whetstone(args: &[&str], project_dir: &str) -> (String, String, bool) {
@@ -75,7 +77,10 @@ fn test_detect_deps_typescript_fixture() {
         .filter(|d| d["language"].as_str() == Some("typescript"))
         .filter_map(|d| d["name"].as_str())
         .collect();
-    assert!(!ts_deps.is_empty(), "Should detect TypeScript deps from package.json");
+    assert!(
+        !ts_deps.is_empty(),
+        "Should detect TypeScript deps from package.json"
+    );
 }
 
 #[test]
@@ -106,8 +111,10 @@ fn test_detect_deps_whetstone_repo() {
 #[test]
 fn test_status_fixtures_with_rules() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, success) =
-        run_whetstone(&["status", "--json", "--no-snapshot"], dir.to_str().unwrap());
+    let (stdout, _stderr, success) = run_whetstone(
+        &["status", "--json", "--no-snapshot"],
+        dir.to_str().unwrap(),
+    );
     assert!(success, "status should succeed");
 
     let result = parse_json(&stdout);
@@ -132,8 +139,10 @@ fn test_status_fixtures_with_rules() {
 #[test]
 fn test_status_score_dimensions() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, _) =
-        run_whetstone(&["status", "--json", "--no-snapshot"], dir.to_str().unwrap());
+    let (stdout, _stderr, _) = run_whetstone(
+        &["status", "--json", "--no-snapshot"],
+        dir.to_str().unwrap(),
+    );
     let result = parse_json(&stdout);
 
     let dims = &result["dimensions"];
@@ -150,8 +159,10 @@ fn test_status_score_dimensions() {
 fn test_status_not_initialized() {
     let dir = std::env::temp_dir().join("whetstone_test_empty");
     let _ = std::fs::create_dir_all(&dir);
-    let (stdout, _stderr, success) =
-        run_whetstone(&["status", "--json", "--no-snapshot"], dir.to_str().unwrap());
+    let (stdout, _stderr, success) = run_whetstone(
+        &["status", "--json", "--no-snapshot"],
+        dir.to_str().unwrap(),
+    );
     assert!(success);
 
     let result = parse_json(&stdout);
@@ -208,8 +219,7 @@ fn test_generate_tests_dry_run() {
 #[test]
 fn test_ci_check_json() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, success) =
-        run_whetstone(&["ci-check", "--json"], dir.to_str().unwrap());
+    let (stdout, _stderr, success) = run_whetstone(&["ci-check", "--json"], dir.to_str().unwrap());
     assert!(success);
 
     let result = parse_json(&stdout);
@@ -261,7 +271,12 @@ fn test_rule_yaml_parsing() {
     assert_eq!(result["breakdown"]["severity"]["must"], 1);
     assert_eq!(result["breakdown"]["severity"]["should"], 1);
     // Both have deterministic signals (ast and pattern)
-    assert!(result["breakdown"]["signals"]["deterministic"].as_i64().unwrap() >= 2);
+    assert!(
+        result["breakdown"]["signals"]["deterministic"]
+            .as_i64()
+            .unwrap()
+            >= 2
+    );
 }
 
 // ── Edge case rule YAML tests ──

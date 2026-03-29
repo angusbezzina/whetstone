@@ -174,17 +174,13 @@ pub fn detect_deps(
 
     if do_check_drift {
         let drift = check_drift(&unique_deps, project_dir);
-        let drift_count = drift
-            .get("count")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
+        let drift_count = drift.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
         if drift_count > 0 {
             result["next_command"] = serde_json::json!(
                 "Resolve changed sources: whetstone resolve-sources --changed-only"
             );
         } else {
-            result["next_command"] =
-                serde_json::json!("No drift detected. Rules are current.");
+            result["next_command"] = serde_json::json!("No drift detected. Rules are current.");
         }
         result["drift"] = drift;
     } else {
@@ -210,11 +206,27 @@ fn dedup_deps(all_deps: &[Value]) -> Vec<Value> {
     let mut merged: BTreeMap<(String, String, bool), Value> = BTreeMap::new();
 
     for dep in all_deps {
-        let name = dep.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let language = dep.get("language").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let name = dep
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let language = dep
+            .get("language")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let dev = dep.get("dev").and_then(|v| v.as_bool()).unwrap_or(false);
-        let source = dep.get("source").and_then(|v| v.as_str()).unwrap_or("root").to_string();
-        let version = dep.get("version").and_then(|v| v.as_str()).unwrap_or("*").to_string();
+        let source = dep
+            .get("source")
+            .and_then(|v| v.as_str())
+            .unwrap_or("root")
+            .to_string();
+        let version = dep
+            .get("version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("*")
+            .to_string();
 
         let key = (name.clone(), language.clone(), dev);
 
@@ -359,7 +371,10 @@ fn check_drift(deps: &[Value], project_dir: &Path) -> Value {
 
 fn glob_yaml_files(dir: &Path) -> Result<Vec<std::path::PathBuf>> {
     let mut files = Vec::new();
-    for entry in walkdir::WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if entry.path().extension().and_then(|e| e.to_str()) == Some("yaml") {
             files.push(entry.path().to_path_buf());
         }

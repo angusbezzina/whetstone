@@ -12,13 +12,21 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
     };
 
     let release_meta = extract_crates_metadata(&data, version);
-    let crate_data = data.get("crate").cloned().unwrap_or(Value::Object(Default::default()));
+    let crate_data = data
+        .get("crate")
+        .cloned()
+        .unwrap_or(Value::Object(Default::default()));
 
     let docs_url = crate_data
         .get("documentation")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
-        .or_else(|| crate_data.get("homepage").and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+        .or_else(|| {
+            crate_data
+                .get("homepage")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })
         .map(String::from)
         .unwrap_or_else(|| format!("https://docs.rs/{name}"));
 

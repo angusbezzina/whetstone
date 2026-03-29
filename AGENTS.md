@@ -168,6 +168,8 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
 1. **File issues for remaining work** -- create beads for anything that needs follow-up
 2. **Run quality gates** (if code changed) -- tests, linters, type checks
    ```bash
+   cargo clippy --all-targets --all-features -- -D warnings
+   cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
    python3 -m pytest -q
    ```
@@ -175,6 +177,8 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
 3. **Update issue status** -- close finished beads, update in-progress items
 4. **PUSH TO REMOTE**:
    ```bash
+   cargo clippy --all-targets --all-features -- -D warnings
+   cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
    git pull --rebase
    git push

@@ -152,7 +152,10 @@ impl InventoryStore {
             current_keys.insert(key.clone());
 
             if let Some(existing) = stored.get(&key) {
-                let old_ver = existing.get("version").and_then(|v| v.as_str()).unwrap_or("");
+                let old_ver = existing
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let new_ver = dep.get("version").and_then(|v| v.as_str()).unwrap_or("");
                 if old_ver != new_ver {
                     changed.push(key);

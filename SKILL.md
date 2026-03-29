@@ -86,12 +86,12 @@ All scripts accept `--project-dir` (default: `.`). User-facing scripts support t
 | `--force-refresh` | Ignore cache, re-fetch all | resolve-sources |
 | `--refresh` | Force re-resolve even cached deps | doctor |
 | `--ttl N` | Cache TTL in seconds (default: 7 days) | resolve-sources |
-| `--workers N` | Parallel resolution workers (default: 4) | resolve-sources |
+| `--workers N` | Parallel resolution workers (default: auto, capped) | resolve-sources |
 | `--max-deps N` | Cap how many deps to resolve | doctor |
 | `--ready-only` | Only hand off extraction-ready deps | doctor |
 | `--extraction-ready` | List deps in extraction_ready state | status |
 
-Building-block scripts (detect-deps, resolve-sources, detect-patterns, generate-*) always output JSON to stdout. All scripts include a `next_command` field in their JSON output.
+Rust binary commands always output JSON to stdout. Legacy Python helpers remain in `scripts/` for reference and deferred functionality such as transcript pattern mining.
 
 ### JSON Output Contract
 
@@ -214,11 +214,7 @@ Pass only the user-confirmed dependencies. Present: "Resolved docs for N/M deps,
 
 **Step 3: Detect style patterns (optional)**
 
-```bash
-# Pattern detection is planned for a future release
-```
-
-Present any discovered patterns with evidence (occurrence count, example quotes). Ask the user which patterns to include as rule candidates.
+Pattern detection is not part of the Rust binary yet. Skip this step unless the user explicitly asks to use the legacy Python helper.
 
 **Step 4: Extract rules**
 
@@ -280,11 +276,7 @@ Only re-fetches documentation for dependencies with version drift AND content ch
 
 **Step 3: Check for new patterns**
 
-```bash
-# Pattern detection is planned for a future release --since-last-run
-```
-
-Show any new patterns discovered since the last run.
+Pattern detection is not part of the Rust binary yet. Skip this step unless the user explicitly asks to use the legacy Python helper.
 
 **Step 4: Extract and diff**
 

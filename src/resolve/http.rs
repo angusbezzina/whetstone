@@ -31,7 +31,11 @@ pub fn http_get_plain_text(url: &str, timeout_secs: u64) -> Option<String> {
     }
 
     // Check content-type header
-    if let Some(ct) = resp.headers().get("content-type").and_then(|v| v.to_str().ok()) {
+    if let Some(ct) = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+    {
         if ct.contains("text/html") || ct.contains("application/xhtml") {
             return None;
         }
@@ -41,7 +45,11 @@ pub fn http_get_plain_text(url: &str, timeout_secs: u64) -> Option<String> {
 
     // Secondary check: reject HTML-looking content
     let stripped = body.trim_start();
-    let lower: String = stripped.chars().take(100).collect::<String>().to_lowercase();
+    let lower: String = stripped
+        .chars()
+        .take(100)
+        .collect::<String>()
+        .to_lowercase();
     if lower.starts_with("<!doctype") || lower.starts_with("<html") {
         return None;
     }

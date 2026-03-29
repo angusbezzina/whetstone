@@ -63,7 +63,7 @@ impl ManifestStore {
 
     fn manifests_mut(&mut self) -> &mut serde_json::Map<String, Value> {
         self.ensure_loaded();
-        if !self.data.get("manifests").is_some() {
+        if self.data.get("manifests").is_none() {
             self.data["manifests"] = Value::Object(Default::default());
         }
         self.data["manifests"].as_object_mut().unwrap()
@@ -96,8 +96,7 @@ impl ManifestStore {
             "first_seen": first_seen,
         });
 
-        self.manifests_mut()
-            .insert(rel_path.to_string(), entry);
+        self.manifests_mut().insert(rel_path.to_string(), entry);
     }
 
     pub fn compare(&mut self, current: &HashMap<String, String>) -> ManifestDiff {

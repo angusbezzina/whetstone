@@ -57,8 +57,11 @@ impl ReportBuilder {
     pub fn section_header(&mut self, title: &str) {
         let padded = format!("\u{2550}\u{2550} {} ", title);
         let fill = self.width.saturating_sub(padded.len());
-        self.lines
-            .push(format!("\u{2560}{}{}=\u{2563}", padded, "=".repeat(fill.saturating_sub(1))));
+        self.lines.push(format!(
+            "\u{2560}{}{}=\u{2563}",
+            padded,
+            "=".repeat(fill.saturating_sub(1))
+        ));
     }
 
     pub fn build(&self) -> String {

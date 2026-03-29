@@ -24,11 +24,26 @@ pub fn ci_check(project_dir: &Path, check_drift: bool, changed_only: bool) -> Re
         }));
     }
 
-    let label = status_result.get("label").and_then(|v| v.as_str()).unwrap_or("Unknown");
-    let score = status_result.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
-    let dims = status_result.get("dimensions").cloned().unwrap_or(Value::Null);
-    let recommendations = status_result.get("recommendations").cloned().unwrap_or(serde_json::json!([]));
-    let pending_updates = dims.get("pending_updates").and_then(|v| v.as_i64()).unwrap_or(0);
+    let label = status_result
+        .get("label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
+    let score = status_result
+        .get("score")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let dims = status_result
+        .get("dimensions")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let recommendations = status_result
+        .get("recommendations")
+        .cloned()
+        .unwrap_or(serde_json::json!([]));
+    let pending_updates = dims
+        .get("pending_updates")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
 
     let freshness_status = match label {
         "Healthy" => "healthy",
@@ -58,7 +73,11 @@ pub fn ci_check(project_dir: &Path, check_drift: bool, changed_only: bool) -> Re
 
 pub fn format_pr_comment(result: &Value) -> String {
     let marker = "<!-- whetstone-ci-check -->";
-    let status_emoji = match result.get("freshness_status").and_then(|v| v.as_str()).unwrap_or("") {
+    let status_emoji = match result
+        .get("freshness_status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+    {
         "healthy" => "OK",
         "needs_review" => "!!",
         "stale" => "XX",
@@ -66,7 +85,10 @@ pub fn format_pr_comment(result: &Value) -> String {
         _ => "??",
     };
 
-    let label = result.get("label").and_then(|v| v.as_str()).unwrap_or("Unknown");
+    let label = result
+        .get("label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
     let score = result.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
 
     let mut lines = vec![
@@ -83,10 +105,30 @@ pub fn format_pr_comment(result: &Value) -> String {
         if let Some(freshness) = dims.get("freshness_days").and_then(|v| v.as_f64()) {
             lines.push(format!("| Freshness | {:.0} days |", freshness));
         }
-        lines.push(format!("| Rules | {} approved |", dims.get("rules_count").and_then(|v| v.as_i64()).unwrap_or(0)));
-        lines.push(format!("| High confidence | {:.0}% |", dims.get("high_confidence_ratio").and_then(|v| v.as_f64()).unwrap_or(0.0)));
-        lines.push(format!("| Deterministic coverage | {:.0}% |", dims.get("deterministic_coverage").and_then(|v| v.as_f64()).unwrap_or(0.0)));
-        lines.push(format!("| Pending updates | {} deps |", dims.get("pending_updates").and_then(|v| v.as_i64()).unwrap_or(0)));
+        lines.push(format!(
+            "| Rules | {} approved |",
+            dims.get("rules_count")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+        ));
+        lines.push(format!(
+            "| High confidence | {:.0}% |",
+            dims.get("high_confidence_ratio")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0)
+        ));
+        lines.push(format!(
+            "| Deterministic coverage | {:.0}% |",
+            dims.get("deterministic_coverage")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0)
+        ));
+        lines.push(format!(
+            "| Pending updates | {} deps |",
+            dims.get("pending_updates")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+        ));
         lines.push(String::new());
     }
 

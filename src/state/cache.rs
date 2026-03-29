@@ -78,13 +78,24 @@ impl SourceCacheStore {
         entries.get(&Self::key(language, name, version)).cloned()
     }
 
-    pub fn is_fresh(&mut self, language: &str, name: &str, version: &str, ttl_seconds: Option<u64>) -> bool {
+    pub fn is_fresh(
+        &mut self,
+        language: &str,
+        name: &str,
+        version: &str,
+        ttl_seconds: Option<u64>,
+    ) -> bool {
         let entry = match self.get(language, name, version) {
             Some(e) => e,
             None => return false,
         };
 
-        if entry.get("errors").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
+        if entry
+            .get("errors")
+            .and_then(|v| v.as_array())
+            .map(|a| !a.is_empty())
+            .unwrap_or(false)
+        {
             return false;
         }
 
@@ -94,7 +105,9 @@ impl SourceCacheStore {
         };
 
         let ttl = ttl_seconds.unwrap_or(DEFAULT_TTL);
-        parse_age_seconds(fetch_ts).map(|age| age < ttl as f64).unwrap_or(false)
+        parse_age_seconds(fetch_ts)
+            .map(|age| age < ttl as f64)
+            .unwrap_or(false)
     }
 
     pub fn upsert(&mut self, entry: Value) {
@@ -105,12 +118,7 @@ impl SourceCacheStore {
         self.entries_mut().insert(key, entry);
     }
 
-    pub fn invalidate_by_version(
-        &mut self,
-        language: &str,
-        name: &str,
-        old_version: &str,
-    ) -> bool {
+    pub fn invalidate_by_version(&mut self, language: &str, name: &str, old_version: &str) -> bool {
         let old_key = Self::key(language, name, old_version);
         let entries = self.entries_mut();
         entries.remove(&old_key).is_some()
@@ -124,12 +132,17 @@ impl SourceCacheStore {
         let mut stale = 0usize;
 
         for entry in entries.values() {
-            if entry.get("errors").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
+            if entry
+                .get("errors")
+                .and_then(|v| v.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false)
+            {
                 stale += 1;
                 continue;
             }
             let fetch_ts = entry.get("fetch_timestamp").and_then(|v| v.as_str());
-            match fetch_ts.and_then(|ts| parse_age_seconds(ts)) {
+            match fetch_ts.and_then(parse_age_seconds) {
                 Some(age) if age < ttl as f64 => hits += 1,
                 _ => stale += 1,
             }
@@ -152,7 +165,9 @@ impl SourceCacheStore {
 fn parse_age_seconds(ts: &str) -> Option<f64> {
     let parsed: DateTime<Utc> = ts.parse().ok().or_else(|| {
         // Try chrono's flexible parsing
-        DateTime::parse_from_rfc3339(ts).ok().map(|dt| dt.with_timezone(&Utc))
+        DateTime::parse_from_rfc3339(ts)
+            .ok()
+            .map(|dt| dt.with_timezone(&Utc))
     })?;
     let age = Utc::now() - parsed;
     Some(age.num_seconds() as f64)

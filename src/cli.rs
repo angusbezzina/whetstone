@@ -275,7 +275,13 @@ pub fn run() -> i32 {
                 .unwrap_or_default();
 
             let do_drift = check_drift || changed_only;
-            match detect::detect_deps(&project_dir, do_drift, &cli_excludes, &cli_includes, incremental) {
+            match detect::detect_deps(
+                &project_dir,
+                do_drift,
+                &cli_excludes,
+                &cli_includes,
+                incremental,
+            ) {
                 Ok(mut result) => {
                     if changed_only {
                         if let Some(drift) = result.get("drift") {
@@ -284,7 +290,9 @@ pub fn run() -> i32 {
                                 .and_then(|c| c.as_array())
                                 .map(|arr| {
                                     arr.iter()
-                                        .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
+                                        .filter_map(|v| {
+                                            v.get("name").and_then(|n| n.as_str()).map(String::from)
+                                        })
                                         .collect()
                                 })
                                 .unwrap_or_default();
@@ -354,18 +362,18 @@ pub fn run() -> i32 {
             let filter_deps: Option<Vec<String>> =
                 deps.map(|s| s.split(',').map(|d| d.trim().to_string()).collect());
 
-            match resolve::resolve_sources(
-                &deps_data,
-                filter_deps.as_deref(),
+            match resolve::resolve_sources(resolve::ResolveOptions {
+                deps_data: &deps_data,
+                filter_deps: filter_deps.as_deref(),
                 changed_only,
-                &project_dir,
+                project_dir: &project_dir,
                 timeout,
                 ttl,
                 force_refresh,
                 resume,
                 retry_failed,
                 workers,
-            ) {
+            }) {
                 Ok(result) => {
                     output::print_json(&result);
                     0
@@ -397,12 +405,12 @@ pub fn run() -> i32 {
             full_run,
         } => {
             let skip_dev = !include_dev;
-            match doctor::doctor(
-                &project_dir,
-                skip_patterns,
+            let _ = skip_patterns;
+            match doctor::doctor(doctor::DoctorOptions {
+                project_dir: &project_dir,
                 skip_dev,
-                json,
-                deps.as_deref(),
+                json_mode: json,
+                deps_filter: deps.as_deref(),
                 verbose,
                 changed_only,
                 refresh,
@@ -411,16 +419,13 @@ pub fn run() -> i32 {
                 ready_only,
                 workers,
                 full_run,
-            ) {
+            }) {
                 Ok(result) => {
                     // Remove private fields before output
                     let mut out = result.clone();
                     if let Some(obj) = out.as_object_mut() {
-                        let keys: Vec<String> = obj
-                            .keys()
-                            .filter(|k| k.starts_with('_'))
-                            .cloned()
-                            .collect();
+                        let keys: Vec<String> =
+                            obj.keys().filter(|k| k.starts_with('_')).cloned().collect();
                         for k in keys {
                             obj.remove(&k);
                         }
@@ -474,7 +479,9 @@ pub fn run() -> i32 {
 
             match status::compute_status(&project_dir, !no_drift_check, changed_only) {
                 Ok(result) => {
-                    if !no_snapshot && result.get("status").and_then(|s| s.as_str()) != Some("not_initialized") {
+                    if !no_snapshot
+                        && result.get("status").and_then(|s| s.as_str()) != Some("not_initialized")
+                    {
                         status::snapshot_metrics(&project_dir, &result);
                     }
 
@@ -524,7 +531,11 @@ pub fn run() -> i32 {
                             for f in files {
                                 let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
                                 let lines = f.get("lines").and_then(|v| v.as_i64()).unwrap_or(0);
-                                let dry = if f.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false) {
+                                let dry = if f
+                                    .get("dry_run")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false)
+                                {
                                     " (dry run)"
                                 } else {
                                     ""
@@ -551,37 +562,35 @@ pub fn run() -> i32 {
             lang,
             dry_run,
             json,
-        } => {
-            match generate_tests::generate_tests(&project_dir, lang.as_deref(), dry_run) {
-                Ok(result) => {
-                    if !json {
-                        if let Some(gen) = result.get("generated") {
-                            if let Some(tests) = gen.get("tests").and_then(|v| v.as_array()) {
-                                for f in tests {
-                                    let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                                    eprintln!("  + {path}");
-                                }
+        } => match generate_tests::generate_tests(&project_dir, lang.as_deref(), dry_run) {
+            Ok(result) => {
+                if !json {
+                    if let Some(gen) = result.get("generated") {
+                        if let Some(tests) = gen.get("tests").and_then(|v| v.as_array()) {
+                            for f in tests {
+                                let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                                eprintln!("  + {path}");
                             }
-                            if let Some(lints) = gen.get("lint_configs").and_then(|v| v.as_array()) {
-                                for f in lints {
-                                    let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                                    eprintln!("  + {path}");
-                                }
+                        }
+                        if let Some(lints) = gen.get("lint_configs").and_then(|v| v.as_array()) {
+                            for f in lints {
+                                let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                                eprintln!("  + {path}");
                             }
                         }
                     }
-                    output::print_json(&result);
-                    0
                 }
-                Err(e) => {
-                    output::print_json(&output::error_json(
-                        &e.to_string(),
-                        "Check whetstone/rules/ directory for approved rules",
-                    ));
-                    1
-                }
+                output::print_json(&result);
+                0
             }
-        }
+            Err(e) => {
+                output::print_json(&output::error_json(
+                    &e.to_string(),
+                    "Check whetstone/rules/ directory for approved rules",
+                ));
+                1
+            }
+        },
 
         Commands::CiCheck {
             project_dir,
@@ -590,51 +599,49 @@ pub fn run() -> i32 {
             fail_on,
             no_drift_check,
             changed_only,
-        } => {
-            match ci_check::ci_check(&project_dir, !no_drift_check, changed_only) {
-                Ok(result) => {
-                    if pr_comment {
-                        println!("{}", ci_check::format_pr_comment(&result));
-                    } else if json {
-                        output::print_json(&result);
-                    } else {
-                        let s = result
-                            .get("freshness_status")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
-                        let label = result
-                            .get("label")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Unknown");
-                        let score = result.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
-                        eprintln!(
-                            "Whetstone: [{}] {} (score: {}/100)",
-                            s.to_uppercase(),
-                            label,
-                            score
-                        );
-                        output::print_json(&result);
-                    }
-
-                    let freshness = result
+        } => match ci_check::ci_check(&project_dir, !no_drift_check, changed_only) {
+            Ok(result) => {
+                if pr_comment {
+                    println!("{}", ci_check::format_pr_comment(&result));
+                } else if json {
+                    output::print_json(&result);
+                } else {
+                    let s = result
                         .get("freshness_status")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    match fail_on.as_str() {
-                        "stale" if freshness == "stale" => 1,
-                        "needs_review" if freshness == "stale" || freshness == "needs_review" => 1,
-                        _ => 0,
-                    }
+                        .unwrap_or("unknown");
+                    let label = result
+                        .get("label")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown");
+                    let score = result.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
+                    eprintln!(
+                        "Whetstone: [{}] {} (score: {}/100)",
+                        s.to_uppercase(),
+                        label,
+                        score
+                    );
+                    output::print_json(&result);
                 }
-                Err(e) => {
-                    output::print_json(&output::error_json(
-                        &e.to_string(),
-                        "Check project directory and script dependencies",
-                    ));
-                    1
+
+                let freshness = result
+                    .get("freshness_status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                match fail_on.as_str() {
+                    "stale" if freshness == "stale" => 1,
+                    "needs_review" if freshness == "stale" || freshness == "needs_review" => 1,
+                    _ => 0,
                 }
             }
-        }
+            Err(e) => {
+                output::print_json(&output::error_json(
+                    &e.to_string(),
+                    "Check project directory and script dependencies",
+                ));
+                1
+            }
+        },
     }
 }
 

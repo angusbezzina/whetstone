@@ -285,7 +285,7 @@ Action outputs: `freshness_status`, `changed_sources_count`, `recommended_rules_
 
 ## Privacy
 
-Whetstone's `detect-patterns.py` mines agent conversation transcripts (Claude Code, Cursor, Cline, etc.) for recurring style patterns. **By default, transcript scanning is scoped to the current project only** — it filters transcripts by matching the project directory name in the file path.
+Pattern mining from agent transcripts remains a **deferred / legacy Python-only workflow**. The Rust binary does not currently scan transcripts. If you choose to use the legacy `detect-patterns.py` helper, transcript scanning is scoped to the current project by default.
 
 This means Whetstone will NOT read conversations from unrelated projects unless you explicitly opt in.
 
@@ -296,11 +296,11 @@ This means Whetstone will NOT read conversations from unrelated projects unless 
 
 **What is read:** Only `user`/`human` role messages from JSONL transcript files. Agent responses are ignored. No transcript content is sent to any external service — all processing is local.
 
-**What is stored:** Nothing from transcripts is persisted. Pattern results are ephemeral JSON output. The only file Whetstone writes is `whetstone/.last-run` (a timestamp).
+**What is stored:** Nothing from transcripts is persisted. Pattern results are ephemeral JSON output. The only file the legacy helper writes is `whetstone/.last-run` (a timestamp).
 
 **Directories scanned:** `~/.claude/projects`, `~/.cursor/projects`, `~/.cline/projects`, `~/.continue/sessions`, `~/.codex/sessions`, `~/.goose/sessions`, `~/.roo/projects`, `~/.agents/sessions`, `~/.config/opencode/sessions`, `~/.windsurf/sessions`.
 
-If you're concerned about privacy, use the default scoped mode (no flag needed) or exclude transcript mining entirely with `--sources git,pr`.
+If you're concerned about privacy, avoid running the legacy `detect-patterns.py` helper.
 
 ## How Whetstone Fits with Existing Tools
 
@@ -372,11 +372,13 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - Agent context generation (AGENTS.md, CLAUDE.md, .cursorrules, and 3 more formats)
 - Health monitoring with drift detection, freshness scoring, and metric history
 - CI integration via GitHub Action with PR comments
-- Privacy-scoped transcript mining for style patterns
+- Rust-first dependency detection, docs resolution, generation, and status workflows
+
+**Deferred / legacy:**
+- Pattern detection from agent transcripts and git history remains Python-only (`scripts/detect-patterns.py`) and is not part of the Rust binary command surface yet.
 
 **Planned (not yet implemented):**
 - AI eval runner for ambiguous signals (`check --ai-only`)
-- Pattern detection from agent transcripts and git history
 - Layer system (personal → project → team → built-in)
 - Rule promotion across layers (`promote` command)
 - Automated custom URL ingestion for non-registry sources

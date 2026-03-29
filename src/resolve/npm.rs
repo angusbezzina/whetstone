@@ -36,7 +36,8 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
     let docs_url = match docs_url {
         Some(url) if !url.is_empty() => url,
         _ => {
-            let mut result = serde_json::json!({"error": format!("No documentation URL found for {name}")});
+            let mut result =
+                serde_json::json!({"error": format!("No documentation URL found for {name}")});
             merge_meta(&mut result, &release_meta);
             return result;
         }
@@ -71,7 +72,11 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
 fn extract_npm_metadata(data: &Value, _version: &str) -> Value {
     let mut meta = serde_json::json!({});
 
-    if let Some(latest) = data.get("dist-tags").and_then(|d| d.get("latest")).and_then(|v| v.as_str()) {
+    if let Some(latest) = data
+        .get("dist-tags")
+        .and_then(|d| d.get("latest"))
+        .and_then(|v| v.as_str())
+    {
         meta["latest_version"] = Value::String(latest.to_string());
 
         if let Some(time) = data.get("time").and_then(|t| t.as_object()) {

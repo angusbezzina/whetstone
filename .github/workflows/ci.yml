@@ -21,10 +21,10 @@ jobs:
         run: cargo build
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings -A dead_code
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Run Rust tests
-        run: cargo test --test rust_integration
+        run: cargo test
 
   python-lint:
     runs-on: ubuntu-latest

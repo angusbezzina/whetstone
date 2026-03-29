@@ -23,7 +23,9 @@ pub struct StateManager {
 
 impl StateManager {
     pub fn new(project_dir: &Path) -> Self {
-        let project = project_dir.canonicalize().unwrap_or_else(|_| project_dir.to_path_buf());
+        let project = project_dir
+            .canonicalize()
+            .unwrap_or_else(|_| project_dir.to_path_buf());
         let state_dir = project.join("whetstone").join(".state");
         Self {
             manifests: ManifestStore::new(state_dir.join("manifests.json")),
@@ -86,7 +88,9 @@ pub fn load_json(path: &Path) -> Value {
         return Value::Object(Default::default());
     }
     match fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_else(|_| Value::Object(Default::default())),
+        Ok(text) => {
+            serde_json::from_str(&text).unwrap_or_else(|_| Value::Object(Default::default()))
+        }
         Err(_) => Value::Object(Default::default()),
     }
 }

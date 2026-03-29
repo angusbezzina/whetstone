@@ -45,22 +45,19 @@ pub fn generate_tests(
     for (language, rules) in &by_language {
         match language.as_str() {
             "python" => {
-                let (tests, lints, warns) =
-                    generate_python(&rules, project_dir, dry_run);
+                let (tests, lints, warns) = generate_python(rules, project_dir, dry_run);
                 test_files.extend(tests);
                 lint_configs.extend(lints);
                 all_warnings.extend(warns);
             }
             "typescript" => {
-                let (tests, lints, warns) =
-                    generate_typescript(&rules, project_dir, dry_run);
+                let (tests, lints, warns) = generate_typescript(rules, project_dir, dry_run);
                 test_files.extend(tests);
                 lint_configs.extend(lints);
                 all_warnings.extend(warns);
             }
             "rust" => {
-                let (tests, lints, warns) =
-                    generate_rust(&rules, project_dir, dry_run);
+                let (tests, lints, warns) = generate_rust(rules, project_dir, dry_run);
                 test_files.extend(tests);
                 lint_configs.extend(lints);
                 all_warnings.extend(warns);
@@ -117,7 +114,7 @@ fn generate_python(
 
     // Generate test file per dependency
     for rule in rules {
-        let safe_name = rule.source_name.replace('-', "_").replace('.', "_");
+        let safe_name = rule.source_name.replace(['-', '.'], "_");
         let test_filename = format!("test_{safe_name}.py");
         let test_path = evals_dir.join(&test_filename);
 
@@ -183,7 +180,7 @@ def python_source_files():
 
 fn generate_python_test(rule: &ApprovedRule) -> String {
     let mut lines = Vec::new();
-    let safe_id = rule.id.replace('.', "_").replace('-', "_");
+    let safe_id = rule.id.replace(['.', '-'], "_");
 
     lines.push(format!(
         "\"\"\"Whetstone eval: {} — {}\"\"\"\n",
@@ -295,11 +292,7 @@ fn generate_typescript(
 
     // Generate test file per dependency
     for rule in rules {
-        let safe_name = rule
-            .source_name
-            .replace('@', "")
-            .replace('/', "_")
-            .replace('-', "_");
+        let safe_name = rule.source_name.replace('@', "").replace(['/', '-'], "_");
         let test_filename = format!("{safe_name}.test.ts");
         let test_path = evals_dir.join(&test_filename);
 
@@ -361,11 +354,7 @@ export function violation(file: string, line: number, text: string): Violation {
 
 fn generate_ts_test(rule: &ApprovedRule) -> String {
     let mut lines = Vec::new();
-    let _safe_id = rule
-        .id
-        .replace('.', "_")
-        .replace('-', "_")
-        .replace('@', "");
+    let _safe_id = rule.id.replace(['.', '-'], "_").replace('@', "");
 
     lines.push("import { describe, it, expect } from 'vitest';".to_string());
     lines.push("import { findSourceFiles, readLines, violation } from './setup';".to_string());
@@ -434,7 +423,7 @@ fn generate_rust(
     let evals_dir = project_dir.join("whetstone").join("evals").join("rust");
 
     for rule in rules {
-        let safe_name = rule.source_name.replace('-', "_").replace('.', "_");
+        let safe_name = rule.source_name.replace(['-', '.'], "_");
         let test_filename = format!("test_{safe_name}.rs");
         let test_path = evals_dir.join(&test_filename);
 
@@ -471,28 +460,38 @@ fn generate_rust(
 
 fn generate_rust_test(rule: &ApprovedRule) -> String {
     let mut lines = Vec::new();
-    let safe_id = rule.id.replace('.', "_").replace('-', "_");
+    let safe_id = rule.id.replace(['.', '-'], "_");
 
     lines.push(format!("//! Whetstone eval: {}", rule.id));
-    lines.push(format!("//! {}", rule.description.lines().next().unwrap_or("")));
+    lines.push(format!(
+        "//! {}",
+        rule.description.lines().next().unwrap_or("")
+    ));
     lines.push(String::new());
     lines.push("use std::fs;".to_string());
     lines.push("use std::path::Path;".to_string());
     lines.push(String::new());
 
-    lines.push(format!(
-        "fn find_rust_files(dir: &Path) -> Vec<std::path::PathBuf> {{"
-    ));
+    lines.push("fn find_rust_files(dir: &Path) -> Vec<std::path::PathBuf> {".to_string());
     lines.push("    let mut files = Vec::new();".to_string());
     lines.push("    if let Ok(entries) = fs::read_dir(dir) {".to_string());
     lines.push("        for entry in entries.flatten() {".to_string());
     lines.push("            let path = entry.path();".to_string());
     lines.push("            if path.is_dir() {".to_string());
-    lines.push("                let name = path.file_name().unwrap_or_default().to_string_lossy();".to_string());
-    lines.push("                if !matches!(name.as_ref(), \"target\" | \".git\" | \"whetstone\") {".to_string());
+    lines.push(
+        "                let name = path.file_name().unwrap_or_default().to_string_lossy();"
+            .to_string(),
+    );
+    lines.push(
+        "                if !matches!(name.as_ref(), \"target\" | \".git\" | \"whetstone\") {"
+            .to_string(),
+    );
     lines.push("                    files.extend(find_rust_files(&path));".to_string());
     lines.push("                }".to_string());
-    lines.push("            } else if path.extension().and_then(|e| e.to_str()) == Some(\"rs\") {".to_string());
+    lines.push(
+        "            } else if path.extension().and_then(|e| e.to_str()) == Some(\"rs\") {"
+            .to_string(),
+    );
     lines.push("                files.push(path);".to_string());
     lines.push("            }".to_string());
     lines.push("        }".to_string());
@@ -511,14 +510,10 @@ fn generate_rust_test(rule: &ApprovedRule) -> String {
                     "    // Signal: {} ({})",
                     signal.description, signal.strategy
                 ));
-                lines.push(
-                    "    let files = find_rust_files(Path::new(\"src\"));".to_string(),
-                );
+                lines.push("    let files = find_rust_files(Path::new(\"src\"));".to_string());
                 lines.push("    let mut violations = Vec::new();".to_string());
                 lines.push("    for file in &files {".to_string());
-                lines.push(
-                    "        if let Ok(content) = fs::read_to_string(file) {".to_string(),
-                );
+                lines.push("        if let Ok(content) = fs::read_to_string(file) {".to_string());
                 lines.push(format!(
                     "            // TODO: implement check for: {}",
                     signal.description

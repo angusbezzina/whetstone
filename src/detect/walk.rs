@@ -59,7 +59,11 @@ pub fn find_manifests(
         .filter(|s| !s.contains('/'))
         .copied()
         .collect();
-    let multi_seg: Vec<&str> = SKIP_DIRS.iter().filter(|s| s.contains('/')).copied().collect();
+    let multi_seg: Vec<&str> = SKIP_DIRS
+        .iter()
+        .filter(|s| s.contains('/'))
+        .copied()
+        .collect();
 
     let extra_single: HashSet<String> = extra_excludes
         .iter()
@@ -138,10 +142,7 @@ fn walk_dir(
     // Recurse into subdirectories
     dirs.sort();
     for subdir in &dirs {
-        let dir_name = subdir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+        let dir_name = subdir.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
         // Skip hidden dirs (except specific ones)
         if dir_name.starts_with('.') && dir_name != ".whetstone" && dir_name != ".env" {

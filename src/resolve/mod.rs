@@ -14,19 +14,33 @@ use std::time::Instant;
 use crate::state::StateManager;
 use crate::types::LifecycleState;
 
+pub struct ResolveOptions<'a> {
+    pub deps_data: &'a Value,
+    pub filter_deps: Option<&'a [String]>,
+    pub changed_only: bool,
+    pub project_dir: &'a Path,
+    pub timeout: u64,
+    pub ttl: u64,
+    pub force_refresh: bool,
+    pub resume: bool,
+    pub retry_failed: bool,
+    pub workers: Option<usize>,
+}
+
 /// Resolve documentation sources for all dependencies.
-pub fn resolve_sources(
-    deps_data: &Value,
-    filter_deps: Option<&[String]>,
-    changed_only: bool,
-    project_dir: &Path,
-    timeout: u64,
-    ttl: u64,
-    force_refresh: bool,
-    resume: bool,
-    retry_failed: bool,
-    workers: Option<usize>,
-) -> Result<Value> {
+pub fn resolve_sources(options: ResolveOptions<'_>) -> Result<Value> {
+    let ResolveOptions {
+        deps_data,
+        filter_deps,
+        changed_only,
+        project_dir,
+        timeout,
+        ttl,
+        force_refresh,
+        resume,
+        retry_failed,
+        workers,
+    } = options;
     let start_time = Instant::now();
     let mut sources: Vec<Value> = Vec::new();
     let mut errors: Vec<Value> = Vec::new();
@@ -69,7 +83,10 @@ pub fn resolve_sources(
         if resume {
             if let Some(inv) = sm.inventory.get(language, name) {
                 let state = inv.get("state").and_then(|s| s.as_str()).unwrap_or("");
-                if matches!(state, "resolved" | "extraction_ready" | "extracted" | "approved") {
+                if matches!(
+                    state,
+                    "resolved" | "extraction_ready" | "extracted" | "approved"
+                ) {
                     if let Some(cached) = sm.cache.get(language, name, version) {
                         if cache_entry_reusable(&cached) {
                             sources.push(cached);
@@ -126,9 +143,13 @@ pub fn resolve_sources(
     for dep in &work_list {
         let language = dep.get("language").and_then(|v| v.as_str()).unwrap_or("");
         let name = dep.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        if !sm.inventory.set_state(language, name, LifecycleState::Resolving) {
+        if !sm
+            .inventory
+            .set_state(language, name, LifecycleState::Resolving)
+        {
             sm.inventory.upsert_dep(dep);
-            sm.inventory.set_state(language, name, LifecycleState::Resolving);
+            sm.inventory
+                .set_state(language, name, LifecycleState::Resolving);
         }
     }
     sm.inventory.save();
@@ -167,9 +188,7 @@ pub fn resolve_sources(
                 let language = dep.get("language").and_then(|v| v.as_str()).unwrap_or("");
                 let version = dep.get("version").and_then(|v| v.as_str()).unwrap_or("*");
                 let lang_key = format!("{language}:{name}");
-                let stored_hash = stored_hashes.get(&lang_key)
-                    .or_else(|| stored_hashes.get(name))
-                    .map(|s| s.as_str());
+                let stored_hash = stored_hashes.get(&lang_key).map(|s| s.as_str());
 
                 let result = resolve_single_dep(name, language, version, stored_hash, timeout);
                 let elapsed = started.elapsed().as_secs_f64();
@@ -178,7 +197,8 @@ pub fn resolve_sources(
                 {
                     let mut sm = sm_mutex.lock().unwrap();
                     if result.get("error").is_some() {
-                        sm.inventory.set_state(language, name, LifecycleState::Failed);
+                        sm.inventory
+                            .set_state(language, name, LifecycleState::Failed);
                     } else {
                         // Check content hash change
                         if let Some(old_cached) = sm.cache.get(language, name, version) {
@@ -203,21 +223,30 @@ pub fn resolve_sources(
                         sm.cache.upsert(cache_entry);
 
                         // Determine extraction readiness
-                        let source_type = result.get("source_type").and_then(|v| v.as_str()).unwrap_or("");
+                        let source_type = result
+                            .get("source_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
                         let confidence = result
                             .get("freshness")
                             .and_then(|f| f.get("confidence"))
                             .and_then(|c| c.as_str())
                             .unwrap_or("low");
-                        let has_content = result.get("content").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
+                        let has_content = result
+                            .get("content")
+                            .and_then(|v| v.as_str())
+                            .map(|s| !s.is_empty())
+                            .unwrap_or(false);
 
                         if matches!(source_type, "llms_full_txt" | "llms_txt")
                             && has_content
                             && confidence == "high"
                         {
-                            sm.inventory.set_state(language, name, LifecycleState::ExtractionReady);
+                            sm.inventory
+                                .set_state(language, name, LifecycleState::ExtractionReady);
                         } else {
-                            sm.inventory.set_state(language, name, LifecycleState::Resolved);
+                            sm.inventory
+                                .set_state(language, name, LifecycleState::Resolved);
                         }
                     }
                     sm.cache.save();
@@ -229,7 +258,11 @@ pub fn resolve_sources(
                 let status_str = if result.get("error").is_some() {
                     "error".to_string()
                 } else {
-                    result.get("source_type").and_then(|v| v.as_str()).unwrap_or("ok").to_string()
+                    result
+                        .get("source_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("ok")
+                        .to_string()
                 };
                 eprintln!("  [{}/{}] {name}: {status_str}", *count, total);
 
@@ -252,9 +285,12 @@ pub fn resolve_sources(
         if changed_only {
             if let Some(hash) = result.get("content_hash").and_then(|v| v.as_str()) {
                 let name = result.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let language = result.get("language").and_then(|v| v.as_str()).unwrap_or("");
+                let language = result
+                    .get("language")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let lang_key = format!("{language}:{name}");
-                let stored = stored_hashes.get(&lang_key).or_else(|| stored_hashes.get(name));
+                let stored = stored_hashes.get(&lang_key);
                 if let Some(stored) = stored {
                     if stored == hash {
                         continue;
@@ -292,8 +328,14 @@ pub fn resolve_sources(
     // Build source type timing stats
     let mut by_source_type: HashMap<String, (usize, f64)> = HashMap::new();
     for t in &timings_vec {
-        let st = t.get("source_type").and_then(|v| v.as_str()).unwrap_or("error");
-        let elapsed = t.get("elapsed_seconds").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let st = t
+            .get("source_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("error");
+        let elapsed = t
+            .get("elapsed_seconds")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
         let entry = by_source_type.entry(st.to_string()).or_insert((0, 0.0));
         entry.0 += 1;
         entry.1 += elapsed;
@@ -313,8 +355,14 @@ pub fn resolve_sources(
 
     let mut slowest: Vec<&Value> = timings_vec.iter().collect();
     slowest.sort_by(|a, b| {
-        let a_e = a.get("elapsed_seconds").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let b_e = b.get("elapsed_seconds").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let a_e = a
+            .get("elapsed_seconds")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let b_e = b
+            .get("elapsed_seconds")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
         b_e.partial_cmp(&a_e).unwrap_or(std::cmp::Ordering::Equal)
     });
     let slowest: Vec<Value> = slowest.into_iter().take(10).cloned().collect();
@@ -384,12 +432,12 @@ fn compute_freshness(result: &Value, stored_hash: Option<&str>) -> Value {
     let mut content_stale = false;
     // Source age from latest_release_date
     if let Some(date_str) = result.get("latest_release_date").and_then(|v| v.as_str()) {
-        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(
-            &date_str.replace('Z', "+00:00"),
-        ) {
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(&date_str.replace('Z', "+00:00")) {
             let age = chrono::Utc::now() - parsed.with_timezone(&chrono::Utc);
             source_age_days = Value::from(age.num_days());
-        } else if let Ok(parsed) = chrono::NaiveDate::parse_from_str(&date_str[..10.min(date_str.len())], "%Y-%m-%d") {
+        } else if let Ok(parsed) =
+            chrono::NaiveDate::parse_from_str(&date_str[..10.min(date_str.len())], "%Y-%m-%d")
+        {
             let today = chrono::Utc::now().date_naive();
             let age = today - parsed;
             source_age_days = Value::from(age.num_days());
@@ -397,11 +445,21 @@ fn compute_freshness(result: &Value, stored_hash: Option<&str>) -> Value {
     }
 
     // Confidence based on source type
-    let source_type = result.get("source_type").and_then(|v| v.as_str()).unwrap_or("");
+    let source_type = result
+        .get("source_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let confidence = match source_type {
         "llms_full_txt" | "llms_txt" => "high",
         "docs_url_only" => "low",
-        _ if result.get("content").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false) => "medium",
+        _ if result
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(|s| !s.is_empty())
+            .unwrap_or(false) =>
+        {
+            "medium"
+        }
         _ => "low",
     };
 
@@ -429,9 +487,16 @@ fn cache_entry_reusable(entry: &Value) -> bool {
     {
         return false;
     }
-    let source_type = entry.get("source_type").and_then(|v| v.as_str()).unwrap_or("");
+    let source_type = entry
+        .get("source_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if matches!(source_type, "llms_full_txt" | "llms_txt") {
-        return entry.get("content").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
+        return entry
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
     }
     true
 }

@@ -117,6 +117,8 @@ When ending a work session, complete ALL steps. Work is NOT complete until `git 
 1. File remaining work as beads
 2. Run quality gates (if code changed)
    ```bash
+   cargo clippy --all-targets --all-features -- -D warnings
+   cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
    python3 -m pytest -q
    ```
@@ -124,6 +126,8 @@ When ending a work session, complete ALL steps. Work is NOT complete until `git 
 3. Update bead status (close finished, update in-progress)
 4. Push:
    ```bash
+   cargo clippy --all-targets --all-features -- -D warnings
+   cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
    git pull --rebase
    git push

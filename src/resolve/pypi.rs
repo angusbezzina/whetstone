@@ -11,7 +11,10 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
         None => return serde_json::json!({"error": format!("PyPI lookup failed for {name}")}),
     };
 
-    let info = data.get("info").cloned().unwrap_or(Value::Object(Default::default()));
+    let info = data
+        .get("info")
+        .cloned()
+        .unwrap_or(Value::Object(Default::default()));
     let release_meta = extract_pypi_metadata(&data, version);
 
     // Extract docs URL from project_urls or home_page
@@ -20,7 +23,8 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
     let docs_url = match docs_url {
         Some(url) => url,
         None => {
-            let mut result = serde_json::json!({"error": format!("No documentation URL found for {name}")});
+            let mut result =
+                serde_json::json!({"error": format!("No documentation URL found for {name}")});
             merge_meta(&mut result, &release_meta);
             return result;
         }
@@ -57,8 +61,14 @@ fn find_docs_url(info: &Value) -> Option<String> {
     let project_urls = info.get("project_urls").and_then(|v| v.as_object());
     if let Some(urls) = project_urls {
         for key in &[
-            "Documentation", "Docs", "documentation", "docs",
-            "Homepage", "homepage", "Home", "home",
+            "Documentation",
+            "Docs",
+            "documentation",
+            "docs",
+            "Homepage",
+            "homepage",
+            "Home",
+            "home",
         ] {
             if let Some(url) = urls.get(*key).and_then(|v| v.as_str()) {
                 if !url.is_empty() {
@@ -94,7 +104,8 @@ fn extract_pypi_metadata(data: &Value, _version: &str) -> Value {
             if let Some(releases) = data.get("releases").and_then(|r| r.as_object()) {
                 if let Some(files) = releases.get(ver).and_then(|f| f.as_array()) {
                     if let Some(first) = files.first() {
-                        if let Some(upload_time) = first.get("upload_time").and_then(|t| t.as_str()) {
+                        if let Some(upload_time) = first.get("upload_time").and_then(|t| t.as_str())
+                        {
                             meta["latest_release_date"] = Value::String(upload_time.to_string());
                         }
                     }

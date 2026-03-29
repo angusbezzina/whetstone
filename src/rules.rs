@@ -214,9 +214,7 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
         if !has_deterministic && !rule.signals.is_empty() {
             warnings.push(ValidationWarning {
                 file: file_path.to_string(),
-                message: format!(
-                    "{rule_ctx}: no deterministic signal (ast or pattern)"
-                ),
+                message: format!("{rule_ctx}: no deterministic signal (ast or pattern)"),
             });
         }
 
@@ -224,10 +222,7 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
             if !VALID_STRATEGIES.contains(&sig.strategy.as_str()) {
                 warnings.push(ValidationWarning {
                     file: file_path.to_string(),
-                    message: format!(
-                        "{rule_ctx}: signal has invalid strategy '{}'",
-                        sig.strategy
-                    ),
+                    message: format!("{rule_ctx}: signal has invalid strategy '{}'", sig.strategy),
                 });
             }
         }
@@ -377,10 +372,7 @@ pub fn load_approved_rules(
     let mut approved = Vec::new();
 
     for lrf in &loaded {
-        let language = lrf
-            .language
-            .as_deref()
-            .unwrap_or("generic");
+        let language = lrf.language.as_deref().unwrap_or("generic");
 
         if let Some(filter) = lang_filter {
             if language != filter {
@@ -402,18 +394,26 @@ pub fn load_approved_rules(
                 source_url: rule.source_url.clone().unwrap_or_default(),
                 source_name: lrf.rule_file.source.name.clone(),
                 language: language.to_string(),
-                signals: rule.signals.iter().map(|s| ApprovedSignal {
-                    id: s.id.clone().unwrap_or_default(),
-                    strategy: s.strategy.clone(),
-                    description: s.description.clone().unwrap_or_default(),
-                    weight: s.weight.clone().unwrap_or_default(),
-                }).collect(),
-                golden_examples: rule.golden_examples.iter().map(|e| ApprovedExample {
-                    code: e.code.clone(),
-                    verdict: e.verdict.clone(),
-                    reason: e.reason.clone().unwrap_or_default(),
-                    language: e.language.clone(),
-                }).collect(),
+                signals: rule
+                    .signals
+                    .iter()
+                    .map(|s| ApprovedSignal {
+                        id: s.id.clone().unwrap_or_default(),
+                        strategy: s.strategy.clone(),
+                        description: s.description.clone().unwrap_or_default(),
+                        weight: s.weight.clone().unwrap_or_default(),
+                    })
+                    .collect(),
+                golden_examples: rule
+                    .golden_examples
+                    .iter()
+                    .map(|e| ApprovedExample {
+                        code: e.code.clone(),
+                        verdict: e.verdict.clone(),
+                        reason: e.reason.clone().unwrap_or_default(),
+                        language: e.language.clone(),
+                    })
+                    .collect(),
                 risk: rule.risk.clone(),
                 linter_gap: rule.linter_gap.clone(),
             });
@@ -472,11 +472,7 @@ pub fn compute_rule_stats(rule_files: &[Value]) -> BTreeMap<String, Value> {
             total_rules += rules.len();
             approved_count += rules
                 .iter()
-                .filter(|r| {
-                    r.get("approved")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false)
-                })
+                .filter(|r| r.get("approved").and_then(|v| v.as_bool()).unwrap_or(false))
                 .count();
         }
     }

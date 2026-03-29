@@ -8,6 +8,28 @@ use crate::detect;
 use crate::rules;
 use crate::state::StateManager;
 
+struct RecommendationInputs<'a> {
+    total_rules: usize,
+    freshness_days: Option<f64>,
+    last_extraction_date: Option<&'a str>,
+    deterministic_coverage: f64,
+    drifted_count: usize,
+    drift_info: &'a Value,
+    ai_signal_count: usize,
+    unapproved_count: usize,
+}
+
+struct ImpactInputs<'a> {
+    total_rules: usize,
+    approved_rules: &'a [&'a Value],
+    all_rules: &'a [Value],
+    dep_names: &'a BTreeSet<String>,
+    rule_files: &'a [Value],
+    deterministic_coverage: f64,
+    drifted_count: usize,
+    project_dep_count: usize,
+}
+
 pub fn compute_status(
     project_dir: &Path,
     check_dep_drift: bool,
@@ -34,8 +56,17 @@ pub fn compute_status(
     let rule_files = if changed_only {
         drift_info = check_drift(project_dir);
         let drifted_names: BTreeSet<String> = drift_info
-            .get("changed").and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(|s| s.to_lowercase())).collect())
+            .get("changed")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        v.get("name")
+                            .and_then(|n| n.as_str())
+                            .map(|s| s.to_lowercase())
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
 
         if drifted_names.is_empty() {
@@ -61,11 +92,15 @@ pub fn compute_status(
             }));
         }
 
-        rule_files.into_iter().filter(|rf| {
-            rf.get("source_name").and_then(|v| v.as_str())
-                .map(|n| drifted_names.contains(&n.to_lowercase()))
-                .unwrap_or(false)
-        }).collect()
+        rule_files
+            .into_iter()
+            .filter(|rf| {
+                rf.get("source_name")
+                    .and_then(|v| v.as_str())
+                    .map(|n| drifted_names.contains(&n.to_lowercase()))
+                    .unwrap_or(false)
+            })
+            .collect()
     } else {
         rule_files
     };
@@ -83,13 +118,26 @@ pub fn compute_status(
         }
     }
 
-    let approved_rules: Vec<&Value> = all_rules.iter().filter(|r| r.get("approved").and_then(|v| v.as_bool()).unwrap_or(false)).collect();
+    let approved_rules: Vec<&Value> = all_rules
+        .iter()
+        .filter(|r| r.get("approved").and_then(|v| v.as_bool()).unwrap_or(false))
+        .collect();
     let total_rules = approved_rules.len();
     let unapproved_count = all_rules.len() - total_rules;
 
-    let high_confidence = approved_rules.iter().filter(|r| r.get("confidence").and_then(|v| v.as_str()) == Some("high")).count();
-    let medium_confidence = approved_rules.iter().filter(|r| r.get("confidence").and_then(|v| v.as_str()) == Some("medium")).count();
-    let high_confidence_ratio = if total_rules > 0 { high_confidence as f64 / total_rules as f64 * 100.0 } else { 0.0 };
+    let high_confidence = approved_rules
+        .iter()
+        .filter(|r| r.get("confidence").and_then(|v| v.as_str()) == Some("high"))
+        .count();
+    let medium_confidence = approved_rules
+        .iter()
+        .filter(|r| r.get("confidence").and_then(|v| v.as_str()) == Some("medium"))
+        .count();
+    let high_confidence_ratio = if total_rules > 0 {
+        high_confidence as f64 / total_rules as f64 * 100.0
+    } else {
+        0.0
+    };
 
     // Signals
     let mut all_signals: Vec<String> = Vec::new();
@@ -103,20 +151,39 @@ pub fn compute_status(
         }
     }
 
-    let deterministic_count = all_signals.iter().filter(|s| matches!(s.as_str(), "ast" | "pattern" | "lint_proxy")).count();
+    let deterministic_count = all_signals
+        .iter()
+        .filter(|s| matches!(s.as_str(), "ast" | "pattern" | "lint_proxy"))
+        .count();
     let ai_count = all_signals.iter().filter(|s| s.as_str() == "ai").count();
     let total_signals = all_signals.len();
-    let deterministic_coverage = if total_signals > 0 { deterministic_count as f64 / total_signals as f64 * 100.0 } else { 0.0 };
+    let deterministic_coverage = if total_signals > 0 {
+        deterministic_count as f64 / total_signals as f64 * 100.0
+    } else {
+        0.0
+    };
 
     // Severity
-    let must_count = approved_rules.iter().filter(|r| r.get("severity").and_then(|v| v.as_str()) == Some("must")).count();
-    let should_count = approved_rules.iter().filter(|r| r.get("severity").and_then(|v| v.as_str()) == Some("should")).count();
-    let may_count = approved_rules.iter().filter(|r| r.get("severity").and_then(|v| v.as_str()) == Some("may")).count();
+    let must_count = approved_rules
+        .iter()
+        .filter(|r| r.get("severity").and_then(|v| v.as_str()) == Some("must"))
+        .count();
+    let should_count = approved_rules
+        .iter()
+        .filter(|r| r.get("severity").and_then(|v| v.as_str()) == Some("should"))
+        .count();
+    let may_count = approved_rules
+        .iter()
+        .filter(|r| r.get("severity").and_then(|v| v.as_str()) == Some("may"))
+        .count();
 
     // Categories
     let mut categories: BTreeMap<String, usize> = BTreeMap::new();
     for r in &approved_rules {
-        let cat = r.get("category").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let cat = r
+            .get("category")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         *categories.entry(cat.to_string()).or_insert(0) += 1;
     }
 
@@ -133,23 +200,50 @@ pub fn compute_status(
             drift_info = serde_json::json!({});
         }
     }
-    let drifted_count = drift_info.get("changed").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let drifted_count = drift_info
+        .get("changed")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
 
-    let label = compute_label(total_rules, freshness_days, deterministic_coverage, drifted_count);
-    let score = compute_score(total_rules, freshness_days, deterministic_coverage, high_confidence_ratio, drifted_count);
-
-    let recommendations = build_recommendations(
-        total_rules, freshness_days, &freshness_label, last_extraction_date.as_deref(),
-        deterministic_coverage, drifted_count, &drift_info, ai_count, unapproved_count,
+    let label = compute_label(
+        total_rules,
+        freshness_days,
+        deterministic_coverage,
+        drifted_count,
     );
+    let score = compute_score(
+        total_rules,
+        freshness_days,
+        deterministic_coverage,
+        high_confidence_ratio,
+        drifted_count,
+    );
+
+    let recommendations = build_recommendations(RecommendationInputs {
+        total_rules,
+        freshness_days,
+        last_extraction_date: last_extraction_date.as_deref(),
+        deterministic_coverage,
+        drifted_count,
+        drift_info: &drift_info,
+        ai_signal_count: ai_count,
+        unapproved_count,
+    });
 
     // Project dep count
     let project_dep_count = count_project_deps(project_dir);
 
-    let metrics = compute_impact_metrics(
-        total_rules, &approved_rules, &all_rules, &dep_names, &rule_files,
-        deterministic_coverage, drifted_count, project_dep_count,
-    );
+    let metrics = compute_impact_metrics(ImpactInputs {
+        total_rules,
+        approved_rules: &approved_rules,
+        all_rules: &all_rules,
+        dep_names: &dep_names,
+        rule_files: &rule_files,
+        deterministic_coverage,
+        drifted_count,
+        project_dep_count,
+    });
 
     // Pipeline state
     let mut pipeline_state = serde_json::json!({});
@@ -158,16 +252,20 @@ pub fn compute_status(
     let mut doc_stale: Vec<Value> = Vec::new();
 
     let mut sm = StateManager::new(project_dir);
-    if let Ok(()) = (|| -> std::result::Result<(), ()> {
+    if let Ok(()) = {
         sm.load_all();
 
         let all_inv_deps = sm.inventory.all_deps();
-        let runtime_inv_deps: Vec<&Value> = all_inv_deps.iter()
+        let runtime_inv_deps: Vec<&Value> = all_inv_deps
+            .iter()
             .filter(|d| !d.get("dev").and_then(|v| v.as_bool()).unwrap_or(false))
             .collect();
         let mut state_counts: HashMap<String, usize> = HashMap::new();
         for d in &all_inv_deps {
-            let s = d.get("state").and_then(|v| v.as_str()).unwrap_or("discovered");
+            let s = d
+                .get("state")
+                .and_then(|v| v.as_str())
+                .unwrap_or("discovered");
             *state_counts.entry(s.to_string()).or_insert(0) += 1;
         }
 
@@ -202,16 +300,29 @@ pub fn compute_status(
                 "state": d.get("state"),
             });
             if let Some(cached) = sm.cache.get(language, name, version) {
-                entry["confidence"] = cached.get("confidence").or_else(|| cached.get("freshness").and_then(|f| f.get("confidence"))).cloned().unwrap_or(Value::Null);
+                entry["confidence"] = cached
+                    .get("confidence")
+                    .or_else(|| cached.get("freshness").and_then(|f| f.get("confidence")))
+                    .cloned()
+                    .unwrap_or(Value::Null);
                 entry["source_type"] = cached.get("source_type").cloned().unwrap_or(Value::Null);
             }
             extraction_readiness.push(entry);
         }
 
         for cached_entry in sm.cache.all_entries() {
-            let lang = cached_entry.get("language").and_then(|v| v.as_str()).unwrap_or("");
-            let name = cached_entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let ver = cached_entry.get("version").and_then(|v| v.as_str()).unwrap_or("*");
+            let lang = cached_entry
+                .get("language")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let name = cached_entry
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let ver = cached_entry
+                .get("version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("*");
             if !sm.cache.is_fresh(lang, name, ver, Some(2592000)) {
                 doc_stale.push(serde_json::json!({
                     "name": name,
@@ -221,15 +332,25 @@ pub fn compute_status(
             }
         }
 
-        Ok(())
-    })() {}
+        Ok::<(), ()>(())
+    } {}
 
     // Next command
     let next_command = if drifted_count > 0 {
         "whetstone doctor --changed-only"
-    } else if pipeline_state.get("failed").and_then(|v| v.as_i64()).unwrap_or(0) > 0 {
+    } else if pipeline_state
+        .get("failed")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0)
+        > 0
+    {
         "whetstone resolve-sources --retry-failed"
-    } else if pipeline_state.get("extraction_ready").and_then(|v| v.as_i64()).unwrap_or(0) > 0 {
+    } else if pipeline_state
+        .get("extraction_ready")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0)
+        > 0
+    {
         "whetstone doctor --ready-only"
     } else if total_rules == 0 {
         "whetstone doctor"
@@ -292,7 +413,9 @@ fn compute_freshness_days(rule_files: &[Value]) -> Option<f64> {
                         if latest.is_none() || dt > latest.unwrap() {
                             latest = Some(dt);
                         }
-                    } else if let Ok(d) = NaiveDate::parse_from_str(&cleaned[..10.min(cleaned.len())], "%Y-%m-%d") {
+                    } else if let Ok(d) =
+                        NaiveDate::parse_from_str(&cleaned[..10.min(cleaned.len())], "%Y-%m-%d")
+                    {
                         let dt = d.and_hms_opt(0, 0, 0).unwrap().and_utc();
                         if latest.is_none() || dt > latest.unwrap() {
                             latest = Some(dt);
@@ -340,17 +463,40 @@ fn compute_last_extraction_date(rule_files: &[Value]) -> Option<String> {
     })
 }
 
-fn compute_label(total_rules: usize, freshness_days: Option<f64>, deterministic_coverage: f64, drifted_count: usize) -> String {
-    if total_rules == 0 { return "No Rules".to_string(); }
-    if (freshness_days.is_some() && freshness_days.unwrap() > 60.0) || drifted_count >= 3 { return "Stale".to_string(); }
-    if drifted_count > 0 { return "Needs Review".to_string(); }
-    if freshness_days.is_some() && freshness_days.unwrap() > 30.0 { return "Needs Review".to_string(); }
-    if deterministic_coverage < 50.0 { return "Needs Review".to_string(); }
+fn compute_label(
+    total_rules: usize,
+    freshness_days: Option<f64>,
+    deterministic_coverage: f64,
+    drifted_count: usize,
+) -> String {
+    if total_rules == 0 {
+        return "No Rules".to_string();
+    }
+    if (freshness_days.is_some() && freshness_days.unwrap() > 60.0) || drifted_count >= 3 {
+        return "Stale".to_string();
+    }
+    if drifted_count > 0 {
+        return "Needs Review".to_string();
+    }
+    if freshness_days.is_some() && freshness_days.unwrap() > 30.0 {
+        return "Needs Review".to_string();
+    }
+    if deterministic_coverage < 50.0 {
+        return "Needs Review".to_string();
+    }
     "Healthy".to_string()
 }
 
-fn compute_score(total_rules: usize, freshness_days: Option<f64>, deterministic_coverage: f64, high_confidence_ratio: f64, drifted_count: usize) -> i64 {
-    if total_rules == 0 { return 0; }
+fn compute_score(
+    total_rules: usize,
+    freshness_days: Option<f64>,
+    deterministic_coverage: f64,
+    high_confidence_ratio: f64,
+    drifted_count: usize,
+) -> i64 {
+    if total_rules == 0 {
+        return 0;
+    }
 
     let freshness_score = match freshness_days {
         None => 15,
@@ -373,11 +519,17 @@ fn compute_score(total_rules: usize, freshness_days: Option<f64>, deterministic_
     (freshness_score + det_score + conf_score + drift_score).min(100)
 }
 
-fn build_recommendations(
-    total_rules: usize, freshness_days: Option<f64>, _freshness_label: &str,
-    last_extraction_date: Option<&str>, deterministic_coverage: f64,
-    drifted_count: usize, drift_info: &Value, ai_signal_count: usize, unapproved_count: usize,
-) -> Vec<Value> {
+fn build_recommendations(inputs: RecommendationInputs<'_>) -> Vec<Value> {
+    let RecommendationInputs {
+        total_rules,
+        freshness_days,
+        last_extraction_date,
+        deterministic_coverage,
+        drifted_count,
+        drift_info,
+        ai_signal_count,
+        unapproved_count,
+    } = inputs;
     let mut recs = Vec::new();
 
     if total_rules == 0 {
@@ -386,9 +538,21 @@ fn build_recommendations(
     }
 
     if drifted_count > 0 {
-        let changed = drift_info.get("changed").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-        let dep_list: Vec<String> = changed.iter().take(3).filter_map(|c| c.get("name").and_then(|n| n.as_str()).map(String::from)).collect();
-        let suffix = if drifted_count > 3 { format!(" (+{} more)", drifted_count - 3) } else { String::new() };
+        let changed = drift_info
+            .get("changed")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let dep_list: Vec<String> = changed
+            .iter()
+            .take(3)
+            .filter_map(|c| c.get("name").and_then(|n| n.as_str()).map(String::from))
+            .collect();
+        let suffix = if drifted_count > 3 {
+            format!(" (+{} more)", drifted_count - 3)
+        } else {
+            String::new()
+        };
         recs.push(serde_json::json!({
             "priority": "high", "action": "refresh",
             "message": format!("{} deps have version drift: {}{suffix}. Re-run doctor to resolve updated sources.", drifted_count, dep_list.join(", ")),
@@ -398,7 +562,9 @@ fn build_recommendations(
 
     if let Some(days) = freshness_days {
         if days > 30.0 {
-            let date_str = last_extraction_date.map(|d| format!(" (last: {})", &d[..10.min(d.len())])).unwrap_or_default();
+            let date_str = last_extraction_date
+                .map(|d| format!(" (last: {})", &d[..10.min(d.len())]))
+                .unwrap_or_default();
             recs.push(serde_json::json!({
                 "priority": if days > 60.0 { "high" } else { "medium" },
                 "action": "refresh",
@@ -444,19 +610,35 @@ fn build_recommendations(
     recs
 }
 
-fn compute_impact_metrics(
-    total_rules: usize, approved_rules: &[&Value], all_rules: &[Value],
-    dep_names: &BTreeSet<String>, rule_files: &[Value],
-    deterministic_coverage: f64, drifted_count: usize, project_dep_count: usize,
-) -> Value {
+fn compute_impact_metrics(inputs: ImpactInputs<'_>) -> Value {
+    let ImpactInputs {
+        total_rules,
+        approved_rules,
+        all_rules,
+        dep_names,
+        rule_files,
+        deterministic_coverage,
+        drifted_count,
+        project_dep_count,
+    } = inputs;
     let total_proposed = all_rules.len();
-    let approval_rate = if total_proposed > 0 { total_rules as f64 / total_proposed as f64 * 100.0 } else { 0.0 };
-    let must_rules = approved_rules.iter().filter(|r| r.get("severity").and_then(|v| v.as_str()) == Some("must")).count();
+    let approval_rate = if total_proposed > 0 {
+        total_rules as f64 / total_proposed as f64 * 100.0
+    } else {
+        0.0
+    };
+    let must_rules = approved_rules
+        .iter()
+        .filter(|r| r.get("severity").and_then(|v| v.as_str()) == Some("must"))
+        .count();
 
     let mut deps_with_rules: BTreeSet<String> = BTreeSet::new();
     for rf in rule_files {
         if let Some(rules) = rf.get("rules").and_then(|v| v.as_array()) {
-            if rules.iter().any(|r| r.get("approved").and_then(|v| v.as_bool()).unwrap_or(false)) {
+            if rules
+                .iter()
+                .any(|r| r.get("approved").and_then(|v| v.as_bool()).unwrap_or(false))
+            {
                 if let Some(name) = rf.get("source_name").and_then(|v| v.as_str()) {
                     deps_with_rules.insert(name.to_string());
                 }
@@ -465,8 +647,16 @@ fn compute_impact_metrics(
     }
 
     let deps_covered = deps_with_rules.len();
-    let deps_total = if project_dep_count > 0 { project_dep_count } else { dep_names.len() };
-    let dep_coverage = if deps_total > 0 { deps_covered as f64 / deps_total as f64 * 100.0 } else { 0.0 };
+    let deps_total = if project_dep_count > 0 {
+        project_dep_count
+    } else {
+        dep_names.len()
+    };
+    let dep_coverage = if deps_total > 0 {
+        deps_covered as f64 / deps_total as f64 * 100.0
+    } else {
+        0.0
+    };
 
     serde_json::json!({
         "rules_approved": total_rules,
@@ -483,18 +673,25 @@ fn compute_impact_metrics(
 
 fn check_drift(project_dir: &Path) -> Value {
     match detect::detect_deps(project_dir, true, &[], &[], false) {
-        Ok(data) => data.get("drift").cloned().unwrap_or(serde_json::json!({"changed": [], "count": 0, "checked": 0})),
+        Ok(data) => data
+            .get("drift")
+            .cloned()
+            .unwrap_or(serde_json::json!({"changed": [], "count": 0, "checked": 0})),
         Err(_) => serde_json::json!({"changed": [], "count": 0, "checked": 0}),
     }
 }
 
 fn count_project_deps(project_dir: &Path) -> usize {
     match detect::detect_deps(project_dir, false, &[], &[], false) {
-        Ok(data) => {
-            data.get("dependencies").and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter(|d| !d.get("dev").and_then(|v| v.as_bool()).unwrap_or(false)).count())
-                .unwrap_or(0)
-        }
+        Ok(data) => data
+            .get("dependencies")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter(|d| !d.get("dev").and_then(|v| v.as_bool()).unwrap_or(false))
+                    .count()
+            })
+            .unwrap_or(0),
         Err(_) => 0,
     }
 }
@@ -508,16 +705,28 @@ pub fn format_human_output(result: &Value) -> String {
         r.section_header("");
         r.empty_line();
         r.line(result.get("message").and_then(|v| v.as_str()).unwrap_or(""));
-        r.line(&format!("Next: {}", result.get("next_command").and_then(|v| v.as_str()).unwrap_or("")));
+        r.line(&format!(
+            "Next: {}",
+            result
+                .get("next_command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+        ));
         r.empty_line();
         r.bottom_border();
         return r.build();
     }
 
-    let label = result.get("label").and_then(|v| v.as_str()).unwrap_or("Unknown");
+    let label = result
+        .get("label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
     let score = result.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
     let dims = result.get("dimensions").cloned().unwrap_or(Value::Null);
-    let freshness_label = result.get("freshness_label").and_then(|v| v.as_str()).unwrap_or("Unknown");
+    let freshness_label = result
+        .get("freshness_label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Unknown");
 
     let indicator = match label {
         "Healthy" => "OK",
@@ -532,9 +741,18 @@ pub fn format_human_output(result: &Value) -> String {
     r.section_header("");
     r.empty_line();
 
-    let rules_count = dims.get("rules_count").and_then(|v| v.as_i64()).unwrap_or(0);
-    let drifted = dims.get("pending_updates").and_then(|v| v.as_i64()).unwrap_or(0);
-    let mut status_line = format!("[{}] {} \u{00b7} Score: {}/100 \u{00b7} {} rules", indicator, label, score, rules_count);
+    let rules_count = dims
+        .get("rules_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let drifted = dims
+        .get("pending_updates")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let mut status_line = format!(
+        "[{}] {} \u{00b7} Score: {}/100 \u{00b7} {} rules",
+        indicator, label, score, rules_count
+    );
     if drifted > 0 {
         status_line.push_str(&format!(" \u{00b7} {} deps drifted", drifted));
     }
@@ -546,14 +764,33 @@ pub fn format_human_output(result: &Value) -> String {
     r.empty_line();
 
     if let Some(freshness) = dims.get("freshness_days").and_then(|v| v.as_f64()) {
-        r.line(&format!("Freshness:              {:.0} days ({})", freshness, freshness_label));
+        r.line(&format!(
+            "Freshness:              {:.0} days ({})",
+            freshness, freshness_label
+        ));
     } else {
-        r.line(&format!("Freshness:              No timestamps found ({})", freshness_label));
+        r.line(&format!(
+            "Freshness:              No timestamps found ({})",
+            freshness_label
+        ));
     }
     r.line(&format!("Rules:                  {} approved", rules_count));
-    r.line(&format!("High confidence:        {:.0}%", dims.get("high_confidence_ratio").and_then(|v| v.as_f64()).unwrap_or(0.0)));
-    r.line(&format!("Deterministic coverage: {:.0}%", dims.get("deterministic_coverage").and_then(|v| v.as_f64()).unwrap_or(0.0)));
-    r.line(&format!("Pending updates:        {} deps with drift", drifted));
+    r.line(&format!(
+        "High confidence:        {:.0}%",
+        dims.get("high_confidence_ratio")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+    ));
+    r.line(&format!(
+        "Deterministic coverage: {:.0}%",
+        dims.get("deterministic_coverage")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+    ));
+    r.line(&format!(
+        "Pending updates:        {} deps with drift",
+        drifted
+    ));
 
     // Recommendations
     if let Some(recs) = result.get("recommendations").and_then(|v| v.as_array()) {
@@ -562,9 +799,16 @@ pub fn format_human_output(result: &Value) -> String {
             r.section_header("Recommendations");
             r.empty_line();
             for rec in recs {
-                let priority = rec.get("priority").and_then(|v| v.as_str()).unwrap_or("medium");
+                let priority = rec
+                    .get("priority")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("medium");
                 let msg = rec.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                let marker = match priority { "high" => "[HIGH]", "medium" => "[MED]", _ => "[LOW]" };
+                let marker = match priority {
+                    "high" => "[HIGH]",
+                    "medium" => "[MED]",
+                    _ => "[LOW]",
+                };
                 r.line(&format!("{} {}", marker, msg));
                 if let Some(cmd) = rec.get("command").and_then(|v| v.as_str()) {
                     r.line(&format!("       -> {}", cmd));
@@ -586,7 +830,8 @@ pub fn format_human_output(result: &Value) -> String {
 pub fn extraction_ready_list(project_dir: &Path) -> Vec<Value> {
     let mut sm = StateManager::new(project_dir);
     sm.inventory.load();
-    sm.inventory.by_state("extraction_ready")
+    sm.inventory
+        .by_state("extraction_ready")
         .iter()
         .map(|d| serde_json::json!({"name": d.get("name"), "language": d.get("language")}))
         .collect()
@@ -617,9 +862,17 @@ pub fn snapshot_metrics(project_dir: &Path, result: &Value) {
     if let Some(parent) = metrics_file.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&metrics_file) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&metrics_file)
+    {
         use std::io::Write;
-        let _ = writeln!(f, "{}", serde_json::to_string(&snapshot).unwrap_or_default());
+        let _ = writeln!(
+            f,
+            "{}",
+            serde_json::to_string(&snapshot).unwrap_or_default()
+        );
     }
 }
 
@@ -652,32 +905,70 @@ pub fn format_history(entries: &[Value]) -> String {
     lines.push("=".repeat(72));
     lines.push("  Whetstone Metric History".to_string());
     lines.push("=".repeat(72));
-    lines.push(format!("  {:<12} {:>5}  {:<14} {:>5} {:>4} {:>5} {:>5}",
-        "Date", "Score", "Label", "Rules", "Must", "Det%", "Drift"));
+    lines.push(format!(
+        "  {:<12} {:>5}  {:<14} {:>5} {:>4} {:>5} {:>5}",
+        "Date", "Score", "Label", "Rules", "Must", "Det%", "Drift"
+    ));
     lines.push(format!("  {}", "-".repeat(64)));
 
     for entry in entries {
-        let ts = entry.get("timestamp").and_then(|v| v.as_str()).unwrap_or("")[..10.min(entry.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").len())].to_string();
+        let ts = entry
+            .get("timestamp")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")[..10.min(
+            entry
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .len(),
+        )]
+            .to_string();
         let score = entry.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
         let label = entry.get("label").and_then(|v| v.as_str()).unwrap_or("?");
-        let rules = entry.get("rules_approved").and_then(|v| v.as_i64()).unwrap_or(0);
-        let must = entry.get("must_rules").and_then(|v| v.as_i64()).unwrap_or(0);
-        let det = entry.get("deterministic_coverage").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let drift = entry.get("pending_drift").and_then(|v| v.as_i64()).unwrap_or(0);
-        lines.push(format!("  {:<12} {:>5}  {:<14} {:>5} {:>4} {:>4.0}% {:>5}",
-            ts, score, label, rules, must, det, drift));
+        let rules = entry
+            .get("rules_approved")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let must = entry
+            .get("must_rules")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let det = entry
+            .get("deterministic_coverage")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let drift = entry
+            .get("pending_drift")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        lines.push(format!(
+            "  {:<12} {:>5}  {:<14} {:>5} {:>4} {:>4.0}% {:>5}",
+            ts, score, label, rules, must, det, drift
+        ));
     }
 
     if entries.len() >= 2 {
         let first = &entries[0];
         let last = entries.last().unwrap();
-        let score_delta = last.get("score").and_then(|v| v.as_i64()).unwrap_or(0) - first.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
-        let rules_delta = last.get("rules_approved").and_then(|v| v.as_i64()).unwrap_or(0) - first.get("rules_approved").and_then(|v| v.as_i64()).unwrap_or(0);
+        let score_delta = last.get("score").and_then(|v| v.as_i64()).unwrap_or(0)
+            - first.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
+        let rules_delta = last
+            .get("rules_approved")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            - first
+                .get("rules_approved")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
         lines.push(format!("  {}", "-".repeat(64)));
-        lines.push(format!("  Trend: score {}{}, rules {}{} over {} snapshots",
-            if score_delta >= 0 { "+" } else { "" }, score_delta,
-            if rules_delta >= 0 { "+" } else { "" }, rules_delta,
-            entries.len()));
+        lines.push(format!(
+            "  Trend: score {}{}, rules {}{} over {} snapshots",
+            if score_delta >= 0 { "+" } else { "" },
+            score_delta,
+            if rules_delta >= 0 { "+" } else { "" },
+            rules_delta,
+            entries.len()
+        ));
     }
 
     lines.push("=".repeat(72));
