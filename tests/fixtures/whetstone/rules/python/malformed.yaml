@@ -1,0 +1,14 @@
+source:
+  name: test-malformed
+  docs_url: https://example.com
+  version: "1.0.0"
+  content_hash: sha256:malformed123
+
+rules:
+  - id: test-malformed.missing-fields
+    severity: must
+    # missing confidence, category, source_url — should produce warnings
+    description: Rule with missing required fields
+    approved: false
+    signals: []
+    golden_examples: []

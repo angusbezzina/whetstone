@@ -4,7 +4,6 @@ pub mod npm;
 pub mod pypi;
 
 use anyhow::Result;
-use regex::Regex;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -167,7 +166,10 @@ pub fn resolve_sources(
                 let name = dep.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let language = dep.get("language").and_then(|v| v.as_str()).unwrap_or("");
                 let version = dep.get("version").and_then(|v| v.as_str()).unwrap_or("*");
-                let stored_hash = stored_hashes.get(name).map(|s| s.as_str());
+                let lang_key = format!("{language}:{name}");
+                let stored_hash = stored_hashes.get(&lang_key)
+                    .or_else(|| stored_hashes.get(name))
+                    .map(|s| s.as_str());
 
                 let result = resolve_single_dep(name, language, version, stored_hash, timeout);
                 let elapsed = started.elapsed().as_secs_f64();
@@ -250,7 +252,10 @@ pub fn resolve_sources(
         if changed_only {
             if let Some(hash) = result.get("content_hash").and_then(|v| v.as_str()) {
                 let name = result.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                if let Some(stored) = stored_hashes.get(name) {
+                let language = result.get("language").and_then(|v| v.as_str()).unwrap_or("");
+                let lang_key = format!("{language}:{name}");
+                let stored = stored_hashes.get(&lang_key).or_else(|| stored_hashes.get(name));
+                if let Some(stored) = stored {
                     if stored == hash {
                         continue;
                     }
@@ -449,29 +454,18 @@ pub fn content_hash(content: &str) -> String {
 
 fn load_stored_hashes(project_dir: &Path) -> HashMap<String, String> {
     let rules_dir = project_dir.join("whetstone").join("rules");
-    if !rules_dir.exists() {
-        return HashMap::new();
-    }
-
-    let name_re = Regex::new(r"(?m)^\s*name:\s*(.+)$").unwrap();
-    let hash_re = Regex::new(r"(?m)^\s*content_hash:\s*(.+)$").unwrap();
+    let (loaded, _warnings) = crate::rules::load_rule_files(&rules_dir);
     let mut hashes = HashMap::new();
 
-    for entry in walkdir::WalkDir::new(&rules_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        if entry.path().extension().and_then(|e| e.to_str()) != Some("yaml") {
-            continue;
-        }
-        if let Ok(text) = std::fs::read_to_string(entry.path()) {
-            if let (Some(name_cap), Some(hash_cap)) =
-                (name_re.captures(&text), hash_re.captures(&text))
-            {
-                hashes.insert(
-                    name_cap[1].trim().to_string(),
-                    hash_cap[1].trim().to_string(),
-                );
+    for lrf in &loaded {
+        let name = &lrf.rule_file.source.name;
+        let lang = lrf.language.as_deref().unwrap_or("unknown");
+        if let Some(ref hash) = lrf.rule_file.source.content_hash {
+            if !name.is_empty() && !hash.is_empty() {
+                // Key by language:name to avoid cross-ecosystem collisions
+                hashes.insert(format!("{lang}:{name}"), hash.clone());
+                // Also store by name-only for backwards compatibility
+                hashes.insert(name.clone(), hash.clone());
             }
         }
     }

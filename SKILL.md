@@ -5,7 +5,7 @@ description: >-
   generates native tests, lint configs, and agent context files. Use when the
   user asks to extract rules, update standards, or run whetstone commands.
 license: MIT
-compatibility: Requires python3 (3.10+), git, and internet access for registry lookups.
+compatibility: Requires the whetstone binary (Rust), git, and internet access for registry lookups.
 metadata:
   author: whetstone
   version: "0.1.0"
@@ -27,12 +27,12 @@ If the user says "whetstone doctor", "doctor", "scan my project", or "bootstrap 
 
 Most users need three steps:
 
-1. **Bootstrap**: `python3 scripts/doctor.py --project-dir .` — detects deps, resolves docs, mines patterns
+1. **Bootstrap**: `whetstone doctor` — detects deps, resolves docs
 2. **Extract + Approve**: Read the doctor's `extraction_context`, apply the Extraction Prompt below for each source, present rules for approval using the Rule Card format
-3. **Generate**: `python3 scripts/generate-tests.py --project-dir .` and `python3 scripts/generate-agent-context.py --project-dir .`
+3. **Generate**: `whetstone generate-context` and `whetstone generate-tests`
 
-After that, check health with `python3 scripts/status.py --project-dir .` anytime.
-When deps update, run `python3 scripts/doctor.py --project-dir . --changed-only` to resolve only changed deps, then re-extract.
+After that, check health with `whetstone status` anytime.
+When deps update, run `whetstone doctor --changed-only` to resolve only changed deps, then re-extract.
 
 ### Repeat Runs
 
@@ -40,40 +40,33 @@ Whetstone caches manifest fingerprints and source resolution results under `whet
 
 | Scenario | Command | What it does |
 |----------|---------|-------------|
-| Full re-bootstrap | `python3 scripts/doctor.py --project-dir .` | Detects all deps, resolves all sources |
-| Only changed deps | `python3 scripts/doctor.py --project-dir . --changed-only` | Skips cached, resolves stale/missing |
-| Resume interrupted run | `python3 scripts/doctor.py --project-dir . --resume` | Picks up where last run stopped |
-| Force re-resolve | `python3 scripts/doctor.py --project-dir . --refresh` | Ignores cache, re-fetches all docs |
-| Cap resolution count | `python3 scripts/doctor.py --project-dir . --max-deps 5` | Resolves top 5 ranked deps only |
-| Extract ready subset | `python3 scripts/doctor.py --project-dir . --ready-only` | Hands off only extraction-ready deps |
-| Retry failed deps | `python3 scripts/resolve-sources.py --retry-failed` | Re-resolves only failed deps |
+| Full re-bootstrap | `whetstone doctor` | Detects all deps, resolves all sources |
+| Only changed deps | `whetstone doctor --changed-only` | Skips cached, resolves stale/missing |
+| Resume interrupted run | `whetstone doctor --resume` | Picks up where last run stopped |
+| Force re-resolve | `whetstone doctor --refresh` | Ignores cache, re-fetches all docs |
+| Cap resolution count | `whetstone doctor --max-deps 5` | Resolves top 5 ranked deps only |
+| Extract ready subset | `whetstone doctor --ready-only` | Hands off only extraction-ready deps |
+| Retry failed deps | `whetstone resolve-sources --retry-failed` | Re-resolves only failed deps |
 
 See the **Doctor** workflow below for the detailed version.
 
 ---
 
-## Script Paths
+## Binary Usage
 
-All scripts live in the `scripts/` directory relative to this SKILL.md file. When running scripts, use the absolute path based on where this skill is installed. For example, if this SKILL.md is at `/path/to/whetstone/SKILL.md`, run:
-
-```
-python3 /path/to/whetstone/scripts/detect-deps.py --project-dir .
-```
-
-In the workflow steps below, script paths are written as `scripts/detect-deps.py` — always resolve these relative to this SKILL.md's directory.
+The `whetstone` binary is the primary interface. When using Whetstone as an agent skill, the agent invokes the binary directly. All commands accept `--project-dir` (default: `.`).
 
 ## Quick Reference
 
-| Script | Purpose | Input | Output |
-|--------|---------|-------|--------|
-| `scripts/doctor.py` | **One-command bootstrap** | Project dir | JSON: extraction context |
-| `scripts/status.py` | **Project health summary** | Rule YAML files | JSON: health dimensions |
-| `scripts/ci-check.py` | **CI freshness check** | Project dir | JSON: CI outputs |
-| `scripts/detect-deps.py` | Detect dependencies | Manifest files | JSON: deps list |
-| `scripts/resolve-sources.py` | Resolve docs URLs | JSON from detect-deps | JSON: source content |
-| `scripts/detect-patterns.py` | Mine style patterns | Transcripts, git, PRs | JSON: candidate patterns (project-scoped by default) |
-| `scripts/generate-agent-context.py` | Generate agent files | Rule YAML files | AGENTS.md, CLAUDE.md, etc. |
-| `scripts/generate-tests.py` | Generate tests + lint | Rule YAML files | pytest/vitest/cargo tests |
+| Command | Purpose | Input | Output |
+|---------|---------|-------|--------|
+| `whetstone doctor` | **One-command bootstrap** | Project dir | JSON: extraction context |
+| `whetstone status` | **Project health summary** | Rule YAML files | JSON: health dimensions |
+| `whetstone ci-check` | **CI freshness check** | Project dir | JSON: CI outputs |
+| `whetstone detect-deps` | Detect dependencies | Manifest files | JSON: deps list |
+| `whetstone resolve-sources` | Resolve docs URLs | JSON from detect-deps | JSON: source content |
+| `whetstone generate-context` | Generate agent files | Rule YAML files | AGENTS.md, CLAUDE.md, etc. |
+| `whetstone generate-tests` | Generate tests + lint | Rule YAML files | pytest/vitest/cargo tests |
 
 ### Common Flags
 
@@ -143,7 +136,7 @@ Run when the user says "whetstone doctor", "doctor", "scan my project", "bootstr
 **Step 1: Run the doctor orchestrator**
 
 ```bash
-python3 scripts/doctor.py --project-dir .
+whetstone doctor
 ```
 
 This runs dependency detection, source resolution, and pattern detection automatically. Progress is printed to stderr; the JSON result (including fetched source content) is printed to stdout.
@@ -180,8 +173,8 @@ Save approved rules to `whetstone/rules/{language}/{dependency}.yaml`.
 **Step 4: Generate outputs**
 
 ```bash
-python3 scripts/generate-agent-context.py --project-dir .
-python3 scripts/generate-tests.py --project-dir .
+whetstone generate-context
+whetstone generate-tests
 ```
 
 **Step 5: Create config (if first run)**
@@ -195,7 +188,7 @@ Present a final summary:
 - Tests: paths to generated test files
 - Agent context: which files were generated
 
-**Next:** "Run your tests to verify: `pytest whetstone/evals/python/`" (or `npx vitest` / `cargo test` for the relevant language). Then run `python3 scripts/status.py --project-dir .` to confirm health.
+**Next:** "Run your tests to verify: `pytest whetstone/evals/python/`" (or `npx vitest` / `cargo test` for the relevant language). Then run `whetstone status` to confirm health.
 
 ---
 
@@ -206,7 +199,7 @@ Run when the user says "whetstone init", "extract rules", or wants more control 
 **Step 1: Detect dependencies**
 
 ```bash
-python3 scripts/detect-deps.py --project-dir .
+whetstone detect-deps
 ```
 
 Present the findings: "Found N dependencies across [languages]." List the dependencies with name, version, and language. Ask the user which dependencies to extract rules for. Default: all non-dev dependencies.
@@ -214,7 +207,7 @@ Present the findings: "Found N dependencies across [languages]." List the depend
 **Step 2: Resolve documentation sources**
 
 ```bash
-python3 scripts/detect-deps.py --project-dir . | python3 scripts/resolve-sources.py --deps dep1,dep2,dep3
+whetstone detect-deps | whetstone resolve-sources --deps dep1,dep2,dep3
 ```
 
 Pass only the user-confirmed dependencies. Present: "Resolved docs for N/M deps, K have llms.txt." For any deps where resolution failed, note why and ask if the user wants to provide a manual docs URL.
@@ -222,7 +215,7 @@ Pass only the user-confirmed dependencies. Present: "Resolved docs for N/M deps,
 **Step 3: Detect style patterns (optional)**
 
 ```bash
-python3 scripts/detect-patterns.py --project-dir .
+# Pattern detection is planned for a future release
 ```
 
 Present any discovered patterns with evidence (occurrence count, example quotes). Ask the user which patterns to include as rule candidates.
@@ -251,8 +244,8 @@ Save approved rules to `whetstone/rules/{language}/{dependency}.yaml`.
 **Step 6: Generate outputs**
 
 ```bash
-python3 scripts/generate-agent-context.py --project-dir .
-python3 scripts/generate-tests.py --project-dir .
+whetstone generate-context
+whetstone generate-tests
 ```
 
 Present summary: "Generated N rules across M deps. Tests: whetstone/evals/. Agent context: CLAUDE.md, AGENTS.md."
@@ -261,7 +254,7 @@ Present summary: "Generated N rules across M deps. Tests: whetstone/evals/. Agen
 
 If `whetstone/whetstone.yaml` doesn't exist, create it from `assets/whetstone.yaml.template` with the detected languages, confirmed agents list, and trigger mode (default: manual).
 
-**Next:** "Run your tests to verify: `pytest whetstone/evals/python/`" (or the equivalent for your language). Then run `python3 scripts/status.py --project-dir .` to confirm health.
+**Next:** "Run your tests to verify: `pytest whetstone/evals/python/`" (or the equivalent for your language). Then run `whetstone status` to confirm health.
 
 ### Update (Subsequent Runs)
 
@@ -272,7 +265,7 @@ By default, update only processes dependencies that have changed (diff-only mode
 **Step 1: Check for drift (changed deps only)**
 
 ```bash
-python3 scripts/detect-deps.py --project-dir . --changed-only
+whetstone detect-deps --changed-only
 ```
 
 This outputs only dependencies whose versions have drifted since last extraction. If no drift is found, inform the user and suggest running `whetstone status` instead. For a full check, use `--check-drift` (shows drift info but still outputs all deps).
@@ -280,7 +273,7 @@ This outputs only dependencies whose versions have drifted since last extraction
 **Step 2: Re-resolve changed sources only**
 
 ```bash
-python3 scripts/detect-deps.py --project-dir . --changed-only | python3 scripts/resolve-sources.py --changed-only --project-dir .
+whetstone detect-deps --changed-only | whetstone resolve-sources --changed-only
 ```
 
 Only re-fetches documentation for dependencies with version drift AND content changes. This is fast and avoids unnecessary network calls.
@@ -288,7 +281,7 @@ Only re-fetches documentation for dependencies with version drift AND content ch
 **Step 3: Check for new patterns**
 
 ```bash
-python3 scripts/detect-patterns.py --project-dir . --since-last-run
+# Pattern detection is planned for a future release --since-last-run
 ```
 
 Show any new patterns discovered since the last run.
@@ -302,18 +295,18 @@ For changed dependencies, re-run extraction. Compare proposed rules against exis
 Same approval flow as init, but only for changes. After approval, regenerate:
 
 ```bash
-python3 scripts/generate-agent-context.py --project-dir .
-python3 scripts/generate-tests.py --project-dir .
+whetstone generate-context
+whetstone generate-tests
 ```
 
-**Next:** "Run updated tests to verify: `pytest whetstone/evals/python/`". Then run `python3 scripts/status.py --project-dir .` to confirm the drift is resolved.
+**Next:** "Run updated tests to verify: `pytest whetstone/evals/python/`". Then run `whetstone status` to confirm the drift is resolved.
 
 ### Status
 
 Run when the user says "whetstone status", "check health", "how are my rules", or similar.
 
 ```bash
-python3 scripts/status.py --project-dir .
+whetstone status
 ```
 
 This outputs a compact health summary with five dimensions:
@@ -334,11 +327,11 @@ Present the human-readable summary to the user. If they want detail, offer `--js
 Run when the user says "regenerate tests", "regenerate agent context", or when rules have been manually edited.
 
 ```bash
-python3 scripts/generate-agent-context.py --project-dir .
-python3 scripts/generate-tests.py --project-dir .
+whetstone generate-context
+whetstone generate-tests
 ```
 
-**Next:** "Run tests to verify the regenerated outputs." Then run `python3 scripts/status.py --project-dir .` to check overall health.
+**Next:** "Run tests to verify the regenerated outputs." Then run `whetstone status` to check overall health.
 
 ---
 
@@ -600,7 +593,7 @@ When `generate-agent-context.py` creates agent context files, it uses this struc
 # Project Coding Standards (Auto-generated by Whetstone)
 # Last updated: {date}
 # Source: whetstone/rules/*.yaml
-# Do not edit manually — regenerate with: python3 scripts/generate-agent-context.py
+# Do not edit manually — regenerate with: whetstone generate-context
 
 ## Patterns to USE
 
@@ -769,7 +762,7 @@ Add to `.claude/settings.json`:
       "matcher": "startup",
       "hooks": [{
         "type": "command",
-        "command": "python3 scripts/detect-patterns.py --since-last-run --quiet",
+        "command": "# Pattern detection planned for future release",
         "async": true,
         "statusMessage": "Whetstone: checking for new style patterns..."
       }]

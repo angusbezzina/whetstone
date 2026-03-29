@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Language {
@@ -20,6 +21,7 @@ impl fmt::Display for Language {
     }
 }
 
+#[allow(dead_code)]
 impl Language {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -30,6 +32,7 @@ impl Language {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dependency {
     pub name: String,
@@ -58,6 +61,7 @@ pub enum LifecycleState {
     Failed,
 }
 
+#[allow(dead_code)]
 impl LifecycleState {
     pub fn as_str(&self) -> &'static str {
         match self {

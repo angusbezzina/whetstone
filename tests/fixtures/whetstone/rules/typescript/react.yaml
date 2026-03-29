@@ -1,0 +1,80 @@
+source:
+  name: react
+  docs_url: https://react.dev
+  version: "19.0.0"
+  content_hash: sha256:abc456
+  resolved_at: "2026-03-01T10:00:00Z"
+  registry: npm
+
+rules:
+  - id: react.use-client-directive
+    severity: should
+    confidence: high
+    category: convention
+    description: >
+      Components using hooks or browser APIs should include the 'use client' directive.
+    source_url: https://react.dev/reference/rsc/use-client
+    risk: >
+      Server-rendering a component that uses client-only APIs causes hydration errors.
+    approved: true
+    approved_at: "2026-03-01T11:00:00Z"
+    proposed_at: "2026-03-01T10:30:00Z"
+    status: approved
+    signals:
+      - id: has-hooks-no-directive
+        strategy: pattern
+        description: File uses useState/useEffect but lacks 'use client' directive
+        weight: required
+      - id: uses-browser-api
+        strategy: ast
+        description: File accesses window/document without 'use client'
+        weight: strong
+    golden_examples:
+      - code: |
+          'use client';
+          import { useState } from 'react';
+          export function Counter() {
+            const [count, setCount] = useState(0);
+            return <button onClick={() => setCount(c => c + 1)}>{count}</button>;
+          }
+        verdict: pass
+        reason: Has 'use client' directive with useState
+      - code: |
+          import { useState } from 'react';
+          export function Counter() {
+            const [count, setCount] = useState(0);
+            return <button onClick={() => setCount(c => c + 1)}>{count}</button>;
+          }
+        verdict: fail
+        reason: Missing 'use client' directive despite using useState
+      - code: |
+          export function ServerComponent({ data }) {
+            return <div>{data.title}</div>;
+          }
+        verdict: pass
+        reason: Pure server component does not need directive
+
+  - id: react.no-index-keys
+    severity: should
+    confidence: medium
+    category: default
+    description: >
+      Do not use array index as key prop when rendering lists that may be reordered.
+    source_url: https://react.dev/learn/rendering-lists#rules-of-keys
+    approved: false
+    proposed_at: "2026-03-01T10:30:00Z"
+    status: candidate
+    signals:
+      - id: index-as-key
+        strategy: pattern
+        description: Uses array index variable as key prop in JSX
+        weight: required
+    golden_examples:
+      - code: |
+          items.map((item) => <li key={item.id}>{item.name}</li>)
+        verdict: pass
+        reason: Uses stable item.id as key
+      - code: |
+          items.map((item, index) => <li key={index}>{item.name}</li>)
+        verdict: fail
+        reason: Uses array index as key which causes issues on reorder

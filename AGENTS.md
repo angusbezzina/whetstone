@@ -4,33 +4,28 @@
 
 ## Project Overview
 
-Whetstone is an Agent Skill (agentskills.io format) with Python helper scripts. Scripts handle deterministic work (dependency detection, URL resolution, file generation, health monitoring). The agent handles judgment (reading documentation, proposing rules, presenting them for approval). No separate API key or binary required — the agent running Whetstone *is* the LLM.
+Whetstone is an Agent Skill (agentskills.io format) with a Rust CLI binary. The binary handles deterministic work (dependency detection, URL resolution, file generation, health monitoring). The agent handles judgment (reading documentation, proposing rules, presenting them for approval). No separate API key required — the agent running Whetstone *is* the LLM.
 
 ### Canonical Workflow
 
 | Step | Responsibility | Command |
 |------|---------------|---------|
-| 1. Detect | Script | `doctor` (or `detect-deps`) |
-| 2. Resolve | Script | `doctor` (or `resolve-sources`) |
+| 1. Detect | Binary | `whetstone doctor` (or `whetstone detect-deps`) |
+| 2. Resolve | Binary | `whetstone doctor` (or `whetstone resolve-sources`) |
 | 3. Extract | Agent | Read docs, propose candidate rules |
 | 4. Approve | Agent + User | Present rules for review, persist decisions |
-| 5. Generate | Script | `generate-tests` + `generate-context` |
-| 6. Monitor | Script | `status` / `ci-check` |
+| 5. Generate | Binary | `whetstone generate-context` + `whetstone generate-tests` |
+| 6. Monitor | Binary | `whetstone status` / `whetstone ci-check` |
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
 | `SKILL.md` | Core agent skill (workflow + extraction prompt) |
-| `scripts/doctor.py` | One-command bootstrap orchestrator |
-| `scripts/detect-deps.py` | Dependency detection (Python/TS/Rust) |
-| `scripts/resolve-sources.py` | Source URL resolution + content fetching |
-| `scripts/detect-patterns.py` | Mine transcripts/git/PRs for style patterns |
-| `scripts/generate-agent-context.py` | Multi-format agent context generation |
-| `scripts/generate-tests.py` | Test + linter config generation |
-| `scripts/status.py` | Health score, drift detection, recommendations |
-| `scripts/ci-check.py` | CI freshness gating + PR comments |
-| `scripts/cli.py` | Unified CLI wrapper for all commands |
+| `src/` | Rust source for the `whetstone` binary |
+| `scripts/` | Legacy Python scripts (reference implementations) |
+| `references/rule-schema.yaml` | Rule YAML format specification |
+| `tests/` | Integration tests and fixtures |
 
 ---
 

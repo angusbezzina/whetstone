@@ -381,7 +381,7 @@ class TestGenerateAgentContext:
         # Copy fixtures to tmp
         import shutil
 
-        shutil.copytree(FIXTURES_DIR / "rules", tmp_path / "whetstone" / "rules")
+        shutil.copytree(FIXTURES_DIR / "whetstone" / "rules", tmp_path / "whetstone" / "rules")
         result = run_script(
             "generate-agent-context.py",
             ["--project-dir", str(tmp_path), "--dry-run"],
@@ -1226,9 +1226,9 @@ class TestImpactMetrics:
             ["--project-dir", str(FIXTURES_DIR), "--json", "--no-drift-check"],
         )
         metrics = result["metrics"]
-        assert metrics["dependencies_total"] == 4
-        assert metrics["dependencies_covered"] == 1
-        assert metrics["dependency_coverage"] == 25.0
+        assert metrics["dependencies_total"] == 5
+        assert metrics["dependencies_covered"] == 2
+        assert metrics["dependency_coverage"] == 40.0
 
     def test_status_next_command_uses_real_cli_commands(self):
         """next_command should be executable guidance, not prose or phantom commands."""

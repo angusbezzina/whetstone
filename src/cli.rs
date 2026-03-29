@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use crate::{ci_check, detect, doctor, output, resolve, status};
+use crate::{ci_check, detect, doctor, generate_context, generate_tests, output, resolve, status};
 
 #[derive(Parser)]
 #[command(
@@ -180,6 +180,50 @@ enum Commands {
         /// Output only extraction-ready deps
         #[arg(long)]
         extraction_ready: bool,
+    },
+
+    /// Generate agent context files from approved rules
+    #[command(alias = "context")]
+    GenerateContext {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Comma-separated format names (claude.md, agents.md, .cursorrules, etc.)
+        #[arg(long)]
+        formats: Option<String>,
+
+        /// Filter by language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Show what would be generated without writing files
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Output only JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Generate test files and linter configs from approved rules
+    #[command(alias = "tests")]
+    GenerateTests {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Filter by language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Show what would be generated without writing files
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Output only JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Lightweight freshness check for CI/CD
@@ -454,6 +498,85 @@ pub fn run() -> i32 {
                     output::print_json(&output::error_json(
                         &e.to_string(),
                         "Check project directory and whetstone configuration",
+                    ));
+                    1
+                }
+            }
+        }
+
+        Commands::GenerateContext {
+            project_dir,
+            formats,
+            lang,
+            dry_run,
+            json,
+        } => {
+            match generate_context::generate_context(
+                &project_dir,
+                formats.as_deref(),
+                lang.as_deref(),
+                dry_run,
+            ) {
+                Ok(result) => {
+                    if !json {
+                        let gen = result.get("generated").and_then(|v| v.as_array());
+                        if let Some(files) = gen {
+                            for f in files {
+                                let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                                let lines = f.get("lines").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let dry = if f.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false) {
+                                    " (dry run)"
+                                } else {
+                                    ""
+                                };
+                                eprintln!("  + {path} ({lines} lines){dry}");
+                            }
+                        }
+                    }
+                    output::print_json(&result);
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "Check whetstone/rules/ directory for approved rules",
+                    ));
+                    1
+                }
+            }
+        }
+
+        Commands::GenerateTests {
+            project_dir,
+            lang,
+            dry_run,
+            json,
+        } => {
+            match generate_tests::generate_tests(&project_dir, lang.as_deref(), dry_run) {
+                Ok(result) => {
+                    if !json {
+                        if let Some(gen) = result.get("generated") {
+                            if let Some(tests) = gen.get("tests").and_then(|v| v.as_array()) {
+                                for f in tests {
+                                    let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                                    eprintln!("  + {path}");
+                                }
+                            }
+                            if let Some(lints) = gen.get("lint_configs").and_then(|v| v.as_array()) {
+                                for f in lints {
+                                    let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                                    eprintln!("  + {path}");
+                                }
+                            }
+                        }
+                    }
+                    output::print_json(&result);
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "Check whetstone/rules/ directory for approved rules",
                     ));
                     1
                 }

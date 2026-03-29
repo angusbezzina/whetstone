@@ -8,9 +8,9 @@ Read `AGENTS.md` for universal project context. This file contains Claude Code-s
 
 ## Project Context
 
-Whetstone is an Agent Skill (agentskills.io format) with Python helper scripts that derives coding rules from dependency documentation and developer patterns. The MVP architecture is documented in `planning/mvp.md`. The full vision is in `planning/product-spec.md`.
+Whetstone is an Agent Skill (agentskills.io format) with a **Rust CLI binary** that derives coding rules from dependency documentation and developer patterns. The MVP architecture is documented in `planning/mvp.md`. The full vision is in `planning/product-spec.md`.
 
-**This is a greenfield project** being built as a skill + scripts, not a compiled binary. The agent (you) acts as the LLM for rule extraction -- the scripts handle deterministic work.
+**The Rust binary (`src/`) is the primary implementation.** Python scripts in `scripts/` are legacy reference implementations. The agent (you) acts as the LLM for rule extraction -- the binary handles deterministic work.
 
 ---
 
@@ -157,12 +157,24 @@ whetstone/
 ├── SKILL.md                        # Agent skill (workflow + extraction prompt)
 ├── CLAUDE.md                       # This file
 ├── AGENTS.md                       # Universal agent instructions
-├── scripts/
-│   ├── detect-deps.py             # Dep detection (Python/TS/Rust)
-│   ├── resolve-sources.py         # Source URL resolution + fetching
-│   ├── detect-patterns.py         # Mine transcripts/git/PRs for patterns
-│   ├── generate-agent-context.py  # Multi-format agent context generation
-│   └── generate-tests.py          # Test + linter config generation
+├── Cargo.toml                      # Rust project manifest
+├── src/                            # Rust source (primary implementation)
+│   ├── main.rs                    # Entry point
+│   ├── cli.rs                     # CLI argument parsing (clap)
+│   ├── doctor.rs                  # One-command bootstrap orchestrator
+│   ├── detect/                    # Dependency detection (Python/TS/Rust)
+│   ├── resolve/                   # Source URL resolution + content fetching
+│   ├── rules.rs                   # Structured YAML rule parsing + validation
+│   ├── generate_context.rs        # Multi-format agent context generation
+│   ├── generate_tests.rs          # Test + linter config generation
+│   ├── status.rs                  # Health score, drift detection
+│   ├── ci_check.rs                # CI freshness gating
+│   ├── state/                     # State management (cache, inventory, manifests)
+│   ├── config.rs                  # Config file loading
+│   ├── output.rs                  # JSON/report formatting
+│   └── types.rs                   # Shared type definitions
+├── scripts/                        # Legacy Python scripts (reference only)
+├── tests/                          # Rust integration tests + fixtures
 ├── references/
 │   ├── rule-schema.yaml           # Rule YAML format spec
 │   ├── extraction-prompt.md       # The extraction prompt

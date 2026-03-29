@@ -28,76 +28,51 @@ Whetstone is not a general AI code reviewer, a replacement for ruff/biome/clippy
 
 ## Quick Start
 
-**Prerequisites:** Python 3.10+, git, internet access for registry lookups.
+**Prerequisites:** Rust toolchain (for building from source), or download a release binary. Git and internet access for registry lookups.
+
+### Install
+
+```bash
+# Build from source
+cargo install --path .
+
+# Or use directly from the repo
+cargo build --release
+./target/release/whetstone --help
+```
 
 ### Recommended repo setup for contributors
 
-Enable the repo-managed pre-push hook so local pushes run the same Ruff gate used in CI:
+Enable the repo-managed pre-push hook so local pushes run the same quality gates used in CI:
 
 ```bash
 git config core.hooksPath .githooks
 chmod +x .githooks/pre-push
 ```
 
-The hook runs:
+### Usage
 
 ```bash
-python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
-```
-
-### For Python projects
-
-```bash
-# 1. Clone Whetstone
-git clone https://github.com/yourusername/whetstone.git
-pip install pyyaml  # only required dependency
-
-# 2. Run the doctor — one command from zero to working rules
-python3 whetstone/scripts/cli.py doctor --project-dir .
-# → detects dependencies from pyproject.toml / requirements.txt
-# → resolves documentation URLs from PyPI, probes for llms.txt
+# 1. Run the doctor — one command from zero to working rules
+whetstone doctor
+# → detects dependencies from pyproject.toml / package.json / Cargo.toml
+# → resolves documentation URLs from registries, probes for llms.txt
 # → outputs extraction context for the agent
 
-# 3. The agent reads the doctor output, proposes rules, you approve each one
+# 2. The agent reads the doctor output, proposes rules, you approve each one
 
-# 4. Generate tests and agent context from approved rules
-python3 whetstone/scripts/cli.py generate-tests --project-dir .
-python3 whetstone/scripts/cli.py generate-context --project-dir .
-# → pytest files in whetstone/evals/python/
-# → ruff overlay in whetstone/lint/ruff.whetstone.toml
-# → AGENTS.md, CLAUDE.md, .cursorrules at project root
+# 3. Generate tests and agent context from approved rules
+whetstone generate-context
+whetstone generate-tests
+# → pytest/vitest/cargo test files in whetstone/evals/
+# → lint overlays in whetstone/lint/
+# → agent context files in whetstone/context/
 
-# 5. Check project health anytime
-python3 whetstone/scripts/cli.py status --project-dir .
+# 4. Check project health anytime
+whetstone status
 ```
 
-### For TypeScript projects
-
-```bash
-python3 whetstone/scripts/cli.py doctor --project-dir .
-# → detects dependencies from package.json
-# → resolves documentation URLs from npm
-
-# After extraction and approval:
-python3 whetstone/scripts/cli.py generate-tests --project-dir .
-# → vitest files in whetstone/evals/typescript/
-# → biome overlay in whetstone/lint/biome.whetstone.json
-```
-
-### For Rust projects
-
-```bash
-python3 whetstone/scripts/cli.py doctor --project-dir .
-# → detects dependencies from Cargo.toml
-# → resolves documentation URLs from crates.io / docs.rs
-
-# After extraction and approval:
-python3 whetstone/scripts/cli.py generate-tests --project-dir .
-# → cargo test files in whetstone/evals/rust/
-# → clippy overlay in whetstone/lint/clippy.whetstone.toml
-```
-
-> **Agent skill mode:** When using Whetstone as an agent skill, say "whetstone doctor" or "whetstone status" and the agent runs the corresponding script. When running manually, use `python3 scripts/cli.py <command>` or call scripts directly.
+> **Agent skill mode:** When using Whetstone as an agent skill, say "whetstone doctor" or "whetstone status" and the agent runs the corresponding command. The binary handles everything — no Python runtime required.
 
 ## Canonical Workflow
 
@@ -118,26 +93,26 @@ When dependencies update, run `detect-deps --changed-only` to see what drifted, 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Scripts (deterministic)           Agent (LLM-mediated)     │
+│  Rust binary (deterministic)       Agent (LLM-mediated)     │
 │                                                             │
-│  detect-deps.py ──────┐                                     │
-│  resolve-sources.py ──┤── doctor.py ──→  Extract rules      │
-│  detect-patterns.py ──┘       │          (agent reads docs, │
-│                               │           proposes rules)   │
-│                               │                ↓            │
-│                               │          Approve rules      │
-│                               │          (user reviews      │
-│                               │           each one)         │
-│                               │                ↓            │
-│  generate-tests.py ───────────┤── writes approved YAML      │
-│  generate-agent-context.py ───┘                             │
-│                                                             │
-│  status.py ── health score, drift detection, next actions   │
-│  ci-check.py ── CI gating, PR comments                     │
+│  detect-deps ─────────┐                                     │
+│  resolve-sources ─────┤── doctor ──→  Extract rules         │
+│                       │       │       (agent reads docs,    │
+│                       │       │        proposes rules)      │
+│                       │       │             ↓               │
+│                       │       │       Approve rules         │
+│                       │       │       (user reviews         │
+│                       │       │        each one)            │
+│                       │       │             ↓               │
+│  generate-tests ──────┤───────┤── writes approved YAML      │
+│  generate-context ────┘       │                             │
+│                               │                             │
+│  status ── health score, drift detection, next actions      │
+│  ci-check ── CI gating, PR comments                        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Scripts handle deterministic work:** dependency detection, URL resolution, file generation, health monitoring. **The agent handles judgment:** reading documentation, proposing rules, and presenting them for user approval. This separation means the agent can be Claude, Cursor, Copilot, or any LLM — the scripts don't care.
+**The binary handles deterministic work:** dependency detection, URL resolution, file generation, health monitoring. **The agent handles judgment:** reading documentation, proposing rules, and presenting them for user approval. This separation means the agent can be Claude, Cursor, Copilot, or any LLM — the binary doesn't care.
 
 ### What gets proposed
 
@@ -158,26 +133,23 @@ When dependencies update, run `detect-deps --changed-only` to see what drifted, 
 
 ## Commands
 
-Use the CLI wrapper for a unified experience:
-
 ```bash
-python3 scripts/cli.py <command> [options]
+whetstone <command> [options]
 ```
 
 | Command | Alias | Purpose | Key Flags |
 |---------|-------|---------|-----------|
-| `doctor` | — | One-command bootstrap | `--json`, `--skip-patterns` |
+| `doctor` | — | One-command bootstrap | `--json`, `--full-run`, `--resume`, `--changed-only` |
 | `status` | — | Project health summary | `--json`, `--score`, `--history`, `--no-drift-check` |
 | `ci-check` | `check` | CI freshness check | `--json`, `--pr-comment`, `--fail-on`, `--changed-only` |
-| `detect-deps` | `deps` | Detect dependencies | `--check-drift`, `--changed-only` |
-| `resolve-sources` | — | Resolve documentation URLs | `--changed-only` |
-| `detect-patterns` | `patterns` | Mine style patterns | `--sources`, `--global-transcripts` |
-| `generate-context` | `context` | Generate agent files | `--dry-run` |
-| `generate-tests` | `tests` | Generate test + lint files | `--dry-run` |
+| `detect-deps` | `deps` | Detect dependencies | `--check-drift`, `--changed-only`, `--incremental` |
+| `resolve-sources` | `resolve` | Resolve documentation URLs | `--changed-only`, `--force-refresh`, `--resume` |
+| `generate-context` | `context` | Generate agent files | `--dry-run`, `--formats`, `--lang` |
+| `generate-tests` | `tests` | Generate test + lint files | `--dry-run`, `--lang` |
 
 All commands accept `--project-dir` (default: `.`) and output JSON to stdout. Human-readable progress goes to stderr. JSON responses include a `next_command` field suggesting what to run next.
 
-You can also call scripts directly: `python3 scripts/<name>.py --project-dir .`
+> **Legacy Python scripts:** The `scripts/` directory contains the original Python implementations. These are maintained for reference but the Rust binary is the primary interface.
 
 ## Outputs
 
@@ -218,7 +190,7 @@ See [`references/rule-schema.yaml`](references/rule-schema.yaml) for the full sc
 
 ### Status output
 
-`status.py` returns a health score (0-100) with five dimensions:
+`whetstone status` returns a health score (0-100) with five dimensions:
 
 | Dimension | What it measures |
 |-----------|-----------------|
@@ -232,7 +204,7 @@ Labels: **Healthy**, **Needs Review**, **Stale**, **No Rules**.
 
 ### Impact metrics
 
-`status.py` also includes a `metrics` object for tracking value over time:
+`whetstone status` also includes a `metrics` object for tracking value over time:
 
 | Metric | What it measures |
 |--------|-----------------|
@@ -248,10 +220,10 @@ Labels: **Healthy**, **Needs Review**, **Stale**, **No Rules**.
 
 ### Metric history
 
-Every `status.py` run automatically appends a timestamped snapshot to `whetstone/.metrics.jsonl`. Use `--history` to see trends:
+Every `whetstone status` run automatically appends a timestamped snapshot to `whetstone/.metrics.jsonl`. Use `--history` to see trends:
 
 ```bash
-python3 scripts/cli.py status --history
+whetstone status --history
 ```
 
 This shows a table of score, label, rules count, and drift over time. Use `--no-snapshot` to skip recording (e.g., in scripts that poll status without wanting to inflate history).
@@ -337,7 +309,7 @@ Whetstone is designed to complement — not replace — your existing toolchain.
 | Tool | What it does | How Whetstone complements it |
 |------|-------------|------------------------------|
 | **ruff / biome / clippy** | Enforces syntax, formatting, and general code quality rules | Whetstone catches dependency-specific practices these linters don't know about. Where a linter rule exists but isn't enabled, Whetstone generates a lint overlay to enable it. |
-| **PR review bots** (reviewdog, danger, etc.) | Automated checks on pull requests | Whetstone generates the rules these bots enforce. Run `ci-check.py` in CI for freshness gating alongside your existing checks. |
+| **PR review bots** (reviewdog, danger, etc.) | Automated checks on pull requests | Whetstone generates the rules these bots enforce. Run `whetstone ci-check` in CI for freshness gating alongside your existing checks. |
 | **AI code review** (CodeRabbit, Copilot review, etc.) | LLM-powered code review | Whetstone provides deterministic, source-backed rules that don't vary between runs. Use it for the checks you want to enforce consistently, AI review for everything else. |
 | **AGENTS.md / .cursorrules** | Static agent instructions | Whetstone auto-generates and keeps these files current. When dependencies update, your agent instructions update too. |
 | **Semgrep / CodeQL** | Custom static analysis rules | For TypeScript and Rust, Whetstone can generate signal patterns that map to Semgrep rules. For Python, Whetstone's pytest-based checks are simpler to maintain. |
@@ -367,7 +339,7 @@ The extraction prompt works with any documentation content — team style guides
 Nothing breaks. The generated tests, lint configs, and agent context files are standard files in your repo. They run with your existing CI and work with any agent that reads `AGENTS.md` or `.cursorrules`.
 
 **How do I update rules when dependencies change?**
-Run `status.py` or `ci-check.py` to see which dependencies have drifted. Then run the doctor or resolve-sources with `--changed-only` to re-extract rules only for what changed.
+Run `whetstone status` or `whetstone ci-check` to see which dependencies have drifted. Then run `whetstone doctor --changed-only` to re-extract rules only for what changed.
 
 **What's the `next_command` field in every output?**
 Every script suggests what to do next. Agent clients can use this to chain commands automatically without reading documentation.
@@ -378,17 +350,17 @@ Whetstone can be used on itself. The `tests/fixtures/` directory contains sample
 
 ```bash
 # Run doctor against the test fixtures
-python3 scripts/doctor.py --project-dir tests/fixtures --skip-patterns --json
+whetstone doctor --project-dir tests/fixtures --json
 
 # Check status of existing rules
-python3 scripts/status.py --project-dir tests/fixtures
+whetstone status --project-dir tests/fixtures
 
 # Generate test artifacts from the sample rules
-python3 scripts/generate-tests.py --project-dir tests/fixtures --dry-run
-python3 scripts/generate-agent-context.py --project-dir tests/fixtures --dry-run
+whetstone generate-tests --project-dir tests/fixtures --dry-run
+whetstone generate-context --project-dir tests/fixtures --dry-run
 ```
 
-The test fixtures include a `fastapi.yaml` rule file that demonstrates the full rule schema with lifecycle fields, provenance metadata, and golden examples. This serves as a reference for the quality bar Whetstone expects.
+The test fixtures include rule files for fastapi and react that demonstrate the full rule schema with lifecycle fields, provenance metadata, and golden examples. This serves as a reference for the quality bar Whetstone expects.
 
 ## Current Capabilities vs Roadmap
 
@@ -404,11 +376,11 @@ The test fixtures include a `fastapi.yaml` rule file that demonstrates the full 
 
 **Planned (not yet implemented):**
 - AI eval runner for ambiguous signals (`check --ai-only`)
+- Pattern detection from agent transcripts and git history
 - Layer system (personal → project → team → built-in)
 - Rule promotion across layers (`promote` command)
 - Automated custom URL ingestion for non-registry sources
 - Shared rule registry with community-ranked rules
-- Rust CLI binary (currently Python scripts)
 
 See `planning/roadmap.md` for the full phased delivery plan.
 
@@ -417,8 +389,7 @@ See `planning/roadmap.md` for the full phased delivery plan.
 | Problem | Fix |
 |---------|-----|
 | `No manifests found` | Ensure `pyproject.toml`, `package.json`, or `Cargo.toml` exists in your project directory |
-| `ModuleNotFoundError: yaml` | Run `pip install pyyaml` — it's the only required dependency |
-| `status: not_initialized` | Run `doctor.py` first to detect deps and create the `whetstone/` directory |
+| `status: not_initialized` | Run `whetstone doctor` first to detect deps and create the `whetstone/` directory |
 | Drift check is slow | Use `--no-drift-check` for faster status, or `--changed-only` to limit scope |
 | Rules from stale docs | Check `source_url` in your rule YAML — Whetstone flags when source content changes via `content_hash` |
 

@@ -1,11 +1,11 @@
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, Utc};
-use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use crate::detect;
+use crate::rules;
 use crate::state::StateManager;
 
 pub fn compute_status(
@@ -162,6 +162,9 @@ pub fn compute_status(
         sm.load_all();
 
         let all_inv_deps = sm.inventory.all_deps();
+        let runtime_inv_deps: Vec<&Value> = all_inv_deps.iter()
+            .filter(|d| !d.get("dev").and_then(|v| v.as_bool()).unwrap_or(false))
+            .collect();
         let mut state_counts: HashMap<String, usize> = HashMap::new();
         for d in &all_inv_deps {
             let s = d.get("state").and_then(|v| v.as_str()).unwrap_or("discovered");
@@ -170,6 +173,7 @@ pub fn compute_status(
 
         pipeline_state = serde_json::json!({
             "total_deps": all_inv_deps.len(),
+            "runtime_deps": runtime_inv_deps.len(),
             "discovered": state_counts.get("discovered").unwrap_or(&0),
             "queued": state_counts.get("queued").unwrap_or(&0),
             "resolving": state_counts.get("resolving").unwrap_or(&0),
@@ -232,7 +236,7 @@ pub fn compute_status(
     } else if freshness_days.map(|d| d > 30.0).unwrap_or(false) {
         "whetstone doctor --refresh"
     } else {
-        "whetstone generate-tests && whetstone generate-context"
+        "whetstone generate-context && whetstone generate-tests"
     };
 
     Ok(serde_json::json!({
@@ -272,74 +276,7 @@ pub fn compute_status(
 }
 
 fn load_rule_files(rules_dir: &Path) -> (Vec<Value>, Vec<String>) {
-    let mut rule_files = Vec::new();
-    let mut warnings = Vec::new();
-
-    if !rules_dir.exists() {
-        return (rule_files, warnings);
-    }
-
-    let name_re = Regex::new(r"(?m)^\s*name:\s*(.+)$").unwrap();
-    let ver_re = Regex::new(r#"(?m)^\s*version:\s*['"]?(.+?)['"]?\s*$"#).unwrap();
-    let hash_re = Regex::new(r"(?m)^\s*content_hash:\s*(.+)$").unwrap();
-    let _id_re = Regex::new(r"(?m)^  - id:\s*(.+)$").unwrap();
-
-    for entry in walkdir::WalkDir::new(rules_dir).into_iter().filter_map(|e| e.ok()) {
-        if entry.path().extension().and_then(|e| e.to_str()) != Some("yaml") {
-            continue;
-        }
-
-        let text = match std::fs::read_to_string(entry.path()) {
-            Ok(t) => t,
-            Err(_) => {
-                warnings.push(format!("Failed to read: {}", entry.path().display()));
-                continue;
-            }
-        };
-
-        let source_name = name_re.captures(&text).map(|c| c[1].trim().to_string()).unwrap_or_else(|| entry.path().file_stem().unwrap_or_default().to_string_lossy().to_string());
-        let source_version = ver_re.captures(&text).map(|c| c[1].trim().to_string());
-        let content_hash = hash_re.captures(&text).map(|c| c[1].trim().to_string());
-
-        // Parse rules from the text using regex
-        let mut rules = Vec::new();
-        let rule_blocks: Vec<&str> = text.split("\n  - id:").collect();
-        for (i, block) in rule_blocks.iter().enumerate() {
-            if i == 0 { continue; }
-            let rule_id = block.lines().next().unwrap_or("").trim().to_string();
-
-            let get_field = |field: &str| -> Option<String> {
-                let re = Regex::new(&format!(r"(?m)^\s*{}:\s*(.+)$", field)).ok()?;
-                re.captures(block).map(|c| c[1].trim().trim_matches('\'').trim_matches('"').to_string())
-            };
-
-            let approved = get_field("approved").map(|v| v.to_lowercase() == "true").unwrap_or(false);
-            let signals: Vec<String> = Regex::new(r"(?m)^\s+strategy:\s+(\w+)")
-                .ok()
-                .map(|re| re.captures_iter(block).map(|c| c[1].to_string()).collect())
-                .unwrap_or_default();
-
-            rules.push(serde_json::json!({
-                "id": rule_id,
-                "severity": get_field("severity"),
-                "confidence": get_field("confidence"),
-                "category": get_field("category"),
-                "approved": approved,
-                "approved_at": get_field("approved_at"),
-                "signals": signals,
-            }));
-        }
-
-        rule_files.push(serde_json::json!({
-            "file": entry.path().to_string_lossy(),
-            "source_name": source_name,
-            "source_version": source_version,
-            "content_hash": content_hash,
-            "rules": rules,
-        }));
-    }
-
-    (rule_files, warnings)
+    rules::load_rules_as_json(rules_dir)
 }
 
 fn compute_freshness_days(rule_files: &[Value]) -> Option<f64> {

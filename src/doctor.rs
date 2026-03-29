@@ -1,5 +1,4 @@
 use anyhow::Result;
-use regex::Regex;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -14,7 +13,7 @@ const DEFAULT_FAST_FIRST_MAX_DEPS: usize = 10;
 
 pub fn doctor(
     project_dir: &Path,
-    skip_patterns: bool,
+    _skip_patterns: bool,
     skip_dev: bool,
     json_mode: bool,
     deps_filter: Option<&str>,
@@ -38,7 +37,7 @@ pub fn doctor(
     let existing_rules = count_existing_rules(project_dir);
 
     // ── Step 1: Detect dependencies ──
-    log("Step 1/4: Detecting dependencies...", json_mode);
+    log("Step 1/3: Detecting dependencies...", json_mode);
     let detect_start = Instant::now();
     let deps_result = detect::detect_deps(project_dir, false, &[], &[], true)?;
     let deps_time = detect_start.elapsed().as_secs_f64();
@@ -253,7 +252,7 @@ pub fn doctor(
 
     // ── Step 2: Resolve sources ──
     log(
-        &format!("Step 2/4: Resolving documentation for {} dependencies...", resolve_deps.len()),
+        &format!("Step 2/3: Resolving documentation for {} dependencies...", resolve_deps.len()),
         json_mode,
     );
 
@@ -319,22 +318,9 @@ pub fn doctor(
         json_mode,
     );
 
-    // ── Step 3: Patterns (skip in Rust port for now) ──
+    // ── Step 3: Extraction handoff ──
     let patterns_count = 0;
-    if !skip_patterns {
-        log("Step 3/4: Pattern detection (skipped in binary)...", json_mode);
-    } else {
-        log("Step 3/4: Skipping pattern detection (--skip-patterns)", json_mode);
-    }
-    steps.push(serde_json::json!({
-        "name": "detect-patterns",
-        "status": "skipped",
-        "elapsed_seconds": 0,
-        "summary": "Skipped in binary mode",
-    }));
-
-    // ── Step 4: Extraction handoff ──
-    log("Step 4/4: Preparing extraction handoff...", json_mode);
+    log("Step 3/3: Preparing extraction handoff...", json_mode);
 
     let ready_now: Vec<&Value> = sources
         .iter()
@@ -387,7 +373,7 @@ pub fn doctor(
     let next_command = if auto_limited {
         "whetstone doctor --resume"
     } else if !extraction_sources.is_empty() {
-        "whetstone status --extraction-ready"
+        "Review extraction results, then: whetstone generate-context"
     } else if !sources.is_empty() {
         "whetstone status"
     } else {
@@ -517,18 +503,13 @@ fn rank_dependencies(deps: &[Value], sm: &mut StateManager) -> Vec<Value> {
 
 fn count_existing_rules(project_dir: &Path) -> usize {
     let rules_dir = project_dir.join("whetstone").join("rules");
-    if !rules_dir.exists() { return 0; }
-
-    let re = Regex::new(r"(?m)^\s*approved:\s*true\s*$").unwrap();
-    let mut count = 0;
-    for entry in walkdir::WalkDir::new(&rules_dir).into_iter().filter_map(|e| e.ok()) {
-        if entry.path().extension().and_then(|e| e.to_str()) == Some("yaml") {
-            if let Ok(text) = std::fs::read_to_string(entry.path()) {
-                count += re.find_iter(&text).count();
-            }
-        }
-    }
-    count
+    let (rule_files, _) = crate::rules::load_rules_as_json(&rules_dir);
+    rule_files
+        .iter()
+        .filter_map(|rf| rf.get("rules").and_then(|v| v.as_array()))
+        .flat_map(|rules| rules.iter())
+        .filter(|r| r.get("approved").and_then(|v| v.as_bool()).unwrap_or(false))
+        .count()
 }
 
 fn build_source_details(sources: &[Value], errors: &[Value]) -> Vec<Value> {
