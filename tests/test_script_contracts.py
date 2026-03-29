@@ -2251,6 +2251,10 @@ class TestV2IncrementalContracts:
         assert "failed" in stats
         assert "skipped_cached" in stats
         assert "workers" in stats
+        assert "wall_seconds" in stats
+        assert "timings" in stats
+        assert "by_source_type" in stats["timings"]
+        assert "slowest_dependencies" in stats["timings"]
 
     def test_doctor_has_scan_and_buckets(self):
         """doctor output includes scan, resolution_buckets, extraction_subsets."""

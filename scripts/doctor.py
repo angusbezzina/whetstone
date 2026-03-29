@@ -525,6 +525,7 @@ def doctor(
     resume: bool = False,
     max_deps: int | None = None,
     ready_only: bool = False,
+    workers: int | None = None,
 ) -> dict:
     """Run the full doctor flow and return a structured result.
 
@@ -668,6 +669,8 @@ def doctor(
     # ═���════════════════════════════════════════════════════════════════════
 
     # Build the resolve work list based on flags
+    ranked_key_order = [f"{d['language']}:{d['name']}" for d in ranked_queue]
+
     if changed_only:
         resolve_deps = cache_buckets["stale"] + cache_buckets["missing"]
         # Also include deps whose manifests changed
@@ -687,12 +690,13 @@ def doctor(
     else:
         resolve_deps = target_deps
 
+    resolve_dep_map = {f"{d['language']}:{d['name']}": d for d in resolve_deps}
+    resolve_deps = [
+        resolve_dep_map[k] for k in ranked_key_order if k in resolve_dep_map
+    ]
+
     if max_deps is not None:
-        # Use ranked order to limit
-        ranked_names = [d["name"] for d in ranked_queue]
-        resolve_name_set = {d["name"] for d in resolve_deps}
-        limited_names = [n for n in ranked_names if n in resolve_name_set][:max_deps]
-        resolve_deps = [d for d in resolve_deps if d["name"] in set(limited_names)]
+        resolve_deps = resolve_deps[:max_deps]
 
     # ── Step 2: Resolve documentation sources ──────────��─────────────────
     _log(
@@ -711,6 +715,8 @@ def doctor(
         resolve_args.append("--force-refresh")
     if resume:
         resolve_args.append("--resume")
+    if workers is not None:
+        resolve_args += ["--workers", str(workers)]
 
     resolve_result, resolve_time = _run_script(
         "resolve-sources.py",
@@ -998,6 +1004,12 @@ def main() -> None:
         action="store_true",
         help="Only hand off extraction-ready deps for extraction",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Number of parallel source-resolution workers (default: auto)",
+    )
     args = parser.parse_args()
 
     skip_dev = not args.include_dev
@@ -1015,6 +1027,7 @@ def main() -> None:
             resume=args.resume,
             max_deps=args.max_deps,
             ready_only=args.ready_only,
+            workers=args.workers,
         )
 
         # Remove private fields before JSON output

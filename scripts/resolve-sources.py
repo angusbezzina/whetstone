@@ -20,6 +20,7 @@ import re
 import ssl
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -34,6 +35,17 @@ except ImportError:
 
 USER_AGENT = "whetstone/0.1.0 (https://github.com/whetstone)"
 DEFAULT_TIMEOUT = 15
+
+
+def _recommended_workers(total: int) -> int:
+    """Choose a bounded worker count for I/O-heavy resolution."""
+    if total <= 0:
+        return 1
+    if total <= 4:
+        return total
+    if total <= 12:
+        return 6
+    return min(12, total)
 
 
 def _http_get(
@@ -466,16 +478,18 @@ def resolve_sources(
     force_refresh: bool = False,
     resume: bool = False,
     retry_failed: bool = False,
-    workers: int = 4,
+    workers: int | None = None,
 ) -> dict:
     """Resolve documentation sources for all dependencies.
 
     Supports caching, checkpointing, parallel resolution, and resume.
     """
+    start_time = time.monotonic()
     sources: list[dict] = []
     errors: list[dict] = []
     cache_counts = {"hit": 0, "miss": 0, "stale": 0}
     skipped_cached = 0
+    timings: list[dict] = []
 
     # Always load stored hashes — needed for freshness.content_stale
     stored_hashes = load_stored_hashes(project_dir)
@@ -580,6 +594,7 @@ def resolve_sources(
 
     def _resolve_and_checkpoint(dep: dict) -> dict:
         nonlocal completed
+        started = time.monotonic()
         name = dep["name"]
         language = dep["language"]
         version = dep.get("version", "*")
@@ -647,18 +662,38 @@ def resolve_sources(
             f"{'error' if 'error' in result else result.get('source_type', 'ok')}",
             file=sys.stderr,
         )
+        result["_elapsed_seconds"] = round(time.monotonic() - started, 3)
         return result
 
     # Parallel resolution
     if work_list:
-        print(f"Resolving {total} dependencies ({workers} workers)...", file=sys.stderr)
-        effective_workers = min(workers, total)
+        effective_workers = (
+            workers if workers is not None else _recommended_workers(total)
+        )
+        print(
+            f"Resolving {total} dependencies ({effective_workers} workers)...",
+            file=sys.stderr,
+        )
+        effective_workers = min(effective_workers, total)
         with ThreadPoolExecutor(max_workers=effective_workers) as executor:
             futures = {
                 executor.submit(_resolve_and_checkpoint, dep): dep for dep in work_list
             }
             for future in as_completed(futures):
+                dep = futures[future]
                 result = future.result()
+                elapsed = result.pop("_elapsed_seconds", 0.0)
+                timings.append(
+                    {
+                        "name": dep["name"],
+                        "language": dep["language"],
+                        "elapsed_seconds": elapsed,
+                        "status": "error" if "error" in result else "ok",
+                        "source_type": result.get("source_type")
+                        if "error" not in result
+                        else None,
+                    }
+                )
 
                 # Changed-only filter
                 if changed_only and result.get("content_hash"):
@@ -688,6 +723,22 @@ def resolve_sources(
             "No sources resolved. Provide manual docs URLs or check errors above."
         )
 
+    wall_seconds = round(time.monotonic() - start_time, 3)
+    source_type_timings: dict[str, dict[str, float | int]] = {}
+    for item in timings:
+        source_type = item.get("source_type") or "error"
+        bucket = source_type_timings.setdefault(
+            source_type, {"count": 0, "total_seconds": 0.0}
+        )
+        bucket["count"] = int(bucket["count"]) + 1
+        bucket["total_seconds"] = round(
+            float(bucket["total_seconds"]) + float(item["elapsed_seconds"]), 3
+        )
+    for bucket in source_type_timings.values():
+        count = int(bucket["count"])
+        total_seconds = float(bucket["total_seconds"])
+        bucket["average_seconds"] = round(total_seconds / count, 3) if count else 0.0
+
     return {
         "sources": sources,
         "errors": errors,
@@ -697,7 +748,14 @@ def resolve_sources(
             "resolved": len(sources),
             "failed": len(errors),
             "skipped_cached": skipped_cached,
-            "workers": workers,
+            "workers": effective_workers if work_list else (workers or 1),
+            "wall_seconds": wall_seconds,
+            "timings": {
+                "by_source_type": source_type_timings,
+                "slowest_dependencies": sorted(
+                    timings, key=lambda item: item["elapsed_seconds"], reverse=True
+                )[:10],
+            },
         },
         "next_command": next_command,
     }
@@ -758,8 +816,8 @@ def main() -> None:
     parser.add_argument(
         "--workers",
         type=int,
-        default=4,
-        help="Number of parallel resolution workers (default: 4)",
+        default=None,
+        help="Number of parallel resolution workers (default: auto, up to 12)",
     )
     args = parser.parse_args()
 
