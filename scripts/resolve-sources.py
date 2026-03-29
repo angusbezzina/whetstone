@@ -491,6 +491,20 @@ def resolve_sources(
 
     # Build work list: filter deps, check cache
     work_list: list[dict] = []
+
+    def _cache_entry_reusable(entry: dict | None) -> bool:
+        """Return True when a cached entry is complete enough to reuse.
+
+        llms-backed entries must retain content so doctor --ready-only can hand
+        extraction-ready sources back to the agent on cached reruns.
+        """
+        if not entry or entry.get("errors"):
+            return False
+        source_type = entry.get("source_type")
+        if source_type in ("llms_full_txt", "llms_txt"):
+            return bool(entry.get("content"))
+        return True
+
     for dep in deps_data.get("dependencies", []):
         name = dep["name"]
         language = dep["language"]
@@ -512,7 +526,7 @@ def resolve_sources(
             ):
                 # Use cached source if available
                 cached = sm.cache.get(language, name, version)
-                if cached and not cached.get("errors"):
+                if _cache_entry_reusable(cached):
                     sources.append(cached)
                     skipped_cached += 1
                     cache_counts["hit"] += 1
@@ -527,7 +541,7 @@ def resolve_sources(
         # Check source cache (unless force-refresh)
         if not force_refresh and sm:
             cached = sm.cache.get(language, name, version)
-            if cached and not cached.get("errors"):
+            if _cache_entry_reusable(cached):
                 if sm.cache.is_fresh(language, name, version, ttl_seconds=ttl):
                     # Cache hit
                     cache_counts["hit"] += 1
@@ -537,6 +551,9 @@ def resolve_sources(
                 else:
                     cache_counts["stale"] += 1
             elif cached and cached.get("errors"):
+                cache_counts["stale"] += 1
+            elif cached:
+                # Incomplete cached entry (e.g. llms source without content)
                 cache_counts["stale"] += 1
             else:
                 cache_counts["miss"] += 1
@@ -594,7 +611,7 @@ def resolve_sources(
                         )
 
                     # Cache the result
-                    cache_entry = {k: v for k, v in result.items() if k != "content"}
+                    cache_entry = dict(result)
                     cache_entry["fetch_timestamp"] = datetime.now(
                         timezone.utc
                     ).isoformat()

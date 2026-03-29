@@ -2268,6 +2268,19 @@ class TestV2IncrementalContracts:
         assert "failed" in buckets
         assert "extraction_subsets" in result
 
+    def test_doctor_next_command_is_executable(self):
+        """doctor next_command should be a real command, not prose."""
+        result = run_script(
+            "doctor.py",
+            ["--project-dir", str(FIXTURES_DIR), "--json", "--skip-patterns"],
+        )
+        next_command = result["next_command"]
+        assert isinstance(next_command, str)
+        assert next_command.startswith("whetstone ") or next_command.startswith(
+            "python3 "
+        )
+        assert "Agent:" not in next_command
+
     def test_status_has_pipeline_state(self):
         """status output includes pipeline_state and cache_stats."""
         result = run_script(

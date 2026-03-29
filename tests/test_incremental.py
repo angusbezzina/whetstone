@@ -9,12 +9,28 @@ Run with: pytest tests/test_incremental.py -v
 from __future__ import annotations
 
 import json
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from state import StateManager
+
+
+def load_script_module(filename: str, module_name: str):
+    """Load a script module directly from file path."""
+    path = SCRIPTS_DIR / filename
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def run_script(name: str, args: list[str], stdin_data: str | None = None) -> dict:
@@ -186,6 +202,81 @@ class TestSourceCacheReuse:
         assert cache["miss"] >= 0
         assert cache["stale"] >= 0
 
+    def test_incomplete_llms_cache_entry_is_refetched(self, tmp_path, monkeypatch):
+        """Fresh llms cache entries without content must be re-fetched, not reused."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "test"\ndependencies = ["requests>=2.31"]\n'
+        )
+
+        sm = StateManager(tmp_path)
+        sm.ensure_dir()
+        sm.load_all()
+        sm.inventory.upsert(
+            {
+                "name": "requests",
+                "language": "python",
+                "version": ">=2.31",
+                "dev": False,
+                "sources": ["root"],
+            }
+        )
+        sm.inventory.set_state("python", "requests", "extraction_ready")
+        sm.cache.upsert(
+            {
+                "name": "requests",
+                "language": "python",
+                "version": ">=2.31",
+                "docs_url": "https://example.com",
+                "llms_txt_url": "https://example.com/llms.txt",
+                "source_type": "llms_txt",
+                "content": None,
+                "content_hash": "sha256:old",
+                "freshness": {"confidence": "high", "content_stale": False},
+                "fetch_timestamp": "2026-03-29T00:00:00+00:00",
+                "ttl_seconds": 604800,
+            }
+        )
+        sm.save_all()
+
+        mod = load_script_module("resolve-sources.py", "resolve_sources_test")
+
+        def fake_resolver(name: str, version: str, timeout: int) -> dict:
+            return {
+                "docs_url": "https://example.com",
+                "llms_txt_url": "https://example.com/llms.txt",
+                "source_type": "llms_txt",
+                "content": "resolved llms content",
+                "content_hash": "sha256:new",
+                "latest_version": "2.32.0",
+                "latest_release_date": "2026-03-01T00:00:00+00:00",
+            }
+
+        monkeypatch.setitem(mod.RESOLVERS, "python", fake_resolver)
+
+        result = mod.resolve_sources(
+            {
+                "dependencies": [
+                    {
+                        "name": "requests",
+                        "language": "python",
+                        "version": ">=2.31",
+                        "dev": False,
+                    }
+                ]
+            },
+            project_dir=tmp_path,
+        )
+
+        assert result["resolution_stats"]["skipped_cached"] == 0
+        assert result["resolution_stats"]["resolved"] == 1
+        assert result["sources"][0]["content"] == "resolved llms content"
+        refreshed = StateManager(tmp_path)
+        refreshed.load_all()
+        cached = refreshed.cache.get("python", "requests", ">=2.31")
+        assert cached is not None
+        assert cached["content"] == "resolved llms content"
+
 
 class TestStatePersistence:
     """Tests for state file persistence and structure."""
@@ -253,6 +344,84 @@ class TestStatePersistence:
         for key, dep in deps.items():
             assert "state" in dep
             assert dep["state"] == "discovered"  # Initial state
+
+    def test_state_only_repo_is_not_not_initialized_for_status(self, tmp_path):
+        """Repos with whetstone/.state should report pipeline status, not not_initialized."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text('[project]\nname = "test"\ndependencies = ["flask"]\n')
+
+        run_script(
+            "detect-deps.py",
+            [
+                "--project-dir",
+                str(tmp_path),
+                "--incremental",
+            ],
+        )
+
+        result = run_script(
+            "status.py",
+            ["--project-dir", str(tmp_path), "--json", "--no-drift-check"],
+        )
+        assert result["status"] == "ok"
+        assert result["label"] == "No Rules"
+        assert result["pipeline_state"]["total_deps"] == 1
+
+    def test_doctor_ready_only_uses_cached_extraction_ready_sources(self, tmp_path):
+        """doctor --ready-only should return cached llms-backed extraction-ready deps."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "test"\ndependencies = ["requests>=2.31"]\n'
+        )
+
+        sm = StateManager(tmp_path)
+        sm.ensure_dir()
+        sm.load_all()
+        sm.manifests.upsert("pyproject.toml", sha256="abc", workspace="")
+        sm.inventory.upsert(
+            {
+                "name": "requests",
+                "language": "python",
+                "version": ">=2.31",
+                "dev": False,
+                "sources": ["root"],
+            }
+        )
+        sm.inventory.set_state("python", "requests", "extraction_ready")
+        sm.cache.upsert(
+            {
+                "name": "requests",
+                "language": "python",
+                "version": ">=2.31",
+                "docs_url": "https://example.com",
+                "llms_txt_url": "https://example.com/llms.txt",
+                "source_type": "llms_txt",
+                "content": "cached llms content",
+                "content_hash": "sha256:cached",
+                "freshness": {"confidence": "high", "content_stale": False},
+                "fetch_timestamp": "2099-01-01T00:00:00+00:00",
+                "ttl_seconds": 604800,
+            }
+        )
+        sm.save_all()
+
+        result = run_script(
+            "doctor.py",
+            [
+                "--project-dir",
+                str(tmp_path),
+                "--json",
+                "--skip-patterns",
+                "--ready-only",
+            ],
+        )
+
+        assert result["extraction_context"]["dep_names"] == ["requests"]
+        assert len(result["extraction_context"]["sources"]) == 1
+        assert result["resolution_buckets"]["ready_now"] == [
+            {"name": "requests", "source_type": "llms_txt"}
+        ]
+        assert result["next_command"] == "whetstone status --extraction-ready"
 
     def test_refresh_log_records_manifest_changes(self, tmp_path):
         """Changing a manifest records a refresh signal."""

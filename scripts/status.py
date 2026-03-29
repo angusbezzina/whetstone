@@ -345,13 +345,14 @@ def compute_status(
     """
     rules_dir = project_dir / "whetstone" / "rules"
     config_path = project_dir / "whetstone" / "whetstone.yaml"
+    state_dir = project_dir / "whetstone" / ".state"
 
     # changed-only implies drift checking
     if changed_only:
         check_dep_drift = True
 
     # Check if whetstone is initialized
-    if not rules_dir.exists() and not config_path.exists():
+    if not rules_dir.exists() and not config_path.exists() and not state_dir.exists():
         return {
             "status": "not_initialized",
             "label": "Not Initialized",
@@ -586,7 +587,9 @@ def compute_status(
                 }
                 cached = sm.cache.get(d["language"], d["name"], d.get("version", "*"))
                 if cached:
-                    entry["confidence"] = cached.get("confidence")
+                    entry["confidence"] = cached.get("confidence") or cached.get(
+                        "freshness", {}
+                    ).get("confidence")
                     entry["source_type"] = cached.get("source_type")
                 extraction_readiness.append(entry)
 

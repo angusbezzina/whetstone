@@ -831,7 +831,6 @@ def doctor(
         s
         for s in sources
         if s.get("source_type") in ("llms_full_txt", "llms_txt")
-        and s.get("content")
         and s.get("freshness", {}).get("confidence") == "high"
     ]
     resolved_low = [s for s in sources if s not in ready_now]
@@ -845,9 +844,7 @@ def doctor(
             for s in resolved_low
         ],
         "failed": [{"name": e["name"], "error": e.get("error")} for e in errors],
-        "cached": [{"name": d["name"]} for d in cache_buckets["cached"]]
-        if changed_only
-        else [],
+        "cached": [{"name": d["name"]} for d in cache_buckets["cached"]],
     }
 
     extraction_subsets = {
@@ -877,7 +874,7 @@ def doctor(
             "status": "ok",
             "elapsed_seconds": 0,
             "summary": (
-                f"Ready for extraction: {len(sources)} sources, "
+                f"Ready for extraction: {len(extraction_sources)} sources, "
                 f"{patterns_count} patterns"
             ),
         }
@@ -892,12 +889,12 @@ def doctor(
     )
 
     # Determine next command
-    if sources:
-        next_command = (
-            "Agent: apply extraction prompt to sources, then run generate scripts"
-        )
+    if extraction_sources:
+        next_command = "whetstone status --extraction-ready"
+    elif sources:
+        next_command = "whetstone status"
     else:
-        next_command = "Resolve source issues above, then re-run whetstone doctor"
+        next_command = "whetstone doctor --refresh"
 
     result = {
         "status": "ok",
