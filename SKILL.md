@@ -31,8 +31,22 @@ Most users need three steps:
 2. **Extract + Approve**: Read the doctor's `extraction_context`, apply the Extraction Prompt below for each source, present rules for approval using the Rule Card format
 3. **Generate**: `python3 scripts/generate-tests.py --project-dir .` and `python3 scripts/generate-agent-context.py --project-dir .`
 
-After that, check health with `python3 scripts/status.py --project-dir .` anytime.  
-When deps update, run `python3 scripts/detect-deps.py --project-dir . --changed-only` to see what drifted, then re-extract only the changed ones.
+After that, check health with `python3 scripts/status.py --project-dir .` anytime.
+When deps update, run `python3 scripts/doctor.py --project-dir . --changed-only` to resolve only changed deps, then re-extract.
+
+### Repeat Runs
+
+Whetstone caches manifest fingerprints and source resolution results under `whetstone/.state/`. Subsequent runs are faster because unchanged deps are skipped.
+
+| Scenario | Command | What it does |
+|----------|---------|-------------|
+| Full re-bootstrap | `python3 scripts/doctor.py --project-dir .` | Detects all deps, resolves all sources |
+| Only changed deps | `python3 scripts/doctor.py --project-dir . --changed-only` | Skips cached, resolves stale/missing |
+| Resume interrupted run | `python3 scripts/doctor.py --project-dir . --resume` | Picks up where last run stopped |
+| Force re-resolve | `python3 scripts/doctor.py --project-dir . --refresh` | Ignores cache, re-fetches all docs |
+| Cap resolution count | `python3 scripts/doctor.py --project-dir . --max-deps 5` | Resolves top 5 ranked deps only |
+| Extract ready subset | `python3 scripts/doctor.py --project-dir . --ready-only` | Hands off only extraction-ready deps |
+| Retry failed deps | `python3 scripts/resolve-sources.py --retry-failed` | Re-resolves only failed deps |
 
 See the **Doctor** workflow below for the detailed version.
 
@@ -70,9 +84,19 @@ All scripts accept `--project-dir` (default: `.`). User-facing scripts support t
 | `--json` | JSON only to stdout (suppress human output) | doctor, status, ci-check |
 | `--score` | Just the numeric score + label | status |
 | `--pr-comment` | GitHub PR comment markdown | ci-check |
-| `--changed-only` | Only process deps with drift | detect-deps, resolve-sources, ci-check |
+| `--changed-only` | Only process deps with drift | detect-deps, doctor, ci-check |
 | `--dry-run` | Preview without writing files | generate-agent-context, generate-tests |
 | `--check-drift` | Include drift info in output | detect-deps |
+| `--incremental` | Fingerprint manifests, persist inventory | detect-deps |
+| `--resume` | Skip already-resolved deps | resolve-sources, doctor |
+| `--retry-failed` | Re-resolve only failed deps | resolve-sources |
+| `--force-refresh` | Ignore cache, re-fetch all | resolve-sources |
+| `--refresh` | Force re-resolve even cached deps | doctor |
+| `--ttl N` | Cache TTL in seconds (default: 7 days) | resolve-sources |
+| `--workers N` | Parallel resolution workers (default: 4) | resolve-sources |
+| `--max-deps N` | Cap how many deps to resolve | doctor |
+| `--ready-only` | Only hand off extraction-ready deps | doctor |
+| `--extraction-ready` | List deps in extraction_ready state | status |
 
 Building-block scripts (detect-deps, resolve-sources, detect-patterns, generate-*) always output JSON to stdout. All scripts include a `next_command` field in their JSON output.
 
@@ -660,6 +684,11 @@ whetstone/
     ruff.whetstone.toml       # Ruff overlay
     biome.whetstone.json      # Biome overlay
     clippy.whetstone.toml     # Clippy overlay
+  .state/                     # Pipeline cache (gitignored)
+    manifests.json            # Manifest fingerprints
+    inventory.json            # Dependency lifecycle state
+    source-cache.json         # Source resolution cache
+    refresh-log.json          # Cache invalidation log
   .last-run                   # Timestamp for --since-last-run
 
 # Agent context files at project root

@@ -37,3 +37,7 @@ htmlcov/
 # These are checked in by the user, but test fixtures generate them transiently
 tests/fixtures/whetstone/.last-run
 tests/fixtures/whetstone/.metrics.jsonl
+
+# Whetstone pipeline state cache (machine-local, not checked in)
+whetstone/.state/
+tests/fixtures/whetstone/.state/

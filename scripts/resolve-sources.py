@@ -19,10 +19,18 @@ import json
 import re
 import ssl
 import sys
+import threading
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
+
+# State management — optional import for caching/checkpointing
+try:
+    from state import StateManager
+except ImportError:
+    StateManager = None  # type: ignore[assignment,misc]
 
 USER_AGENT = "whetstone/0.1.0 (https://github.com/whetstone)"
 DEFAULT_TIMEOUT = 15
@@ -397,84 +405,264 @@ def load_stored_hashes(project_dir: Path) -> dict[str, str]:
     return hashes
 
 
+def _resolve_single_dep(
+    dep: dict,
+    stored_hash: str | None,
+    timeout: int,
+) -> dict:
+    """Resolve a single dependency. Thread-safe.
+
+    Returns a dict with either resolved source data or an error key.
+    """
+    name = dep["name"]
+    language = dep["language"]
+    version = dep.get("version", "*")
+
+    resolver = RESOLVERS.get(language)
+    if not resolver:
+        return {
+            "name": name,
+            "language": language,
+            "version": version,
+            "error": f"Unsupported language: {language}",
+        }
+
+    try:
+        result = resolver(name, version, timeout)
+    except Exception as e:
+        return {
+            "name": name,
+            "language": language,
+            "version": version,
+            "error": str(e),
+        }
+
+    if "error" in result:
+        return {
+            "name": name,
+            "language": language,
+            "version": version,
+            "error": result["error"],
+        }
+
+    freshness = _compute_freshness(result, stored_hash=stored_hash)
+
+    return {
+        "name": name,
+        "language": language,
+        "version": version,
+        **result,
+        "freshness": freshness,
+    }
+
+
 def resolve_sources(
     deps_data: dict,
     filter_deps: set[str] | None = None,
     changed_only: bool = False,
     project_dir: Path = Path("."),
     timeout: int = DEFAULT_TIMEOUT,
+    ttl: int = 604800,
+    force_refresh: bool = False,
+    resume: bool = False,
+    retry_failed: bool = False,
+    workers: int = 4,
 ) -> dict:
-    """Resolve documentation sources for all dependencies."""
+    """Resolve documentation sources for all dependencies.
+
+    Supports caching, checkpointing, parallel resolution, and resume.
+    """
     sources: list[dict] = []
     errors: list[dict] = []
+    cache_counts = {"hit": 0, "miss": 0, "stale": 0}
+    skipped_cached = 0
 
     # Always load stored hashes — needed for freshness.content_stale
     stored_hashes = load_stored_hashes(project_dir)
 
+    # Initialize state manager for caching/checkpointing
+    sm = None
+    if StateManager is not None:
+        sm = StateManager(project_dir)
+        sm.ensure_dir()
+        sm.cache.load()
+        sm.inventory.load()
+        sm.refresh_log.load()
+
+    # Build work list: filter deps, check cache
+    work_list: list[dict] = []
     for dep in deps_data.get("dependencies", []):
         name = dep["name"]
         language = dep["language"]
         version = dep.get("version", "*")
 
-        # Filter by requested deps
         if filter_deps and name not in filter_deps:
             continue
-
-        # Skip dev dependencies for source resolution
         if dep.get("dev", False):
             continue
 
-        resolver = RESOLVERS.get(language)
-        if not resolver:
-            errors.append(
-                {
-                    "name": name,
-                    "language": language,
-                    "error": f"Unsupported language: {language}",
-                }
-            )
-            continue
+        # Resume: skip deps already in resolved/extraction_ready state
+        if resume and sm:
+            inv_entry = sm.inventory.get(language, name)
+            if inv_entry and inv_entry.get("state") in (
+                "resolved",
+                "extraction_ready",
+                "extracted",
+                "approved",
+            ):
+                # Use cached source if available
+                cached = sm.cache.get(language, name, version)
+                if cached and not cached.get("errors"):
+                    sources.append(cached)
+                    skipped_cached += 1
+                    cache_counts["hit"] += 1
+                    continue
 
-        try:
-            result = resolver(name, version, timeout)
-        except Exception as e:
-            errors.append(
-                {
-                    "name": name,
-                    "language": language,
-                    "error": str(e),
-                }
-            )
-            continue
+        # Retry-failed: only process deps in failed state
+        if retry_failed and sm:
+            inv_entry = sm.inventory.get(language, name)
+            if inv_entry and inv_entry.get("state") != "failed":
+                continue
 
-        if "error" in result:
-            errors.append(
-                {
-                    "name": name,
-                    "language": language,
-                    "error": result["error"],
-                }
-            )
-            continue
+        # Check source cache (unless force-refresh)
+        if not force_refresh and sm:
+            cached = sm.cache.get(language, name, version)
+            if cached and not cached.get("errors"):
+                if sm.cache.is_fresh(language, name, version, ttl_seconds=ttl):
+                    # Cache hit
+                    cache_counts["hit"] += 1
+                    sources.append(cached)
+                    skipped_cached += 1
+                    continue
+                else:
+                    cache_counts["stale"] += 1
+            elif cached and cached.get("errors"):
+                cache_counts["stale"] += 1
+            else:
+                cache_counts["miss"] += 1
+        else:
+            cache_counts["miss"] += 1
 
-        # Changed-only filter
+        work_list.append(dep)
+
+    # Mark deps as resolving in inventory
+    if sm:
+        for dep in work_list:
+            try:
+                sm.inventory.set_state(dep["language"], dep["name"], "resolving")
+            except KeyError:
+                # Dep not in inventory yet — upsert it first
+                sm.inventory.upsert(dep)
+                sm.inventory.set_state(dep["language"], dep["name"], "resolving")
+        sm.inventory.save()
+
+    # Lock for thread-safe state writes
+    state_lock = threading.Lock()
+    completed = 0
+    total = len(work_list)
+
+    def _resolve_and_checkpoint(dep: dict) -> dict:
+        nonlocal completed
+        name = dep["name"]
+        language = dep["language"]
+        version = dep.get("version", "*")
         stored_hash = stored_hashes.get(name)
-        if changed_only and result.get("content_hash"):
-            if stored_hash and stored_hash == result["content_hash"]:
-                continue  # Skip unchanged
 
-        # Compute freshness metadata
-        freshness = _compute_freshness(result, stored_hash=stored_hash)
+        result = _resolve_single_dep(dep, stored_hash, timeout)
 
-        sources.append(
-            {
-                "name": name,
-                "language": language,
-                "version": version,
-                **result,
-                "freshness": freshness,
-            }
+        # Checkpoint to state
+        if sm:
+            with state_lock:
+                if "error" in result:
+                    try:
+                        sm.inventory.set_state(language, name, "failed")
+                    except KeyError:
+                        pass
+                else:
+                    # Check content hash change
+                    old_cached = sm.cache.get(language, name, version)
+                    if (
+                        old_cached
+                        and old_cached.get("content_hash")
+                        and result.get("content_hash")
+                        and old_cached["content_hash"] != result["content_hash"]
+                    ):
+                        sm.refresh_log.record(
+                            "content_hash_changed",
+                            f"{language}:{name}",
+                            "content changed on re-resolve",
+                        )
+
+                    # Cache the result
+                    cache_entry = {k: v for k, v in result.items() if k != "content"}
+                    cache_entry["fetch_timestamp"] = datetime.now(
+                        timezone.utc
+                    ).isoformat()
+                    cache_entry["ttl_seconds"] = ttl
+                    sm.cache.upsert(cache_entry)
+
+                    # Determine extraction readiness
+                    source_type = result.get("source_type", "")
+                    confidence = result.get("freshness", {}).get("confidence", "low")
+                    has_content = bool(result.get("content"))
+
+                    if (
+                        source_type in ("llms_full_txt", "llms_txt")
+                        and has_content
+                        and confidence == "high"
+                    ):
+                        try:
+                            sm.inventory.set_state(language, name, "extraction_ready")
+                        except KeyError:
+                            pass
+                    else:
+                        try:
+                            sm.inventory.set_state(language, name, "resolved")
+                        except KeyError:
+                            pass
+
+                sm.cache.save()
+                sm.inventory.save()
+
+        completed += 1
+        print(
+            f"  [{completed}/{total}] {dep['name']}: "
+            f"{'error' if 'error' in result else result.get('source_type', 'ok')}",
+            file=sys.stderr,
         )
+        return result
+
+    # Parallel resolution
+    if work_list:
+        print(f"Resolving {total} dependencies ({workers} workers)...", file=sys.stderr)
+        effective_workers = min(workers, total)
+        with ThreadPoolExecutor(max_workers=effective_workers) as executor:
+            futures = {
+                executor.submit(_resolve_and_checkpoint, dep): dep for dep in work_list
+            }
+            for future in as_completed(futures):
+                result = future.result()
+
+                # Changed-only filter
+                if changed_only and result.get("content_hash"):
+                    stored_hash = stored_hashes.get(result["name"])
+                    if stored_hash and stored_hash == result["content_hash"]:
+                        continue
+
+                if "error" in result:
+                    errors.append(
+                        {
+                            "name": result["name"],
+                            "language": result["language"],
+                            "error": result["error"],
+                        }
+                    )
+                else:
+                    sources.append(result)
+
+    # Save final state
+    if sm:
+        sm.refresh_log.save()
 
     if sources:
         next_command = "Extract rules: agent applies extraction prompt to each source"
@@ -486,6 +674,14 @@ def resolve_sources(
     return {
         "sources": sources,
         "errors": errors,
+        "cache": cache_counts,
+        "resolution_stats": {
+            "total": total + skipped_cached,
+            "resolved": len(sources),
+            "failed": len(errors),
+            "skipped_cached": skipped_cached,
+            "workers": workers,
+        },
         "next_command": next_command,
     }
 
@@ -521,6 +717,33 @@ def main() -> None:
         default=DEFAULT_TIMEOUT,
         help=f"HTTP request timeout in seconds (default: {DEFAULT_TIMEOUT})",
     )
+    parser.add_argument(
+        "--ttl",
+        type=int,
+        default=604800,
+        help="Cache TTL in seconds (default: 7 days / 604800s)",
+    )
+    parser.add_argument(
+        "--force-refresh",
+        action="store_true",
+        help="Ignore cache and re-resolve all dependencies",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip deps already resolved in state (resume interrupted run)",
+    )
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Re-resolve only dependencies in failed state",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Number of parallel resolution workers (default: 4)",
+    )
     args = parser.parse_args()
 
     try:
@@ -539,6 +762,11 @@ def main() -> None:
             changed_only=args.changed_only,
             project_dir=args.project_dir,
             timeout=args.timeout,
+            ttl=args.ttl,
+            force_refresh=args.force_refresh,
+            resume=args.resume,
+            retry_failed=args.retry_failed,
+            workers=args.workers,
         )
 
         json.dump(result, sys.stdout, indent=2)

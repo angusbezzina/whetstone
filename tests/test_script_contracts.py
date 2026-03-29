@@ -1236,7 +1236,8 @@ class TestImpactMetrics:
             "status.py",
             ["--project-dir", str(FIXTURES_DIR), "--json", "--no-drift-check"],
         )
-        assert result["next_command"] == "whetstone doctor"
+        # next_command should start with a real CLI command (may have flags)
+        assert result["next_command"].startswith("whetstone ")
 
     def test_metrics_absent_when_not_initialized(self, tmp_path):
         """Not-initialized projects don't have metrics (no crash)."""
@@ -2207,3 +2208,84 @@ class TestExhaustiveOutputContracts:
         )
         assert "freshness_status" in result
         assert "score" in result or "freshness_status" in result
+
+
+# --- v2 Incremental Pipeline Contracts ---
+
+
+class TestV2IncrementalContracts:
+    """Contract tests for v2 incremental pipeline features."""
+
+    def test_detect_deps_incremental_has_fingerprint_keys(self):
+        """detect-deps --incremental adds manifest_diff and inventory_diff."""
+        result = run_script(
+            "detect-deps.py",
+            ["--project-dir", str(FIXTURES_DIR), "--incremental"],
+        )
+        assert "manifests_changed" in result
+        assert isinstance(result["manifests_changed"], bool)
+        assert "manifest_diff" in result
+        diff = result["manifest_diff"]
+        assert "changed" in diff
+        assert "added" in diff
+        assert "removed" in diff
+        assert "unchanged" in diff
+        assert "inventory_diff" in result
+
+    def test_resolve_sources_has_cache_and_stats(self):
+        """resolve-sources output includes cache and resolution_stats."""
+        script = SCRIPTS_DIR / "resolve-sources.py"
+        result = subprocess.run(
+            [sys.executable, str(script), "--project-dir", str(FIXTURES_DIR)],
+            input='{"dependencies": [], "languages": []}',
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        data = json.loads(result.stdout)
+        assert "cache" in data
+        assert "resolution_stats" in data
+        stats = data["resolution_stats"]
+        assert "total" in stats
+        assert "resolved" in stats
+        assert "failed" in stats
+        assert "skipped_cached" in stats
+        assert "workers" in stats
+
+    def test_doctor_has_scan_and_buckets(self):
+        """doctor output includes scan, resolution_buckets, extraction_subsets."""
+        result = run_script(
+            "doctor.py",
+            ["--project-dir", str(FIXTURES_DIR), "--json", "--skip-patterns"],
+        )
+        assert "scan" in result
+        scan = result["scan"]
+        assert "cache_stats" in scan
+        assert "ranked_queue" in scan
+        assert "resolution_buckets" in result
+        buckets = result["resolution_buckets"]
+        assert "ready_now" in buckets
+        assert "failed" in buckets
+        assert "extraction_subsets" in result
+
+    def test_status_has_pipeline_state(self):
+        """status output includes pipeline_state and cache_stats."""
+        result = run_script(
+            "status.py",
+            ["--project-dir", str(FIXTURES_DIR), "--json", "--no-drift-check"],
+        )
+        assert "pipeline_state" in result
+        assert "cache_stats" in result
+        assert "extraction_readiness" in result
+
+    def test_status_drift_has_structured_format(self):
+        """status drift separates dependency_changes from documentation_stale."""
+        result = run_script(
+            "status.py",
+            ["--project-dir", str(FIXTURES_DIR), "--json", "--no-drift-check"],
+        )
+        drift = result.get("drift", {})
+        assert isinstance(drift, dict)
+        assert "dependency_changes" in drift
+        assert "documentation_stale" in drift
+        assert "count" in drift

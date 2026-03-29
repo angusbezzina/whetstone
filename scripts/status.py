@@ -32,6 +32,12 @@ try:
 except ImportError:
     yaml = None  # type: ignore[assignment]
 
+# State management — optional import for pipeline state
+try:
+    from state import StateManager
+except ImportError:
+    StateManager = None  # type: ignore[assignment,misc]
+
 
 # --- YAML loading ---
 
@@ -392,7 +398,12 @@ def compute_status(
                     "signals": {"deterministic": 0, "ai": 0, "total": 0},
                 },
                 "dependencies_covered": [],
-                "drift": {"changed": [], "count": 0, "checked": 0},
+                "drift": {
+                    "dependency_changes": [],
+                    "documentation_stale": [],
+                    "count": 0,
+                    "checked": 0,
+                },
                 "metrics": {
                     "rules_approved": 0,
                     "rules_proposed": 0,
@@ -526,17 +537,92 @@ def compute_status(
         project_dep_count=project_dep_count,
     )
 
-    # Next command
+    # --- Pipeline state from StateManager ---
+    pipeline_state: dict = {}
+    cache_stats: dict = {}
+    extraction_readiness: list[dict] = []
+    doc_stale: list[dict] = []
+
+    sm = None
+    if StateManager is not None:
+        sm = StateManager(project_dir)
+        try:
+            sm.load_all()
+
+            # Count deps by lifecycle state
+            all_inv_deps = sm.inventory.all_deps()
+            state_counts: dict[str, int] = {}
+            for d in all_inv_deps:
+                s = d.get("state", "discovered")
+                state_counts[s] = state_counts.get(s, 0) + 1
+
+            pipeline_state = {
+                "total_deps": len(all_inv_deps),
+                "discovered": state_counts.get("discovered", 0),
+                "queued": state_counts.get("queued", 0),
+                "resolving": state_counts.get("resolving", 0),
+                "resolved": state_counts.get("resolved", 0),
+                "extraction_ready": state_counts.get("extraction_ready", 0),
+                "extracted": state_counts.get("extracted", 0),
+                "approved": state_counts.get("approved", 0),
+                "stale": state_counts.get("stale", 0),
+                "failed": state_counts.get("failed", 0),
+            }
+
+            # Cache health
+            cs = sm.cache.stats()
+            cache_stats = {
+                "hits": cs.hits,
+                "stale": cs.stale,
+                "total": cs.total,
+            }
+
+            # Extraction readiness per dep
+            for d in all_inv_deps:
+                entry = {
+                    "name": d["name"],
+                    "language": d["language"],
+                    "state": d.get("state", "discovered"),
+                }
+                cached = sm.cache.get(d["language"], d["name"], d.get("version", "*"))
+                if cached:
+                    entry["confidence"] = cached.get("confidence")
+                    entry["source_type"] = cached.get("source_type")
+                extraction_readiness.append(entry)
+
+            # Documentation staleness (separate from version drift)
+            for cached_entry in sm.cache.all_entries():
+                if not sm.cache.is_fresh(
+                    cached_entry["language"],
+                    cached_entry["name"],
+                    cached_entry["version"],
+                    ttl_seconds=2592000,  # 30 days for doc staleness
+                ):
+                    doc_stale.append(
+                        {
+                            "name": cached_entry["name"],
+                            "language": cached_entry["language"],
+                            "fetch_timestamp": cached_entry.get("fetch_timestamp"),
+                        }
+                    )
+        except Exception:
+            pass  # State is optional enrichment
+
+    # Next command — enhanced with incremental awareness
     if drifted_count > 0:
-        next_command = "whetstone doctor"
+        next_command = "whetstone doctor --changed-only"
+    elif pipeline_state.get("failed", 0) > 0:
+        next_command = "python3 scripts/resolve-sources.py --retry-failed"
+    elif pipeline_state.get("extraction_ready", 0) > 0:
+        next_command = "whetstone doctor --ready-only"
     elif total_rules == 0:
         next_command = "whetstone doctor"
     elif freshness_days and freshness_days > 30:
-        next_command = "whetstone doctor"
+        next_command = "whetstone doctor --refresh"
     else:
         next_command = "whetstone generate-tests && whetstone generate-context"
 
-    return {
+    result_dict: dict = {
         "status": "ok",
         "label": label,
         "score": score,
@@ -562,12 +648,22 @@ def compute_status(
             },
         },
         "dependencies_covered": sorted(dep_names),
-        "drift": drift_info,
+        "drift": {
+            "dependency_changes": drift_info.get("changed", []),
+            "documentation_stale": doc_stale,
+            "count": drifted_count,
+            "checked": drift_info.get("checked", 0),
+        },
+        "pipeline_state": pipeline_state,
+        "cache_stats": cache_stats,
+        "extraction_readiness": extraction_readiness,
         "metrics": metrics,
         "recommendations": recommendations,
         "warnings": load_warnings,
         "next_command": next_command,
     }
+
+    return result_dict
 
 
 def _compute_impact_metrics(
@@ -731,9 +827,9 @@ def _build_recommendations(
                 "action": "refresh",
                 "message": (
                     f"{drifted_count} deps have version drift: {dep_list}{suffix}. "
-                    f"Re-run doctor to resolve updated sources, then re-extract."
+                    f"Re-run doctor to resolve updated sources."
                 ),
-                "command": "whetstone doctor",
+                "command": "whetstone doctor --changed-only",
             }
         )
 
@@ -749,7 +845,7 @@ def _build_recommendations(
                     f"Last extraction was {freshness_days:.0f} days ago{date_str}. "
                     f"Re-run doctor to check for documentation changes."
                 ),
-                "command": "whetstone doctor",
+                "command": "whetstone doctor --refresh",
             }
         )
 
@@ -976,6 +1072,30 @@ def format_human_output(result: dict) -> str:
             )
         )
 
+    # Pipeline State (if available)
+    pipeline = result.get("pipeline_state", {})
+    cache = result.get("cache_stats", {})
+    if pipeline.get("total_deps", 0) > 0:
+        lines.append(line())
+        lines.append(section_header("Pipeline"))
+        lines.append(line())
+        lines.append(
+            line(
+                f"Resolved: {pipeline.get('resolved', 0) + pipeline.get('extraction_ready', 0)}  "
+                f"Ready: {pipeline.get('extraction_ready', 0)}  "
+                f"Failed: {pipeline.get('failed', 0)}  "
+                f"Pending: {pipeline.get('queued', 0) + pipeline.get('resolving', 0)}"
+            )
+        )
+        if cache.get("total", 0) > 0:
+            lines.append(
+                line(
+                    f"Cache: {cache.get('hits', 0)} fresh, "
+                    f"{cache.get('stale', 0)} stale, "
+                    f"{cache.get('total', 0)} total"
+                )
+            )
+
     # Recommendations
     recs = result.get("recommendations", [])
     if recs:
@@ -1185,9 +1305,29 @@ def main() -> None:
         action="store_true",
         help="Skip recording a metric snapshot (default: record on every run)",
     )
+    parser.add_argument(
+        "--extraction-ready",
+        action="store_true",
+        help="Output only deps in extraction_ready state (JSON list)",
+    )
     args = parser.parse_args()
 
     try:
+        # Extraction-ready mode — list deps ready for extraction
+        if args.extraction_ready:
+            if StateManager is not None:
+                sm = StateManager(args.project_dir)
+                sm.inventory.load()
+                ready = sm.inventory.by_state("extraction_ready")
+                ready_list = [
+                    {"name": d["name"], "language": d["language"]} for d in ready
+                ]
+            else:
+                ready_list = []
+            json.dump(ready_list, sys.stdout, indent=2)
+            sys.stdout.write("\n")
+            return
+
         # History mode — show trends and exit
         if args.history:
             entries = _load_metrics_history(args.project_dir)

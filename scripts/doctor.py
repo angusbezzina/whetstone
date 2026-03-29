@@ -24,6 +24,12 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# State management — optional import for incremental mode
+try:
+    from state import StateManager
+except ImportError:
+    StateManager = None  # type: ignore[assignment,misc]
+
 
 def _script_dir() -> Path:
     """Return the directory containing this script."""
@@ -99,6 +105,101 @@ def _count_existing_rules(project_dir: Path) -> int:
     except Exception:
         pass
     return count
+
+
+def _rank_dependencies(
+    deps: list[dict],
+    sm: object | None = None,
+) -> list[dict]:
+    """Rank dependencies by resolution priority.
+
+    Scoring model:
+    - Runtime deps: +100 (dev: +0)
+    - Source quality from prior cache: llms_full_txt +50, llms_txt +40, docs_url_only +10
+    - Multi-workspace: +20 per additional workspace beyond the first
+    - Stale cache entry: +30
+    - Failed retry: +5
+
+    Returns deps sorted by score descending, with score added to each dict.
+    """
+    scored = []
+    for dep in deps:
+        score = 0.0
+        name = dep["name"]
+        language = dep["language"]
+        version = dep.get("version", "*")
+
+        # Runtime vs dev
+        if not dep.get("dev", False):
+            score += 100
+
+        # Prior source quality from cache
+        if sm is not None and hasattr(sm, "cache"):
+            cached = sm.cache.get(language, name, version)
+            if cached:
+                st = cached.get("source_type", "")
+                if st == "llms_full_txt":
+                    score += 50
+                elif st == "llms_txt":
+                    score += 40
+                elif st == "docs_url_only":
+                    score += 10
+
+        # Multi-workspace
+        sources_count = len(dep.get("sources", []))
+        score += max(0, (sources_count - 1)) * 20
+
+        # Staleness and failure from inventory
+        if sm is not None and hasattr(sm, "inventory"):
+            inv = sm.inventory.get(language, name)
+            if inv:
+                state = inv.get("state", "")
+                if state == "stale":
+                    score += 30
+                elif state == "failed":
+                    score += 5
+
+        scored.append({**dep, "_score": score})
+
+    scored.sort(key=lambda d: d["_score"], reverse=True)
+    return scored
+
+
+def _classify_deps(
+    deps: list[dict],
+    sm: object | None = None,
+) -> dict:
+    """Classify dependencies into cache buckets.
+
+    Returns dict with cached, stale, missing, failed lists.
+    """
+    cached, stale, missing, failed = [], [], [], []
+
+    for dep in deps:
+        name = dep["name"]
+        language = dep["language"]
+        version = dep.get("version", "*")
+
+        if sm is None or not hasattr(sm, "cache"):
+            missing.append(dep)
+            continue
+
+        entry = sm.cache.get(language, name, version)
+        if entry is None:
+            missing.append(dep)
+        elif entry.get("errors"):
+            failed.append(dep)
+        elif sm.cache.is_fresh(language, name, version):
+            cached.append(dep)
+        else:
+            stale.append(dep)
+
+    return {
+        "cached": cached,
+        "stale": stale,
+        "missing": missing,
+        "failed": failed,
+    }
 
 
 def _build_source_details(sources: list[dict], errors: list[dict]) -> list[dict]:
@@ -262,7 +363,27 @@ def _format_report(
             lines.append(line(f"  {lang + ':':14s} {count} deps"))
         lines.append(line())
 
-    # Documentation Sources section
+    # Scan Summary section (Phase A)
+    scan = result.get("scan", {})
+    cache_stats = scan.get("cache_stats", {})
+    if any(cache_stats.values()):
+        lines.append(section_header("Scan Summary"))
+        lines.append(line())
+        lines.append(
+            line(
+                f"Cached:  {cache_stats.get('cached', 0):>3}    "
+                f"Stale:   {cache_stats.get('stale', 0):>3}"
+            )
+        )
+        lines.append(
+            line(
+                f"Missing: {cache_stats.get('missing', 0):>3}    "
+                f"Failed:  {cache_stats.get('failed', 0):>3}"
+            )
+        )
+        lines.append(line())
+
+    # Documentation Sources section (Phase B)
     lines.append(section_header("Documentation Sources"))
     lines.append(line())
 
@@ -278,6 +399,13 @@ def _format_report(
     lines.append(line(f"Docs URL only: {docs_only}"))
     if failed_count > 0:
         lines.append(line(f"Failed: {failed_count} (see warnings below)"))
+
+    # Show resolution buckets
+    buckets = result.get("resolution_buckets", {})
+    ready_now = buckets.get("ready_now", [])
+    if ready_now:
+        lines.append(line(f"Extraction ready: {len(ready_now)} deps"))
+
     lines.append(line())
 
     # Top sources
@@ -392,22 +520,46 @@ def doctor(
     json_mode: bool = False,
     deps_filter: str | None = None,
     verbose: bool = False,
+    changed_only: bool = False,
+    refresh: bool = False,
+    resume: bool = False,
+    max_deps: int | None = None,
+    ready_only: bool = False,
 ) -> dict:
-    """Run the full doctor flow and return a structured result."""
+    """Run the full doctor flow and return a structured result.
+
+    Phase A (fast scan): detect → fingerprint → classify → rank → report
+    Phase B (incremental resolve): resolve changed/missing/stale → report
+    """
 
     total_start = time.monotonic()
     steps: list[dict] = []
     warnings: list[str] = []
 
+    # Initialize state manager for incremental support
+    sm = None
+    if StateManager is not None:
+        sm = StateManager(project_dir)
+        sm.ensure_dir()
+        sm.load_all()
+
     # Check for existing rules (repeat run detection)
     existing_rules = _count_existing_rules(project_dir)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # PHASE A: Fast Scan
+    # ══════════════════════════════════════════════════════════════════════
 
     # ── Step 1: Detect dependencies ──────────────────────────────────────
     _log("Step 1/4: Detecting dependencies...", json_mode)
 
+    detect_args = ["--project-dir", str(project_dir)]
+    if sm is not None:
+        detect_args.append("--incremental")
+
     deps_result, deps_time = _run_script(
         "detect-deps.py",
-        ["--project-dir", str(project_dir)],
+        detect_args,
     )
 
     if deps_result is None or "error" in deps_result:
@@ -474,18 +626,91 @@ def doctor(
             },
             "recommendations": [],
             "source_details": [],
+            "scan": {"cache_stats": {}, "ranked_queue": []},
             "next_command": "Add dependencies to your project, then run whetstone doctor again",
         }
 
-    # ── Step 2: Resolve documentation sources ────────────────────────────
+    # ── Phase A: Classify and rank dependencies ──────────────────────────
+    # Reload state in case detect-deps updated it
+    if sm is not None:
+        sm.cache.load()
+        sm.inventory.load()
+
+    cache_buckets = _classify_deps(target_deps, sm)
+    ranked_queue = _rank_dependencies(target_deps, sm)
+
+    scan_info = {
+        "manifests_changed": deps_result.get("manifests_changed"),
+        "manifest_diff": deps_result.get("manifest_diff"),
+        "inventory_diff": deps_result.get("inventory_diff"),
+        "cache_stats": {
+            "cached": len(cache_buckets["cached"]),
+            "stale": len(cache_buckets["stale"]),
+            "missing": len(cache_buckets["missing"]),
+            "failed": len(cache_buckets["failed"]),
+        },
+        "ranked_queue": [
+            {"name": d["name"], "language": d["language"], "score": d.get("_score", 0)}
+            for d in ranked_queue[:20]
+        ],
+    }
+
     _log(
-        f"Step 2/4: Resolving documentation for {len(target_deps)} dependencies...",
+        f"  Scan: {len(cache_buckets['cached'])} cached, "
+        f"{len(cache_buckets['stale'])} stale, "
+        f"{len(cache_buckets['missing'])} missing, "
+        f"{len(cache_buckets['failed'])} failed",
+        json_mode,
+    )
+
+    # ═════════════════════════════════════��════════════════════════════════
+    # PHASE B: Incremental Resolution
+    # ═���════════════════════════════════════════════════════════════════════
+
+    # Build the resolve work list based on flags
+    if changed_only:
+        resolve_deps = cache_buckets["stale"] + cache_buckets["missing"]
+        # Also include deps whose manifests changed
+        manifest_diff = deps_result.get("manifest_diff", {})
+        changed_manifests = set(
+            manifest_diff.get("changed", []) + manifest_diff.get("added", [])
+        )
+        if changed_manifests:
+            inv_diff = deps_result.get("inventory_diff", {})
+            changed_dep_keys = set(
+                inv_diff.get("changed", []) + inv_diff.get("added", [])
+            )
+            for dep in cache_buckets["cached"]:
+                key = f"{dep['language']}:{dep['name']}"
+                if key in changed_dep_keys:
+                    resolve_deps.append(dep)
+    else:
+        resolve_deps = target_deps
+
+    if max_deps is not None:
+        # Use ranked order to limit
+        ranked_names = [d["name"] for d in ranked_queue]
+        resolve_name_set = {d["name"] for d in resolve_deps}
+        limited_names = [n for n in ranked_names if n in resolve_name_set][:max_deps]
+        resolve_deps = [d for d in resolve_deps if d["name"] in set(limited_names)]
+
+    # ── Step 2: Resolve documentation sources ──────────��─────────────────
+    _log(
+        f"Step 2/4: Resolving documentation for {len(resolve_deps)} dependencies...",
         json_mode,
     )
 
     resolve_args = ["--project-dir", str(project_dir)]
     if deps_filter:
         resolve_args += ["--deps", deps_filter]
+    elif resolve_deps and len(resolve_deps) < len(target_deps):
+        # Only resolve the subset
+        dep_names = ",".join(d["name"] for d in resolve_deps)
+        resolve_args += ["--deps", dep_names]
+    if refresh:
+        resolve_args.append("--force-refresh")
+    if resume:
+        resolve_args.append("--resume")
 
     resolve_result, resolve_time = _run_script(
         "resolve-sources.py",
@@ -601,12 +826,49 @@ def doctor(
     # ── Step 4: Prepare extraction handoff ───────────────────────────────
     _log("Step 4/4: Preparing extraction handoff...", json_mode)
 
+    # Classify resolution results into buckets
+    ready_now = [
+        s
+        for s in sources
+        if s.get("source_type") in ("llms_full_txt", "llms_txt")
+        and s.get("content")
+        and s.get("freshness", {}).get("confidence") == "high"
+    ]
+    resolved_low = [s for s in sources if s not in ready_now]
+
+    resolution_buckets = {
+        "ready_now": [
+            {"name": s["name"], "source_type": s.get("source_type")} for s in ready_now
+        ],
+        "resolved_low": [
+            {"name": s["name"], "source_type": s.get("source_type")}
+            for s in resolved_low
+        ],
+        "failed": [{"name": e["name"], "error": e.get("error")} for e in errors],
+        "cached": [{"name": d["name"]} for d in cache_buckets["cached"]]
+        if changed_only
+        else [],
+    }
+
+    extraction_subsets = {
+        "ready_now": [
+            {"name": s["name"], "source_type": s.get("source_type")} for s in ready_now
+        ],
+        "resolved_not_ready": [
+            {"name": s["name"], "reason": s.get("source_type", "unknown")}
+            for s in resolved_low
+        ],
+        "pending": [{"name": d["name"]} for d in cache_buckets.get("missing", [])],
+        "failed": [{"name": e["name"]} for e in errors],
+    }
+
     # Build the extraction context for the agent
+    extraction_sources = ready_now if ready_only else sources
     extraction_context = {
-        "sources": sources,
+        "sources": extraction_sources,
         "patterns": (patterns_result or {}).get("patterns", []),
         "languages": languages,
-        "dep_names": [s["name"] for s in sources],
+        "dep_names": [s["name"] for s in extraction_sources],
     }
 
     steps.append(
@@ -652,6 +914,9 @@ def doctor(
         "source_details": source_details,
         "recommendations": recommendations,
         "extraction_context": extraction_context,
+        "scan": scan_info,
+        "resolution_buckets": resolution_buckets,
+        "extraction_subsets": extraction_subsets,
         "warnings": warnings,
         "next_command": next_command,
         # Private fields for report formatting (not part of public contract)
@@ -710,6 +975,32 @@ def main() -> None:
         action="store_true",
         help="Show full source list instead of top N in report",
     )
+    parser.add_argument(
+        "--changed-only",
+        action="store_true",
+        help="Only resolve deps where manifests or versions changed",
+    )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Force re-resolve even cached dependencies",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume incomplete resolution from last checkpoint",
+    )
+    parser.add_argument(
+        "--max-deps",
+        type=int,
+        default=None,
+        help="Maximum number of dependencies to resolve in this run",
+    )
+    parser.add_argument(
+        "--ready-only",
+        action="store_true",
+        help="Only hand off extraction-ready deps for extraction",
+    )
     args = parser.parse_args()
 
     skip_dev = not args.include_dev
@@ -722,6 +1013,11 @@ def main() -> None:
             json_mode=args.json_mode,
             deps_filter=args.deps,
             verbose=args.verbose,
+            changed_only=args.changed_only,
+            refresh=args.refresh,
+            resume=args.resume,
+            max_deps=args.max_deps,
+            ready_only=args.ready_only,
         )
 
         # Remove private fields before JSON output

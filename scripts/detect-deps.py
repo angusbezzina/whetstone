@@ -22,6 +22,13 @@ import re
 import sys
 from pathlib import Path
 
+# State management — optional import for incremental mode
+try:
+    from state import StateManager, ManifestStore
+except ImportError:
+    StateManager = None  # type: ignore[assignment,misc]
+    ManifestStore = None  # type: ignore[assignment,misc]
+
 # Directories to skip when recursively searching for manifests.
 # These are never project source — they're build artifacts, caches, or VCS internals.
 SKIP_DIRS = frozenset(
@@ -649,6 +656,7 @@ def detect_deps(
     do_check_drift: bool = False,
     cli_excludes: list[str] | None = None,
     cli_includes: list[str] | None = None,
+    incremental: bool = False,
 ) -> dict:
     """Main detection logic. Returns structured JSON-ready dict.
 
@@ -779,6 +787,51 @@ def detect_deps(
     if warnings:
         result["warnings"] = warnings
 
+    # --- Incremental mode: fingerprint manifests + persist inventory ---
+    if incremental and StateManager is not None:
+        sm = StateManager(project_dir)
+        sm.ensure_dir()
+        sm.manifests.load()
+        sm.inventory.load()
+
+        # Fingerprint each manifest
+        current_fingerprints: dict[str, str] = {}
+        for filepath, _source in manifest_files:
+            rel_path = os.path.relpath(filepath, project_dir)
+            current_fingerprints[rel_path] = ManifestStore.fingerprint_file(filepath)
+
+        # Compare against stored
+        manifest_diff = sm.manifests.compare(current_fingerprints)
+
+        # Update stored fingerprints
+        for filepath, source in manifest_files:
+            rel_path = os.path.relpath(filepath, project_dir)
+            sm.manifests.upsert(
+                rel_path,
+                sha256=current_fingerprints[rel_path],
+                workspace=source,
+            )
+        sm.manifests.save()
+
+        # Update dependency inventory
+        inventory_diff = sm.inventory.bulk_upsert(unique_deps)
+
+        # Log refresh signals for changed manifests
+        sm.refresh_log.load()
+        for changed_path in manifest_diff.changed:
+            sm.refresh_log.record("manifest_changed", changed_path, "sha256 changed")
+        for inv_key in inventory_diff.changed:
+            sm.refresh_log.record("version_changed", inv_key, "version changed")
+
+        sm.inventory.save()
+        sm.refresh_log.save()
+
+        result["manifests_changed"] = bool(
+            manifest_diff.changed or manifest_diff.added or manifest_diff.removed
+        )
+        result["manifest_diff"] = manifest_diff._asdict()
+        result["inventory_diff"] = inventory_diff._asdict()
+
     if do_check_drift:
         drift = check_drift(unique_deps, project_dir)
         result["drift"] = drift
@@ -829,6 +882,11 @@ def main() -> None:
         default=None,
         help="Comma-separated directory patterns to include even if normally skipped",
     )
+    parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help="Compare manifest fingerprints and persist dependency inventory to state",
+    )
     args = parser.parse_args()
 
     cli_excludes = (
@@ -849,6 +907,7 @@ def main() -> None:
             do_drift,
             cli_excludes=cli_excludes,
             cli_includes=cli_includes,
+            incremental=args.incremental,
         )
 
         # --changed-only: filter to only drifted deps
