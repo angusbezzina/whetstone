@@ -114,9 +114,15 @@ When ending a work session, complete ALL steps. Work is NOT complete until `git 
 
 1. File remaining work as beads
 2. Run quality gates (if code changed)
+   ```bash
+   python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
+   python3 -m pytest -q
+   ```
+   Do not push if Ruff fails. This exact command mirrors the CI gate that has been failing on import ordering issues.
 3. Update bead status (close finished, update in-progress)
 4. Push:
    ```bash
+   python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
    git pull --rebase
    bd sync
    git push
@@ -126,6 +132,17 @@ When ending a work session, complete ALL steps. Work is NOT complete until `git 
 6. Hand off context for next session
 
 **NEVER** stop before pushing. **NEVER** say "ready to push when you are". YOU push.
+
+## Git Hooks
+
+This repo uses a repo-managed pre-push hook in `.githooks/pre-push` to run the Ruff gate locally before pushes.
+
+One-time setup:
+
+```bash
+git config core.hooksPath .githooks
+chmod +x .githooks/pre-push
+```
 
 ---
 

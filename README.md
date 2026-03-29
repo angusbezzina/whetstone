@@ -30,6 +30,21 @@ Whetstone is not a general AI code reviewer, a replacement for ruff/biome/clippy
 
 **Prerequisites:** Python 3.10+, git, internet access for registry lookups.
 
+### Recommended repo setup for contributors
+
+Enable the repo-managed pre-push hook so local pushes run the same Ruff gate used in CI:
+
+```bash
+git config core.hooksPath .githooks
+chmod +x .githooks/pre-push
+```
+
+The hook runs:
+
+```bash
+python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
+```
+
 ### For Python projects
 
 ```bash

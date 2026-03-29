@@ -170,9 +170,15 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
 
 1. **File issues for remaining work** -- create beads for anything that needs follow-up
 2. **Run quality gates** (if code changed) -- tests, linters, type checks
+   ```bash
+   python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
+   python3 -m pytest -q
+   ```
+   Never push if the Ruff command fails. It mirrors the CI lint gate and has been a frequent source of avoidable failures.
 3. **Update issue status** -- close finished beads, update in-progress items
 4. **PUSH TO REMOTE**:
    ```bash
+   python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
    git pull --rebase
    bd sync
    git push
@@ -187,3 +193,4 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
 - NEVER stop before pushing -- that leaves work stranded locally
 - NEVER say "ready to push when you are" -- YOU must push
 - If push fails, resolve and retry until it succeeds
+- Treat Ruff import/order failures as push blockers; fix them locally before pushing

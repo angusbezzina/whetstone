@@ -8,19 +8,14 @@ Run with: pytest tests/test_incremental.py -v
 
 from __future__ import annotations
 
-import json
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
-
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
-
-from state import StateManager
 
 
 def load_script_module(filename: str, module_name: str):
@@ -31,6 +26,9 @@ def load_script_module(filename: str, module_name: str):
     assert spec is not None and spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+StateManager = load_script_module("state.py", "state_test_module").StateManager
 
 
 def make_dep(name: str, language: str = "python") -> dict:
