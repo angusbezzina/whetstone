@@ -26,17 +26,30 @@ bd show <issue-id>
 bd update <issue-id> --status in_progress
 bd update <issue-id> --status done
 
-# Sync with git remote
-bd sync
+# Sync with the remote Beads store (Dolt-native workflow)
+bd dolt push
+bd dolt pull
 ```
 
 ### Working with Issues
 
 Issues in Beads are:
-- **Git-native**: Stored in `.beads/issues.jsonl` and synced like code
+- **Dolt-native**: Stored in the Beads database under `.beads/` and synced via Beads/Dolt remotes
 - **AI-friendly**: CLI-first design works perfectly with AI coding agents
 - **Branch-aware**: Issues can follow your branch workflow
-- **Always in sync**: Auto-syncs with your commits
+- **Portable**: Can be bootstrapped on new machines with `bd bootstrap`
+
+## Important Note For This Repo
+
+This repository is migrating away from the historical `bd sync` / `beads-sync`
+workflow. If you see older references to `.beads/issues.jsonl` or sync branches,
+consider them legacy compatibility artifacts rather than the supported workflow.
+
+The intended collaboration model is the current upstream Beads guidance:
+
+- initialize with `bd init` / `bd init --team`
+- bootstrap new clones with `bd bootstrap`
+- sync shared Beads state with `bd dolt push` / `bd dolt pull`
 
 ## Why Beads?
 

@@ -13,9 +13,15 @@ daemon.pid
 bd.sock
 sync-state.json
 last-touched
+dolt-server.lock
+dolt-server.log
+dolt-server.pid
+dolt-server.port
+push-state.json
 
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
+.beads-credential-key
 
 # Legacy database files
 db.sqlite
@@ -39,6 +45,7 @@ beads.right.meta.json
 .jsonl.lock
 sync_base.jsonl
 export-state/
+backup/
 
 # Dolt database (managed by Dolt remotes, not git)
 dolt/

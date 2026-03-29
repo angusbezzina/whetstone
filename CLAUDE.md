@@ -24,10 +24,12 @@ bd ready              # Find available work
 bd show <id>          # View details
 bd update <id> --status in_progress  # Claim work
 bd close <id>         # Complete work
-bd sync               # Sync with git (ALWAYS before pushing)
+bd dolt push          # Push Beads data to the remote Dolt ref
+bd dolt pull          # Pull Beads data from the remote Dolt ref
 ```
 
 Do NOT use ad-hoc TODO comments, task lists, or other tracking as a substitute for beads. If the user asks to plan work, create beads. If there's follow-up work at session end, create beads.
+Do NOT depend on the legacy `bd sync` / `beads-sync` workflow in this repo; the intended Beads setup is the current Dolt-native collaboration model documented upstream.
 
 ---
 
@@ -124,10 +126,10 @@ When ending a work session, complete ALL steps. Work is NOT complete until `git 
    ```bash
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
    git pull --rebase
-   bd sync
    git push
    git status  # MUST show "up to date with origin"
    ```
+   If your local Beads setup supports Dolt remotes for this repo, run `bd dolt push` after bead updates and before ending the session.
 5. Verify all changes are committed AND pushed
 6. Hand off context for next session
 
