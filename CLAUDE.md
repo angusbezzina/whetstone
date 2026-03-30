@@ -121,6 +121,7 @@ When ending a work session, complete ALL steps. Work is NOT complete until `git 
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
+   python3 scripts/validate-rule-schema.py
    python3 -m pytest -q
    ```
    Do not push if Ruff fails. This exact command mirrors the CI gate that has been failing on import ordering issues.
@@ -130,6 +131,7 @@ When ending a work session, complete ALL steps. Work is NOT complete until `git 
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
+   python3 scripts/validate-rule-schema.py
    git pull --rebase
    git push
    git status  # MUST show "up to date with origin"

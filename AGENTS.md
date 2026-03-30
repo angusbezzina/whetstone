@@ -173,6 +173,7 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
+   python3 scripts/validate-rule-schema.py
    python3 -m pytest -q
    ```
    Never push if the Ruff command fails. It mirrors the CI lint gate and has been a frequent source of avoidable failures.
@@ -182,6 +183,7 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
+   python3 scripts/validate-rule-schema.py
    git pull --rebase
    git push
    git status  # MUST show "up to date with origin"
