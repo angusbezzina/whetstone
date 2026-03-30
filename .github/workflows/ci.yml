@@ -65,12 +65,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: dtolnay/rust-toolchain@stable
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
         run: pip install pyyaml
+
+      - name: Build release binary for validation steps
+        run: cargo build --release
 
       - name: Validate rule schema fields
         run: python3 scripts/validate-rule-schema.py
