@@ -36,4 +36,10 @@ The code is simple enough to port, but it's low priority because:
 3. The script works standalone with zero dependencies
 4. Porting adds no user-visible value until the "single binary" story matters for distribution
 
-When the port happens, add it as `whetstone detect-patterns` subcommand.
+Current product stance:
+
+- keep `scripts/detect-patterns.py` as an optional helper
+- do not include it in the primary install-and-run workflow
+- do not have `doctor` invoke it automatically
+
+When the port happens, add it as `whetstone detect-patterns` only if it materially improves the main product story.

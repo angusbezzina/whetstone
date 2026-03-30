@@ -15,7 +15,7 @@
 
 ## What "Legacy" Means
 
-Python scripts in `scripts/` are retained for:
+Python reference scripts in `scripts/legacy/` are retained for:
 1. Reference implementation during validation
 2. Pattern detection (only feature not in Rust)
 3. Backwards compatibility during transition
@@ -32,7 +32,7 @@ A command is ready for Rust-only when:
 
 ## Remaining Python Dependency
 
-The only Python-exclusive functionality is `detect-patterns.py` which mines agent conversation transcripts, git history, and PR comments for style patterns. This is deferred from the Rust port because:
+The only Python-exclusive functionality is `scripts/detect-patterns.py` which mines agent conversation transcripts, git history, and PR comments for style patterns. This is deferred from the Rust port because:
 - It requires shell-out to `git` and `gh` CLI tools
 - Its value is supplementary (patterns are optional input to extraction)
 - The feature is lower priority than core workflow correctness

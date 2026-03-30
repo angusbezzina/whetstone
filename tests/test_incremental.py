@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
+SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts" / "legacy"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 

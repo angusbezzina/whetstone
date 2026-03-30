@@ -153,7 +153,7 @@ jobs:
 
           # Run ci-check to get actual JSON fields
           result = subprocess.run(
-              [sys.executable, 'scripts/ci-check.py', '--project-dir', 'tests/fixtures', '--json', '--no-drift-check'],
+              ['./target/release/whetstone', 'ci-check', '--project-dir', 'tests/fixtures', '--json', '--no-drift-check'],
               capture_output=True, text=True, timeout=60
           )
           ci_data = json.loads(result.stdout)
@@ -205,6 +205,13 @@ jobs:
           # --version and --help
           $BIN --version | grep -q "whetstone"
           $BIN --help | grep -q "ci-check"
+
+      - name: Validate installed-binary style usage from outside repo root
+        run: |
+          BIN="$(pwd)/target/release/whetstone"
+          TMPDIR=$(mktemp -d)
+          cd "$TMPDIR"
+          "$BIN" status --json --no-snapshot --no-drift-check --project-dir "$GITHUB_WORKSPACE/tests/fixtures" | jq -e '.status == "ok"'
 
       - name: Validate ci-check output contract matches action.yml outputs
         run: |

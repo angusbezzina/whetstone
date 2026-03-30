@@ -1,5 +1,7 @@
 # Whetstone MVP: Agent Skill + Scripts
 
+> **Historical planning document.** This file describes the original Python-heavy MVP architecture. The current primary product/runtime is the Rust binary in `src/`. See `planning/cutover.md`, `planning/cutover-criteria.md`, and `planning/mvp-v2.md` for the current state.
+
 > **Status: COMPLETE.** The MVP is fully implemented and shipped. See `planning/mvp-v2.md` for the current work phase focused on product sharpness and quality.
 
 > Build the core Whetstone experience as an Agent Skill with Python helper scripts. Deliverable in one focused day.

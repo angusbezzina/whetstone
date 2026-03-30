@@ -41,6 +41,10 @@ cargo build --release
 ./target/release/whetstone --help
 ```
 
+Release binaries are also built in CI for supported targets. For normal user
+adoption, prefer a release binary or `cargo install` over running from a source
+checkout.
+
 ### Recommended repo setup for contributors
 
 Enable the repo-managed pre-push hook so local pushes run the same quality gates used in CI:
@@ -156,7 +160,7 @@ whetstone <command> [options]
 
 All commands accept `--project-dir` (default: `.`) and output JSON to stdout. Human-readable progress goes to stderr. JSON responses include a `next_command` field suggesting what to run next.
 
-> **Legacy Python scripts:** The `scripts/` directory contains the original Python implementations. These are maintained for reference but the Rust binary is the primary interface.
+> **Legacy Python scripts:** Superseded Python runtime entrypoints now live under `scripts/legacy/`. They are retained for parity/reference testing only. The only active top-level Python helper is `scripts/detect-patterns.py`, which remains optional and outside the core Rust workflow.
 
 ## Outputs
 
@@ -264,6 +268,13 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
+#### Action migration note
+
+Older Whetstone revisions used Python scripts inside the GitHub Action.
+The current action builds and runs the Rust binary directly. If you previously
+depended on Python internals, migrate to the documented action inputs/outputs in
+`action.yml` instead of shelling out to a script.
+
 Action inputs:
 
 | Input | Default | Description |
@@ -292,7 +303,7 @@ Action outputs: `freshness_status`, `changed_sources_count`, `recommended_rules_
 
 ## Privacy
 
-Pattern mining from agent transcripts remains a **deferred / legacy Python-only workflow**. The Rust binary does not currently scan transcripts. If you choose to use the legacy `detect-patterns.py` helper, transcript scanning is scoped to the current project by default.
+Pattern mining from agent transcripts remains a **deferred / optional Python-only workflow**. The Rust binary does not currently scan transcripts. If you choose to use `scripts/detect-patterns.py`, transcript scanning is scoped to the current project by default.
 
 This means Whetstone will NOT read conversations from unrelated projects unless you explicitly opt in.
 
@@ -382,7 +393,7 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - Rust-first dependency detection, docs resolution, generation, and status workflows
 
 **Deferred / legacy:**
-- Pattern detection from agent transcripts and git history remains Python-only (`scripts/detect-patterns.py`) and is not part of the Rust binary command surface yet.
+- Pattern detection from agent transcripts and git history remains optional Python-only (`scripts/detect-patterns.py`) and is not part of the Rust binary command surface.
 
 **Planned (not yet implemented):**
 - AI eval runner for ambiguous signals (`check --ai-only`)

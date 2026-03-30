@@ -91,7 +91,7 @@ All scripts accept `--project-dir` (default: `.`). User-facing scripts support t
 | `--ready-only` | Only hand off extraction-ready deps | doctor |
 | `--extraction-ready` | List deps in extraction_ready state | status |
 
-All commands output JSON to stdout. Pattern detection (`detect-patterns`) is planned for a future release.
+All core binary commands output JSON to stdout. Pattern detection remains an optional legacy helper (`scripts/detect-patterns.py`) outside the main Rust command surface.
 
 ### JSON Output Contract
 
@@ -130,7 +130,7 @@ The binary handles all deterministic work. The agent brings judgment to rule ext
 
 ### Doctor (Recommended First Run)
 
-Run when the user says "whetstone doctor", "doctor", "scan my project", "bootstrap rules", or when they want the fastest path from zero to working rules. This is the **recommended** entry point — it chains detect → resolve → patterns → extract → generate in one flow.
+Run when the user says "whetstone doctor", "doctor", "scan my project", "bootstrap rules", or when they want the fastest path from zero to working rules. This is the **recommended** entry point — it chains detect → resolve → extract → generate in one flow.
 
 **Step 1: Run the doctor orchestrator**
 
@@ -138,17 +138,16 @@ Run when the user says "whetstone doctor", "doctor", "scan my project", "bootstr
 whetstone doctor
 ```
 
-This runs dependency detection, source resolution, and pattern detection automatically. Progress is printed to stderr; the JSON result (including fetched source content) is printed to stdout.
+This runs dependency detection and source resolution automatically. Progress is printed to stderr; the JSON result (including fetched source content) is printed to stdout.
 
 Review the summary output. It will show:
 - Dependencies found (runtime + dev, per language)
 - Sources resolved (how many deps have docs, how many have llms.txt)
-- Patterns found (recurring style signals from history)
 - Warnings (any deps whose docs couldn't be resolved)
 
 **Step 2: Extract rules from sources**
 
-Read the `extraction_context` from the doctor output. For each source in `extraction_context.sources`, apply the **Extraction Prompt** below. Also consider any patterns from `extraction_context.patterns` as additional rule candidates.
+Read the `extraction_context` from the doctor output. For each source in `extraction_context.sources`, apply the **Extraction Prompt** below.
 
 Propose rules following the rule YAML schema. Maximum 5 rules per dependency. **Prioritize rules about recent changes (last 18 months) that LLMs were likely not trained on.**
 
@@ -183,7 +182,7 @@ If `whetstone/whetstone.yaml` doesn't exist, create it from `assets/whetstone.ya
 **Step 6: Summary**
 
 Present a final summary:
-- Rules: N approved across M dependencies + K style patterns
+- Rules: N approved across M dependencies
 - Tests: paths to generated test files
 - Agent context: which files were generated
 
@@ -213,11 +212,11 @@ Pass only the user-confirmed dependencies. Present: "Resolved docs for N/M deps,
 
 **Step 3: Detect style patterns (optional)**
 
-Pattern detection is planned for a future release. Skip this step.
+Pattern detection is not part of the Rust binary. Skip this step unless the user explicitly wants to run the optional legacy helper `scripts/detect-patterns.py`.
 
 **Step 4: Extract rules**
 
-Read the source content from Step 2 and patterns from Step 3. For each dependency, apply the extraction prompt below. When filling in the prompt template, use the `latest_version` and `latest_release_date` fields from the resolve-sources output. Set `{today}` to the current date. Propose rules following the rule YAML schema. Maximum 5 rules per dependency. **Prioritize rules about recent changes (last 18 months) that LLMs were likely not trained on.**
+Read the source content from Step 2. For each dependency, apply the extraction prompt below. When filling in the prompt template, use the `latest_version` and `latest_release_date` fields from the resolve-sources output. Set `{today}` to the current date. Propose rules following the rule YAML schema. Maximum 5 rules per dependency. **Prioritize rules about recent changes (last 18 months) that LLMs were likely not trained on.**
 
 **Step 5: Interactive approval**
 
@@ -273,9 +272,9 @@ whetstone detect-deps --changed-only | whetstone resolve-sources --changed-only
 
 Only re-fetches documentation for dependencies with version drift AND content changes. This is fast and avoids unnecessary network calls.
 
-**Step 3: Check for new patterns**
+**Step 3: Check for new patterns (optional legacy helper)**
 
-Pattern detection is planned for a future release. Skip this step.
+Pattern detection is not part of the Rust binary. Skip this step unless the user explicitly wants to run the optional legacy helper `scripts/detect-patterns.py`.
 
 **Step 4: Extract and diff**
 

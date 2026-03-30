@@ -16,13 +16,18 @@ from pathlib import Path
 
 import pytest  # noqa: F401
 
-SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
+LEGACY_SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts" / "legacy"
+ACTIVE_SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
 def run_script(name: str, args: list[str], stdin_data: str | None = None) -> dict:
     """Run a script and return parsed JSON output."""
-    script = SCRIPTS_DIR / name
+    script_dir = (
+        ACTIVE_SCRIPTS_DIR if name == "detect-patterns.py" else LEGACY_SCRIPTS_DIR
+    )
+    script = script_dir / name
     cmd = [sys.executable, str(script)] + args
     result = subprocess.run(
         cmd,
@@ -32,6 +37,18 @@ def run_script(name: str, args: list[str], stdin_data: str | None = None) -> dic
         timeout=60,
     )
     # Parse JSON from stdout (ignore stderr which may have progress messages)
+    return json.loads(result.stdout)
+
+
+def run_rust(args: list[str]) -> dict:
+    """Run the Rust binary via cargo and return parsed JSON output."""
+    result = subprocess.run(
+        ["cargo", "run", "--quiet", "--"] + args,
+        cwd=ROOT_DIR,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
     return json.loads(result.stdout)
 
 
@@ -114,6 +131,67 @@ class TestStatus:
         assert "high_confidence_ratio" in dims
         assert "deterministic_coverage" in dims
         assert "pending_updates" in dims
+
+    def test_generate_context_parity_with_rust(self):
+        py = run_script(
+            "generate-agent-context.py",
+            ["--project-dir", str(FIXTURES_DIR), "--dry-run"],
+        )
+        rust = run_rust(
+            [
+                "generate-context",
+                "--project-dir",
+                str(FIXTURES_DIR),
+                "--dry-run",
+                "--json",
+            ]
+        )
+        assert py["rules_count"] == rust["rules_count"]
+        assert len(py["generated"]) == len(rust["generated"])
+
+    def test_generate_tests_parity_with_rust(self):
+        py = run_script(
+            "generate-tests.py",
+            ["--project-dir", str(FIXTURES_DIR), "--dry-run"],
+        )
+        rust = run_rust(
+            [
+                "generate-tests",
+                "--project-dir",
+                str(FIXTURES_DIR),
+                "--dry-run",
+                "--json",
+            ]
+        )
+        assert py["rules_processed"] == rust["rules_count"]
+        py_tests_total = sum(len(v) for v in py["generated"]["tests"].values())
+        rust_tests_total = sum(
+            1 for entry in rust["generated"]["tests"] if entry.get("type") == "test"
+        )
+        assert py_tests_total == rust_tests_total
+
+    def test_ci_check_parity_with_rust(self):
+        py = run_script(
+            "ci-check.py",
+            ["--project-dir", str(FIXTURES_DIR), "--json", "--no-drift-check"],
+        )
+        rust = run_rust(
+            [
+                "ci-check",
+                "--project-dir",
+                str(FIXTURES_DIR),
+                "--json",
+                "--no-drift-check",
+            ]
+        )
+        for key in [
+            "freshness_status",
+            "changed_sources_count",
+            "recommended_rules_count",
+            "requires_review",
+            "score",
+        ]:
+            assert py[key] == rust[key]
 
     def test_has_breakdown(self):
         result = run_script(
@@ -381,7 +459,9 @@ class TestGenerateAgentContext:
         # Copy fixtures to tmp
         import shutil
 
-        shutil.copytree(FIXTURES_DIR / "whetstone" / "rules", tmp_path / "whetstone" / "rules")
+        shutil.copytree(
+            FIXTURES_DIR / "whetstone" / "rules", tmp_path / "whetstone" / "rules"
+        )
         result = run_script(
             "generate-agent-context.py",
             ["--project-dir", str(tmp_path), "--dry-run"],
@@ -799,7 +879,7 @@ class TestCICheckFailOn:
 
     def test_fail_on_none_always_passes(self):
         """--fail-on none should always exit 0."""
-        script = SCRIPTS_DIR / "ci-check.py"
+        script = LEGACY_SCRIPTS_DIR / "ci-check.py"
         result = subprocess.run(
             [
                 sys.executable,
@@ -819,7 +899,7 @@ class TestCICheckFailOn:
 
     def test_fail_on_stale_passes_when_healthy(self):
         """--fail-on stale should exit 0 when status is not stale."""
-        script = SCRIPTS_DIR / "ci-check.py"
+        script = LEGACY_SCRIPTS_DIR / "ci-check.py"
         result = subprocess.run(
             [
                 sys.executable,
@@ -844,7 +924,7 @@ class TestCICheckFailOn:
 
     def test_fail_on_needs_review_passes_when_healthy(self):
         """--fail-on needs_review should exit 0 when status is healthy."""
-        script = SCRIPTS_DIR / "ci-check.py"
+        script = LEGACY_SCRIPTS_DIR / "ci-check.py"
         result = subprocess.run(
             [
                 sys.executable,
@@ -868,7 +948,7 @@ class TestCICheckFailOn:
 
     def test_not_initialized_does_not_trigger_fail_on(self, tmp_path):
         """--fail-on stale should not trigger on not_initialized projects."""
-        script = SCRIPTS_DIR / "ci-check.py"
+        script = LEGACY_SCRIPTS_DIR / "ci-check.py"
         result = subprocess.run(
             [
                 sys.executable,
@@ -1044,7 +1124,7 @@ class TestSourceFreshness:
         import importlib.util
 
         spec = importlib.util.spec_from_file_location(
-            "resolve_sources", str(SCRIPTS_DIR / "resolve-sources.py")
+            "resolve_sources", str(LEGACY_SCRIPTS_DIR / "resolve-sources.py")
         )
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
@@ -1080,7 +1160,7 @@ class TestSourceFreshness:
         import importlib.util
 
         spec = importlib.util.spec_from_file_location(
-            "resolve_sources", str(SCRIPTS_DIR / "resolve-sources.py")
+            "resolve_sources", str(LEGACY_SCRIPTS_DIR / "resolve-sources.py")
         )
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
@@ -1104,7 +1184,7 @@ class TestSourceFreshness:
         import importlib.util
 
         spec = importlib.util.spec_from_file_location(
-            "resolve_sources", str(SCRIPTS_DIR / "resolve-sources.py")
+            "resolve_sources", str(LEGACY_SCRIPTS_DIR / "resolve-sources.py")
         )
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
@@ -1518,7 +1598,7 @@ class TestTranscriptPrivacy:
 
     def test_global_flag_emits_stderr_warning(self, tmp_path):
         """--global-transcripts emits a privacy warning to stderr."""
-        script = SCRIPTS_DIR / "detect-patterns.py"
+        script = ACTIVE_SCRIPTS_DIR / "detect-patterns.py"
         proc = subprocess.run(
             [
                 sys.executable,
@@ -1542,7 +1622,7 @@ class TestTranscriptPrivacy:
         import importlib.util
 
         spec = importlib.util.spec_from_file_location(
-            "detect_patterns", SCRIPTS_DIR / "detect-patterns.py"
+            "detect_patterns", ACTIVE_SCRIPTS_DIR / "detect-patterns.py"
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -1564,7 +1644,7 @@ class TestTSRustTestGeneration:
         import importlib.util
 
         spec = importlib.util.spec_from_file_location(
-            "generate_tests", SCRIPTS_DIR / "generate-tests.py"
+            "generate_tests", LEGACY_SCRIPTS_DIR / "generate-tests.py"
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -1981,7 +2061,7 @@ class TestCLIWrapper:
 
     def test_cli_help_exits_zero(self):
         """CLI --help exits with 0."""
-        script = SCRIPTS_DIR / "cli.py"
+        script = LEGACY_SCRIPTS_DIR / "cli.py"
         result = subprocess.run(
             [sys.executable, str(script), "--help"],
             capture_output=True,
@@ -1993,7 +2073,7 @@ class TestCLIWrapper:
 
     def test_cli_unknown_command_exits_nonzero(self):
         """CLI with unknown command exits with 1."""
-        script = SCRIPTS_DIR / "cli.py"
+        script = LEGACY_SCRIPTS_DIR / "cli.py"
         result = subprocess.run(
             [sys.executable, str(script), "nonexistent"],
             capture_output=True,
@@ -2005,7 +2085,7 @@ class TestCLIWrapper:
 
     def test_cli_dispatches_status(self):
         """CLI 'status' dispatches to status.py."""
-        script = SCRIPTS_DIR / "cli.py"
+        script = LEGACY_SCRIPTS_DIR / "cli.py"
         result = subprocess.run(
             [
                 sys.executable,
@@ -2028,7 +2108,7 @@ class TestCLIWrapper:
 
     def test_cli_alias_deps(self):
         """CLI alias 'deps' dispatches to detect-deps.py."""
-        script = SCRIPTS_DIR / "cli.py"
+        script = LEGACY_SCRIPTS_DIR / "cli.py"
         result = subprocess.run(
             [sys.executable, str(script), "deps", "--project-dir", str(FIXTURES_DIR)],
             capture_output=True,
@@ -2041,7 +2121,7 @@ class TestCLIWrapper:
 
     def test_cli_no_args_exits_nonzero(self):
         """CLI with no args exits with 1 and shows help."""
-        script = SCRIPTS_DIR / "cli.py"
+        script = LEGACY_SCRIPTS_DIR / "cli.py"
         result = subprocess.run(
             [sys.executable, str(script)],
             capture_output=True,
@@ -2189,7 +2269,7 @@ class TestExhaustiveOutputContracts:
 
     def test_resolve_sources_empty_input_has_next_command(self):
         """resolve-sources with empty deps has next_command."""
-        script = SCRIPTS_DIR / "resolve-sources.py"
+        script = LEGACY_SCRIPTS_DIR / "resolve-sources.py"
         result = subprocess.run(
             [sys.executable, str(script), "--project-dir", str(FIXTURES_DIR)],
             input='{"dependencies": [], "languages": []}',
@@ -2234,7 +2314,7 @@ class TestV2IncrementalContracts:
 
     def test_resolve_sources_has_cache_and_stats(self):
         """resolve-sources output includes cache and resolution_stats."""
-        script = SCRIPTS_DIR / "resolve-sources.py"
+        script = LEGACY_SCRIPTS_DIR / "resolve-sources.py"
         result = subprocess.run(
             [sys.executable, str(script), "--project-dir", str(FIXTURES_DIR)],
             input='{"dependencies": [], "languages": []}',

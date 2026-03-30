@@ -5,6 +5,14 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+fn python_has_yaml() -> bool {
+    Command::new("python3")
+        .args(["-c", "import yaml"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 fn whetstone_bin() -> PathBuf {
     // Try to find the debug binary
     let mut path = std::env::current_exe().unwrap();
@@ -41,6 +49,35 @@ fn run_whetstone(args: &[&str], project_dir: &str) -> (String, String, bool) {
     (stdout, stderr, output.status.success())
 }
 
+fn run_whetstone_from_cwd(args: &[&str], current_dir: &std::path::Path) -> (String, String, bool) {
+    let bin = whetstone_bin();
+    let output = Command::new(&bin)
+        .args(args)
+        .current_dir(current_dir)
+        .output()
+        .unwrap_or_else(|e| panic!("Failed to run {}: {}", bin.display(), e));
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    (stdout, stderr, output.status.success())
+}
+
+fn run_legacy_script(name: &str, args: &[&str], project_dir: &str) -> (String, String, bool) {
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("scripts")
+        .join("legacy")
+        .join(name);
+    let output = Command::new("python3")
+        .arg(script)
+        .args(args)
+        .current_dir(project_dir)
+        .output()
+        .unwrap_or_else(|e| panic!("Failed to run legacy script {name}: {e}"));
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    (stdout, stderr, output.status.success())
+}
+
 fn parse_json(s: &str) -> serde_json::Value {
     serde_json::from_str(s).unwrap_or_else(|e| panic!("Invalid JSON: {e}\nInput: {s}"))
 }
@@ -50,10 +87,7 @@ fn assert_json_has_keys(actual: &serde_json::Value, expected_keys: &[&str], cont
         .as_object()
         .unwrap_or_else(|| panic!("{context}: expected JSON object"));
     for key in expected_keys {
-        assert!(
-            obj.contains_key(*key),
-            "{context}: missing key '{key}'"
-        );
+        assert!(obj.contains_key(*key), "{context}: missing key '{key}'");
     }
 }
 
@@ -226,6 +260,68 @@ fn test_generate_tests_dry_run() {
     );
 }
 
+#[test]
+fn test_generate_context_parity_snapshot() {
+    if !python_has_yaml() {
+        eprintln!("Skipping legacy generate-context parity: PyYAML unavailable");
+        return;
+    }
+    let dir = fixtures_dir();
+    let (rust_stdout, _rust_stderr, rust_success) = run_whetstone(
+        &["generate-context", "--dry-run", "--json"],
+        dir.to_str().unwrap(),
+    );
+    assert!(rust_success);
+    let rust_result = parse_json(&rust_stdout);
+
+    let (py_stdout, _py_stderr, py_success) = run_legacy_script(
+        "generate-agent-context.py",
+        &["--dry-run"],
+        dir.to_str().unwrap(),
+    );
+    assert!(py_success);
+    let py_result = parse_json(&py_stdout);
+
+    assert_eq!(rust_result["rules_count"], py_result["rules_count"]);
+    assert_eq!(rust_result["generated"].as_array().unwrap().len(), 1);
+    assert_eq!(py_result["generated"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn test_generate_tests_parity_snapshot() {
+    if !python_has_yaml() {
+        eprintln!("Skipping legacy generate-tests parity: PyYAML unavailable");
+        return;
+    }
+    let dir = fixtures_dir();
+    let (rust_stdout, _rust_stderr, rust_success) = run_whetstone(
+        &["generate-tests", "--dry-run", "--json"],
+        dir.to_str().unwrap(),
+    );
+    assert!(rust_success);
+    let rust_result = parse_json(&rust_stdout);
+
+    let (py_stdout, _py_stderr, py_success) =
+        run_legacy_script("generate-tests.py", &["--dry-run"], dir.to_str().unwrap());
+    assert!(py_success);
+    let py_result = parse_json(&py_stdout);
+
+    assert_eq!(rust_result["rules_count"], py_result["rules_processed"]);
+    let rust_tests_total = rust_result["generated"]["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v.get("type").and_then(|t| t.as_str()) == Some("test"))
+        .count();
+    let py_tests_total = py_result["generated"]["tests"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|v| v.as_array().map(|a| a.len()).unwrap_or(0))
+        .sum::<usize>();
+    assert_eq!(rust_tests_total, py_tests_total);
+}
+
 // ── ci-check tests ──
 
 #[test]
@@ -238,6 +334,38 @@ fn test_ci_check_json() {
     assert!(result.get("score").is_some());
     assert!(result.get("label").is_some());
     assert!(result.get("freshness_status").is_some());
+}
+
+#[test]
+fn test_ci_check_parity_snapshot() {
+    let dir = fixtures_dir();
+    let (rust_stdout, _rust_stderr, rust_success) = run_whetstone(
+        &["ci-check", "--json", "--no-drift-check"],
+        dir.to_str().unwrap(),
+    );
+    assert!(rust_success);
+    let rust_result = parse_json(&rust_stdout);
+
+    let (py_stdout, _py_stderr, py_success) = run_legacy_script(
+        "ci-check.py",
+        &["--json", "--no-drift-check"],
+        dir.to_str().unwrap(),
+    );
+    assert!(py_success);
+    let py_result = parse_json(&py_stdout);
+
+    for key in [
+        "freshness_status",
+        "changed_sources_count",
+        "recommended_rules_count",
+        "requires_review",
+        "score",
+    ] {
+        assert_eq!(
+            rust_result[key], py_result[key],
+            "ci-check parity for {key}"
+        );
+    }
 }
 
 // ── CLI tests ──
@@ -433,8 +561,18 @@ fn test_self_host_regression_detect_deps() {
         .collect();
 
     let required_deps = [
-        "anyhow", "chrono", "clap", "serde", "serde_json", "serde_yaml", "reqwest", "toml",
-        "walkdir", "sha2", "rayon", "regex",
+        "anyhow",
+        "chrono",
+        "clap",
+        "serde",
+        "serde_json",
+        "serde_yaml",
+        "reqwest",
+        "toml",
+        "walkdir",
+        "sha2",
+        "rayon",
+        "regex",
     ];
     for dep in &required_deps {
         assert!(
@@ -474,10 +612,7 @@ fn test_self_host_regression_detect_deps() {
 
 #[test]
 fn test_splinter_first_run_resume_warm() {
-    let tmp = std::env::temp_dir().join(format!(
-        "whetstone_splinter_test_{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("whetstone_splinter_test_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
 
@@ -495,8 +630,7 @@ dependencies = ["requests>=2.31.0", "click>=8.0"]
     )
     .unwrap();
 
-    let (stdout, _stderr, success) =
-        run_whetstone(&["detect-deps", "--incremental"], project_dir);
+    let (stdout, _stderr, success) = run_whetstone(&["detect-deps", "--incremental"], project_dir);
     assert!(success, "First run detect-deps should succeed");
     let first_run = parse_json(&stdout);
 
@@ -596,8 +730,7 @@ dependencies = ["requests>=2.32.0", "flask>=3.0"]
     );
 
     // crd.1.2: verify click was actually removed from inventory (not just reported)
-    let inv_content =
-        std::fs::read_to_string(tmp.join("whetstone/.state/inventory.json")).unwrap();
+    let inv_content = std::fs::read_to_string(tmp.join("whetstone/.state/inventory.json")).unwrap();
     let inv: serde_json::Value = serde_json::from_str(&inv_content).unwrap();
     assert!(
         inv.get("dependencies")
@@ -607,6 +740,53 @@ dependencies = ["requests>=2.32.0", "flask>=3.0"]
     );
 
     // Cleanup
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_removed_dependency_cleanup_not_reflected_in_status() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_removed_dep_status_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let project_dir = tmp.to_str().unwrap();
+
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        "[project]\nname='cleanup'\ndependencies=['requests>=2.31','click>=8.0']\n",
+    )
+    .unwrap();
+    let (_stdout1, _stderr1, success1) =
+        run_whetstone(&["detect-deps", "--incremental"], project_dir);
+    assert!(success1);
+
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        "[project]\nname='cleanup'\ndependencies=['requests>=2.31']\n",
+    )
+    .unwrap();
+    let (_stdout2, _stderr2, success2) =
+        run_whetstone(&["detect-deps", "--incremental"], project_dir);
+    assert!(success2);
+
+    let (status_stdout, _status_stderr, status_success) = run_whetstone(
+        &["status", "--json", "--no-drift-check", "--no-snapshot"],
+        project_dir,
+    );
+    assert!(status_success);
+    let status = parse_json(&status_stdout);
+
+    let readiness_names: Vec<&str> = status["extraction_readiness"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.get("name").and_then(|n| n.as_str()))
+        .collect();
+    assert!(!readiness_names.contains(&"click"));
+    assert_eq!(status["pipeline_state"]["total_deps"], 1);
+
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -702,4 +882,35 @@ fn test_status_parity_snapshot() {
         ],
         "status metrics parity",
     );
+}
+
+#[test]
+fn test_installed_binary_style_usage_from_outside_repo() {
+    let dir = fixtures_dir();
+    let outside =
+        std::env::temp_dir().join(format!("whetstone_external_run_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&outside);
+    std::fs::create_dir_all(&outside).unwrap();
+
+    let (stdout, _stderr, success) = run_whetstone_from_cwd(
+        &[
+            "status",
+            "--json",
+            "--no-snapshot",
+            "--no-drift-check",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        &outside,
+    );
+    assert!(
+        success,
+        "installed-binary style invocation should succeed from outside the repo"
+    );
+
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert!(result["dimensions"]["rules_count"].as_i64().unwrap() >= 1);
+
+    let _ = std::fs::remove_dir_all(&outside);
 }

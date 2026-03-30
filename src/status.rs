@@ -272,20 +272,19 @@ pub fn compute_status(
         // Use detected_totals from the last detect-deps run when available,
         // so that doctor and status agree on dependency counts.
         let detected_totals = sm.inventory.get_detected_totals();
-        let (total_deps_count, runtime_deps_count) =
-            if let Some(ref totals) = detected_totals {
-                let total = totals
-                    .get("detected_total")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(all_inv_deps.len() as i64);
-                let runtime = totals
-                    .get("detected_runtime")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(runtime_inv_deps.len() as i64);
-                (total as usize, runtime as usize)
-            } else {
-                (all_inv_deps.len(), runtime_inv_deps.len())
-            };
+        let (total_deps_count, runtime_deps_count) = if let Some(ref totals) = detected_totals {
+            let total = totals
+                .get("detected_total")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(all_inv_deps.len() as i64);
+            let runtime = totals
+                .get("detected_runtime")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(runtime_inv_deps.len() as i64);
+            (total as usize, runtime as usize)
+        } else {
+            (all_inv_deps.len(), runtime_inv_deps.len())
+        };
 
         pipeline_state = serde_json::json!({
             "total_deps": total_deps_count,

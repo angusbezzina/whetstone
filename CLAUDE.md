@@ -10,7 +10,7 @@ Read `AGENTS.md` for universal project context. This file contains Claude Code-s
 
 Whetstone is an Agent Skill (agentskills.io format) with a **Rust CLI binary** that derives coding rules from dependency documentation and developer patterns. The MVP architecture is documented in `planning/mvp.md`. The full vision is in `planning/product-spec.md`.
 
-**The Rust binary (`src/`) is the primary implementation.** Python scripts in `scripts/` are legacy reference implementations. The agent (you) acts as the LLM for rule extraction -- the binary handles deterministic work.
+**The Rust binary (`src/`) is the primary implementation.** Archived Python command implementations now live under `scripts/legacy/`; the only active top-level Python helper is `scripts/detect-patterns.py`, which is optional and outside the core Rust workflow. The agent (you) acts as the LLM for rule extraction -- the binary handles deterministic work.
 
 ---
 
@@ -52,11 +52,11 @@ When searching for best practices, dependency docs, API patterns, or technical g
 
 ### Python Scripts
 
-The `scripts/` directory contains Python helper scripts. When writing or modifying them:
+Archived Python reference scripts live under `scripts/legacy/`. The only active top-level Python helper is `scripts/detect-patterns.py`. When writing or modifying these scripts:
 
 - Target Python 3.10+ (use `match` statements, `|` union types where appropriate)
 - Use only stdlib + `requests` + `pyyaml` + `toml` -- keep dependencies minimal
-- Every script must be runnable standalone: `python3 scripts/scriptname.py`
+- Every archived script must still be runnable standalone when used for parity/reference checks
 - Every script outputs JSON to stdout for the agent to consume
 - Use `argparse` for CLI flags
 - Handle errors gracefully -- print JSON with an `"error"` key, don't crash with tracebacks

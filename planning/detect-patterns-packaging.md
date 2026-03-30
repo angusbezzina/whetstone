@@ -1,33 +1,31 @@
 # detect-patterns Packaging Story
 
-## Context
+## Current Decision
 
-detect-patterns remains a Python script while the rest of Whetstone is a Rust binary. This document defines how it's distributed and discovered.
+`detect-patterns` remains an **optional standalone Python helper** and is **not** part of the Rust binary command surface.
 
-## Recommended Approach: Bundled Script
+## Supported Product Boundary
 
-Ship detect-patterns.py alongside the binary in release artifacts:
+- Core product: Rust binary (`whetstone ...`)
+- Optional helper: `scripts/detect-patterns.py`
+- Doctor workflow: does **not** invoke pattern mining automatically
 
-1. Include `scripts/detect-patterns.py` in GitHub Release assets
-2. Binary detects Python availability via `which python3`
-3. Future: add `whetstone detect-patterns` subcommand that shells out to the script
-4. If Python not available: print helpful error, exit with specific code
+## Packaging Stance
 
-### Why this works
-- The script has ZERO external Python dependencies (stdlib only)
-- Any system with Python 3.9+ can run it without pip install
-- Users who want pattern detection already likely have Python installed
-- No PyPI publishing overhead
+- Do **not** include detect-patterns in the primary install path or simple binary workflow
+- Document it only as an optional advanced helper for transcript/git/PR mining
+- Do not require Python for the core product story
 
-## Integration Points
+## Why
 
-- cli.rs: Future `DetectPatterns` variant in Commands enum
-- doctor.rs: Wire `skip_patterns` flag to optionally invoke detect-patterns
-- Output contract: detect-patterns.py already emits JSON matching project conventions
+- Core deterministic workflows deliver the main product value without it
+- Pattern mining depends on environment-specific transcript, git, and gh state
+- It is supplementary rather than required for install-and-run adoption
 
-## Alternative Considered: pip install
+## Future Revisit Criteria
 
-A `whetstone-patterns` PyPI package was considered but rejected because:
-- Extra install step for users
-- Publishing overhead
-- The script is a single file with no dependencies
+Only reconsider a Rust port if:
+
+1. users explicitly ask for pattern mining as part of the main product
+2. the single-binary install story remains clear
+3. privacy and environment assumptions are acceptable

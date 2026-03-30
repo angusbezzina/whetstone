@@ -4,16 +4,16 @@
 
 | Script | Status | Rationale |
 |--------|--------|-----------|
-| detect-deps.py | Legacy/reference | Full Rust parity |
-| resolve-sources.py | Legacy/reference | Full Rust parity |
-| doctor.py | Legacy/reference | Full Rust parity |
-| status.py | Legacy/reference | Full Rust parity |
-| ci-check.py | Legacy/reference | Full Rust parity |
-| generate-tests.py | Legacy/reference | Full Rust parity |
-| generate-agent-context.py | Legacy/reference | Full Rust parity |
-| detect-patterns.py | ACTIVE | Only unported feature |
-| state.py | Support | Used by other Python scripts |
-| cli.py | Dormant | Python CLI wrapper, superseded by Rust binary |
+| `scripts/legacy/detect-deps.py` | Archived/reference | Full Rust parity |
+| `scripts/legacy/resolve-sources.py` | Archived/reference | Full Rust parity |
+| `scripts/legacy/doctor.py` | Archived/reference | Full Rust parity |
+| `scripts/legacy/status.py` | Archived/reference | Full Rust parity |
+| `scripts/legacy/ci-check.py` | Archived/reference | Full Rust parity |
+| `scripts/legacy/generate-tests.py` | Archived/reference | Full Rust parity |
+| `scripts/legacy/generate-agent-context.py` | Archived/reference | Full Rust parity |
+| `scripts/detect-patterns.py` | ACTIVE | Only unported feature |
+| `scripts/legacy/state.py` | Support | Used by archived Python scripts |
+| `scripts/legacy/cli.py` | Archived | Superseded Python CLI wrapper |
 
 ## What "Python-Free" Means
 
@@ -25,10 +25,10 @@
 
 ## Retention Policy
 
-- scripts/ directory stays in repo as reference implementation
+- archived command scripts live under `scripts/legacy/`
 - No Python script is invoked by the Rust binary
 - Python tests remain for cross-validation during transition
-- scripts/ should NOT be included in release artifacts or install instructions
+- archived scripts should NOT be included in release artifacts or install instructions
 
 ## Development vs User Python
 
