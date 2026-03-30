@@ -50,6 +50,13 @@ git config core.hooksPath .githooks
 chmod +x .githooks/pre-push
 ```
 
+If your local Beads state gets out of sync or a new machine cannot see current
+issues, repair/hydrate the local Beads Dolt database with:
+
+```bash
+./scripts/beads-repair.sh --role contributor
+```
+
 ### Usage
 
 ```bash

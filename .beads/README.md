@@ -31,6 +31,26 @@ bd dolt push
 bd dolt pull
 ```
 
+### Canonical Local State For This Repo
+
+This repository expects local Beads state to use:
+
+- backend: `dolt`
+- database name: `beads`
+- git remote name: `origin`
+
+Healthy local checks:
+
+```bash
+bd context --json
+bd count
+bd ready
+bd dolt pull
+```
+
+If these fail because the local `.beads` directory is stale, corrupted, or points
+at the wrong Dolt database, use the repair helper below.
+
 ### Working with Issues
 
 Issues in Beads are:
@@ -50,6 +70,55 @@ The intended collaboration model is the current upstream Beads guidance:
 - initialize with `bd init` / `bd init --team`
 - bootstrap new clones with `bd bootstrap`
 - sync shared Beads state with `bd dolt push` / `bd dolt pull`
+
+In practice, this repo currently relies on a **deterministic repair/hydration
+flow** for new or broken clones because `bd bootstrap` has been inconsistent
+across machines.
+
+### Supported onboarding on another device
+
+From a fresh clone of the repo:
+
+```bash
+./scripts/beads-repair.sh --role contributor
+bd ready
+```
+
+This recreates the local Dolt database from the remote Beads data and avoids
+common local-state mismatches.
+
+### Recovering a broken local Beads setup
+
+If you see errors like:
+
+- `database not found: beads`
+- `bd bootstrap` says the database already exists but `bd doctor` still fails
+- `bd dolt push` / `bd dolt pull` fail because the local database points at the wrong state
+
+run:
+
+```bash
+./scripts/beads-repair.sh --role maintainer
+```
+
+The script:
+
+1. stops the local Dolt server
+2. backs up the existing local Dolt database under `.beads/backup/local-db-repair/`
+3. rewrites `.beads/metadata.json` to the canonical `beads` database name
+4. clones the remote Dolt data into `.beads/dolt/beads`
+5. restarts the Dolt server and prints verification commands
+
+### Normal day-to-day sync flow
+
+```bash
+bd dolt pull
+# work with beads
+bd dolt push
+```
+
+If `bd dolt push` reports a non-fast-forward or merge conflict, do **not** force
+push. Pull first and resolve from a healthy canonical clone.
 
 ## Why Beads?
 

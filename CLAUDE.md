@@ -30,6 +30,7 @@ bd dolt pull          # Pull Beads data from the remote Dolt ref
 
 Do NOT use ad-hoc TODO comments, task lists, or other tracking as a substitute for beads. If the user asks to plan work, create beads. If there's follow-up work at session end, create beads.
 Do NOT depend on the legacy `bd sync` / `beads-sync` workflow in this repo; the intended Beads setup is the current Dolt-native collaboration model documented upstream.
+If local `.beads` state is broken or another machine is missing current issues, repair it with `./scripts/beads-repair.sh` instead of improvising ad hoc Beads/Dolt state surgery.
 
 ---
 

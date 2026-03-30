@@ -47,6 +47,7 @@ bd dolt pull          # Pull Beads data from the remote Dolt ref
 - ALWAYS use `bd` to create, track, and close issues
 - NEVER rely on legacy `bd sync` / `beads-sync` branch workflows; this repo should follow Beads' current Dolt-native collaboration model
 - When your local Beads setup supports Dolt remotes, push/pull issue state with `bd dolt push` / `bd dolt pull`
+- If local `.beads` state is broken or another device cannot see current issues, use `./scripts/beads-repair.sh` to rehydrate the local Dolt database from the repo remote before continuing
 - If the user asks to plan work, create beads for it -- do not use ad-hoc notes or TODO comments as a substitute for proper issue tracking
 - Only skip beads if the user explicitly says to
 
