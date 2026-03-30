@@ -269,9 +269,28 @@ pub fn compute_status(
             *state_counts.entry(s.to_string()).or_insert(0) += 1;
         }
 
+        // Use detected_totals from the last detect-deps run when available,
+        // so that doctor and status agree on dependency counts.
+        let detected_totals = sm.inventory.get_detected_totals();
+        let (total_deps_count, runtime_deps_count) =
+            if let Some(ref totals) = detected_totals {
+                let total = totals
+                    .get("detected_total")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(all_inv_deps.len() as i64);
+                let runtime = totals
+                    .get("detected_runtime")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(runtime_inv_deps.len() as i64);
+                (total as usize, runtime as usize)
+            } else {
+                (all_inv_deps.len(), runtime_inv_deps.len())
+            };
+
         pipeline_state = serde_json::json!({
-            "total_deps": all_inv_deps.len(),
-            "runtime_deps": runtime_inv_deps.len(),
+            "total_deps": total_deps_count,
+            "runtime_deps": runtime_deps_count,
+            "inventory_entries": all_inv_deps.len(),
             "discovered": state_counts.get("discovered").unwrap_or(&0),
             "queued": state_counts.get("queued").unwrap_or(&0),
             "resolving": state_counts.get("resolving").unwrap_or(&0),

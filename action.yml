@@ -17,9 +17,6 @@ inputs:
   github-token:
     description: "GitHub token for posting PR comments. When set on pull_request events, findings are posted as a PR comment."
     required: false
-  python-version:
-    description: "Python version to use"
-    default: "3.11"
 
 outputs:
   freshness_status:
@@ -41,13 +38,11 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - uses: actions/setup-python@v5
-      with:
-        python-version: ${{ inputs.python-version }}
+    - uses: dtolnay/rust-toolchain@stable
 
-    - name: Install dependencies
+    - name: Build Whetstone
       shell: bash
-      run: pip install pyyaml
+      run: cargo build --release --manifest-path ${{ github.action_path }}/Cargo.toml
 
     - id: check
       shell: bash
@@ -56,20 +51,20 @@ runs:
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
         INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
       run: |
-        SCRIPT_DIR="${{ github.action_path }}/scripts"
+        WHETSTONE="${{ github.action_path }}/target/release/whetstone"
         CHANGED_FLAG=""
         if [ "$INPUT_CHANGED_ONLY" = "true" ]; then
           CHANGED_FLAG="--changed-only"
         fi
-        OUTPUT=$(python3 "$SCRIPT_DIR/ci-check.py" --project-dir "$INPUT_DIRECTORY" --json --fail-on "$INPUT_FAIL_ON" $CHANGED_FLAG 2>/dev/null)
+        OUTPUT=$("$WHETSTONE" ci-check --json --project-dir "$INPUT_DIRECTORY" --fail-on "$INPUT_FAIL_ON" $CHANGED_FLAG 2>/dev/null)
         EXIT_CODE=$?
 
-        # Parse JSON outputs
-        echo "freshness_status=$(echo "$OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("freshness_status","unknown"))')" >> "$GITHUB_OUTPUT"
-        echo "changed_sources_count=$(echo "$OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("changed_sources_count",0))')" >> "$GITHUB_OUTPUT"
-        echo "recommended_rules_count=$(echo "$OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("recommended_rules_count",0))')" >> "$GITHUB_OUTPUT"
-        echo "requires_review=$(echo "$OUTPUT" | python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("requires_review",False)).lower())')" >> "$GITHUB_OUTPUT"
-        echo "score=$(echo "$OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("score",0))')" >> "$GITHUB_OUTPUT"
+        # Parse JSON outputs with jq (pre-installed on all GitHub runners)
+        echo "freshness_status=$(echo "$OUTPUT" | jq -r '.freshness_status // "unknown"')" >> "$GITHUB_OUTPUT"
+        echo "changed_sources_count=$(echo "$OUTPUT" | jq -r '.changed_sources_count // 0')" >> "$GITHUB_OUTPUT"
+        echo "recommended_rules_count=$(echo "$OUTPUT" | jq -r '.recommended_rules_count // 0')" >> "$GITHUB_OUTPUT"
+        echo "requires_review=$(echo "$OUTPUT" | jq -r '.requires_review // false')" >> "$GITHUB_OUTPUT"
+        echo "score=$(echo "$OUTPUT" | jq -r '.score // 0')" >> "$GITHUB_OUTPUT"
 
         exit $EXIT_CODE
 
@@ -82,11 +77,11 @@ runs:
         github-token: ${{ inputs.github-token }}
         script: |
           const { execSync } = require("child_process");
-          const scriptDir = `${{ github.action_path }}/scripts`;
+          const bin = `${{ github.action_path }}/target/release/whetstone`;
           let comment;
           try {
             comment = execSync(
-              `python3 "${scriptDir}/ci-check.py" --project-dir "${process.env.INPUT_DIRECTORY}" --pr-comment --no-drift-check`,
+              `"${bin}" ci-check --pr-comment --project-dir "${process.env.INPUT_DIRECTORY}" --no-drift-check`,
               { encoding: "utf8", timeout: 30000 }
             ).trim();
           } catch (e) {

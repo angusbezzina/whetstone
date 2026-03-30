@@ -5,6 +5,12 @@ use std::path::PathBuf;
 use super::{atomic_write, load_json, now_iso};
 use crate::types::LifecycleState;
 
+/// Result of removing stale entries from the inventory.
+pub struct StaleCleanupResult {
+    pub removed: Vec<String>,
+    pub protected: Vec<String>,
+}
+
 pub struct InventoryDiff {
     pub added: Vec<String>,
     pub changed: Vec<String>,
@@ -195,5 +201,48 @@ impl InventoryStore {
     pub fn all_deps(&mut self) -> Vec<Value> {
         self.ensure_loaded();
         self.deps_map().values().cloned().collect()
+    }
+
+    /// Remove a single dependency entry from the inventory.
+    pub fn remove_dep(&mut self, language: &str, name: &str) -> bool {
+        let key = Self::key(language, name);
+        self.deps_mut().remove(&key).is_some()
+    }
+
+    /// Remove inventory entries reported as removed in a diff,
+    /// unless they are in the protected set (e.g., deps with approved rules).
+    /// Returns which keys were actually removed and which were protected.
+    pub fn remove_stale(
+        &mut self,
+        diff: &InventoryDiff,
+        protected_keys: &HashSet<String>,
+    ) -> StaleCleanupResult {
+        let mut removed = Vec::new();
+        let mut protected = Vec::new();
+
+        for key in &diff.removed {
+            if protected_keys.contains(key) {
+                protected.push(key.clone());
+                continue;
+            }
+            if self.deps_mut().remove(key).is_some() {
+                removed.push(key.clone());
+            }
+        }
+
+        StaleCleanupResult { removed, protected }
+    }
+
+    /// Store detected totals from the last detect-deps run so that
+    /// status can read them back without re-running detection.
+    pub fn set_detected_totals(&mut self, totals: &Value) {
+        self.ensure_loaded();
+        self.data["detected_totals"] = totals.clone();
+    }
+
+    /// Read detected totals persisted by the last detect-deps run.
+    pub fn get_detected_totals(&mut self) -> Option<Value> {
+        self.ensure_loaded();
+        self.data.get("detected_totals").cloned()
     }
 }

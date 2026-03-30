@@ -172,9 +172,17 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
         }));
     }
 
-    // Reload state (detect may have updated it)
+    // Reload state (detect may have updated it, including detected_totals)
     sm.cache.load();
     sm.inventory.load();
+
+    // Persist detected_totals for status reconciliation (non-incremental runs)
+    sm.inventory.set_detected_totals(&serde_json::json!({
+        "detected_runtime": deps_count,
+        "detected_dev": dev_count,
+        "detected_total": deps_count + dev_count,
+    }));
+    sm.inventory.save();
 
     // Classify and rank
     let cache_buckets = classify_deps(&target_deps, &mut sm);

@@ -6,7 +6,7 @@ pub mod walk;
 use anyhow::Result;
 use regex::Regex;
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use crate::config::WhetstoneConfig;
@@ -160,6 +160,27 @@ pub fn detect_deps(
                 .record("version_changed", inv_key, "version changed");
         }
 
+        // Clean up stale inventory entries (deps removed from manifests)
+        let mut cleanup_removed = Vec::new();
+        let mut cleanup_protected = Vec::new();
+        if !inventory_diff.removed.is_empty() {
+            let protected = approved_dep_keys(project_dir);
+            let cleanup = sm.inventory.remove_stale(&inventory_diff, &protected);
+            for key in &cleanup.removed {
+                sm.refresh_log
+                    .record("dependency_removed", key, "no longer in manifests");
+            }
+            cleanup_removed = cleanup.removed;
+            cleanup_protected = cleanup.protected;
+        }
+
+        // Persist detected totals for status reconciliation
+        sm.inventory.set_detected_totals(&serde_json::json!({
+            "detected_runtime": runtime.len(),
+            "detected_dev": dev.len(),
+            "detected_total": unique_deps.len(),
+        }));
+
         sm.inventory.save();
         sm.refresh_log.save();
 
@@ -169,7 +190,14 @@ pub fn detect_deps(
                 || !manifest_diff.removed.is_empty()
         );
         result["manifest_diff"] = manifest_diff.to_json();
-        result["inventory_diff"] = inventory_diff.to_json();
+        result["inventory_diff"] = serde_json::json!({
+            "added": inventory_diff.added,
+            "changed": inventory_diff.changed,
+            "removed": inventory_diff.removed,
+            "unchanged": inventory_diff.unchanged,
+            "actually_removed": cleanup_removed,
+            "protected": cleanup_protected,
+        });
     }
 
     if do_check_drift {
@@ -200,6 +228,34 @@ pub fn detect_deps(
 
 fn is_dev(dep: &Value) -> bool {
     dep.get("dev").and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
+/// Build a set of "language:name" keys for dependencies that have approved rules.
+/// These are protected from stale-entry cleanup.
+fn approved_dep_keys(project_dir: &Path) -> HashSet<String> {
+    let rules_dir = project_dir.join("whetstone").join("rules");
+    let (rule_files, _) = crate::rules::load_rules_as_json(&rules_dir);
+    let mut protected = HashSet::new();
+    for rf in &rule_files {
+        let has_approved = rf
+            .get("rules")
+            .and_then(|v| v.as_array())
+            .map(|rules| {
+                rules
+                    .iter()
+                    .any(|r| r.get("approved").and_then(|v| v.as_bool()).unwrap_or(false))
+            })
+            .unwrap_or(false);
+        if has_approved {
+            if let (Some(lang), Some(name)) = (
+                rf.get("language").and_then(|v| v.as_str()),
+                rf.get("source_name").and_then(|v| v.as_str()),
+            ) {
+                protected.insert(format!("{lang}:{name}"));
+            }
+        }
+    }
+    protected
 }
 
 fn dedup_deps(all_deps: &[Value]) -> Vec<Value> {

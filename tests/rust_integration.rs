@@ -45,6 +45,18 @@ fn parse_json(s: &str) -> serde_json::Value {
     serde_json::from_str(s).unwrap_or_else(|e| panic!("Invalid JSON: {e}\nInput: {s}"))
 }
 
+fn assert_json_has_keys(actual: &serde_json::Value, expected_keys: &[&str], context: &str) {
+    let obj = actual
+        .as_object()
+        .unwrap_or_else(|| panic!("{context}: expected JSON object"));
+    for key in expected_keys {
+        assert!(
+            obj.contains_key(*key),
+            "{context}: missing key '{key}'"
+        );
+    }
+}
+
 // ── detect-deps tests ──
 
 #[test]
@@ -387,4 +399,307 @@ fn test_status_contract() {
     assert!(result.get("breakdown").is_some());
     assert!(result.get("recommendations").is_some());
     assert!(result.get("next_command").is_some());
+}
+
+// ── crd.3.1: Self-host regression scenario ──
+
+#[test]
+fn test_self_host_regression_detect_deps() {
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let (stdout, _stderr, success) = run_whetstone(&["detect-deps"], dir);
+    assert!(success, "detect-deps should succeed on whetstone repo");
+
+    let result = parse_json(&stdout);
+
+    // Contract: required top-level fields
+    assert_json_has_keys(
+        &result,
+        &["languages", "counts", "dependencies", "manifests"],
+        "detect-deps self-host",
+    );
+
+    // Rust must be detected from the root Cargo.toml
+    let languages = result["languages"].as_array().unwrap();
+    let lang_strs: Vec<&str> = languages.iter().filter_map(|v| v.as_str()).collect();
+    assert!(lang_strs.contains(&"rust"), "Should detect rust language");
+
+    // Validate known Cargo.toml deps
+    let deps = result["dependencies"].as_array().unwrap();
+    let rust_runtime: Vec<&str> = deps
+        .iter()
+        .filter(|d| d["language"].as_str() == Some("rust"))
+        .filter(|d| !d["dev"].as_bool().unwrap_or(false))
+        .filter_map(|d| d["name"].as_str())
+        .collect();
+
+    let required_deps = [
+        "anyhow", "chrono", "clap", "serde", "serde_json", "serde_yaml", "reqwest", "toml",
+        "walkdir", "sha2", "rayon", "regex",
+    ];
+    for dep in &required_deps {
+        assert!(
+            rust_runtime.contains(dep),
+            "Missing required Rust dep: {dep}"
+        );
+    }
+
+    // Every dep must have all contract fields
+    for dep in deps {
+        assert!(
+            dep.get("name").and_then(|v| v.as_str()).is_some(),
+            "dep missing name"
+        );
+        assert!(
+            dep.get("language").and_then(|v| v.as_str()).is_some(),
+            "dep missing language"
+        );
+        assert!(dep.get("version").is_some(), "dep missing version");
+        assert!(dep.get("dev").is_some(), "dep missing dev flag");
+        assert!(
+            dep.get("sources").and_then(|v| v.as_array()).is_some(),
+            "dep missing sources array"
+        );
+    }
+
+    // Manifests must include Cargo.toml
+    let manifests = result["manifests"].as_array().unwrap();
+    let manifest_strs: Vec<&str> = manifests.iter().filter_map(|v| v.as_str()).collect();
+    assert!(
+        manifest_strs.contains(&"Cargo.toml"),
+        "Should detect Cargo.toml"
+    );
+}
+
+// ── crd.3.2: Splinter regression (first-run, resume, warm re-run) ──
+
+#[test]
+fn test_splinter_first_run_resume_warm() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_splinter_test_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    let project_dir = tmp.to_str().unwrap();
+
+    // Phase 1: First run (cold)
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        r#"
+[project]
+name = "splinter-test"
+version = "0.1.0"
+dependencies = ["requests>=2.31.0", "click>=8.0"]
+"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, success) =
+        run_whetstone(&["detect-deps", "--incremental"], project_dir);
+    assert!(success, "First run detect-deps should succeed");
+    let first_run = parse_json(&stdout);
+
+    assert_eq!(first_run["counts"]["runtime"]["_all"], 2);
+    assert_eq!(
+        first_run["manifests_changed"], true,
+        "First run should detect new manifests"
+    );
+    let inv_diff = &first_run["inventory_diff"];
+    assert_eq!(
+        inv_diff["added"].as_array().unwrap().len(),
+        2,
+        "Should add 2 deps to inventory"
+    );
+
+    // Verify state files were created
+    assert!(tmp.join("whetstone/.state/inventory.json").exists());
+    assert!(tmp.join("whetstone/.state/manifests.json").exists());
+
+    // Phase 2: Resume (no changes)
+    let (stdout2, _stderr2, success2) =
+        run_whetstone(&["detect-deps", "--incremental"], project_dir);
+    assert!(success2, "Resume detect-deps should succeed");
+    let resume_run = parse_json(&stdout2);
+
+    assert_eq!(resume_run["counts"]["runtime"]["_all"], 2);
+    assert_eq!(
+        resume_run["manifests_changed"], false,
+        "Resume should see no manifest changes"
+    );
+    let inv_diff2 = &resume_run["inventory_diff"];
+    assert!(
+        inv_diff2["added"].as_array().unwrap().is_empty(),
+        "No new deps on resume"
+    );
+    assert_eq!(
+        inv_diff2["unchanged"].as_array().unwrap().len(),
+        2,
+        "Both deps should be unchanged"
+    );
+
+    // Phase 3: Modify manifest (add flask, remove click, change requests version)
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        r#"
+[project]
+name = "splinter-test"
+version = "0.2.0"
+dependencies = ["requests>=2.32.0", "flask>=3.0"]
+"#,
+    )
+    .unwrap();
+
+    let (stdout3, _stderr3, success3) =
+        run_whetstone(&["detect-deps", "--incremental"], project_dir);
+    assert!(success3, "Warm re-run detect-deps should succeed");
+    let warm_run = parse_json(&stdout3);
+
+    assert_eq!(warm_run["counts"]["runtime"]["_all"], 2);
+    assert_eq!(
+        warm_run["manifests_changed"], true,
+        "Should detect manifest change"
+    );
+    let inv_diff3 = &warm_run["inventory_diff"];
+
+    // flask is new
+    let added: Vec<&str> = inv_diff3["added"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(added.contains(&"python:flask"), "Should add flask");
+
+    // requests version changed
+    let changed: Vec<&str> = inv_diff3["changed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        changed.contains(&"python:requests"),
+        "Should detect requests version change"
+    );
+
+    // click was removed from manifest
+    let removed: Vec<&str> = inv_diff3["removed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        removed.contains(&"python:click"),
+        "Should detect click removal"
+    );
+
+    // crd.1.2: verify click was actually removed from inventory (not just reported)
+    let inv_content =
+        std::fs::read_to_string(tmp.join("whetstone/.state/inventory.json")).unwrap();
+    let inv: serde_json::Value = serde_json::from_str(&inv_content).unwrap();
+    assert!(
+        inv.get("dependencies")
+            .and_then(|d| d.get("python:click"))
+            .is_none(),
+        "click should be removed from inventory"
+    );
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+// ── crd.2.1: Parity snapshot tests ──
+
+#[test]
+fn test_detect_deps_parity_snapshot() {
+    let dir = fixtures_dir();
+    let (stdout, _stderr, success) = run_whetstone(&["detect-deps"], dir.to_str().unwrap());
+    assert!(success);
+    let result = parse_json(&stdout);
+
+    // Structural checks matching Python contract
+    assert_json_has_keys(
+        &result,
+        &["languages", "counts", "dependencies", "manifests"],
+        "detect-deps parity",
+    );
+
+    // Key value parity — same deps as Python baseline
+    let dep_names: Vec<&str> = result["dependencies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|d| d["name"].as_str())
+        .collect();
+
+    let expected_runtime = ["fastapi", "next", "pydantic", "react", "requests"];
+    for name in &expected_runtime {
+        assert!(dep_names.contains(name), "Missing runtime dep: {name}");
+    }
+    let expected_dev = ["pytest", "typescript"];
+    for name in &expected_dev {
+        assert!(dep_names.contains(name), "Missing dev dep: {name}");
+    }
+
+    // Count parity
+    assert_eq!(result["counts"]["runtime"]["_all"], 5);
+    assert_eq!(result["counts"]["dev"]["_all"], 2);
+    assert_eq!(result["counts"]["runtime"]["python"], 3);
+    assert_eq!(result["counts"]["runtime"]["typescript"], 2);
+}
+
+#[test]
+fn test_status_parity_snapshot() {
+    let dir = fixtures_dir();
+    let (stdout, _stderr, success) = run_whetstone(
+        &["status", "--json", "--no-snapshot", "--no-drift-check"],
+        dir.to_str().unwrap(),
+    );
+    assert!(success);
+    let result = parse_json(&stdout);
+
+    // Structural checks matching Python contract
+    assert_json_has_keys(
+        &result,
+        &[
+            "status",
+            "label",
+            "score",
+            "dimensions",
+            "breakdown",
+            "pipeline_state",
+            "recommendations",
+            "metrics",
+            "next_command",
+        ],
+        "status parity",
+    );
+
+    // Fixture has 2 approved rules (fastapi + react)
+    assert_eq!(result["dimensions"]["rules_count"], 2);
+
+    let deps_covered: Vec<&str> = result["dependencies_covered"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(deps_covered.contains(&"fastapi"));
+    assert!(deps_covered.contains(&"react"));
+
+    // Metrics contract
+    assert_json_has_keys(
+        &result["metrics"],
+        &[
+            "rules_approved",
+            "rules_proposed",
+            "approval_rate",
+            "must_rules",
+            "dependencies_covered",
+            "dependencies_total",
+        ],
+        "status metrics parity",
+    );
 }

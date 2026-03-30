@@ -168,6 +168,54 @@ jobs:
           print('All action outputs verified.')
           "
 
+  release-binary-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Validate all commands produce valid JSON
+        run: |
+          BIN=./target/release/whetstone
+
+          # detect-deps
+          $BIN detect-deps --project-dir tests/fixtures | jq -e '.dependencies | length > 0'
+
+          # status --json
+          $BIN status --json --no-snapshot --no-drift-check --project-dir tests/fixtures | jq -e '.status and .score != null and .label and .dimensions'
+
+          # ci-check --json
+          $BIN ci-check --json --project-dir tests/fixtures | jq -e '.freshness_status and .score != null and .requires_review != null and .changed_sources_count != null and .recommended_rules_count != null'
+
+          # ci-check --pr-comment
+          COMMENT=$($BIN ci-check --pr-comment --project-dir tests/fixtures --no-drift-check)
+          echo "$COMMENT" | grep -q "<!-- whetstone-ci-check -->"
+          echo "$COMMENT" | grep -q "Whetstone Status"
+
+          # generate-context --dry-run --json
+          $BIN generate-context --dry-run --json --project-dir tests/fixtures | jq -e '.status == "ok"'
+
+          # generate-tests --dry-run --json
+          $BIN generate-tests --dry-run --json --project-dir tests/fixtures | jq -e '.status == "ok"'
+
+          # --version and --help
+          $BIN --version | grep -q "whetstone"
+          $BIN --help | grep -q "ci-check"
+
+      - name: Validate ci-check output contract matches action.yml outputs
+        run: |
+          BIN=./target/release/whetstone
+          OUTPUT=$($BIN ci-check --json --project-dir tests/fixtures)
+
+          for field in freshness_status changed_sources_count recommended_rules_count requires_review score; do
+            echo "$OUTPUT" | jq -e ".$field != null" || { echo "FAIL: missing $field"; exit 1; }
+            echo "OK: $field"
+          done
+
   actionlint:
     runs-on: ubuntu-latest
     steps:
