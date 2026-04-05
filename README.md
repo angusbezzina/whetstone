@@ -157,10 +157,11 @@ whetstone <command> [options]
 | `resolve-sources` | `resolve` | Resolve documentation URLs | `--changed-only`, `--force-refresh`, `--resume` |
 | `generate-context` | `context` | Generate agent files | `--dry-run`, `--formats`, `--lang` |
 | `generate-tests` | `tests` | Generate test + lint files | `--dry-run`, `--lang` |
+| `detect-patterns` | `patterns` | Mine style patterns from transcripts/git/PRs | `--sources`, `--since`, `--quiet`, `--global-transcripts` |
 
 All commands accept `--project-dir` (default: `.`) and output JSON to stdout. Human-readable progress goes to stderr. JSON responses include a `next_command` field suggesting what to run next.
 
-> **Legacy Python scripts:** Superseded Python runtime entrypoints now live under `scripts/legacy/`. They are retained for parity/reference testing only. The only active top-level Python helper is `scripts/detect-patterns.py`, which remains optional and outside the core Rust workflow.
+> **Legacy Python scripts:** Superseded Python runtime entrypoints live under `scripts/legacy/` for parity/reference testing only. The pattern-mining helper has been ported to Rust — invoke `whetstone detect-patterns` instead of `scripts/detect-patterns.py`. The Python script will be removed once downstream consumers have migrated.
 
 ## Outputs
 
@@ -303,9 +304,9 @@ Action outputs: `freshness_status`, `changed_sources_count`, `recommended_rules_
 
 ## Privacy
 
-Pattern mining from agent transcripts remains a **deferred / optional Python-only workflow**. The Rust binary does not currently scan transcripts. If you choose to use `scripts/detect-patterns.py`, transcript scanning is scoped to the current project by default.
+Pattern mining from agent transcripts is an **opt-in** workflow exposed by `whetstone detect-patterns`. Transcript scanning is scoped to the current project by default: only JSONL files whose path contains the current project directory name are read.
 
-This means Whetstone will NOT read conversations from unrelated projects unless you explicitly opt in.
+This means Whetstone will NOT read conversations from unrelated projects unless you explicitly opt in with `--global-transcripts`.
 
 | Mode | Behavior | Flag |
 |------|----------|------|
@@ -314,11 +315,11 @@ This means Whetstone will NOT read conversations from unrelated projects unless 
 
 **What is read:** Only `user`/`human` role messages from JSONL transcript files. Agent responses are ignored. No transcript content is sent to any external service — all processing is local.
 
-**What is stored:** Nothing from transcripts is persisted. Pattern results are ephemeral JSON output. The only file the legacy helper writes is `whetstone/.last-run` (a timestamp).
+**What is stored:** Nothing from transcripts is persisted. Pattern results are ephemeral JSON output. The only file `detect-patterns` writes is `whetstone/.last-run` (a timestamp used by `--since-last-run`).
 
 **Directories scanned:** `~/.claude/projects`, `~/.cursor/projects`, `~/.cline/projects`, `~/.continue/sessions`, `~/.codex/sessions`, `~/.goose/sessions`, `~/.roo/projects`, `~/.agents/sessions`, `~/.config/opencode/sessions`, `~/.windsurf/sessions`.
 
-If you're concerned about privacy, avoid running the legacy `detect-patterns.py` helper.
+If you're concerned about privacy, omit `detect-patterns` from your workflow (it is not run by `doctor` unless you explicitly pass `--sources`) or drop the `transcript` source with `--sources git,pr`.
 
 ## How Whetstone Fits with Existing Tools
 
@@ -392,8 +393,8 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - CI integration via GitHub Action with PR comments
 - Rust-first dependency detection, docs resolution, generation, and status workflows
 
-**Deferred / legacy:**
-- Pattern detection from agent transcripts and git history remains optional Python-only (`scripts/detect-patterns.py`) and is not part of the Rust binary command surface.
+**Opt-in:**
+- Pattern detection from agent transcripts, git history, and PR comments via `whetstone detect-patterns` (Rust subcommand; not run automatically by `doctor`).
 
 **Planned (not yet implemented):**
 - AI eval runner for ambiguous signals (`check --ai-only`)

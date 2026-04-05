@@ -24,7 +24,7 @@ Whetstone is an Agent Skill (agentskills.io format) with a Rust CLI binary. The 
 | `SKILL.md` | Core agent skill (workflow + extraction prompt) |
 | `src/` | Rust source for the `whetstone` binary |
 | `scripts/legacy/` | Archived Python reference implementations for parity tests |
-| `scripts/detect-patterns.py` | Optional Python-only pattern mining helper |
+| `scripts/detect-patterns.py` | Deprecated Python pattern mining helper, retained only as a parity reference; use `whetstone detect-patterns` instead |
 | `references/rule-schema.yaml` | Rule YAML format specification |
 | `tests/` | Integration tests and fixtures |
 

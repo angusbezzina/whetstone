@@ -91,7 +91,7 @@ All scripts accept `--project-dir` (default: `.`). User-facing scripts support t
 | `--ready-only` | Only hand off extraction-ready deps | doctor |
 | `--extraction-ready` | List deps in extraction_ready state | status |
 
-All core binary commands output JSON to stdout. Pattern detection remains an optional legacy helper (`scripts/detect-patterns.py`) outside the main Rust command surface.
+All core binary commands output JSON to stdout. Pattern detection is exposed as an opt-in subcommand (`whetstone detect-patterns`) and is not invoked automatically by `doctor`.
 
 ### JSON Output Contract
 
@@ -212,7 +212,13 @@ Pass only the user-confirmed dependencies. Present: "Resolved docs for N/M deps,
 
 **Step 3: Detect style patterns (optional)**
 
-Pattern detection is not part of the Rust binary. Skip this step unless the user explicitly wants to run the optional legacy helper `scripts/detect-patterns.py`.
+Skip this step unless the user explicitly wants pattern mining. When requested:
+
+```bash
+whetstone detect-patterns --sources transcript,git,pr
+```
+
+Transcript mining is project-scoped by default; pass `--global-transcripts` only with explicit user consent.
 
 **Step 4: Extract rules**
 
@@ -272,9 +278,13 @@ whetstone detect-deps --changed-only | whetstone resolve-sources --changed-only
 
 Only re-fetches documentation for dependencies with version drift AND content changes. This is fast and avoids unnecessary network calls.
 
-**Step 3: Check for new patterns (optional legacy helper)**
+**Step 3: Check for new patterns (optional)**
 
-Pattern detection is not part of the Rust binary. Skip this step unless the user explicitly wants to run the optional legacy helper `scripts/detect-patterns.py`.
+Skip unless requested. To mine new style signals since the last run:
+
+```bash
+whetstone detect-patterns --since-last-run --quiet
+```
 
 **Step 4: Extract and diff**
 

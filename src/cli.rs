@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use crate::{ci_check, detect, doctor, generate_context, generate_tests, output, resolve, status};
+use crate::{
+    ci_check, detect, detect_patterns, doctor, generate_context, generate_tests, output, resolve,
+    status,
+};
 
 #[derive(Parser)]
 #[command(
@@ -224,6 +227,38 @@ enum Commands {
         /// Output only JSON
         #[arg(long)]
         json: bool,
+    },
+
+    /// Mine style patterns from transcripts, git history, and PR comments
+    #[command(alias = "patterns")]
+    DetectPatterns {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Only analyze data since last execution
+        #[arg(long)]
+        since_last_run: bool,
+
+        /// Time-bounded analysis (ISO date or relative e.g. "7 days ago")
+        #[arg(long)]
+        since: Option<String>,
+
+        /// Only output when new patterns are found
+        #[arg(long)]
+        quiet: bool,
+
+        /// Comma-separated sources (transcript,git,pr)
+        #[arg(long, default_value = "transcript,git,pr")]
+        sources: String,
+
+        /// Minimum occurrences required to report a pattern
+        #[arg(long, default_value_t = 2)]
+        min_occurrences: usize,
+
+        /// Scan all agent transcripts, not just project-scoped matches
+        #[arg(long)]
+        global_transcripts: bool,
     },
 
     /// Lightweight freshness check for CI/CD
@@ -591,6 +626,46 @@ pub fn run() -> i32 {
                 1
             }
         },
+
+        Commands::DetectPatterns {
+            project_dir,
+            since_last_run,
+            since,
+            quiet,
+            sources,
+            min_occurrences,
+            global_transcripts,
+        } => {
+            let source_set = detect_patterns::parse_sources(&sources);
+            if source_set.is_empty() {
+                output::print_json(&output::error_json(
+                    "No valid sources specified. Use: transcript, git, pr",
+                    "Pass --sources with at least one of transcript, git, pr",
+                ));
+                return 1;
+            }
+            match detect_patterns::detect_patterns(detect_patterns::DetectPatternsOptions {
+                project_dir: &project_dir,
+                sources: source_set,
+                since,
+                since_last_run,
+                quiet,
+                min_occurrences,
+                global_transcripts,
+            }) {
+                Ok(result) => {
+                    output::print_json(&result);
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "Check project directory and source availability",
+                    ));
+                    1
+                }
+            }
+        }
 
         Commands::CiCheck {
             project_dir,

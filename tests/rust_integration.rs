@@ -914,3 +914,258 @@ fn test_installed_binary_style_usage_from_outside_repo() {
 
     let _ = std::fs::remove_dir_all(&outside);
 }
+
+// ── detect-patterns tests ──
+
+fn git_init_with_style_commits(dir: &std::path::Path) {
+    use std::process::Command;
+
+    let run = |args: &[&str]| {
+        let ok = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .status()
+            .expect("git command")
+            .success();
+        assert!(ok, "git {args:?} failed");
+    };
+
+    run(&["init", "--quiet", "--initial-branch=main"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "Test"]);
+    run(&["config", "commit.gpgsign", "false"]);
+
+    let messages = [
+        "format: reformat python files with ruff",
+        "format: apply consistent formatting across modules",
+        "lint: fix pyflakes warnings",
+        "lint: fix ruff errors",
+        "refactor: rename helper functions to snake_case",
+        "refactor: rename modules to match package layout",
+        "style: consistent braces",
+        "chore: unrelated commit without style signal",
+    ];
+
+    for (i, msg) in messages.iter().enumerate() {
+        std::fs::write(dir.join(format!("file{i}.txt")), format!("contents {i}\n")).unwrap();
+        run(&["add", "."]);
+        run(&["commit", "--quiet", "-m", msg]);
+    }
+}
+
+#[test]
+fn test_detect_patterns_git_contract() {
+    let tmp =
+        std::env::temp_dir().join(format!("whetstone_patterns_git_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    git_init_with_style_commits(&tmp);
+
+    let (stdout, _stderr, success) = run_whetstone(
+        &[
+            "detect-patterns",
+            "--sources",
+            "git",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(success, "detect-patterns should succeed on a git repo");
+
+    let result = parse_json(&stdout);
+    assert_json_has_keys(
+        &result,
+        &["patterns", "sources_analyzed", "next_command"],
+        "detect-patterns top level",
+    );
+
+    let git_stats = &result["sources_analyzed"]["git"];
+    assert!(
+        git_stats["commits"].as_u64().unwrap() >= 8,
+        "git source should count at least the commits we made"
+    );
+
+    let patterns = result["patterns"].as_array().unwrap();
+    assert!(
+        !patterns.is_empty(),
+        "should find at least one git style pattern"
+    );
+
+    for p in patterns {
+        assert_json_has_keys(
+            p,
+            &[
+                "description",
+                "source",
+                "occurrences",
+                "confidence",
+                "sessions",
+                "example_quotes",
+                "last_seen",
+                "score",
+                "suggested_rule",
+            ],
+            "detect-patterns pattern entry",
+        );
+        assert_eq!(p["source"], "git");
+        assert!(p["occurrences"].as_u64().unwrap() >= 2);
+        let suggested = &p["suggested_rule"];
+        assert_eq!(suggested["severity"], "should");
+        assert_eq!(suggested["category"], "convention");
+    }
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_detect_patterns_python_parity_git() {
+    // This test pins JSON structural parity between the Rust port and the
+    // legacy Python helper so we can remove the Python script without
+    // breaking downstream consumers.
+    if !python_has_yaml() {
+        return; // Python/yaml unavailable — skip, consistent with existing parity tests.
+    }
+
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_patterns_parity_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    git_init_with_style_commits(&tmp);
+
+    let (rust_stdout, _, rust_ok) = run_whetstone(
+        &[
+            "detect-patterns",
+            "--sources",
+            "git",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(rust_ok, "rust detect-patterns should succeed");
+
+    let py_script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("scripts")
+        .join("detect-patterns.py");
+    if !py_script.exists() {
+        return; // Python helper already removed — parity pinning no longer required.
+    }
+    let py_output = std::process::Command::new("python3")
+        .arg(&py_script)
+        .args([
+            "--sources",
+            "git",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ])
+        .current_dir(&tmp)
+        .output()
+        .expect("run python detect-patterns");
+    assert!(
+        py_output.status.success(),
+        "python detect-patterns should succeed: {}",
+        String::from_utf8_lossy(&py_output.stderr)
+    );
+    let py_stdout = String::from_utf8_lossy(&py_output.stdout).into_owned();
+
+    let rust_json = parse_json(&rust_stdout);
+    let py_json = parse_json(&py_stdout);
+
+    // Top-level shape must match exactly.
+    let rust_keys: std::collections::BTreeSet<&str> = rust_json
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let py_keys: std::collections::BTreeSet<&str> = py_json
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        rust_keys, py_keys,
+        "top-level JSON keys must match between Rust and Python detect-patterns"
+    );
+
+    // Per-pattern field shape must match on the first pattern of each.
+    let rust_patterns = rust_json["patterns"].as_array().unwrap();
+    let py_patterns = py_json["patterns"].as_array().unwrap();
+    assert!(!rust_patterns.is_empty());
+    assert!(!py_patterns.is_empty());
+
+    let rust_fields: std::collections::BTreeSet<&str> = rust_patterns[0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let py_fields: std::collections::BTreeSet<&str> = py_patterns[0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        rust_fields, py_fields,
+        "per-pattern JSON keys must match between Rust and Python detect-patterns"
+    );
+
+    // The bucket descriptions are drawn from a fixed set — assert the same
+    // buckets fire on both sides.
+    let rust_buckets: std::collections::BTreeSet<String> = rust_patterns
+        .iter()
+        .filter_map(|p| p["description"].as_str().map(String::from))
+        .collect();
+    let py_buckets: std::collections::BTreeSet<String> = py_patterns
+        .iter()
+        .filter_map(|p| p["description"].as_str().map(String::from))
+        .collect();
+    assert_eq!(
+        rust_buckets, py_buckets,
+        "git bucket descriptions should match between Rust and Python"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_detect_patterns_quiet_mode() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_patterns_quiet_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    // Empty dir — no git, no transcripts, no PRs. Quiet mode should still
+    // return the documented no-op payload.
+    let (stdout, _stderr, success) = run_whetstone(
+        &[
+            "detect-patterns",
+            "--sources",
+            "git",
+            "--quiet",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(success);
+    let result = parse_json(&stdout);
+    assert!(result["patterns"].as_array().unwrap().is_empty());
+    assert_eq!(
+        result["next_command"], "No patterns found. Proceed to extraction."
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
