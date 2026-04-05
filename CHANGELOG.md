@@ -4,6 +4,14 @@ All notable changes to Whetstone are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-04-05
+
+### Fixed
+- Switch reqwest from native-tls to rustls-tls so cross-compilation for
+  aarch64-unknown-linux-gnu no longer requires a system OpenSSL. The binary
+  is now fully self-contained on all targets.
+- Update macOS x86_64 CI runner from deprecated macos-13 to macos-14.
+
 ## [0.1.0] - 2026-04-05
 
 First public release. Whetstone is a single self-contained Rust binary with
@@ -34,4 +42,5 @@ no Python runtime dependency.
 - **Release workflow** building Linux and macOS binaries for x86_64 and
   aarch64 with cross-compilation support.
 
+[0.1.1]: https://github.com/angusbezzina/whetstone/releases/tag/v0.1.1
 [0.1.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.1.0
