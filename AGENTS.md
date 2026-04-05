@@ -198,3 +198,22 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
 - NEVER say "ready to push when you are" -- YOU must push
 - If push fails, resolve and retry until it succeeds
 - Treat Ruff import/order failures as push blockers; fix them locally before pushing
+
+---
+
+## Release Protocol
+
+When cutting a release, agents MUST:
+1. Pass all quality gates (clippy, cargo test, ruff, validate-rules, pytest)
+2. Update `CHANGELOG.md` with a new version section listing every user-visible change
+3. Bump the `version` field in `Cargo.toml` to match the tag
+4. Commit as `chore: release vX.Y.Z`, then `git tag vX.Y.Z && git push && git push origin vX.Y.Z`
+5. Wait for `release.yml` to build and publish, then verify the release page and test `install.sh --version vX.Y.Z`
+
+Agents MUST NEVER:
+- Tag without updating CHANGELOG.md and Cargo.toml
+- Push a tag that doesn't match Cargo.toml version
+- Skip quality gates before tagging
+- Delete or force-push a published tag
+
+See `CLAUDE.md` for the full release checklist including Homebrew formula updates.

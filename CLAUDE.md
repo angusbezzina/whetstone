@@ -202,6 +202,54 @@ whetstone/
 - Rule files: `dependency-name.yaml` (e.g., `fastapi.yaml`)
 - Test files: `test_dependency_rule_name.py` (Python), `dependency-rule-name.test.ts` (TS), `whetstone_dependency_tests.rs` (Rust)
 
+---
+
+## Release Protocol
+
+Whetstone ships as a single self-contained binary via GitHub Releases. Agents
+MUST follow this protocol when the user asks to cut a release.
+
+### Pre-release checklist (all must pass)
+```bash
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
+cargo run --quiet --release -- validate-rules
+python3 -m pytest -q
+```
+
+### Versioning
+- Follow [Semantic Versioning](https://semver.org/): MAJOR.MINOR.PATCH
+- `Cargo.toml` version field is the source of truth
+- Git tags use `v` prefix: `v0.1.0`, `v0.2.0`, etc.
+- Bump `Cargo.toml` version **before** tagging — the tag commit must contain the matching version
+
+### Cutting a release
+1. **Update CHANGELOG.md**: add a new `## [X.Y.Z] - YYYY-MM-DD` section with Added/Changed/Fixed/Removed subsections. Add a link reference at the bottom. Every user-visible change since the last release must be listed.
+2. **Bump version** in `Cargo.toml`
+3. **Commit**: `chore: release vX.Y.Z`
+4. **Tag and push**:
+   ```bash
+   git tag vX.Y.Z
+   git push && git push origin vX.Y.Z
+   ```
+5. **Wait for release.yml** to build binaries, validate, and create the GitHub Release
+6. **Verify** the release page has 4 binaries + checksums-sha256.txt
+7. **Test install.sh** from a clean directory:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/angusbezzina/whetstone/main/install.sh | sh -s -- --version vX.Y.Z
+   whetstone --version  # must print the new version
+   ```
+8. **Update Homebrew formula** (if tap is published): copy new sha256 values from checksums-sha256.txt into `packaging/homebrew/whetstone.rb`, bump version, push to tap repo
+
+### What agents must NEVER do
+- Tag a release without updating CHANGELOG.md and Cargo.toml version
+- Push a tag that doesn't match the Cargo.toml version
+- Skip the pre-release quality gates
+- Delete or force-push a tag that has already been published as a GitHub Release
+
+---
+
 ### Commit Message Style
 
 Use conventional commits:

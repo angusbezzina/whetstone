@@ -1,22 +1,61 @@
 #!/bin/sh
 set -e
 
+# Install Whetstone from a GitHub release.
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/angusbezzina/whetstone/main/install.sh | sh
+#
+# Pin a specific version:
+#   curl -fsSL ... | sh -s -- --version v0.1.0
+#
+# Override install dir:
+#   INSTALL_DIR=/usr/local/bin curl -fsSL ... | sh
+
 REPO="angusbezzina/whetstone"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="whetstone"
+REQUESTED_VERSION=""
+
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --version|-v)
+                REQUESTED_VERSION="$2"
+                shift 2
+                ;;
+            --version=*)
+                REQUESTED_VERSION="${1#--version=}"
+                shift
+                ;;
+            --help|-h)
+                echo "Usage: install.sh [--version v0.1.0]"
+                echo ""
+                echo "Environment variables:"
+                echo "  INSTALL_DIR      Where to place the binary (default: ~/.local/bin)"
+                exit 0
+                ;;
+            *)
+                echo "Unknown option: $1" >&2
+                exit 1
+                ;;
+        esac
+    done
+}
 
 # Test escape hatch: when WHETSTONE_INSTALL_LOCAL_SRC points at an existing
 # file, install.sh installs that binary instead of downloading from a GitHub
 # release. CI uses this to exercise the install path end-to-end without
 # needing a tagged release. Not intended for end-user use.
 main() {
+    parse_args "$@"
     detect_platform
     if [ -n "${WHETSTONE_INSTALL_LOCAL_SRC:-}" ]; then
         install_from_local_source
         print_success
         return
     fi
-    get_latest_version
+    get_version
     download_and_verify
     install_binary
     print_success
@@ -60,18 +99,23 @@ detect_platform() {
     echo "Detected platform: $TARGET"
 }
 
-get_latest_version() {
-    echo "Fetching latest release..."
-    VERSION="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-        | grep '"tag_name"' \
-        | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
+get_version() {
+    if [ -n "$REQUESTED_VERSION" ]; then
+        VERSION="$REQUESTED_VERSION"
+        echo "Requested version: $VERSION"
+    else
+        echo "Fetching latest release..."
+        VERSION="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+            | grep '"tag_name"' \
+            | sed -E 's/.*"tag_name":[[:space:]]*"([^"]+)".*/\1/')"
 
-    if [ -z "$VERSION" ]; then
-        echo "Error: could not determine latest version" >&2
-        exit 1
+        if [ -z "$VERSION" ]; then
+            echo "Error: could not determine latest version" >&2
+            exit 1
+        fi
+
+        echo "Latest version: $VERSION"
     fi
-
-    echo "Latest version: $VERSION"
 }
 
 download_and_verify() {
@@ -139,4 +183,4 @@ print_success() {
     esac
 }
 
-main
+main "$@"
