@@ -177,7 +177,7 @@ whetstone <command> [options]
 
 All commands accept `--project-dir` (default: `.`) and output JSON to stdout. Human-readable progress goes to stderr. JSON responses include a `next_command` field suggesting what to run next.
 
-> **Legacy Python scripts:** Superseded Python runtime entrypoints live under `scripts/legacy/` for parity/reference testing only. The pattern-mining helper has been ported to Rust — invoke `whetstone detect-patterns` instead of `scripts/detect-patterns.py`. The Python script will be removed once downstream consumers have migrated.
+> **Python is not a runtime dependency.** Every user-facing command ships from the Rust binary. Archived Python reference implementations live under `scripts/legacy/` solely so `tests/test_script_contracts.py` can parity-test the Rust ports.
 
 ## Outputs
 
