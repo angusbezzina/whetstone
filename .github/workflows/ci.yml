@@ -26,6 +26,12 @@ jobs:
       - name: Run Rust tests
         run: cargo test
 
+  # Python jobs below exist solely to lint and parity-test the archived
+  # reference implementations under scripts/legacy/. No user-facing Whetstone
+  # functionality depends on a Python runtime — the binary is Rust-only.
+  # Schema validation, install smoke tests, and action.yml validation all
+  # run without setup-python in the schema-check / install-smoke / actionlint
+  # jobs above.
   python-lint:
     runs-on: ubuntu-latest
     steps:
@@ -44,7 +50,7 @@ jobs:
       - name: Run ruff format check
         run: ruff format --check scripts/ tests/
 
-  python-test:
+  python-parity-tests:
     runs-on: ubuntu-latest
     needs: python-lint
     steps:
@@ -57,7 +63,7 @@ jobs:
       - name: Install dependencies
         run: pip install pyyaml pytest
 
-      - name: Run contract tests
+      - name: Run parity contract tests against scripts/legacy/
         run: python3 -m pytest tests/test_script_contracts.py -v
 
   schema-check:
@@ -67,46 +73,42 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: pip install pyyaml
-
       - name: Build release binary for validation steps
         run: cargo build --release
 
       - name: Validate rule schema fields
-        run: python3 scripts/validate-rule-schema.py
+        run: ./target/release/whetstone validate-rules
 
       - name: Validate action.yml outputs match ci-check fields
+        shell: bash
         run: |
-          python3 -c "
-          import yaml, json, subprocess, sys
+          set -euo pipefail
 
-          # Load action.yml outputs
-          with open('action.yml') as f:
-              action = yaml.safe_load(f)
-          action_outputs = set(action.get('outputs', {}).keys())
-          print(f'Action outputs: {action_outputs}')
-
-          # Run ci-check to get actual JSON fields
-          result = subprocess.run(
-              ['./target/release/whetstone', 'ci-check', '--project-dir', 'tests/fixtures', '--json', '--no-drift-check'],
-              capture_output=True, text=True, timeout=60
+          # Extract `outputs:` top-level keys from action.yml without needing Python.
+          ACTION_OUTPUTS=$(
+            awk '
+              /^outputs:/        { in_outputs = 1; next }
+              /^[^[:space:]]/    { in_outputs = 0 }
+              in_outputs && /^  [A-Za-z_][A-Za-z0-9_]*:/ {
+                gsub(":", "", $1); print $1
+              }
+            ' action.yml
           )
-          ci_data = json.loads(result.stdout)
+          echo "Action outputs: $(echo "$ACTION_OUTPUTS" | tr '\n' ' ')"
 
-          # Every action output must exist in ci-check JSON
-          for output_name in action_outputs:
-              if output_name not in ci_data:
-                  print(f'FAIL: action output \"{output_name}\" not in ci-check JSON')
-                  sys.exit(1)
-              print(f'  OK: {output_name} = {ci_data[output_name]}')
+          CI_JSON=$(./target/release/whetstone ci-check \
+            --project-dir tests/fixtures --json --no-drift-check)
 
-          print('All action outputs verified.')
-          "
+          for field in $ACTION_OUTPUTS; do
+            if ! echo "$CI_JSON" | jq -e --arg k "$field" '. | has($k)' >/dev/null; then
+              echo "FAIL: action output \"$field\" not in ci-check JSON"
+              exit 1
+            fi
+            value=$(echo "$CI_JSON" | jq -r --arg k "$field" '.[$k]')
+            echo "  OK: $field = $value"
+          done
+
+          echo "All action outputs verified."
 
   release-binary-validation:
     runs-on: ubuntu-latest
@@ -163,33 +165,109 @@ jobs:
             echo "OK: $field"
           done
 
+  install-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Install via install.sh against the local binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          INSTALL_ROOT=$(mktemp -d)
+          export INSTALL_DIR="${INSTALL_ROOT}/bin"
+          export WHETSTONE_INSTALL_LOCAL_SRC="$(pwd)/target/release/whetstone"
+          ./install.sh
+          test -x "${INSTALL_DIR}/whetstone" || {
+            echo "FAIL: install.sh did not place an executable at ${INSTALL_DIR}/whetstone"
+            exit 1
+          }
+          echo "INSTALL_DIR=${INSTALL_DIR}" >> "$GITHUB_ENV"
+
+      - name: Run installed binary from outside the repo checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          FIXTURES="$GITHUB_WORKSPACE/tests/fixtures"
+          OUTSIDE=$(mktemp -d)
+          cd "$OUTSIDE"
+
+          # --version and --help must work from an install dir.
+          "${INSTALL_DIR}/whetstone" --version | grep -q "whetstone"
+          "${INSTALL_DIR}/whetstone" --help | grep -q "ci-check"
+
+          # Core JSON commands against an external project dir.
+          "${INSTALL_DIR}/whetstone" status \
+            --json --no-snapshot --no-drift-check --project-dir "$FIXTURES" \
+            | jq -e '.status == "ok"'
+
+          "${INSTALL_DIR}/whetstone" detect-deps --project-dir "$FIXTURES" \
+            | jq -e '.dependencies | length > 0'
+
+          "${INSTALL_DIR}/whetstone" ci-check \
+            --json --no-drift-check --project-dir "$FIXTURES" \
+            | jq -e '.freshness_status'
+
+          "${INSTALL_DIR}/whetstone" validate-rules \
+            --project-dir "$GITHUB_WORKSPACE" | grep -q "All schema checks passed."
+
   actionlint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Validate action.yml is well-formed
+        shell: bash
         run: |
-          python3 -c "
-          import yaml, sys
+          set -euo pipefail
 
-          with open('action.yml') as f:
-              action = yaml.safe_load(f)
+          # Structural checks against action.yml using only grep/awk so this
+          # job has no language-runtime dependency. The action.yml schema is
+          # stable enough that column-anchored top-level keys are reliable.
+          fail() { echo "FAIL: $1"; exit 1; }
 
-          required = ['name', 'description', 'inputs', 'outputs', 'runs']
-          missing = [k for k in required if k not in action]
-          if missing:
-              print(f'FAIL: action.yml missing top-level keys: {missing}')
-              sys.exit(1)
+          for key in name description inputs outputs runs; do
+            if ! grep -Eq "^${key}:" action.yml; then
+              fail "action.yml missing top-level key: ${key}"
+            fi
+          done
 
-          if action.get('runs', {}).get('using') != 'composite':
-              print('FAIL: action.yml must use composite runs')
-              sys.exit(1)
+          if ! grep -Eq '^[[:space:]]+using:[[:space:]]+"?composite"?' action.yml; then
+            fail "action.yml must use composite runs"
+          fi
 
-          steps = action.get('runs', {}).get('steps', [])
-          if not steps:
-              print('FAIL: action.yml has no steps')
-              sys.exit(1)
+          if ! grep -Eq '^[[:space:]]+steps:' action.yml; then
+            fail "action.yml has no steps block"
+          fi
 
-          print(f'action.yml OK: {len(action.get(\"inputs\", {}))} inputs, {len(action.get(\"outputs\", {}))} outputs, {len(steps)} steps')
-          "
+          # Count children of `inputs:`, `outputs:`, and `runs.steps:` by
+          # looking at two-space-indented keys / dashes between section markers.
+          count_children() {
+            awk -v section="$1" '
+              $0 ~ "^"section":" { in_section = 1; next }
+              in_section && /^[^[:space:]]/ { in_section = 0 }
+              in_section && /^  [A-Za-z_][A-Za-z0-9_-]*:/ { n++ }
+              END { print n + 0 }
+            ' action.yml
+          }
+          count_steps() {
+            awk '
+              /^  steps:/ { in_steps = 1; next }
+              in_steps && /^[^[:space:]]/ { in_steps = 0 }
+              in_steps && /^    - / { n++ }
+              END { print n + 0 }
+            ' action.yml
+          }
+
+          inputs=$(count_children inputs)
+          outputs=$(count_children outputs)
+          steps=$(count_steps)
+
+          [ "$steps" -gt 0 ] || fail "action.yml has no steps"
+
+          echo "action.yml OK: $inputs inputs, $outputs outputs, $steps steps"

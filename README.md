@@ -32,18 +32,34 @@ Whetstone is not a general AI code reviewer, a replacement for ruff/biome/clippy
 
 ### Install
 
-```bash
-# Build from source
-cargo install --path .
+The recommended install path is `install.sh`, which downloads the latest
+release binary for your platform and verifies its sha256 against the
+published checksum file:
 
-# Or use directly from the repo
-cargo build --release
-./target/release/whetstone --help
+```bash
+curl -fsSL https://raw.githubusercontent.com/angusbezzina/whetstone/main/install.sh | sh
 ```
 
-Release binaries are also built in CI for supported targets. For normal user
-adoption, prefer a release binary or `cargo install` over running from a source
-checkout.
+By default the binary is placed at `~/.local/bin/whetstone`. Override with
+`INSTALL_DIR=/usr/local/bin` or similar. No repo checkout or Rust toolchain
+is required on the target machine.
+
+Alternatives:
+
+```bash
+# Homebrew (once the tap is published — see packaging/homebrew/README.md)
+brew install angusbezzina/tap/whetstone
+
+# From source with Cargo
+cargo install --git https://github.com/angusbezzina/whetstone
+
+# From a local checkout
+cargo build --release && ./target/release/whetstone --help
+```
+
+`whetstone` is a single self-contained binary; once installed, `whetstone
+doctor --project-dir <your-repo>` works from any directory — there is no
+requirement to run it from inside the Whetstone checkout.
 
 ### Recommended repo setup for contributors
 

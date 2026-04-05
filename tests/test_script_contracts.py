@@ -17,17 +17,18 @@ from pathlib import Path
 import pytest  # noqa: F401
 
 LEGACY_SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts" / "legacy"
-ACTIVE_SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
 def run_script(name: str, args: list[str], stdin_data: str | None = None) -> dict:
-    """Run a script and return parsed JSON output."""
-    script_dir = (
-        ACTIVE_SCRIPTS_DIR if name == "detect-patterns.py" else LEGACY_SCRIPTS_DIR
-    )
-    script = script_dir / name
+    """Run a legacy script and return parsed JSON output.
+
+    All active script behavior is served by the Rust binary; this harness now
+    only exercises the archived Python reference implementations under
+    ``scripts/legacy/`` for parity regression coverage.
+    """
+    script = LEGACY_SCRIPTS_DIR / name
     cmd = [sys.executable, str(script)] + args
     result = subprocess.run(
         cmd,
@@ -1399,39 +1400,10 @@ class TestChangedOnlySemantics:
 # --- PR mining regression tests ---
 
 
-class TestPRMining:
-    """Regression tests for PR comment mining — Epic 3 (whetstone-n54)."""
-
-    def test_detect_patterns_pr_source_no_crash(self, tmp_path):
-        """detect-patterns with --sources pr doesn't crash even without gh/repo."""
-        result = run_script(
-            "detect-patterns.py",
-            ["--project-dir", str(tmp_path), "--sources", "pr"],
-        )
-        assert "patterns" in result
-        assert isinstance(result["patterns"], list)
-        assert "sources_analyzed" in result
-
-    def test_detect_patterns_all_sources_no_crash(self):
-        """detect-patterns with all sources doesn't crash."""
-        result = run_script(
-            "detect-patterns.py",
-            ["--project-dir", str(FIXTURES_DIR), "--sources", "transcript,git,pr"],
-        )
-        assert "patterns" in result
-        assert "sources_analyzed" in result
-        # PR source should be present in analyzed dict
-        assert "pr" in result["sources_analyzed"]
-
-    def test_detect_patterns_has_next_command(self):
-        """detect-patterns always includes next_command."""
-        result = run_script(
-            "detect-patterns.py",
-            ["--project-dir", str(FIXTURES_DIR)],
-        )
-        assert "next_command" in result
-        assert isinstance(result["next_command"], str)
-        assert len(result["next_command"]) > 0
+# NOTE: PR comment mining regression tests previously lived here but were
+# covered by `scripts/detect-patterns.py`, which has been removed. The Rust
+# replacement is exercised by tests/rust_integration.rs::test_detect_patterns_*
+# (contract, Python parity pin while the legacy script existed, quiet mode).
 
 
 # --- Strict schema validation tests ---
@@ -1567,73 +1539,10 @@ class TestStrictSchemaValidation:
 # --- Exhaustive output-contract tests ---
 
 
-class TestTranscriptPrivacy:
-    """Transcript mining is project-scoped by default — Epic 6 (whetstone-jve)."""
-
-    def test_default_scoped_to_project(self, tmp_path):
-        """detect-patterns without --global-transcripts reports scoped: true."""
-        result = run_script(
-            "detect-patterns.py",
-            ["--project-dir", str(tmp_path), "--sources", "transcript"],
-        )
-        assert "sources_analyzed" in result
-        if "transcript" in result["sources_analyzed"]:
-            assert result["sources_analyzed"]["transcript"]["scoped"] is True
-
-    def test_global_flag_disables_scoping(self, tmp_path):
-        """detect-patterns --global-transcripts reports scoped: false."""
-        result = run_script(
-            "detect-patterns.py",
-            [
-                "--project-dir",
-                str(tmp_path),
-                "--sources",
-                "transcript",
-                "--global-transcripts",
-            ],
-        )
-        assert "sources_analyzed" in result
-        if "transcript" in result["sources_analyzed"]:
-            assert result["sources_analyzed"]["transcript"]["scoped"] is False
-
-    def test_global_flag_emits_stderr_warning(self, tmp_path):
-        """--global-transcripts emits a privacy warning to stderr."""
-        script = ACTIVE_SCRIPTS_DIR / "detect-patterns.py"
-        proc = subprocess.run(
-            [
-                sys.executable,
-                str(script),
-                "--project-dir",
-                str(tmp_path),
-                "--sources",
-                "transcript",
-                "--global-transcripts",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        assert "WARNING" in proc.stderr
-        assert "global" in proc.stderr.lower()
-
-    def test_project_filter_matches_correctly(self):
-        """_project_transcript_filter matches project name in path."""
-        # Import the filter function directly
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location(
-            "detect_patterns", ACTIVE_SCRIPTS_DIR / "detect-patterns.py"
-        )
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-
-        project = Path("/home/user/code/my-project")
-        assert mod._project_transcript_filter(
-            project, Path("/home/user/.claude/projects/my-project/session.jsonl")
-        )
-        assert not mod._project_transcript_filter(
-            project, Path("/home/user/.claude/projects/other-project/session.jsonl")
-        )
+# NOTE: Transcript privacy regression tests previously lived here but were
+# covered by `scripts/detect-patterns.py`, which has been removed. Project
+# scoping and the --global-transcripts privacy warning are now enforced by
+# src/detect_patterns.rs with coverage in tests/rust_integration.rs.
 
 
 class TestTSRustTestGeneration:
@@ -2250,22 +2159,9 @@ class TestLongitudinalMetrics:
 class TestExhaustiveOutputContracts:
     """All scripts must always include next_command — Epic 5 (whetstone-zsn)."""
 
-    def test_detect_patterns_quiet_empty_has_next_command(self, tmp_path):
-        """detect-patterns --quiet with no patterns still has next_command."""
-        result = run_script(
-            "detect-patterns.py",
-            ["--project-dir", str(tmp_path), "--quiet"],
-        )
-        assert "next_command" in result
-        assert isinstance(result["next_command"], str)
-
-    def test_detect_patterns_normal_has_next_command(self):
-        """detect-patterns in normal mode has next_command."""
-        result = run_script(
-            "detect-patterns.py",
-            ["--project-dir", str(FIXTURES_DIR)],
-        )
-        assert "next_command" in result
+    # detect-patterns next_command coverage now lives in
+    # tests/rust_integration.rs::test_detect_patterns_* since the Python
+    # helper has been removed.
 
     def test_resolve_sources_empty_input_has_next_command(self):
         """resolve-sources with empty deps has next_command."""

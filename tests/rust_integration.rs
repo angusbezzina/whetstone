@@ -915,6 +915,72 @@ fn test_installed_binary_style_usage_from_outside_repo() {
     let _ = std::fs::remove_dir_all(&outside);
 }
 
+// ── validate-rules tests ──
+
+#[test]
+fn test_validate_rules_passes_on_repo() {
+    let repo_root = env!("CARGO_MANIFEST_DIR");
+    let (stdout, _stderr, success) = run_whetstone(
+        &["validate-rules", "--project-dir", repo_root],
+        repo_root,
+    );
+    assert!(
+        success,
+        "validate-rules should succeed on repo fixtures; output:\n{stdout}"
+    );
+    assert!(stdout.contains("Schema file found and readable."));
+    assert!(stdout.contains("All schema checks passed."));
+    assert!(stdout.contains("SKIP: tests/fixtures/whetstone/rules/python/malformed.yaml"));
+}
+
+#[test]
+fn test_validate_rules_fails_on_bad_fixture() {
+    // Synthesize a throwaway project with a broken rule fixture and confirm
+    // the validator surfaces it and exits non-zero.
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_validate_fail_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("references")).unwrap();
+    std::fs::create_dir_all(tmp.join("tests/fixtures/whetstone/rules/python")).unwrap();
+
+    // Copy the real schema file so the header checks pass.
+    let real_schema = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("references")
+        .join("rule-schema.yaml");
+    std::fs::copy(&real_schema, tmp.join("references/rule-schema.yaml")).unwrap();
+
+    // Write a rule with an invalid severity and an invalid signal strategy.
+    std::fs::write(
+        tmp.join("tests/fixtures/whetstone/rules/python/bad.yaml"),
+        r#"source:
+  name: bad
+rules:
+  - id: bad.rule
+    severity: critical
+    confidence: high
+    category: convention
+    description: example
+    source_url: https://example.com
+    signals:
+      - id: s1
+        strategy: magic
+"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, success) = run_whetstone(
+        &["validate-rules", "--project-dir", tmp.to_str().unwrap()],
+        tmp.to_str().unwrap(),
+    );
+    assert!(!success, "validate-rules must fail when fixture is invalid");
+    assert!(stdout.contains("invalid severity"));
+    assert!(stdout.contains("invalid strategy"));
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 // ── detect-patterns tests ──
 
 fn git_init_with_style_commits(dir: &std::path::Path) {

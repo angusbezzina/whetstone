@@ -5,12 +5,33 @@ REPO="angusbezzina/whetstone"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="whetstone"
 
+# Test escape hatch: when WHETSTONE_INSTALL_LOCAL_SRC points at an existing
+# file, install.sh installs that binary instead of downloading from a GitHub
+# release. CI uses this to exercise the install path end-to-end without
+# needing a tagged release. Not intended for end-user use.
 main() {
     detect_platform
+    if [ -n "${WHETSTONE_INSTALL_LOCAL_SRC:-}" ]; then
+        install_from_local_source
+        print_success
+        return
+    fi
     get_latest_version
     download_and_verify
     install_binary
     print_success
+}
+
+install_from_local_source() {
+    if [ ! -f "$WHETSTONE_INSTALL_LOCAL_SRC" ]; then
+        echo "Error: WHETSTONE_INSTALL_LOCAL_SRC does not point at a file: $WHETSTONE_INSTALL_LOCAL_SRC" >&2
+        exit 1
+    fi
+    VERSION="local-$(date +%Y%m%d%H%M%S)"
+    mkdir -p "$INSTALL_DIR"
+    cp "$WHETSTONE_INSTALL_LOCAL_SRC" "${INSTALL_DIR}/${BINARY_NAME}"
+    chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
+    echo "Installed local binary to ${INSTALL_DIR}/${BINARY_NAME}"
 }
 
 detect_platform() {

@@ -9,4 +9,4 @@ echo "Running pre-push Ruff checks..."
 python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
 
 echo "Running pre-push schema checks..."
-python3 scripts/validate-rule-schema.py
+cargo run --quiet --release -- validate-rules

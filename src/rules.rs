@@ -239,6 +239,162 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
     warnings
 }
 
+// --- Schema + fixtures validation (replacement for scripts/validate-rule-schema.py) ---
+
+/// Required field names the schema file must document.
+const SCHEMA_REQUIRED_FIELDS: &[&str] = &[
+    "id",
+    "severity",
+    "confidence",
+    "category",
+    "description",
+    "source_url",
+    "signals",
+];
+
+/// Fixture paths (relative to the project root) that are deliberately invalid
+/// and should be skipped by the schema validator.
+const INTENTIONALLY_INVALID_FIXTURES: &[&str] =
+    &["tests/fixtures/whetstone/rules/python/malformed.yaml"];
+
+/// Validate the schema file and all rule fixtures under the given project root.
+///
+/// Produces a human-readable report (matching the legacy Python contract) and
+/// a boolean indicating overall success. Used by the `validate-rules` CLI
+/// subcommand and the CI schema gate.
+pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
+    let mut out = String::new();
+    let mut ok = true;
+
+    let schema_path = project_root.join("references").join("rule-schema.yaml");
+    if !schema_path.exists() {
+        out.push_str("FAIL: references/rule-schema.yaml not found\n");
+        return (out, false);
+    }
+    let schema_text = match std::fs::read_to_string(&schema_path) {
+        Ok(t) => t,
+        Err(e) => {
+            out.push_str(&format!("FAIL: cannot read {}: {e}\n", schema_path.display()));
+            return (out, false);
+        }
+    };
+    out.push_str("Schema file found and readable.\n");
+    for field in SCHEMA_REQUIRED_FIELDS {
+        if !schema_text.contains(field) {
+            out.push_str(&format!(
+                "FAIL: required field \"{field}\" not found in schema\n"
+            ));
+            ok = false;
+        } else {
+            out.push_str(&format!("  OK: {field}\n"));
+        }
+    }
+    if !ok {
+        return (out, false);
+    }
+
+    let fixtures_root = project_root.join("tests").join("fixtures");
+    let mut fixtures: Vec<std::path::PathBuf> = Vec::new();
+    if fixtures_root.exists() {
+        for entry in walkdir::WalkDir::new(&fixtures_root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if entry.path().extension().and_then(|e| e.to_str()) == Some("yaml") {
+                fixtures.push(entry.path().to_path_buf());
+            }
+        }
+    }
+    fixtures.sort();
+    out.push_str(&format!("Checking {} fixture files...\n", fixtures.len()));
+
+    let mut errors: Vec<String> = Vec::new();
+    for fixture in &fixtures {
+        let rel = fixture
+            .strip_prefix(project_root)
+            .unwrap_or(fixture)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if INTENTIONALLY_INVALID_FIXTURES.iter().any(|p| rel == *p) {
+            out.push_str(&format!("  SKIP: {rel} (intentional invalid fixture)\n"));
+            continue;
+        }
+
+        let text = match std::fs::read_to_string(fixture) {
+            Ok(t) => t,
+            Err(e) => {
+                errors.push(format!("{rel}: read error: {e}"));
+                continue;
+            }
+        };
+
+        let rf: RuleFile = match serde_yaml::from_str(&text) {
+            Ok(rf) => rf,
+            Err(e) => {
+                errors.push(format!("{rel}: parse error: {e}"));
+                continue;
+            }
+        };
+
+        if rf.rules.is_empty() {
+            continue;
+        }
+
+        for rule in &rf.rules {
+            let rid = if rule.id.is_empty() { "?" } else { &rule.id };
+            for req in ["id", "severity", "confidence", "category", "source_url"] {
+                let missing = match req {
+                    "id" => rule.id.is_empty(),
+                    "severity" => rule.severity.is_none(),
+                    "confidence" => rule.confidence.is_none(),
+                    "category" => rule.category.is_none(),
+                    "source_url" => rule.source_url.is_none(),
+                    _ => false,
+                };
+                if missing {
+                    errors.push(format!("{rel}: rule {rid} missing {req}"));
+                }
+            }
+
+            if let Some(ref sev) = rule.severity {
+                if !VALID_SEVERITIES.contains(&sev.as_str()) {
+                    errors.push(format!("{rel}: rule {rid} invalid severity \"{sev}\""));
+                }
+            }
+            if let Some(ref conf) = rule.confidence {
+                if !VALID_CONFIDENCES.contains(&conf.as_str()) {
+                    errors.push(format!("{rel}: rule {rid} invalid confidence \"{conf}\""));
+                }
+            }
+            if let Some(ref cat) = rule.category {
+                if !VALID_CATEGORIES.contains(&cat.as_str()) {
+                    errors.push(format!("{rel}: rule {rid} invalid category \"{cat}\""));
+                }
+            }
+            for sig in &rule.signals {
+                if !VALID_STRATEGIES.contains(&sig.strategy.as_str()) {
+                    errors.push(format!(
+                        "{rel}: rule {rid} invalid strategy \"{}\"",
+                        sig.strategy
+                    ));
+                }
+            }
+
+            out.push_str(&format!("  OK: {rel} / {rid}\n"));
+        }
+    }
+
+    if !errors.is_empty() {
+        for e in &errors {
+            out.push_str(&format!("FAIL: {e}\n"));
+        }
+        return (out, false);
+    }
+
+    out.push_str("All schema checks passed.\n");
+    (out, true)
+}
+
 // --- Loading ---
 
 /// Load all rule files from the rules directory, returning parsed files and warnings.

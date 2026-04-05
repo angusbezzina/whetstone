@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::{
     ci_check, detect, detect_patterns, doctor, generate_context, generate_tests, output, resolve,
-    status,
+    rules, status,
 };
 
 #[derive(Parser)]
@@ -227,6 +227,14 @@ enum Commands {
         /// Output only JSON
         #[arg(long)]
         json: bool,
+    },
+
+    /// Validate the rule schema and all rule fixtures
+    #[command(alias = "validate")]
+    ValidateRules {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
     },
 
     /// Mine style patterns from transcripts, git history, and PR comments
@@ -626,6 +634,16 @@ pub fn run() -> i32 {
                 1
             }
         },
+
+        Commands::ValidateRules { project_dir } => {
+            let (report, ok) = rules::validate_schema_and_fixtures(&project_dir);
+            print!("{report}");
+            if ok {
+                0
+            } else {
+                1
+            }
+        }
 
         Commands::DetectPatterns {
             project_dir,

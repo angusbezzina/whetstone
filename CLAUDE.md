@@ -10,7 +10,7 @@ Read `AGENTS.md` for universal project context. This file contains Claude Code-s
 
 Whetstone is an Agent Skill (agentskills.io format) with a **Rust CLI binary** that derives coding rules from dependency documentation and developer patterns. The MVP architecture is documented in `planning/mvp.md`. The full vision is in `planning/product-spec.md`.
 
-**The Rust binary (`src/`) is the primary implementation.** Archived Python command implementations now live under `scripts/legacy/`; the only active top-level Python helper is `scripts/detect-patterns.py`, which is optional and outside the core Rust workflow. The agent (you) acts as the LLM for rule extraction -- the binary handles deterministic work.
+**The Rust binary (`src/`) is the sole runtime implementation.** Archived Python command implementations live under `scripts/legacy/` strictly as parity reference for `tests/test_script_contracts.py`. Pattern mining (`whetstone detect-patterns`), rule-schema validation (`whetstone validate-rules`), and every other user-facing workflow are Rust-native. The agent (you) acts as the LLM for rule extraction -- the binary handles deterministic work.
 
 ---
 
@@ -52,7 +52,7 @@ When searching for best practices, dependency docs, API patterns, or technical g
 
 ### Python Scripts
 
-Archived Python reference scripts live under `scripts/legacy/`. The only active top-level Python helper is `scripts/detect-patterns.py`. When writing or modifying these scripts:
+Archived Python reference scripts live under `scripts/legacy/`. There are no active top-level Python helpers -- all runtime commands ship from the Rust binary. If you are touching archived scripts (only for parity regression coverage), the rules below still apply:
 
 - Target Python 3.10+ (use `match` statements, `|` union types where appropriate)
 - Use only stdlib + `requests` + `pyyaml` + `toml` -- keep dependencies minimal
@@ -121,7 +121,7 @@ When ending a work session, complete ALL steps. Work is NOT complete until `git 
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
-   python3 scripts/validate-rule-schema.py
+   cargo run --quiet --release -- validate-rules
    python3 -m pytest -q
    ```
    Do not push if Ruff fails. This exact command mirrors the CI gate that has been failing on import ordering issues.
@@ -131,7 +131,7 @@ When ending a work session, complete ALL steps. Work is NOT complete until `git 
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
-   python3 scripts/validate-rule-schema.py
+   cargo run --quiet --release -- validate-rules
    git pull --rebase
    git push
    git status  # MUST show "up to date with origin"
