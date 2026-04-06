@@ -1,0 +1,56 @@
+source:
+  name: serde_yaml
+  docs_url: "https://docs.rs/serde_yaml/"
+  version: "0.9"
+  content_hash: "sha256:dogfood-manual-extraction"
+  resolved_at: "2026-04-05T00:00:00Z"
+  registry: crates_io
+
+rules:
+  - id: serde_yaml.crate-deprecated
+    severity: must
+    confidence: high
+    category: migration
+    description: >
+      serde_yaml 0.9 is officially deprecated and unmaintained. MUST migrate
+      to an actively maintained alternative such as serde_yml, yaml-rust2,
+      or marked_yaml.
+    source_url: "https://crates.io/crates/serde_yaml"
+    source_quote: "0.9.34+deprecated"
+    risk: >
+      Unmaintained crate will not receive security patches or bug fixes.
+      May break with future Rust editions.
+    linter_gap: >
+      No Rust linter warns about deprecated crates. Cargo does not flag
+      this at compile time.
+    approved: true
+    approved_at: "2026-04-05T00:00:00Z"
+    status: approved
+    proposed_at: "2026-04-05T00:00:00Z"
+    proposed_by: whetstone-extraction
+
+    signals:
+      - id: imports-serde-yaml
+        strategy: pattern
+        description: "Cargo.toml or source files reference serde_yaml"
+        weight: required
+
+    golden_examples:
+      - code: |
+          [dependencies]
+          serde_yaml = "0.9"
+        verdict: fail
+        reason: "Using deprecated serde_yaml crate"
+      - code: |
+          [dependencies]
+          serde_yml = "0.0.12"
+        verdict: pass
+        reason: "Using maintained serde_yml alternative"
+      - code: |
+          use serde_yaml::from_str;
+        verdict: fail
+        reason: "Importing from deprecated crate"
+      - code: |
+          use serde_yml::from_str;
+        verdict: pass
+        reason: "Importing from maintained alternative"

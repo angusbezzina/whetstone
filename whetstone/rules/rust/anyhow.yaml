@@ -1,0 +1,94 @@
+source:
+  name: anyhow
+  docs_url: "https://docs.rs/anyhow"
+  version: "1"
+  content_hash: "sha256:dogfood-manual-extraction"
+  resolved_at: "2026-04-05T00:00:00Z"
+  registry: crates_io
+
+rules:
+  - id: anyhow.context-over-map-err
+    severity: should
+    confidence: high
+    category: convention
+    description: >
+      SHOULD use .context() or .with_context() instead of .map_err(|e| anyhow!(...))
+      to add context to errors. The context methods are more idiomatic, compose better
+      with the ? operator, and preserve the original error chain.
+    source_url: "https://docs.rs/anyhow/latest/anyhow/trait.Context.html"
+    risk: >
+      map_err(|e| anyhow!(...)) discards the original error's type info and
+      produces less useful backtraces.
+    linter_gap: >
+      Clippy does not lint for anyhow-specific idioms. This is a library
+      convention, not a language rule.
+    approved: true
+    approved_at: "2026-04-05T00:00:00Z"
+    status: approved
+    proposed_at: "2026-04-05T00:00:00Z"
+    proposed_by: whetstone-extraction
+
+    signals:
+      - id: map-err-anyhow-bang
+        strategy: pattern
+        description: "Detects .map_err followed by anyhow! macro call"
+        weight: required
+
+    golden_examples:
+      - code: |
+          let config = std::fs::read_to_string(path)
+              .context("Failed to read config file")?;
+        verdict: pass
+        reason: "Uses .context() to add context idiomatically"
+      - code: |
+          let config = std::fs::read_to_string(path)
+              .with_context(|| format!("Failed to read {}", path.display()))?;
+        verdict: pass
+        reason: "Uses .with_context() for dynamic context"
+      - code: |
+          let config = std::fs::read_to_string(path)
+              .map_err(|e| anyhow!("Failed to read config: {}", e))?;
+        verdict: fail
+        reason: "Uses map_err+anyhow! instead of .context()"
+
+  - id: anyhow.expect-over-unwrap
+    severity: should
+    confidence: high
+    category: convention
+    description: >
+      SHOULD use .expect("reason") instead of .unwrap() in application code
+      using anyhow. When an operation is expected to succeed, .expect() documents
+      the invariant and produces actionable panic messages.
+    source_url: "https://docs.rs/anyhow/latest/anyhow/"
+    risk: >
+      .unwrap() produces opaque "called unwrap on Err" panics with no context
+      about why the author believed the value would be present.
+    linter_gap: >
+      Clippy has unwrap_used but it is allow-by-default and flags all unwrap
+      usage indiscriminately. Whetstone targets application code using anyhow
+      specifically.
+    approved: true
+    approved_at: "2026-04-05T00:00:00Z"
+    status: approved
+    proposed_at: "2026-04-05T00:00:00Z"
+    proposed_by: whetstone-extraction
+
+    signals:
+      - id: unwrap-call
+        strategy: pattern
+        description: "Detects .unwrap() calls in source files"
+        weight: required
+
+    golden_examples:
+      - code: |
+          let port = env::var("PORT").expect("PORT must be set");
+        verdict: pass
+        reason: "Documents why the value is expected to be present"
+      - code: |
+          let port = env::var("PORT").unwrap();
+        verdict: fail
+        reason: "Bare unwrap with no context for failure"
+      - code: |
+          let value = some_infallible_op().expect("internal: op is infallible");
+        verdict: pass
+        reason: "Documents the invariant even for infallible ops"

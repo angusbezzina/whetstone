@@ -1,0 +1,107 @@
+source:
+  name: reqwest
+  docs_url: "https://docs.rs/reqwest"
+  version: "0.12"
+  content_hash: "sha256:dogfood-manual-extraction"
+  resolved_at: "2026-04-05T00:00:00Z"
+  registry: crates_io
+
+rules:
+  - id: reqwest.set-timeout
+    severity: must
+    confidence: high
+    category: default
+    description: >
+      MUST set an explicit timeout on reqwest clients. The default is no timeout,
+      which means requests can hang indefinitely on unresponsive servers.
+    source_url: "https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html#method.timeout"
+    risk: >
+      Without a timeout, a single unresponsive upstream can hang the entire
+      process or exhaust thread pool workers. In production, this causes
+      cascading failures.
+    linter_gap: >
+      Clippy does not check library-specific configuration defaults.
+      This is a runtime safety issue, not a syntax issue.
+    approved: true
+    approved_at: "2026-04-05T00:00:00Z"
+    status: approved
+    proposed_at: "2026-04-05T00:00:00Z"
+    proposed_by: whetstone-extraction
+
+    signals:
+      - id: client-without-timeout
+        strategy: pattern
+        description: "Detects Client::new() or ClientBuilder::new()...build() without .timeout()"
+        weight: required
+
+    golden_examples:
+      - code: |
+          let client = reqwest::blocking::Client::builder()
+              .timeout(Duration::from_secs(15))
+              .build()?;
+        verdict: pass
+        reason: "Explicit timeout set on client builder"
+      - code: |
+          let client = reqwest::blocking::Client::new();
+        verdict: fail
+        reason: "Client::new() uses no timeout (infinite by default)"
+      - code: |
+          let client = reqwest::blocking::Client::builder()
+              .user_agent("myapp/1.0")
+              .build()?;
+        verdict: fail
+        reason: "Builder configured without timeout"
+      - code: |
+          let client = reqwest::blocking::Client::builder()
+              .timeout(Duration::from_secs(30))
+              .connect_timeout(Duration::from_secs(5))
+              .build()?;
+        verdict: pass
+        reason: "Both connection and request timeouts set"
+
+  - id: reqwest.check-status
+    severity: should
+    confidence: high
+    category: convention
+    description: >
+      SHOULD call .error_for_status() or explicitly check status codes on
+      reqwest responses. By default, reqwest treats 4xx/5xx as successful
+      responses and returns the body without error.
+    source_url: "https://docs.rs/reqwest/latest/reqwest/struct.Response.html#method.error_for_status"
+    risk: >
+      Silently accepting error responses leads to parsing HTML error pages
+      as JSON, treating empty 204 responses as data, or missing upstream failures.
+    linter_gap: >
+      No linter checks HTTP response handling patterns. This is a runtime
+      correctness issue specific to reqwest's API design.
+    approved: true
+    approved_at: "2026-04-05T00:00:00Z"
+    status: approved
+    proposed_at: "2026-04-05T00:00:00Z"
+    proposed_by: whetstone-extraction
+
+    signals:
+      - id: no-status-check
+        strategy: pattern
+        description: "Detects .get()/.post() chains without .error_for_status() or .status() check"
+        weight: required
+
+    golden_examples:
+      - code: |
+          let body = client.get(url)
+              .send()?
+              .error_for_status()?
+              .text()?;
+        verdict: pass
+        reason: "Calls error_for_status() before reading body"
+      - code: |
+          let body = client.get(url).send()?.text()?;
+        verdict: fail
+        reason: "Reads body without checking HTTP status"
+      - code: |
+          let resp = client.get(url).send()?;
+          if resp.status().is_success() {
+              let body = resp.text()?;
+          }
+        verdict: pass
+        reason: "Explicitly checks status before reading body"

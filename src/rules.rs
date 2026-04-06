@@ -293,20 +293,26 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
         return (out, false);
     }
 
-    let fixtures_root = project_root.join("tests").join("fixtures");
+    // Collect YAML files from both test fixtures and actual rules
+    let scan_roots = [
+        project_root.join("tests").join("fixtures"),
+        project_root.join("whetstone").join("rules"),
+    ];
     let mut fixtures: Vec<std::path::PathBuf> = Vec::new();
-    if fixtures_root.exists() {
-        for entry in walkdir::WalkDir::new(&fixtures_root)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            if entry.path().extension().and_then(|e| e.to_str()) == Some("yaml") {
-                fixtures.push(entry.path().to_path_buf());
+    for root in &scan_roots {
+        if root.exists() {
+            for entry in walkdir::WalkDir::new(root)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                if entry.path().extension().and_then(|e| e.to_str()) == Some("yaml") {
+                    fixtures.push(entry.path().to_path_buf());
+                }
             }
         }
     }
     fixtures.sort();
-    out.push_str(&format!("Checking {} fixture files...\n", fixtures.len()));
+    out.push_str(&format!("Checking {} rule files...\n", fixtures.len()));
 
     let mut errors: Vec<String> = Vec::new();
     for fixture in &fixtures {

@@ -1,0 +1,123 @@
+%%{ init: { "theme": "base", "themeVariables": { "fontSize": "14px" } } }%%
+flowchart TD
+    %% ═══════════════════════════════════════
+    %% WHETSTONE: CLI as Structured Oracle
+    %%
+    %% Green  = Binary (deterministic, --json)
+    %% Orange = Agent  (judgment, via SKILL.md)
+    %% Blue   = User   (approval decisions)
+    %% Grey   = Future (eval system)
+    %% ═══════════════════════════════════════
+
+    START([User: "Run whetstone" / "Extract rules"])
+
+    %% ─── STEP 1: DISCOVER ───
+    START --> DOCTOR["`**wh doctor --json**
+    Detect deps from manifests
+    Resolve docs from registries
+    Probe for llms.txt
+    Cache everything
+    Return: summary + readiness`"]
+
+    DOCTOR --> AGENT_PLAN["`**Agent reads summary**
+    Identifies ready deps
+    Asks user which to extract
+    (or picks top priorities)`"]
+
+    %% ─── STEP 2: EXTRACT (per dep) ───
+    AGENT_PLAN --> SHOW["`**wh extract --show dep --json**
+    Pull cached content for one dep
+    Return: llms.txt / docs content,
+    metadata, version`"]
+
+    SHOW --> AGENT_EXTRACT["`**Agent applies extraction prompt**
+    High confidence or silence
+    Max 5 rules per dep
+    Every rule needs deterministic signal
+    Cite source URLs
+    Generate golden examples`"]
+
+    %% ─── STEP 3: APPROVE ───
+    AGENT_EXTRACT --> AGENT_PRESENT["`**Agent presents candidates**
+    Rule card per candidate:
+    description, severity, confidence,
+    signals, examples, source link`"]
+
+    AGENT_PRESENT --> USER{User reviews\neach rule}
+    USER -->|Approve| WRITE[Agent writes rule YAML\nto whetstone/rules/]
+    USER -->|Edit| EDIT[Agent adjusts\nper feedback] --> WRITE
+    USER -->|Deny| SKIP[Skip — move on]
+
+    %% ─── STEP 4: VALIDATE ───
+    WRITE --> VALIDATE["`**wh validate --json**
+    Schema check all rules`"]
+    VALIDATE -->|Fail| FIX[Agent reads error\nfixes YAML] --> VALIDATE
+    VALIDATE -->|Pass| MORE{More deps?}
+    SKIP --> MORE
+    MORE -->|Yes| SHOW
+    MORE -->|No| GENERATE
+
+    %% ─── STEP 5: GENERATE ───
+    GENERATE["`**wh context + wh tests**
+    Agent context: agents.md, claude.md,
+    .cursorrules, copilot, windsurf, codex
+    Tests: pytest, vitest, cargo test
+    Lint: ruff, biome, clippy overlays`"]
+
+    %% ─── STEP 6: CONFIRM ───
+    GENERATE --> STATUS["`**wh status --json**
+    Health score 0-100
+    Freshness, coverage, drift`"]
+
+    STATUS --> DONE([Done — rules enforced,\nagents informed])
+
+    %% ═══════════════════════════════════════
+    %% UPDATE FLOW (drift detected)
+    %% ═══════════════════════════════════════
+    STATUS -.->|Drift detected\nlater| UPDATE["`**wh update --json**
+    Re-resolve changed sources
+    Compare content hashes
+    Return: what changed`"]
+    UPDATE --> AGENT_PLAN
+
+    %% ═══════════════════════════════════════
+    %% CI PATH (no agent, binary only)
+    %% ═══════════════════════════════════════
+    CI_START([CI pipeline]) --> CI["`**wh ci --fail-on stale**
+    Compute status
+    Exit 0 or 1
+    Optional PR comment`"]
+    CI --> CI_RESULT{Pass / Fail}
+
+    %% ═══════════════════════════════════════
+    %% PATTERN MINING (optional, parallel)
+    %% ═══════════════════════════════════════
+    PATTERNS([Optional]) --> PAT["`**wh patterns --json**
+    Mine transcripts, git, PRs
+    Return: discovered style patterns`"]
+    PAT -.-> AGENT_EXTRACT
+
+    %% ═══════════════════════════════════════
+    %% EVAL SYSTEM (future)
+    %% ═══════════════════════════════════════
+    DONE -.->|Future| EVAL["`**wh eval run --json**
+    tree-sitter pre-filter
+    Threshold gating
+    Agent judges ambiguous cases
+    **wh eval calibrate**
+    Validate against golden examples`"]
+
+    %% ═══════════════════════════════════════
+    %% STYLING
+    %% ═══════════════════════════════════════
+    classDef binary fill:#2d6a4f,color:#fff,stroke:#1b4332
+    classDef agent fill:#e76f51,color:#fff,stroke:#c1440e
+    classDef user fill:#264653,color:#fff,stroke:#f1faee
+    classDef future fill:#6c757d,color:#fff,stroke:#495057
+    classDef start fill:#f4a261,color:#000,stroke:#e76f51
+
+    class DOCTOR,SHOW,VALIDATE,GENERATE,STATUS,UPDATE,CI,PAT binary
+    class AGENT_PLAN,AGENT_EXTRACT,AGENT_PRESENT,WRITE,EDIT,FIX agent
+    class USER,SKIP user
+    class EVAL future
+    class START,CI_START,PATTERNS start

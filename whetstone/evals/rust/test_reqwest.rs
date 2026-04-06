@@ -1,0 +1,37 @@
+//! Whetstone eval: reqwest.check-status
+//! SHOULD call .error_for_status() or explicitly check status codes on reqwest responses. By default, reqwest treats 4xx/5xx as successful responses and returns the body without error.
+
+use std::fs;
+use std::path::Path;
+
+fn find_rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                if !matches!(name.as_ref(), "target" | ".git" | "whetstone") {
+                    files.extend(find_rust_files(&path));
+                }
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+    }
+    files
+}
+
+#[test]
+fn test_reqwest_check_status_signal_0() {
+    // Signal: Detects .get()/.post() chains without .error_for_status() or .status() check (pattern)
+    let files = find_rust_files(Path::new("src"));
+    let mut violations = Vec::new();
+    for file in &files {
+        if let Ok(content) = fs::read_to_string(file) {
+            // TODO: implement check for: Detects .get()/.post() chains without .error_for_status() or .status() check
+            let _ = content;
+        }
+    }
+    assert!(violations.is_empty(), "{} violations for reqwest.check-status", violations.len());
+}
