@@ -1,3 +1,4 @@
+pub mod changelog;
 pub mod crates_io;
 pub mod http;
 pub mod npm;
@@ -467,7 +468,7 @@ fn compute_freshness(result: &Value, stored_hash: Option<&str>) -> Value {
         .unwrap_or("");
     let confidence = match source_type {
         "llms_full_txt" | "llms_txt" => "high",
-        "readme" | "html_converted" => "medium",
+        "readme" | "html_converted" | "changelog" => "medium",
         "docs_url_only" => "low",
         _ if result
             .get("content")
@@ -591,6 +592,32 @@ pub fn content_hash(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     format!("sha256:{:x}", hasher.finalize())
+}
+
+/// Build a sections array from the primary resolved content and optional changelog.
+/// The primary content is derived from the resolver's existing result.
+/// The changelog is an optional section from changelog probing.
+pub fn build_sections(result: &Value, changelog: Option<Value>) -> Value {
+    let mut sections = vec![];
+
+    // Primary content section
+    if let Some(content) = result.get("content").and_then(|v| v.as_str()) {
+        if !content.is_empty() {
+            sections.push(serde_json::json!({
+                "type": result.get("source_type").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                "content": content,
+                "url": result.get("llms_txt_url").or(result.get("docs_url")),
+                "content_hash": result.get("content_hash"),
+            }));
+        }
+    }
+
+    // Changelog section
+    if let Some(cl) = changelog {
+        sections.push(cl);
+    }
+
+    Value::Array(sections)
 }
 
 fn load_stored_hashes(project_dir: &Path) -> HashMap<String, String> {

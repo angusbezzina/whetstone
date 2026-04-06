@@ -5,12 +5,14 @@ source:
   content_hash: "sha256:dogfood-manual-extraction"
   resolved_at: "2026-04-05T00:00:00Z"
   registry: crates_io
+  content_origin: readme
 
 rules:
   - id: serde_yaml.crate-deprecated
     severity: must
     confidence: high
     category: migration
+    source_kind: official_docs
     description: >
       serde_yaml 0.9 is officially deprecated and unmaintained. MUST migrate
       to an actively maintained alternative such as serde_yml, yaml-rust2,

@@ -18,6 +18,9 @@ source:
                            #   npm      — Node Package Manager
                            #   crates_io — Rust crate registry
                            #   manual   — manually provided source
+  content_origin: enum    # Optional. How the binary fetched the content.
+                           # One of: llms_txt | readme | html_converted | changelog | custom_url
+                           # Auto-populated by the resolve pipeline.
 
 # --- Rules list ---
 rules:
@@ -33,6 +36,12 @@ rules:
     confidence: enum       # Required. One of: high | medium
                            # high   — directly stated in documentation
                            # medium — inferred from documentation patterns
+
+    source_kind: string    # Optional. What kind of source backs this rule.
+                           # Suggested values: official_docs | changelog | migration_guide |
+                           # blog | social | community | team_guide | conference | manual
+                           # Open-ended — users can use any value for custom filtering.
+                           # Set by the agent or user during extraction/approval.
 
     category: enum         # Required. One of: migration | default | convention | breaking-change | semantic
                            # migration       — deprecated APIs that still work but shouldn't be used

@@ -5,12 +5,14 @@ source:
   content_hash: "sha256:dogfood-manual-extraction"
   resolved_at: "2026-04-05T00:00:00Z"
   registry: crates_io
+  content_origin: readme
 
 rules:
   - id: reqwest.set-timeout
     severity: must
     confidence: high
     category: default
+    source_kind: official_docs
     description: >
       MUST set an explicit timeout on reqwest clients. The default is no timeout,
       which means requests can hang indefinitely on unresponsive servers.
@@ -63,6 +65,7 @@ rules:
     severity: should
     confidence: high
     category: convention
+    source_kind: official_docs
     description: >
       SHOULD call .error_for_status() or explicitly check status codes on
       reqwest responses. By default, reqwest treats 4xx/5xx as successful

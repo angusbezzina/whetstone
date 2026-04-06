@@ -1,7 +1,8 @@
 use serde_json::Value;
 
+use super::changelog::probe_github_changelog;
 use super::http::{http_get_html_as_text, http_get_json};
-use super::{content_hash, probe_llms_txt};
+use super::{build_sections, content_hash, probe_llms_txt};
 
 /// Resolve documentation for an npm package.
 pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
@@ -43,6 +44,21 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
         }
     };
 
+    // Extract repository URL for changelog probing
+    let repo_url = data
+        .get("repository")
+        .and_then(|v| {
+            v.as_object()
+                .and_then(|obj| obj.get("url").and_then(|u| u.as_str()))
+                .or_else(|| v.as_str())
+        })
+        .map(String::from);
+
+    let changelog_section = repo_url
+        .as_deref()
+        .and_then(|url| probe_github_changelog(url, timeout));
+
+    // Tier 1: Probe for llms.txt
     let (content, llms_url, source_type) = probe_llms_txt(&docs_url, timeout);
 
     if let Some(content) = content {
@@ -54,6 +70,7 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
             "content": content,
             "content_hash": hash,
         });
+        result["sections"] = build_sections(&result, changelog_section);
         merge_meta(&mut result, &release_meta);
         return result;
     }
@@ -69,6 +86,7 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
                 "content": readme,
                 "content_hash": hash,
             });
+            result["sections"] = build_sections(&result, changelog_section);
             merge_meta(&mut result, &release_meta);
             return result;
         }
@@ -84,8 +102,26 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
             "content": text,
             "content_hash": hash,
         });
+        result["sections"] = build_sections(&result, changelog_section);
         merge_meta(&mut result, &release_meta);
         return result;
+    }
+
+    // Changelog-only fallback
+    if let Some(ref cl) = changelog_section {
+        if let Some(cl_content) = cl.get("content").and_then(|v| v.as_str()) {
+            let hash = content_hash(cl_content);
+            let mut result = serde_json::json!({
+                "docs_url": docs_url,
+                "llms_txt_url": null,
+                "source_type": "changelog",
+                "content": cl_content,
+                "content_hash": hash,
+                "sections": [cl],
+            });
+            merge_meta(&mut result, &release_meta);
+            return result;
+        }
     }
 
     let mut result = serde_json::json!({

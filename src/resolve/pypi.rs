@@ -1,7 +1,8 @@
 use serde_json::Value;
 
+use super::changelog::probe_github_changelog;
 use super::http::{http_get_html_as_text, http_get_json};
-use super::{content_hash, probe_llms_txt};
+use super::{build_sections, content_hash, probe_llms_txt};
 
 /// Resolve documentation for a Python package via PyPI.
 pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
@@ -30,6 +31,13 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
         }
     };
 
+    // Extract repository URL for changelog probing
+    let repo_url = find_repo_url(&info);
+
+    let changelog_section = repo_url
+        .as_deref()
+        .and_then(|url| probe_github_changelog(url, timeout));
+
     // Probe for llms.txt
     let (content, llms_url, source_type) = probe_llms_txt(&docs_url, timeout);
 
@@ -42,6 +50,7 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
             "content": content,
             "content_hash": hash,
         });
+        result["sections"] = build_sections(&result, changelog_section);
         merge_meta(&mut result, &release_meta);
         return result;
     }
@@ -57,6 +66,7 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
                 "content": description,
                 "content_hash": hash,
             });
+            result["sections"] = build_sections(&result, changelog_section);
             merge_meta(&mut result, &release_meta);
             return result;
         }
@@ -72,8 +82,26 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
             "content": text,
             "content_hash": hash,
         });
+        result["sections"] = build_sections(&result, changelog_section);
         merge_meta(&mut result, &release_meta);
         return result;
+    }
+
+    // Changelog-only fallback
+    if let Some(ref cl) = changelog_section {
+        if let Some(cl_content) = cl.get("content").and_then(|v| v.as_str()) {
+            let hash = content_hash(cl_content);
+            let mut result = serde_json::json!({
+                "docs_url": docs_url,
+                "llms_txt_url": null,
+                "source_type": "changelog",
+                "content": cl_content,
+                "content_hash": hash,
+                "sections": [cl],
+            });
+            merge_meta(&mut result, &release_meta);
+            return result;
+        }
     }
 
     let mut result = serde_json::json!({
@@ -120,6 +148,27 @@ fn find_docs_url(info: &Value) -> Option<String> {
         }
     }
 
+    None
+}
+
+/// Extract repository URL from PyPI project_urls for changelog probing.
+fn find_repo_url(info: &Value) -> Option<String> {
+    let project_urls = info.get("project_urls").and_then(|v| v.as_object())?;
+    for key in &[
+        "Repository",
+        "Source",
+        "Source Code",
+        "GitHub",
+        "Code",
+        "repository",
+        "source",
+    ] {
+        if let Some(url) = project_urls.get(*key).and_then(|v| v.as_str()) {
+            if !url.is_empty() && url.contains("github.com") {
+                return Some(url.to_string());
+            }
+        }
+    }
     None
 }
 

@@ -54,6 +54,9 @@ pub struct RuleSource {
     pub resolved_at: Option<String>,
     #[serde(default)]
     pub registry: Option<String>,
+    /// How the binary fetched content: llms_txt, readme, html_converted, changelog, custom_url
+    #[serde(default)]
+    pub content_origin: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -87,6 +90,10 @@ pub struct Rule {
     pub proposed_at: Option<String>,
     #[serde(default)]
     pub proposed_by: Option<String>,
+    /// What kind of source backs this rule: official_docs, changelog, migration_guide,
+    /// blog, social, community, team_guide, conference, manual, or any custom string.
+    #[serde(default)]
+    pub source_kind: Option<String>,
     #[serde(default)]
     pub signals: Vec<Signal>,
     #[serde(default)]
