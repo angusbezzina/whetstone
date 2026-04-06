@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::{
     ci_check, detect, detect_patterns, doctor, generate_context, generate_tests, output, resolve,
-    rules, status,
+    rules, status, update,
 };
 
 #[derive(Parser)]
@@ -280,6 +280,17 @@ enum Commands {
         /// Only check changed deps
         #[arg(long)]
         changed_only: bool,
+    },
+
+    /// Update whetstone to the latest release
+    Update {
+        /// Only check for updates, don't install
+        #[arg(long)]
+        check: bool,
+
+        /// Force update even if already on the latest version
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -747,6 +758,34 @@ pub fn run() -> i32 {
                 1
             }
         },
+
+        Commands::Update { check, force } => {
+            match update::check_and_update(force, check) {
+                Ok(result) => {
+                    if json_mode {
+                        output::print_json(&result);
+                    } else {
+                        let msg = result
+                            .get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Done");
+                        println!("{msg}");
+                    }
+                    0
+                }
+                Err(e) => {
+                    if json_mode {
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "Check network connectivity and GitHub access",
+                        ));
+                    } else {
+                        eprintln!("Update failed: {e}");
+                    }
+                    1
+                }
+            }
+        }
     }
 }
 

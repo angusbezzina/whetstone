@@ -12,6 +12,7 @@ mod rules;
 mod state;
 mod status;
 mod types;
+mod update;
 
 fn main() {
     let exit_code = cli::run();
