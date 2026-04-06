@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use super::http::http_get_json;
+use super::http::{http_get_html_as_text, http_get_json};
 use super::{content_hash, probe_llms_txt};
 
 /// Resolve documentation for a Python package via PyPI.
@@ -40,6 +40,36 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
             "llms_txt_url": llms_url,
             "source_type": source_type,
             "content": content,
+            "content_hash": hash,
+        });
+        merge_meta(&mut result, &release_meta);
+        return result;
+    }
+
+    // Tier 2: Extract description from PyPI response (often the README)
+    if let Some(description) = info.get("description").and_then(|v| v.as_str()) {
+        if description.len() > 100 {
+            let hash = content_hash(description);
+            let mut result = serde_json::json!({
+                "docs_url": docs_url,
+                "llms_txt_url": null,
+                "source_type": "readme",
+                "content": description,
+                "content_hash": hash,
+            });
+            merge_meta(&mut result, &release_meta);
+            return result;
+        }
+    }
+
+    // Tier 3: Fetch docs HTML and convert to text
+    if let Some(text) = http_get_html_as_text(&docs_url, timeout) {
+        let hash = content_hash(&text);
+        let mut result = serde_json::json!({
+            "docs_url": docs_url,
+            "llms_txt_url": null,
+            "source_type": "html_converted",
+            "content": text,
             "content_hash": hash,
         });
         merge_meta(&mut result, &release_meta);

@@ -19,8 +19,8 @@ Whetstone follows the 2026 consensus pattern for agentic developer tools: **the 
 ```
 Binary (deterministic)          Agent (judgment via SKILL.md)        User
 ──────────────────────          ────────────────────────────         ────
-wh doctor --json           →    reads summary, picks deps       →   confirms scope
-wh extract --show X --json →    reads docs, applies prompt      →
+wh doctor --json           →    reads summary + content         →   confirms scope
+                                applies extraction prompt
                                 presents candidate rules        →   approve / deny / edit
                                 writes YAML to rules/
 wh validate --json         →    fixes errors if any
@@ -28,7 +28,7 @@ wh context + wh tests      →    reports what was generated
 wh status --json           →    reports health
 ```
 
-Six CLI calls. The agent reasons between them. SKILL.md teaches it how. See `planning/whetstone-logic-flow.mmd` for the full visual.
+Five CLI calls. The agent reasons between them. SKILL.md teaches it how. See `planning/whetstone-logic-flow.mmd` for the full visual.
 
 ### What the Binary Does
 
@@ -79,7 +79,7 @@ Six CLI calls. The agent reasons between them. SKILL.md teaches it how. See `pla
 
 | Gap | Severity | Notes |
 |-----|----------|-------|
-| Content fetching for non-llms.txt deps | Critical | Binary resolves docs URLs but content is null. Agent must bring own knowledge. Most crates/packages lack llms.txt. |
+| Content fetching for non-llms.txt deps | Fixed | 3-tier fallback: llms.txt → registry README → HTML conversion. All deps now get content. (fixed 2026-04-05) |
 | SKILL.md extraction workflow | High | Skill needs clearer per-dep extraction loop using doctor output |
 | Custom sources | High | Can't add arbitrary URLs, only registry-resolved docs |
 | Diff-based updates | High | No `update` command for changed sources |
@@ -98,8 +98,8 @@ First real rules extracted for Whetstone's own Rust deps (6 rules across serde_y
 - **Status pipeline works perfectly** — score 100, all dimensions correct
 - **Context generation works** — Do/Don't sections, source URLs, good/bad examples
 - **Test generation produces TODO scaffolds** — compiles but doesn't check anything without tree-sitter
-- **Content gap is the real blocker** — none of Whetstone's deps have llms.txt, so content is null for all. Agent extracted rules from its own training knowledge.
-- **`extract --show` proved unnecessary** — nothing in cache to show. Closed the bead.
+- ~~**Content gap was the real blocker**~~ — **Fixed**: added 3-tier fallback (llms.txt → registry README → HTML conversion). All 10 deps now return content with medium confidence.
+- **`extract --show` proved unnecessary** — doctor output includes content directly. Closed the bead.
 
 ---
 
@@ -122,18 +122,18 @@ Close the gap between Whetstone's strong infrastructure and its missing product 
 | ~~`whetstone-6bm`~~ | Validate generate-tests on real rules | **Closed** — scaffolds compile, tree-sitter needed for real checks |
 | ~~`whetstone-4aq`~~ | extract --show/--list commands | **Closed** — proved unnecessary by dogfooding |
 
-**Phase 2 — Current focus:**
+**Phase 2 — Current focus (ordered by impact):**
 
-| Bead | Work | Depends On |
-|------|------|-----------|
-| `whetstone-la2` | Rewrite SKILL.md extraction workflow | — |
-| `whetstone-d41` | Integrate tera template engine | — |
-| `whetstone-dg4` | Custom source support (arbitrary URLs) | — |
-| `whetstone-5wg` | Harden doctor/status UX from dogfooding | — |
-| `whetstone-t32` | Diff-based update command | — |
-| `whetstone-1dp` | Expand whetstone.yaml config depth | dg4 |
-| `whetstone-kp3` | Built-in rule system | — |
-| `whetstone-e51` | Curate built-in rules (3 languages) | kp3 |
+| Priority | Bead | Work | Depends On |
+|----------|------|------|-----------|
+| Do first | `whetstone-la2` | Rewrite SKILL.md extraction workflow | — |
+| Do first | `whetstone-dg4` | Custom source support (arbitrary URLs) | — |
+| Do first | `whetstone-kp3` | Built-in rule system | — |
+| Then | `whetstone-e51` | Curate built-in rules (3 languages) | kp3 |
+| Then | `whetstone-t32` | Diff-based update command | — |
+| Then | `whetstone-1dp` | Expand whetstone.yaml config depth | dg4 |
+| Defer | `whetstone-d41` | Integrate tera template engine | — |
+| Defer | `whetstone-5wg` | Harden doctor/status UX from dogfooding | — |
 
 **Phase 3 — Eval + AST:**
 
@@ -205,8 +205,6 @@ Not planned in detail. Depends on community adoption and Epic 1-2 validation.
 | `wh doctor` | `start` | Summary: deps found, sources resolved, readiness, recommendations |
 | `wh init` | `deps`, `detect-deps` | Detected dependencies with counts and drift |
 | `wh set-sources` | `sources`, `resolve-sources` | Resolution results with cache stats |
-| `wh extract --list` | — | Deps ready for extraction with confidence levels |
-| `wh extract --show <dep>` | — | Full cached content for one dependency |
 | `wh validate` | `validate-rules` | Schema validation pass/fail |
 | `wh context` | `generate-context` | Generated agent context files |
 | `wh tests` | `generate-tests` | Generated test files + lint configs |
@@ -229,13 +227,10 @@ All commands support `--json` (auto-enabled when piped) and `--project-dir`.
 
 ---
 
-## Beads Hygiene Note
+## Beads State
 
-There are ~60 open beads across two generations:
-- **`whetstone-1v0.x.x` series** — From an earlier planning round. Many describe work that's already implemented (checkpointing, parallelism, cache invalidation). These need triage: close what's done, defer or supersede what's stale.
-- **`whetstone-d2t` epic + children** — The current plan of attack. These are authoritative.
-
-Before starting Epic 1 work, triage the `1v0.x.x` beads to clean up the backlog.
+14 open issues remain after triaging 47 stale/superseded beads (2026-04-05).
+All tracked under `whetstone-d2t` epic. Run `bd ready` for available work.
 
 ---
 

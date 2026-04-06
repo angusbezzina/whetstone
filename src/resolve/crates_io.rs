@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use super::http::http_get_json;
+use super::http::{http_get, http_get_html_as_text, http_get_json};
 use super::{content_hash, probe_llms_txt};
 
 /// Resolve documentation for a Rust crate via crates.io.
@@ -47,6 +47,41 @@ pub fn resolve(name: &str, version: &str, timeout: u64) -> Value {
             "llms_txt_url": llms_url,
             "source_type": source_type,
             "content": content,
+            "content_hash": hash,
+        });
+        merge_meta(&mut result, &release_meta);
+        return result;
+    }
+
+    // Tier 2: Try crates.io README endpoint (raw markdown, no new deps)
+    let latest_ver = release_meta
+        .get("latest_version")
+        .and_then(|v| v.as_str())
+        .unwrap_or(version);
+    let readme_url = format!("https://crates.io/api/v1/crates/{name}/{latest_ver}/readme");
+    if let Some(readme) = http_get(&readme_url, timeout) {
+        if readme.len() > 100 && !readme.trim_start().to_lowercase().starts_with("<!doctype") {
+            let hash = content_hash(&readme);
+            let mut result = serde_json::json!({
+                "docs_url": docs_url,
+                "llms_txt_url": null,
+                "source_type": "readme",
+                "content": readme,
+                "content_hash": hash,
+            });
+            merge_meta(&mut result, &release_meta);
+            return result;
+        }
+    }
+
+    // Tier 3: Fetch docs HTML and convert to text
+    if let Some(text) = http_get_html_as_text(&docs_url, timeout) {
+        let hash = content_hash(&text);
+        let mut result = serde_json::json!({
+            "docs_url": docs_url,
+            "llms_txt_url": null,
+            "source_type": "html_converted",
+            "content": text,
             "content_hash": hash,
         });
         merge_meta(&mut result, &release_meta);

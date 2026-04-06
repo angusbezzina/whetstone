@@ -19,18 +19,11 @@ flowchart TD
     Cache everything
     Return: summary + readiness`"]
 
-    DOCTOR --> AGENT_PLAN["`**Agent reads summary**
+    DOCTOR --> AGENT_EXTRACT["`**Agent reads summary + content**
+    Doctor output includes fetched content
+    (llms.txt, README, or HTML-converted)
     Identifies ready deps
-    Asks user which to extract
-    (or picks top priorities)`"]
-
-    %% ─── STEP 2: EXTRACT (per dep) ───
-    AGENT_PLAN --> SHOW["`**wh extract --show dep --json**
-    Pull cached content for one dep
-    Return: llms.txt / docs content,
-    metadata, version`"]
-
-    SHOW --> AGENT_EXTRACT["`**Agent applies extraction prompt**
+    Applies extraction prompt per dep:
     High confidence or silence
     Max 5 rules per dep
     Every rule needs deterministic signal
@@ -54,7 +47,7 @@ flowchart TD
     VALIDATE -->|Fail| FIX[Agent reads error\nfixes YAML] --> VALIDATE
     VALIDATE -->|Pass| MORE{More deps?}
     SKIP --> MORE
-    MORE -->|Yes| SHOW
+    MORE -->|Yes| AGENT_EXTRACT
     MORE -->|No| GENERATE
 
     %% ─── STEP 5: GENERATE ───
@@ -116,7 +109,7 @@ flowchart TD
     classDef future fill:#6c757d,color:#fff,stroke:#495057
     classDef start fill:#f4a261,color:#000,stroke:#e76f51
 
-    class DOCTOR,SHOW,VALIDATE,GENERATE,STATUS,UPDATE,CI,PAT binary
+    class DOCTOR,VALIDATE,GENERATE,STATUS,UPDATE,CI,PAT binary
     class AGENT_PLAN,AGENT_EXTRACT,AGENT_PRESENT,WRITE,EDIT,FIX agent
     class USER,SKIP user
     class EVAL future

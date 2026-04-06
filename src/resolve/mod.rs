@@ -467,6 +467,7 @@ fn compute_freshness(result: &Value, stored_hash: Option<&str>) -> Value {
         .unwrap_or("");
     let confidence = match source_type {
         "llms_full_txt" | "llms_txt" => "high",
+        "readme" | "html_converted" => "medium",
         "docs_url_only" => "low",
         _ if result
             .get("content")
