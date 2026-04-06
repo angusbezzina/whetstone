@@ -4,6 +4,32 @@ All notable changes to Whetstone are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-04-05
+
+### Added
+- **`wh update`** — self-update command that downloads the latest release
+  binary from GitHub, verifies sha256 checksum, and replaces the running
+  binary atomically. Flags: `--check` (just check), `--force` (reinstall).
+- **`wh` binary alias** — short name for `whetstone`, installed alongside
+  the main binary.
+- **Progress bar** during dependency resolution via indicatif.
+- **Human-friendly default output** — all commands now print readable text
+  by default. Use `--json` (global flag) for machine-readable JSON.
+  Auto-detects piped stdout.
+- **Scoped package grouping** — `@radix-ui/*` and similar npm scopes shown
+  as a single grouped line in human output; JSON gains a `scope` field.
+
+### Changed
+- Command renames (old names kept as hidden aliases):
+  `detect-deps`→`init`, `resolve-sources`→`set-sources`,
+  `generate-context`→`context`, `generate-tests`→`tests`,
+  `validate-rules`→`validate`, `detect-patterns`→`patterns`,
+  `ci-check`→`ci`. Doctor gains visible alias `start`.
+
+### Fixed
+- Box-drawing characters now consistent (no mixed ASCII `=` and Unicode `═`).
+- `status` no longer prints "Monorepo detected" twice.
+
 ## [0.1.1] - 2026-04-05
 
 ### Fixed
@@ -42,5 +68,6 @@ no Python runtime dependency.
 - **Release workflow** building Linux and macOS binaries for x86_64 and
   aarch64 with cross-compilation support.
 
+[0.1.2]: https://github.com/angusbezzina/whetstone/releases/tag/v0.1.2
 [0.1.1]: https://github.com/angusbezzina/whetstone/releases/tag/v0.1.1
 [0.1.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.1.0
