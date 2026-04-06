@@ -168,7 +168,7 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
             "recommendations": [],
             "source_details": [],
             "scan": {"cache_stats": {}, "ranked_queue": []},
-            "next_command": "Add dependencies to your project, then run whetstone doctor again",
+            "next_command": "Add dependencies to your project, then run wh doctor again",
         }));
     }
 
@@ -459,13 +459,13 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
     );
 
     let next_command = if auto_limited {
-        "whetstone doctor --resume"
+        "wh doctor --resume"
     } else if !extraction_sources.is_empty() {
-        "Review extraction results, then: whetstone generate-context"
+        "Review extraction results, then: wh context"
     } else if !sources.is_empty() {
-        "whetstone status"
+        "wh status"
     } else {
-        "whetstone doctor --refresh"
+        "wh doctor --refresh"
     };
 
     let result = serde_json::json!({
@@ -712,7 +712,7 @@ fn build_recommendations(
             "priority": "high",
             "action": "continue",
             "message": format!("Fast-first mode resolved the top {} dependencies; resume to continue with {} remaining", sources.len(), remaining_count),
-            "command": "whetstone doctor --resume",
+            "command": "wh doctor --resume",
         }));
     }
 

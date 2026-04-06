@@ -70,6 +70,7 @@ install_from_local_source() {
     mkdir -p "$INSTALL_DIR"
     cp "$WHETSTONE_INSTALL_LOCAL_SRC" "${INSTALL_DIR}/${BINARY_NAME}"
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
+    ln -sf "${INSTALL_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/wh"
     echo "Installed local binary to ${INSTALL_DIR}/${BINARY_NAME}"
 }
 
@@ -162,7 +163,8 @@ install_binary() {
     mkdir -p "$INSTALL_DIR"
     cp "${TMPDIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
-    echo "Installed to ${INSTALL_DIR}/${BINARY_NAME}"
+    ln -sf "${INSTALL_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/wh"
+    echo "Installed to ${INSTALL_DIR}/${BINARY_NAME} (also available as 'wh')"
 }
 
 print_success() {

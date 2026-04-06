@@ -19,20 +19,20 @@ Whetstone derives coding rules from the documentation of your actual dependencie
 
 ## Activation
 
-Activate when the user says any of: "whetstone", "whetstone doctor", "extract rules", "update standards", "update rules", "init whetstone", "run whetstone", "check rules", "refresh rules", "generate tests from rules".
+Activate when the user says any of: "whetstone", "wh doctor", "extract rules", "update standards", "update rules", "init whetstone", "run whetstone", "check rules", "refresh rules", "generate tests from rules".
 
-If the user says "whetstone doctor", "doctor", "scan my project", or "bootstrap rules", use the **Doctor** workflow below — it's the fastest path from zero to working rules.
+If the user says "wh doctor", "doctor", "scan my project", or "bootstrap rules", use the **Doctor** workflow below — it's the fastest path from zero to working rules.
 
 ## Happy Path (TL;DR)
 
 Most users need three steps:
 
-1. **Bootstrap**: `whetstone doctor` — detects deps, resolves docs
+1. **Bootstrap**: `wh doctor` — detects deps, resolves docs
 2. **Extract + Approve**: Read the doctor's `extraction_context`, apply the Extraction Prompt below for each source, present rules for approval using the Rule Card format
-3. **Generate**: `whetstone generate-context` and `whetstone generate-tests`
+3. **Generate**: `wh context` and `wh tests`
 
-After that, check health with `whetstone status` anytime.
-When deps update, run `whetstone doctor --changed-only` to resolve only changed deps, then re-extract.
+After that, check health with `wh status` anytime.
+When deps update, run `wh doctor --changed-only` to resolve only changed deps, then re-extract.
 
 ### Repeat Runs
 
@@ -40,13 +40,13 @@ Whetstone caches manifest fingerprints and source resolution results under `whet
 
 | Scenario | Command | What it does |
 |----------|---------|-------------|
-| Full re-bootstrap | `whetstone doctor` | Detects all deps, resolves all sources |
-| Only changed deps | `whetstone doctor --changed-only` | Skips cached, resolves stale/missing |
-| Resume interrupted run | `whetstone doctor --resume` | Picks up where last run stopped |
-| Force re-resolve | `whetstone doctor --refresh` | Ignores cache, re-fetches all docs |
-| Cap resolution count | `whetstone doctor --max-deps 5` | Resolves top 5 ranked deps only |
-| Extract ready subset | `whetstone doctor --ready-only` | Hands off only extraction-ready deps |
-| Retry failed deps | `whetstone resolve-sources --retry-failed` | Re-resolves only failed deps |
+| Full re-bootstrap | `wh doctor` | Detects all deps, resolves all sources |
+| Only changed deps | `wh doctor --changed-only` | Skips cached, resolves stale/missing |
+| Resume interrupted run | `wh doctor --resume` | Picks up where last run stopped |
+| Force re-resolve | `wh doctor --refresh` | Ignores cache, re-fetches all docs |
+| Cap resolution count | `wh doctor --max-deps 5` | Resolves top 5 ranked deps only |
+| Extract ready subset | `wh doctor --ready-only` | Hands off only extraction-ready deps |
+| Retry failed deps | `wh set-sources --retry-failed` | Re-resolves only failed deps |
 
 See the **Doctor** workflow below for the detailed version.
 
@@ -60,13 +60,13 @@ The `whetstone` binary is the primary interface. When using Whetstone as an agen
 
 | Command | Purpose | Input | Output |
 |---------|---------|-------|--------|
-| `whetstone doctor` | **One-command bootstrap** | Project dir | JSON: extraction context |
-| `whetstone status` | **Project health summary** | Rule YAML files | JSON: health dimensions |
-| `whetstone ci-check` | **CI freshness check** | Project dir | JSON: CI outputs |
-| `whetstone detect-deps` | Detect dependencies | Manifest files | JSON: deps list |
-| `whetstone resolve-sources` | Resolve docs URLs | JSON from detect-deps | JSON: source content |
-| `whetstone generate-context` | Generate agent files | Rule YAML files | AGENTS.md, CLAUDE.md, etc. |
-| `whetstone generate-tests` | Generate tests + lint | Rule YAML files | pytest/vitest/cargo tests |
+| `wh doctor` | **One-command bootstrap** | Project dir | JSON: extraction context |
+| `wh status` | **Project health summary** | Rule YAML files | JSON: health dimensions |
+| `wh ci` | **CI freshness check** | Project dir | JSON: CI outputs |
+| `wh init` | Detect dependencies | Manifest files | JSON: deps list |
+| `wh set-sources` | Resolve docs URLs | JSON from detect-deps | JSON: source content |
+| `wh context` | Generate agent files | Rule YAML files | AGENTS.md, CLAUDE.md, etc. |
+| `wh tests` | Generate tests + lint | Rule YAML files | pytest/vitest/cargo tests |
 
 ### Common Flags
 
@@ -91,7 +91,7 @@ All scripts accept `--project-dir` (default: `.`). User-facing scripts support t
 | `--ready-only` | Only hand off extraction-ready deps | doctor |
 | `--extraction-ready` | List deps in extraction_ready state | status |
 
-All core binary commands output JSON to stdout. Pattern detection is exposed as an opt-in subcommand (`whetstone detect-patterns`) and is not invoked automatically by `doctor`.
+All core binary commands output JSON to stdout. Pattern detection is exposed as an opt-in subcommand (`wh patterns`) and is not invoked automatically by `doctor`.
 
 ### JSON Output Contract
 
@@ -130,12 +130,12 @@ The binary handles all deterministic work. The agent brings judgment to rule ext
 
 ### Doctor (Recommended First Run)
 
-Run when the user says "whetstone doctor", "doctor", "scan my project", "bootstrap rules", or when they want the fastest path from zero to working rules. This is the **recommended** entry point — it chains detect → resolve → extract → generate in one flow.
+Run when the user says "wh doctor", "doctor", "scan my project", "bootstrap rules", or when they want the fastest path from zero to working rules. This is the **recommended** entry point — it chains detect → resolve → extract → generate in one flow.
 
 **Step 1: Run the doctor orchestrator**
 
 ```bash
-whetstone doctor
+wh doctor
 ```
 
 This runs dependency detection and source resolution automatically. Progress is printed to stderr; the JSON result (including fetched source content) is printed to stdout.
@@ -171,8 +171,8 @@ Save approved rules to `whetstone/rules/{language}/{dependency}.yaml`.
 **Step 4: Generate outputs**
 
 ```bash
-whetstone generate-context
-whetstone generate-tests
+wh context
+wh tests
 ```
 
 **Step 5: Create config (if first run)**
@@ -186,7 +186,7 @@ Present a final summary:
 - Tests: paths to generated test files
 - Agent context: which files were generated
 
-**Next:** "Run your tests to verify: `pytest whetstone/evals/python/`" (or `npx vitest` / `cargo test` for the relevant language). Then run `whetstone status` to confirm health.
+**Next:** "Run your tests to verify: `pytest whetstone/evals/python/`" (or `npx vitest` / `cargo test` for the relevant language). Then run `wh status` to confirm health.
 
 ---
 
@@ -197,7 +197,7 @@ Run when the user says "whetstone init", "extract rules", or wants more control 
 **Step 1: Detect dependencies**
 
 ```bash
-whetstone detect-deps
+wh init
 ```
 
 Present the findings: "Found N dependencies across [languages]." List the dependencies with name, version, and language. Ask the user which dependencies to extract rules for. Default: all non-dev dependencies.
@@ -205,7 +205,7 @@ Present the findings: "Found N dependencies across [languages]." List the depend
 **Step 2: Resolve documentation sources**
 
 ```bash
-whetstone detect-deps | whetstone resolve-sources --deps dep1,dep2,dep3
+wh init | wh set-sources --deps dep1,dep2,dep3
 ```
 
 Pass only the user-confirmed dependencies. Present: "Resolved docs for N/M deps, K have llms.txt." For any deps where resolution failed, note why and ask if the user wants to provide a manual docs URL.
@@ -215,7 +215,7 @@ Pass only the user-confirmed dependencies. Present: "Resolved docs for N/M deps,
 Skip this step unless the user explicitly wants pattern mining. When requested:
 
 ```bash
-whetstone detect-patterns --sources transcript,git,pr
+wh patterns --sources transcript,git,pr
 ```
 
 Transcript mining is project-scoped by default; pass `--global-transcripts` only with explicit user consent.
@@ -244,8 +244,8 @@ Save approved rules to `whetstone/rules/{language}/{dependency}.yaml`.
 **Step 6: Generate outputs**
 
 ```bash
-whetstone generate-context
-whetstone generate-tests
+wh context
+wh tests
 ```
 
 Present summary: "Generated N rules across M deps. Tests: whetstone/evals/. Agent context: CLAUDE.md, AGENTS.md."
@@ -254,7 +254,7 @@ Present summary: "Generated N rules across M deps. Tests: whetstone/evals/. Agen
 
 If `whetstone/whetstone.yaml` doesn't exist, create it from `assets/whetstone.yaml.template` with the detected languages, confirmed agents list, and trigger mode (default: manual).
 
-**Next:** "Run your tests to verify: `pytest whetstone/evals/python/`" (or the equivalent for your language). Then run `whetstone status` to confirm health.
+**Next:** "Run your tests to verify: `pytest whetstone/evals/python/`" (or the equivalent for your language). Then run `wh status` to confirm health.
 
 ### Update (Subsequent Runs)
 
@@ -265,15 +265,15 @@ By default, update only processes dependencies that have changed (diff-only mode
 **Step 1: Check for drift (changed deps only)**
 
 ```bash
-whetstone detect-deps --changed-only
+wh init --changed-only
 ```
 
-This outputs only dependencies whose versions have drifted since last extraction. If no drift is found, inform the user and suggest running `whetstone status` instead. For a full check, use `--check-drift` (shows drift info but still outputs all deps).
+This outputs only dependencies whose versions have drifted since last extraction. If no drift is found, inform the user and suggest running `wh status` instead. For a full check, use `--check-drift` (shows drift info but still outputs all deps).
 
 **Step 2: Re-resolve changed sources only**
 
 ```bash
-whetstone detect-deps --changed-only | whetstone resolve-sources --changed-only
+wh init --changed-only | wh set-sources --changed-only
 ```
 
 Only re-fetches documentation for dependencies with version drift AND content changes. This is fast and avoids unnecessary network calls.
@@ -283,7 +283,7 @@ Only re-fetches documentation for dependencies with version drift AND content ch
 Skip unless requested. To mine new style signals since the last run:
 
 ```bash
-whetstone detect-patterns --since-last-run --quiet
+wh patterns --since-last-run --quiet
 ```
 
 **Step 4: Extract and diff**
@@ -295,18 +295,18 @@ For changed dependencies, re-run extraction. Compare proposed rules against exis
 Same approval flow as init, but only for changes. After approval, regenerate:
 
 ```bash
-whetstone generate-context
-whetstone generate-tests
+wh context
+wh tests
 ```
 
-**Next:** "Run updated tests to verify: `pytest whetstone/evals/python/`". Then run `whetstone status` to confirm the drift is resolved.
+**Next:** "Run updated tests to verify: `pytest whetstone/evals/python/`". Then run `wh status` to confirm the drift is resolved.
 
 ### Status
 
-Run when the user says "whetstone status", "check health", "how are my rules", or similar.
+Run when the user says "wh status", "check health", "how are my rules", or similar.
 
 ```bash
-whetstone status
+wh status
 ```
 
 This outputs a compact health summary with five dimensions:
@@ -320,18 +320,18 @@ The output includes a status label (**Healthy**, **Needs Review**, **Stale**, **
 
 Present the human-readable summary to the user. If they want detail, offer `--json` for the full breakdown or `--score` for just the numeric score.
 
-**Next:** Follow the `next_command` from the status JSON output — it suggests the most relevant action (e.g., `whetstone doctor` to re-resolve sources when drift is detected, or `whetstone doctor` for initial setup).
+**Next:** Follow the `next_command` from the status JSON output — it suggests the most relevant action (e.g., `wh doctor` to re-resolve sources when drift is detected, or `wh doctor` for initial setup).
 
 ### Generate Only
 
 Run when the user says "regenerate tests", "regenerate agent context", or when rules have been manually edited.
 
 ```bash
-whetstone generate-context
-whetstone generate-tests
+wh context
+wh tests
 ```
 
-**Next:** "Run tests to verify the regenerated outputs." Then run `whetstone status` to check overall health.
+**Next:** "Run tests to verify the regenerated outputs." Then run `wh status` to check overall health.
 
 ---
 
@@ -455,10 +455,10 @@ curl -fsSL https://raw.githubusercontent.com/angusbezzina/whetstone/main/install
 # OR: cargo install --git https://github.com/angusbezzina/whetstone.git
 
 # Bootstrap rules
-whetstone doctor          # detect deps, resolve docs, prepare extraction context
+wh doctor          # detect deps, resolve docs, prepare extraction context
 # Agent extracts rules, user approves/denies each
-whetstone generate-context  # generate CLAUDE.md, AGENTS.md, etc.
-whetstone generate-tests    # generate test files
+wh context  # generate CLAUDE.md, AGENTS.md, etc.
+wh tests    # generate test files
 
 # Verify
 pytest whetstone/evals/python/           # Python

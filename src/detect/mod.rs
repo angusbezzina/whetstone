@@ -200,30 +200,141 @@ pub fn detect_deps(
         });
     }
 
+    // Add scope field to scoped npm packages
+    if let Some(deps) = result.get_mut("dependencies").and_then(|v| v.as_array_mut()) {
+        for dep in deps.iter_mut() {
+            if let Some(name) = dep.get("name").and_then(|v| v.as_str()).map(String::from) {
+                if name.starts_with('@') {
+                    if let Some(slash_pos) = name.find('/') {
+                        dep["scope"] = serde_json::json!(&name[..slash_pos]);
+                    }
+                }
+            }
+        }
+    }
+
     if do_check_drift {
         let drift = check_drift(&unique_deps, project_dir);
         let drift_count = drift.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
         if drift_count > 0 {
-            result["next_command"] = serde_json::json!(
-                "Resolve changed sources: whetstone resolve-sources --changed-only"
-            );
+            result["next_command"] =
+                serde_json::json!("Resolve changed sources: wh set-sources --changed-only");
         } else {
             result["next_command"] = serde_json::json!("No drift detected. Rules are current.");
         }
         result["drift"] = drift;
     } else {
-        let dep_names: Vec<&str> = runtime
-            .iter()
-            .take(10)
-            .filter_map(|d| d.get("name").and_then(|n| n.as_str()))
-            .collect();
-        result["next_command"] = serde_json::json!(format!(
-            "Resolve docs: whetstone resolve-sources --deps {}",
-            dep_names.join(",")
-        ));
+        result["next_command"] = serde_json::json!("Resolve docs: wh doctor");
     }
 
     Ok(result)
+}
+
+/// Format detect-deps result as a human-readable summary with scoped package grouping.
+pub fn format_human_output(result: &Value) -> String {
+    use std::collections::BTreeMap;
+    let mut lines = Vec::new();
+
+    // Monorepo info
+    let is_monorepo = result
+        .get("discovery")
+        .and_then(|d| d.get("monorepo"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if is_monorepo {
+        let ws_count = result
+            .get("discovery")
+            .and_then(|d| d.get("workspaces"))
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        lines.push(format!("Monorepo: {ws_count} workspaces"));
+    }
+
+    // Language counts
+    let counts = result.get("counts").and_then(|c| c.get("runtime"));
+    if let Some(counts) = counts {
+        let total = counts.get("_all").and_then(|v| v.as_i64()).unwrap_or(0);
+        let mut lang_parts = Vec::new();
+        for (k, v) in counts.as_object().into_iter().flatten() {
+            if k != "_all" {
+                if let Some(n) = v.as_i64() {
+                    lang_parts.push(format!("{n} {k}"));
+                }
+            }
+        }
+        lines.push(format!(
+            "Dependencies: {total} runtime ({})",
+            lang_parts.join(", ")
+        ));
+    }
+
+    let dev_count = result
+        .get("counts")
+        .and_then(|c| c.get("dev"))
+        .and_then(|c| c.get("_all"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    if dev_count > 0 {
+        lines.push(format!("Dev dependencies: {dev_count}"));
+    }
+
+    // Group deps by scope for display
+    if let Some(deps) = result.get("dependencies").and_then(|v| v.as_array()) {
+        let runtime: Vec<&Value> = deps
+            .iter()
+            .filter(|d| !d.get("dev").and_then(|v| v.as_bool()).unwrap_or(false))
+            .collect();
+
+        // Group scoped packages
+        let mut scope_groups: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+        let mut standalone: Vec<(&str, &str)> = Vec::new();
+
+        for dep in &runtime {
+            let name = dep.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+            let version = dep.get("version").and_then(|v| v.as_str()).unwrap_or("*");
+            if let Some(scope) = dep.get("scope").and_then(|v| v.as_str()) {
+                let short = name.strip_prefix(&format!("{scope}/")).unwrap_or(name);
+                scope_groups.entry(scope.to_string()).or_default().push(short);
+            } else {
+                standalone.push((name, version));
+            }
+        }
+
+        lines.push(String::new());
+        lines.push("Runtime:".to_string());
+
+        for (scope, packages) in &scope_groups {
+            if packages.len() == 1 {
+                lines.push(format!("  {scope}/{}", packages[0]));
+            } else {
+                let preview: Vec<&str> = packages.iter().take(4).copied().collect();
+                let suffix = if packages.len() > 4 {
+                    format!(", ... +{}", packages.len() - 4)
+                } else {
+                    String::new()
+                };
+                lines.push(format!(
+                    "  {scope} ({} packages) \u{2014} {}{}",
+                    packages.len(),
+                    preview.join(", "),
+                    suffix,
+                ));
+            }
+        }
+
+        for (name, version) in &standalone {
+            lines.push(format!("  {name} {version}"));
+        }
+    }
+
+    // Next command
+    if let Some(next) = result.get("next_command").and_then(|v| v.as_str()) {
+        lines.push(String::new());
+        lines.push(format!("Next: {next}"));
+    }
+
+    lines.join("\n")
 }
 
 fn is_dev(dep: &Value) -> bool {

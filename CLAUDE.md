@@ -10,7 +10,7 @@ Read `AGENTS.md` for universal project context. This file contains Claude Code-s
 
 Whetstone is an Agent Skill (agentskills.io format) with a **Rust CLI binary** that derives coding rules from dependency documentation and developer patterns. The MVP architecture is documented in `planning/mvp.md`. The full vision is in `planning/product-spec.md`.
 
-**The Rust binary (`src/`) is the sole runtime implementation.** Archived Python command implementations live under `scripts/legacy/` strictly as parity reference for `tests/test_script_contracts.py`. Pattern mining (`whetstone detect-patterns`), rule-schema validation (`whetstone validate-rules`), and every other user-facing workflow are Rust-native. The agent (you) acts as the LLM for rule extraction -- the binary handles deterministic work.
+**The Rust binary (`src/`) is the sole runtime implementation.** Archived Python command implementations live under `scripts/legacy/` strictly as parity reference for `tests/test_script_contracts.py`. Pattern mining (`wh patterns`), rule-schema validation (`wh validate`), and every other user-facing workflow are Rust-native. The agent (you) acts as the LLM for rule extraction -- the binary handles deterministic work.
 
 ---
 
@@ -121,7 +121,7 @@ When ending a work session, complete ALL steps. Work is NOT complete until `git 
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
-   cargo run --quiet --release -- validate-rules
+   cargo run --quiet --release -- validate
    python3 -m pytest -q
    ```
    Do not push if Ruff fails. This exact command mirrors the CI gate that has been failing on import ordering issues.
@@ -131,7 +131,7 @@ When ending a work session, complete ALL steps. Work is NOT complete until `git 
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
-   cargo run --quiet --release -- validate-rules
+   cargo run --quiet --release -- validate
    git pull --rebase
    git push
    git status  # MUST show "up to date with origin"
@@ -214,7 +214,7 @@ MUST follow this protocol when the user asks to cut a release.
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
-cargo run --quiet --release -- validate-rules
+cargo run --quiet --release -- validate
 python3 -m pytest -q
 ```
 

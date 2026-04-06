@@ -81,7 +81,7 @@ issues, repair/hydrate the local Beads Dolt database with:
 
 ```bash
 # 1. Run the doctor — one command from zero to working rules
-whetstone doctor
+wh doctor
 # → detects dependencies from pyproject.toml / package.json / Cargo.toml
 # → resolves documentation URLs from registries, probes for llms.txt
 # → outputs extraction context for the agent
@@ -89,17 +89,17 @@ whetstone doctor
 # 2. The agent reads the doctor output, proposes rules, you approve each one
 
 # 3. Generate tests and agent context from approved rules
-whetstone generate-context
-whetstone generate-tests
+wh context
+wh tests
 # → pytest/vitest/cargo test files in whetstone/evals/
 # → lint overlays in whetstone/lint/
 # → agent context files in whetstone/context/
 
 # 4. Check project health anytime
-whetstone status
+wh status
 ```
 
-> **Agent skill mode:** When using Whetstone as an agent skill, say "whetstone doctor" or "whetstone status" and the agent runs the corresponding command. The binary handles everything — no Python runtime required.
+> **Agent skill mode:** When using Whetstone as an agent skill, say "wh doctor" or "wh status" and the agent runs the corresponding command. The binary handles everything — no Python runtime required.
 
 ## Canonical Workflow
 
@@ -218,7 +218,7 @@ See [`references/rule-schema.yaml`](references/rule-schema.yaml) for the full sc
 
 ### Status output
 
-`whetstone status` returns a health score (0-100) with five dimensions:
+`wh status` returns a health score (0-100) with five dimensions:
 
 | Dimension | What it measures |
 |-----------|-----------------|
@@ -232,7 +232,7 @@ Labels: **Healthy**, **Needs Review**, **Stale**, **No Rules**.
 
 ### Impact metrics
 
-`whetstone status` also includes a `metrics` object for tracking value over time:
+`wh status` also includes a `metrics` object for tracking value over time:
 
 | Metric | What it measures |
 |--------|-----------------|
@@ -248,10 +248,10 @@ Labels: **Healthy**, **Needs Review**, **Stale**, **No Rules**.
 
 ### Metric history
 
-Every `whetstone status` run automatically appends a timestamped snapshot to `whetstone/.metrics.jsonl`. Use `--history` to see trends:
+Every `wh status` run automatically appends a timestamped snapshot to `whetstone/.metrics.jsonl`. Use `--history` to see trends:
 
 ```bash
-whetstone status --history
+wh status --history
 ```
 
 This shows a table of score, label, rules count, and drift over time. Use `--no-snapshot` to skip recording (e.g., in scripts that poll status without wanting to inflate history).
@@ -320,7 +320,7 @@ Action outputs: `freshness_status`, `changed_sources_count`, `recommended_rules_
 
 ## Privacy
 
-Pattern mining from agent transcripts is an **opt-in** workflow exposed by `whetstone detect-patterns`. Transcript scanning is scoped to the current project by default: only JSONL files whose path contains the current project directory name are read.
+Pattern mining from agent transcripts is an **opt-in** workflow exposed by `wh patterns`. Transcript scanning is scoped to the current project by default: only JSONL files whose path contains the current project directory name are read.
 
 This means Whetstone will NOT read conversations from unrelated projects unless you explicitly opt in with `--global-transcripts`.
 
@@ -344,7 +344,7 @@ Whetstone is designed to complement — not replace — your existing toolchain.
 | Tool | What it does | How Whetstone complements it |
 |------|-------------|------------------------------|
 | **ruff / biome / clippy** | Enforces syntax, formatting, and general code quality rules | Whetstone catches dependency-specific practices these linters don't know about. Where a linter rule exists but isn't enabled, Whetstone generates a lint overlay to enable it. |
-| **PR review bots** (reviewdog, danger, etc.) | Automated checks on pull requests | Whetstone generates the rules these bots enforce. Run `whetstone ci-check` in CI for freshness gating alongside your existing checks. |
+| **PR review bots** (reviewdog, danger, etc.) | Automated checks on pull requests | Whetstone generates the rules these bots enforce. Run `wh ci` in CI for freshness gating alongside your existing checks. |
 | **AI code review** (CodeRabbit, Copilot review, etc.) | LLM-powered code review | Whetstone provides deterministic, source-backed rules that don't vary between runs. Use it for the checks you want to enforce consistently, AI review for everything else. |
 | **AGENTS.md / .cursorrules** | Static agent instructions | Whetstone auto-generates and keeps these files current. When dependencies update, your agent instructions update too. |
 | **Semgrep / CodeQL** | Custom static analysis rules | For TypeScript and Rust, Whetstone can generate signal patterns that map to Semgrep rules. For Python, Whetstone's pytest-based checks are simpler to maintain. |
@@ -374,7 +374,7 @@ The extraction prompt works with any documentation content — team style guides
 Nothing breaks. The generated tests, lint configs, and agent context files are standard files in your repo. They run with your existing CI and work with any agent that reads `AGENTS.md` or `.cursorrules`.
 
 **How do I update rules when dependencies change?**
-Run `whetstone status` or `whetstone ci-check` to see which dependencies have drifted. Then run `whetstone doctor --changed-only` to re-extract rules only for what changed.
+Run `wh status` or `wh ci` to see which dependencies have drifted. Then run `wh doctor --changed-only` to re-extract rules only for what changed.
 
 **What's the `next_command` field in every output?**
 Every script suggests what to do next. Agent clients can use this to chain commands automatically without reading documentation.
@@ -385,14 +385,14 @@ Whetstone can be used on itself. The `tests/fixtures/` directory contains sample
 
 ```bash
 # Run doctor against the test fixtures
-whetstone doctor --project-dir tests/fixtures --json
+wh doctor --project-dir tests/fixtures --json
 
 # Check status of existing rules
-whetstone status --project-dir tests/fixtures
+wh status --project-dir tests/fixtures
 
 # Generate test artifacts from the sample rules
-whetstone generate-tests --project-dir tests/fixtures --dry-run
-whetstone generate-context --project-dir tests/fixtures --dry-run
+wh tests --project-dir tests/fixtures --dry-run
+wh context --project-dir tests/fixtures --dry-run
 ```
 
 The test fixtures include rule files for fastapi and react that demonstrate the full rule schema with lifecycle fields, provenance metadata, and golden examples. This serves as a reference for the quality bar Whetstone expects.
@@ -410,7 +410,7 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - Rust-first dependency detection, docs resolution, generation, and status workflows
 
 **Opt-in:**
-- Pattern detection from agent transcripts, git history, and PR comments via `whetstone detect-patterns` (Rust subcommand; not run automatically by `doctor`).
+- Pattern detection from agent transcripts, git history, and PR comments via `wh patterns` (Rust subcommand; not run automatically by `doctor`).
 
 **Planned (not yet implemented):**
 - AI eval runner for ambiguous signals (`check --ai-only`)
@@ -426,7 +426,7 @@ See `planning/roadmap.md` for the full phased delivery plan.
 | Problem | Fix |
 |---------|-----|
 | `No manifests found` | Ensure `pyproject.toml`, `package.json`, or `Cargo.toml` exists in your project directory |
-| `status: not_initialized` | Run `whetstone doctor` first to detect deps and create the `whetstone/` directory |
+| `status: not_initialized` | Run `wh doctor` first to detect deps and create the `whetstone/` directory |
 | Drift check is slow | Use `--no-drift-check` for faster status, or `--changed-only` to limit scope |
 | Rules from stale docs | Check `source_url` in your rule YAML — Whetstone flags when source content changes via `content_hash` |
 

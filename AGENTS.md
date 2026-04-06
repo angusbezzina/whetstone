@@ -10,12 +10,12 @@ Whetstone is an Agent Skill (agentskills.io format) with a Rust CLI binary. The 
 
 | Step | Responsibility | Command |
 |------|---------------|---------|
-| 1. Detect | Binary | `whetstone doctor` (or `whetstone detect-deps`) |
-| 2. Resolve | Binary | `whetstone doctor` (or `whetstone resolve-sources`) |
+| 1. Detect | Binary | `wh doctor` (or `wh init`) |
+| 2. Resolve | Binary | `wh doctor` (or `wh set-sources`) |
 | 3. Extract | Agent | Read docs, propose candidate rules |
 | 4. Approve | Agent + User | Present rules for review, persist decisions |
-| 5. Generate | Binary | `whetstone generate-context` + `whetstone generate-tests` |
-| 6. Monitor | Binary | `whetstone status` / `whetstone ci-check` |
+| 5. Generate | Binary | `wh context` + `wh tests` |
+| 6. Monitor | Binary | `wh status` / `wh ci` |
 
 ### Key Files
 
@@ -172,7 +172,7 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
-   cargo run --quiet --release -- validate-rules
+   cargo run --quiet --release -- validate
    python3 -m pytest -q
    ```
    Never push if the Ruff command fails. It mirrors the CI lint gate and has been a frequent source of avoidable failures.
@@ -182,7 +182,7 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
-   cargo run --quiet --release -- validate-rules
+   cargo run --quiet --release -- validate
    git pull --rebase
    git push
    git status  # MUST show "up to date with origin"

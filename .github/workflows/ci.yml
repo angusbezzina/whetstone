@@ -77,7 +77,7 @@ jobs:
         run: cargo build --release
 
       - name: Validate rule schema fields
-        run: ./target/release/whetstone validate-rules
+        run: ./target/release/whetstone validate
 
       - name: Validate action.yml outputs match ci-check fields
         shell: bash
@@ -96,7 +96,7 @@ jobs:
           )
           echo "Action outputs: $(echo "$ACTION_OUTPUTS" | tr '\n' ' ')"
 
-          CI_JSON=$(./target/release/whetstone ci-check \
+          CI_JSON=$(./target/release/whetstone ci \
             --project-dir tests/fixtures --json --no-drift-check)
 
           for field in $ACTION_OUTPUTS; do

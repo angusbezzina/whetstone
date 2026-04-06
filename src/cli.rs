@@ -13,15 +13,19 @@ use crate::{
     version
 )]
 struct Cli {
+    /// Output machine-readable JSON instead of human-friendly text
+    #[arg(long, global = true)]
+    json: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Detect project dependencies from manifest files
-    #[command(alias = "deps")]
-    DetectDeps {
+    /// Scan project and detect dependencies
+    #[command(name = "init", visible_alias = "deps", alias = "detect-deps")]
+    Init {
         /// Root directory to search for manifest files
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
@@ -48,8 +52,8 @@ enum Commands {
     },
 
     /// Resolve documentation URLs and fetch content for dependencies
-    #[command(alias = "resolve")]
-    ResolveSources {
+    #[command(name = "set-sources", visible_alias = "sources", alias = "resolve-sources")]
+    SetSources {
         /// JSON input file from detect-deps (default: stdin)
         #[arg(long)]
         input: Option<PathBuf>,
@@ -91,7 +95,8 @@ enum Commands {
         workers: Option<usize>,
     },
 
-    /// Single command from zero to working rules
+    /// Bootstrap from zero to working rules
+    #[command(visible_alias = "start")]
     Doctor {
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -112,10 +117,6 @@ enum Commands {
         /// Comma-separated dependency names to target
         #[arg(long)]
         deps: Option<String>,
-
-        /// Output only JSON
-        #[arg(long)]
-        json: bool,
 
         /// Show full source list in report
         #[arg(long)]
@@ -150,15 +151,11 @@ enum Commands {
         full_run: bool,
     },
 
-    /// Compact project health summary
+    /// Project health summary and drift detection
     Status {
         /// Project root directory
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
-
-        /// Output only JSON
-        #[arg(long)]
-        json: bool,
 
         /// Output only score and label
         #[arg(long)]
@@ -186,8 +183,8 @@ enum Commands {
     },
 
     /// Generate agent context files from approved rules
-    #[command(alias = "context")]
-    GenerateContext {
+    #[command(name = "context", alias = "generate-context")]
+    Context {
         /// Project root directory
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
@@ -203,15 +200,11 @@ enum Commands {
         /// Show what would be generated without writing files
         #[arg(long)]
         dry_run: bool,
-
-        /// Output only JSON
-        #[arg(long)]
-        json: bool,
     },
 
     /// Generate test files and linter configs from approved rules
-    #[command(alias = "tests")]
-    GenerateTests {
+    #[command(name = "tests", alias = "generate-tests")]
+    Tests {
         /// Project root directory
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
@@ -223,23 +216,19 @@ enum Commands {
         /// Show what would be generated without writing files
         #[arg(long)]
         dry_run: bool,
-
-        /// Output only JSON
-        #[arg(long)]
-        json: bool,
     },
 
     /// Validate the rule schema and all rule fixtures
-    #[command(alias = "validate")]
-    ValidateRules {
+    #[command(name = "validate", alias = "validate-rules")]
+    Validate {
         /// Project root directory
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
     },
 
     /// Mine style patterns from transcripts, git history, and PR comments
-    #[command(alias = "patterns")]
-    DetectPatterns {
+    #[command(name = "patterns", alias = "detect-patterns")]
+    Patterns {
         /// Project root directory
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
@@ -270,15 +259,11 @@ enum Commands {
     },
 
     /// Lightweight freshness check for CI/CD
-    #[command(alias = "check")]
-    CiCheck {
+    #[command(name = "ci", visible_alias = "check", alias = "ci-check")]
+    Ci {
         /// Project root directory
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
-
-        /// Output JSON only
-        #[arg(long)]
-        json: bool,
 
         /// Output as GitHub PR comment markdown
         #[arg(long)]
@@ -300,9 +285,10 @@ enum Commands {
 
 pub fn run() -> i32 {
     let cli = Cli::parse();
+    let json_mode = cli.json || output::is_piped();
 
     match cli.command {
-        Commands::DetectDeps {
+        Commands::Init {
             project_dir,
             check_drift,
             changed_only,
@@ -357,7 +343,7 @@ pub fn run() -> i32 {
                                     }
                                 }
                                 result["next_command"] = serde_json::json!(
-                                    "Resolve changed sources: whetstone resolve-sources --changed-only"
+                                    "Resolve changed sources: wh set-sources --changed-only"
                                 );
                             } else {
                                 result["dependencies"] = serde_json::json!([]);
@@ -366,7 +352,11 @@ pub fn run() -> i32 {
                             }
                         }
                     }
-                    output::print_json(&result);
+                    if json_mode {
+                        output::print_json(&result);
+                    } else {
+                        println!("{}", detect::format_human_output(&result));
+                    }
                     0
                 }
                 Err(e) => {
@@ -379,7 +369,7 @@ pub fn run() -> i32 {
             }
         }
 
-        Commands::ResolveSources {
+        Commands::SetSources {
             input,
             deps,
             changed_only,
@@ -418,7 +408,11 @@ pub fn run() -> i32 {
                 workers,
             }) {
                 Ok(result) => {
-                    output::print_json(&result);
+                    if json_mode {
+                        output::print_json(&result);
+                    } else {
+                        println!("{}", resolve::format_human_output(&result));
+                    }
                     0
                 }
                 Err(e) => {
@@ -437,7 +431,6 @@ pub fn run() -> i32 {
             skip_dev: _,
             include_dev,
             deps,
-            json,
             verbose,
             changed_only,
             refresh,
@@ -452,7 +445,7 @@ pub fn run() -> i32 {
             match doctor::doctor(doctor::DoctorOptions {
                 project_dir: &project_dir,
                 skip_dev,
-                json_mode: json,
+                json_mode,
                 deps_filter: deps.as_deref(),
                 verbose,
                 changed_only,
@@ -473,7 +466,10 @@ pub fn run() -> i32 {
                             obj.remove(&k);
                         }
                     }
-                    output::print_json(&out);
+                    if json_mode {
+                        output::print_json(&out);
+                    }
+                    // Doctor prints its own human report internally via format_report
                     if result.get("status").and_then(|s| s.as_str()) == Some("error") {
                         1
                     } else {
@@ -494,7 +490,6 @@ pub fn run() -> i32 {
 
         Commands::Status {
             project_dir,
-            json,
             score,
             no_drift_check,
             changed_only,
@@ -510,12 +505,11 @@ pub fn run() -> i32 {
 
             if history {
                 let entries = status::load_metrics_history(&project_dir, 20);
-                if json {
+                if json_mode {
                     output::print_json(&serde_json::json!({"history": entries}));
                 } else {
                     let report = status::format_history(&entries);
-                    eprintln!("{report}");
-                    output::print_json(&serde_json::json!({"history": entries}));
+                    println!("{report}");
                 }
                 return 0;
             }
@@ -535,12 +529,11 @@ pub fn run() -> i32 {
                             .and_then(|v| v.as_str())
                             .unwrap_or("Unknown");
                         println!("{s} {l}");
-                    } else if json {
+                    } else if json_mode {
                         output::print_json(&result);
                     } else {
                         let report = status::format_human_output(&result);
-                        eprintln!("{report}");
-                        output::print_json(&result);
+                        println!("{report}");
                     }
                     0
                 }
@@ -554,12 +547,11 @@ pub fn run() -> i32 {
             }
         }
 
-        Commands::GenerateContext {
+        Commands::Context {
             project_dir,
             formats,
             lang,
             dry_run,
-            json,
         } => {
             match generate_context::generate_context(
                 &project_dir,
@@ -568,7 +560,9 @@ pub fn run() -> i32 {
                 dry_run,
             ) {
                 Ok(result) => {
-                    if !json {
+                    if json_mode {
+                        output::print_json(&result);
+                    } else {
                         let gen = result.get("generated").and_then(|v| v.as_array());
                         if let Some(files) = gen {
                             for f in files {
@@ -583,11 +577,10 @@ pub fn run() -> i32 {
                                 } else {
                                     ""
                                 };
-                                eprintln!("  + {path} ({lines} lines){dry}");
+                                println!("  + {path} ({lines} lines){dry}");
                             }
                         }
                     }
-                    output::print_json(&result);
                     0
                 }
                 Err(e) => {
@@ -600,30 +593,30 @@ pub fn run() -> i32 {
             }
         }
 
-        Commands::GenerateTests {
+        Commands::Tests {
             project_dir,
             lang,
             dry_run,
-            json,
         } => match generate_tests::generate_tests(&project_dir, lang.as_deref(), dry_run) {
             Ok(result) => {
-                if !json {
+                if json_mode {
+                    output::print_json(&result);
+                } else {
                     if let Some(gen) = result.get("generated") {
                         if let Some(tests) = gen.get("tests").and_then(|v| v.as_array()) {
                             for f in tests {
                                 let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                                eprintln!("  + {path}");
+                                println!("  + {path}");
                             }
                         }
                         if let Some(lints) = gen.get("lint_configs").and_then(|v| v.as_array()) {
                             for f in lints {
                                 let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                                eprintln!("  + {path}");
+                                println!("  + {path}");
                             }
                         }
                     }
                 }
-                output::print_json(&result);
                 0
             }
             Err(e) => {
@@ -635,7 +628,7 @@ pub fn run() -> i32 {
             }
         },
 
-        Commands::ValidateRules { project_dir } => {
+        Commands::Validate { project_dir } => {
             let (report, ok) = rules::validate_schema_and_fixtures(&project_dir);
             print!("{report}");
             if ok {
@@ -645,7 +638,7 @@ pub fn run() -> i32 {
             }
         }
 
-        Commands::DetectPatterns {
+        Commands::Patterns {
             project_dir,
             since_last_run,
             since,
@@ -672,7 +665,28 @@ pub fn run() -> i32 {
                 global_transcripts,
             }) {
                 Ok(result) => {
-                    output::print_json(&result);
+                    if json_mode {
+                        output::print_json(&result);
+                    } else {
+                        let count = result
+                            .get("patterns")
+                            .and_then(|v| v.as_array())
+                            .map(|a| a.len())
+                            .unwrap_or(0);
+                        if count == 0 {
+                            println!("No patterns found.");
+                        } else {
+                            println!("Found {count} pattern(s):");
+                            if let Some(patterns) = result.get("patterns").and_then(|v| v.as_array()) {
+                                for p in patterns {
+                                    let desc = p.get("description").and_then(|v| v.as_str()).unwrap_or("?");
+                                    let src = p.get("source").and_then(|v| v.as_str()).unwrap_or("?");
+                                    let occ = p.get("occurrences").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    println!("  [{src}] {desc} ({occ} occurrences)");
+                                }
+                            }
+                        }
+                    }
                     0
                 }
                 Err(e) => {
@@ -685,9 +699,8 @@ pub fn run() -> i32 {
             }
         }
 
-        Commands::CiCheck {
+        Commands::Ci {
             project_dir,
-            json,
             pr_comment,
             fail_on,
             no_drift_check,
@@ -696,7 +709,7 @@ pub fn run() -> i32 {
             Ok(result) => {
                 if pr_comment {
                     println!("{}", ci_check::format_pr_comment(&result));
-                } else if json {
+                } else if json_mode {
                     output::print_json(&result);
                 } else {
                     let s = result
@@ -708,13 +721,12 @@ pub fn run() -> i32 {
                         .and_then(|v| v.as_str())
                         .unwrap_or("Unknown");
                     let score = result.get("score").and_then(|v| v.as_i64()).unwrap_or(0);
-                    eprintln!(
+                    println!(
                         "Whetstone: [{}] {} (score: {}/100)",
                         s.to_uppercase(),
                         label,
                         score
                     );
-                    output::print_json(&result);
                 }
 
                 let freshness = result

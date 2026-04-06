@@ -39,8 +39,8 @@ pub fn generate_context(
         return Ok(serde_json::json!({
             "status": "ok",
             "generated": [],
-            "warnings": ["No approved rules found. Run 'whetstone doctor' to extract and approve rules."],
-            "next_command": "whetstone doctor",
+            "warnings": ["No approved rules found. Run 'wh doctor' to extract and approve rules."],
+            "next_command": "wh doctor",
         }));
     }
 
@@ -110,9 +110,9 @@ pub fn generate_context(
     };
 
     let next_command = if generated.is_empty() {
-        "whetstone doctor"
+        "wh doctor"
     } else {
-        "whetstone generate-tests"
+        "wh tests"
     };
 
     Ok(serde_json::json!({

@@ -5,13 +5,19 @@ edition = "2021"
 description = "Whetstone sharpens the tools that write your code"
 license = "MIT"
 rust-version = "1.75"
+default-run = "whetstone"
 
 [[bin]]
 name = "whetstone"
 path = "src/main.rs"
 
+[[bin]]
+name = "wh"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1"
+indicatif = "0.17"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 rayon = "1"

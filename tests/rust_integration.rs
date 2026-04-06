@@ -374,13 +374,16 @@ fn test_ci_check_parity_snapshot() {
 fn test_help_output() {
     let (stdout, _stderr, success) = run_whetstone(&["--help"], ".");
     assert!(success);
-    assert!(stdout.contains("detect-deps"));
-    assert!(stdout.contains("resolve-sources"));
-    assert!(stdout.contains("doctor"));
-    assert!(stdout.contains("status"));
-    assert!(stdout.contains("generate-context"));
-    assert!(stdout.contains("generate-tests"));
-    assert!(stdout.contains("ci-check"));
+    // New command names
+    assert!(stdout.contains("init"), "help should contain 'init'");
+    assert!(stdout.contains("set-sources"), "help should contain 'set-sources'");
+    assert!(stdout.contains("doctor"), "help should contain 'doctor'");
+    assert!(stdout.contains("status"), "help should contain 'status'");
+    assert!(stdout.contains("context"), "help should contain 'context'");
+    assert!(stdout.contains("tests"), "help should contain 'tests'");
+    assert!(stdout.contains("ci"), "help should contain 'ci'");
+    assert!(stdout.contains("validate"), "help should contain 'validate'");
+    assert!(stdout.contains("patterns"), "help should contain 'patterns'");
 }
 
 #[test]

@@ -4,6 +4,7 @@ pub mod npm;
 pub mod pypi;
 
 use anyhow::Result;
+use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -158,9 +159,20 @@ pub fn resolve_sources(options: ResolveOptions<'_>) -> Result<Value> {
     let effective_workers = workers.unwrap_or_else(|| recommended_workers(total));
     let effective_workers = effective_workers.min(total).max(1);
 
-    if !work_list.is_empty() {
-        eprintln!("Resolving {total} dependencies ({effective_workers} workers)...");
-    }
+    let pb = if crate::output::is_piped() || work_list.is_empty() {
+        ProgressBar::hidden()
+    } else {
+        let pb = ProgressBar::new(total as u64);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} [{bar:30.cyan/blue}] {pos}/{len} {msg}")
+                .unwrap()
+                .progress_chars("\u{2501}\u{257a}\u{2500}"),
+        );
+        pb.set_message("Resolving...");
+        pb
+    };
+    let pb = std::sync::Arc::new(pb);
 
     // Thread-safe state for checkpointing
     let sm_mutex = Arc::new(Mutex::new(sm));
@@ -181,6 +193,7 @@ pub fn resolve_sources(options: ResolveOptions<'_>) -> Result<Value> {
             let completed = Arc::clone(&completed);
             let results = Arc::clone(&results);
             let timings = Arc::clone(&timings);
+            let pb = Arc::clone(&pb);
 
             s.spawn(move |_| {
                 let started = Instant::now();
@@ -264,7 +277,8 @@ pub fn resolve_sources(options: ResolveOptions<'_>) -> Result<Value> {
                         .unwrap_or("ok")
                         .to_string()
                 };
-                eprintln!("  [{}/{}] {name}: {status_str}", *count, total);
+                pb.inc(1);
+                pb.set_message(format!("{name}: {status_str}"));
 
                 timings.lock().unwrap().push(serde_json::json!({
                     "name": name,
@@ -278,6 +292,8 @@ pub fn resolve_sources(options: ResolveOptions<'_>) -> Result<Value> {
             });
         }
     });
+
+    pb.finish_and_clear();
 
     // Collect results
     let all_results = Arc::try_unwrap(results).unwrap().into_inner().unwrap();
@@ -509,6 +525,65 @@ fn recommended_workers(total: usize) -> usize {
     } else {
         12.min(total)
     }
+}
+
+/// Format resolve result as a human-readable summary.
+pub fn format_human_output(result: &Value) -> String {
+    let mut lines = Vec::new();
+
+    let total = result
+        .get("resolved")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let llms_count = result
+        .get("resolved")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|d| {
+                    matches!(
+                        d.get("source_type").and_then(|v| v.as_str()),
+                        Some("llms_full_txt" | "llms_txt")
+                    )
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    let failed = result
+        .get("failed")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+
+    lines.push(format!("Resolved {total} dependencies ({llms_count} with llms.txt)"));
+    if failed > 0 {
+        lines.push(format!("{failed} failed to resolve"));
+    }
+
+    if let Some(resolved) = result.get("resolved").and_then(|v| v.as_array()) {
+        for dep in resolved {
+            let name = dep.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+            let src = dep
+                .get("source_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let icon = match src {
+                "llms_full_txt" => "\u{2713}\u{2713}",
+                "llms_txt" => "\u{2713}",
+                "docs_url_only" => "\u{25cb}",
+                _ => "?",
+            };
+            lines.push(format!("  {icon} {name} ({src})"));
+        }
+    }
+
+    if let Some(next) = result.get("next_command").and_then(|v| v.as_str()) {
+        lines.push(String::new());
+        lines.push(format!("Next: {next}"));
+    }
+
+    lines.join("\n")
 }
 
 pub fn content_hash(content: &str) -> String {

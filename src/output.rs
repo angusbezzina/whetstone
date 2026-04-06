@@ -1,4 +1,13 @@
+use std::io::IsTerminal;
+
 use serde_json::Value;
+
+/// Check whether stdout is a pipe (not an interactive terminal).
+/// When piped, commands auto-switch to JSON output so scripts and agents
+/// can consume the output without passing `--json`.
+pub fn is_piped() -> bool {
+    !std::io::stdout().is_terminal()
+}
 
 /// Print JSON to stdout with a trailing newline (matching Python contract).
 pub fn print_json(value: &Value) {
@@ -36,12 +45,12 @@ impl ReportBuilder {
 
     pub fn top_border(&mut self) {
         self.lines
-            .push(format!("\u{2554}{}\u{2557}", "=".repeat(self.width)));
+            .push(format!("\u{2554}{}\u{2557}", "\u{2550}".repeat(self.width)));
     }
 
     pub fn bottom_border(&mut self) {
         self.lines
-            .push(format!("\u{255a}{}\u{255d}", "=".repeat(self.width)));
+            .push(format!("\u{255a}{}\u{255d}", "\u{2550}".repeat(self.width)));
     }
 
     pub fn line(&mut self, text: &str) {
@@ -58,9 +67,9 @@ impl ReportBuilder {
         let padded = format!("\u{2550}\u{2550} {} ", title);
         let fill = self.width.saturating_sub(padded.len());
         self.lines.push(format!(
-            "\u{2560}{}{}=\u{2563}",
+            "\u{2560}{}{}\u{2550}\u{2563}",
             padded,
-            "=".repeat(fill.saturating_sub(1))
+            "\u{2550}".repeat(fill.saturating_sub(1))
         ));
     }
 

@@ -45,16 +45,24 @@ pub fn compute_status(
         return Ok(serde_json::json!({
             "status": "not_initialized",
             "label": "Not Initialized",
-            "message": "No whetstone directory found. Run 'whetstone doctor' to get started.",
-            "next_command": "whetstone doctor",
+            "message": "No whetstone directory found. Run 'wh doctor' to get started.",
+            "next_command": "wh doctor",
         }));
     }
 
     let (rule_files, load_warnings) = load_rule_files(&rules_dir);
     let mut drift_info = Value::Null;
 
+    let changed_only_deps_data = if changed_only {
+        detect::detect_deps(project_dir, true, &[], &[], false).ok()
+    } else {
+        None
+    };
     let rule_files = if changed_only {
-        drift_info = check_drift(project_dir);
+        drift_info = changed_only_deps_data
+            .as_ref()
+            .map(extract_drift)
+            .unwrap_or(serde_json::json!({"changed": [], "count": 0, "checked": 0}));
         let drifted_names: BTreeSet<String> = drift_info
             .get("changed")
             .and_then(|v| v.as_array())
@@ -87,7 +95,7 @@ pub fn compute_status(
                 "metrics": {"rules_approved": 0, "rules_proposed": 0, "approval_rate": 0, "must_rules": 0, "dependencies_covered": 0, "dependencies_total": 0, "dependency_coverage": 0, "deterministic_coverage": 0, "pending_drift": 0},
                 "recommendations": [{"priority": "low", "action": "info", "message": "No dependency drift detected. Everything is current.", "command": null}],
                 "warnings": [],
-                "next_command": "whetstone status",
+                "next_command": "wh status",
                 "message": "No dependency drift detected.",
             }));
         }
@@ -192,10 +200,22 @@ pub fn compute_status(
     let freshness_label = compute_freshness_label(freshness_days);
     let last_extraction_date = compute_last_extraction_date(&rule_files);
 
+    // Detect deps once — used for both drift and dep count
+    let deps_data = if !changed_only && check_dep_drift {
+        detect::detect_deps(project_dir, true, &[], &[], false).ok()
+    } else if changed_only {
+        // changed_only path already called detect_deps above via check_drift
+        None
+    } else {
+        detect::detect_deps(project_dir, false, &[], &[], false).ok()
+    };
+
     // Drift
     if !changed_only {
         if check_dep_drift {
-            drift_info = check_drift(project_dir);
+            if let Some(ref data) = deps_data {
+                drift_info = extract_drift(data);
+            }
         } else {
             drift_info = serde_json::json!({});
         }
@@ -231,8 +251,12 @@ pub fn compute_status(
         unapproved_count,
     });
 
-    // Project dep count
-    let project_dep_count = count_project_deps(project_dir);
+    // Project dep count — reuse whichever detect result is available
+    let project_dep_count = deps_data
+        .as_ref()
+        .or(changed_only_deps_data.as_ref())
+        .map(count_runtime_deps)
+        .unwrap_or(0);
 
     let metrics = compute_impact_metrics(ImpactInputs {
         total_rules,
@@ -355,27 +379,27 @@ pub fn compute_status(
 
     // Next command
     let next_command = if drifted_count > 0 {
-        "whetstone doctor --changed-only"
+        "wh doctor --changed-only"
     } else if pipeline_state
         .get("failed")
         .and_then(|v| v.as_i64())
         .unwrap_or(0)
         > 0
     {
-        "whetstone resolve-sources --retry-failed"
+        "wh set-sources --retry-failed"
     } else if pipeline_state
         .get("extraction_ready")
         .and_then(|v| v.as_i64())
         .unwrap_or(0)
         > 0
     {
-        "whetstone doctor --ready-only"
+        "wh doctor --ready-only"
     } else if total_rules == 0 {
-        "whetstone doctor"
+        "wh doctor"
     } else if freshness_days.map(|d| d > 30.0).unwrap_or(false) {
-        "whetstone doctor --refresh"
+        "wh doctor --refresh"
     } else {
-        "whetstone generate-context && whetstone generate-tests"
+        "wh context && wh tests"
     };
 
     Ok(serde_json::json!({
@@ -551,7 +575,7 @@ fn build_recommendations(inputs: RecommendationInputs<'_>) -> Vec<Value> {
     let mut recs = Vec::new();
 
     if total_rules == 0 {
-        recs.push(serde_json::json!({"priority": "high", "action": "init", "message": "No rules found. Run 'whetstone doctor' to get started.", "command": "whetstone doctor"}));
+        recs.push(serde_json::json!({"priority": "high", "action": "init", "message": "No rules found. Run 'wh doctor' to get started.", "command": "wh doctor"}));
         return recs;
     }
 
@@ -574,7 +598,7 @@ fn build_recommendations(inputs: RecommendationInputs<'_>) -> Vec<Value> {
         recs.push(serde_json::json!({
             "priority": "high", "action": "refresh",
             "message": format!("{} deps have version drift: {}{suffix}. Re-run doctor to resolve updated sources.", drifted_count, dep_list.join(", ")),
-            "command": "whetstone doctor --changed-only",
+            "command": "wh doctor --changed-only",
         }));
     }
 
@@ -587,7 +611,7 @@ fn build_recommendations(inputs: RecommendationInputs<'_>) -> Vec<Value> {
                 "priority": if days > 60.0 { "high" } else { "medium" },
                 "action": "refresh",
                 "message": format!("Last extraction was {:.0} days ago{date_str}. Re-run doctor to check for documentation changes.", days),
-                "command": "whetstone doctor --refresh",
+                "command": "wh doctor --refresh",
             }));
         }
     }
@@ -689,29 +713,23 @@ fn compute_impact_metrics(inputs: ImpactInputs<'_>) -> Value {
     })
 }
 
-fn check_drift(project_dir: &Path) -> Value {
-    match detect::detect_deps(project_dir, true, &[], &[], false) {
-        Ok(data) => data
-            .get("drift")
-            .cloned()
-            .unwrap_or(serde_json::json!({"changed": [], "count": 0, "checked": 0})),
-        Err(_) => serde_json::json!({"changed": [], "count": 0, "checked": 0}),
-    }
+fn extract_drift(deps_data: &Value) -> Value {
+    deps_data
+        .get("drift")
+        .cloned()
+        .unwrap_or(serde_json::json!({"changed": [], "count": 0, "checked": 0}))
 }
 
-fn count_project_deps(project_dir: &Path) -> usize {
-    match detect::detect_deps(project_dir, false, &[], &[], false) {
-        Ok(data) => data
-            .get("dependencies")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter(|d| !d.get("dev").and_then(|v| v.as_bool()).unwrap_or(false))
-                    .count()
-            })
-            .unwrap_or(0),
-        Err(_) => 0,
-    }
+fn count_runtime_deps(deps_data: &Value) -> usize {
+    deps_data
+        .get("dependencies")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|d| !d.get("dev").and_then(|v| v.as_bool()).unwrap_or(false))
+                .count()
+        })
+        .unwrap_or(0)
 }
 
 pub fn format_human_output(result: &Value) -> String {
@@ -915,7 +933,7 @@ pub fn load_metrics_history(project_dir: &Path, limit: usize) -> Vec<Value> {
 
 pub fn format_history(entries: &[Value]) -> String {
     if entries.is_empty() {
-        return "No metric history found. Run 'whetstone status' to record snapshots.".to_string();
+        return "No metric history found. Run 'wh status' to record snapshots.".to_string();
     }
 
     let mut lines = Vec::new();

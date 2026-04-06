@@ -24,8 +24,8 @@ pub fn generate_tests(
         return Ok(serde_json::json!({
             "status": "ok",
             "generated": {"tests": [], "lint_configs": []},
-            "warnings": ["No approved rules found. Run 'whetstone doctor' to extract and approve rules."],
-            "next_command": "whetstone doctor",
+            "warnings": ["No approved rules found. Run 'wh doctor' to extract and approve rules."],
+            "next_command": "wh doctor",
         }));
     }
 
