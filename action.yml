@@ -56,7 +56,7 @@ runs:
         if [ "$INPUT_CHANGED_ONLY" = "true" ]; then
           CHANGED_FLAG="--changed-only"
         fi
-        OUTPUT=$("$WHETSTONE" ci-check --json --project-dir "$INPUT_DIRECTORY" --fail-on "$INPUT_FAIL_ON" $CHANGED_FLAG 2>/dev/null)
+        OUTPUT=$("$WHETSTONE" ci --json --project-dir "$INPUT_DIRECTORY" --fail-on "$INPUT_FAIL_ON" $CHANGED_FLAG 2>/dev/null)
         EXIT_CODE=$?
 
         # Parse JSON outputs with jq (pre-installed on all GitHub runners)
@@ -81,7 +81,7 @@ runs:
           let comment;
           try {
             comment = execSync(
-              `"${bin}" ci-check --pr-comment --project-dir "${process.env.INPUT_DIRECTORY}" --no-drift-check`,
+              `"${bin}" ci --pr-comment --project-dir "${process.env.INPUT_DIRECTORY}" --no-drift-check`,
               { encoding: "utf8", timeout: 30000 }
             ).trim();
           } catch (e) {

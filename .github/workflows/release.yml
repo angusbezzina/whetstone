@@ -80,17 +80,17 @@ jobs:
       - name: Validate --version
         run: ./whetstone-x86_64-unknown-linux-gnu --version
 
-      - name: Validate detect-deps
+      - name: Validate init
         run: |
-          ./whetstone-x86_64-unknown-linux-gnu detect-deps --project-dir tests/fixtures | jq .
+          ./whetstone-x86_64-unknown-linux-gnu init --project-dir tests/fixtures | jq .
 
       - name: Validate status
         run: |
           ./whetstone-x86_64-unknown-linux-gnu status --json --no-snapshot --project-dir tests/fixtures | jq .
 
-      - name: Validate ci-check
+      - name: Validate ci
         run: |
-          ./whetstone-x86_64-unknown-linux-gnu ci-check --json --project-dir tests/fixtures | jq .
+          ./whetstone-x86_64-unknown-linux-gnu ci --json --project-dir tests/fixtures | jq .
 
   release:
     name: Create Release

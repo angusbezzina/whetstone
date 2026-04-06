@@ -125,28 +125,28 @@ jobs:
           BIN=./target/release/whetstone
 
           # detect-deps
-          $BIN detect-deps --project-dir tests/fixtures | jq -e '.dependencies | length > 0'
+          $BIN init --project-dir tests/fixtures | jq -e '.dependencies | length > 0'
 
           # status --json
           $BIN status --json --no-snapshot --no-drift-check --project-dir tests/fixtures | jq -e '.status and .score != null and .label and .dimensions'
 
           # ci-check --json
-          $BIN ci-check --json --project-dir tests/fixtures | jq -e '.freshness_status and .score != null and .requires_review != null and .changed_sources_count != null and .recommended_rules_count != null'
+          $BIN ci --json --project-dir tests/fixtures | jq -e '.freshness_status and .score != null and .requires_review != null and .changed_sources_count != null and .recommended_rules_count != null'
 
           # ci-check --pr-comment
-          COMMENT=$($BIN ci-check --pr-comment --project-dir tests/fixtures --no-drift-check)
+          COMMENT=$($BIN ci --pr-comment --project-dir tests/fixtures --no-drift-check)
           echo "$COMMENT" | grep -q "<!-- whetstone-ci-check -->"
           echo "$COMMENT" | grep -q "Whetstone Status"
 
           # generate-context --dry-run --json
-          $BIN generate-context --dry-run --json --project-dir tests/fixtures | jq -e '.status == "ok"'
+          $BIN context --dry-run --json --project-dir tests/fixtures | jq -e '.status == "ok"'
 
           # generate-tests --dry-run --json
-          $BIN generate-tests --dry-run --json --project-dir tests/fixtures | jq -e '.status == "ok"'
+          $BIN tests --dry-run --json --project-dir tests/fixtures | jq -e '.status == "ok"'
 
           # --version and --help
           $BIN --version | grep -q "whetstone"
-          $BIN --help | grep -q "ci-check"
+          $BIN --help | grep -q "ci"
 
       - name: Validate installed-binary style usage from outside repo root
         run: |
@@ -158,7 +158,7 @@ jobs:
       - name: Validate ci-check output contract matches action.yml outputs
         run: |
           BIN=./target/release/whetstone
-          OUTPUT=$($BIN ci-check --json --project-dir tests/fixtures)
+          OUTPUT=$($BIN ci --json --project-dir tests/fixtures)
 
           for field in freshness_status changed_sources_count recommended_rules_count requires_review score; do
             echo "$OUTPUT" | jq -e ".$field != null" || { echo "FAIL: missing $field"; exit 1; }
@@ -199,21 +199,21 @@ jobs:
 
           # --version and --help must work from an install dir.
           "${INSTALL_DIR}/whetstone" --version | grep -q "whetstone"
-          "${INSTALL_DIR}/whetstone" --help | grep -q "ci-check"
+          "${INSTALL_DIR}/whetstone" --help | grep -q "ci"
 
           # Core JSON commands against an external project dir.
           "${INSTALL_DIR}/whetstone" status \
             --json --no-snapshot --no-drift-check --project-dir "$FIXTURES" \
             | jq -e '.status == "ok"'
 
-          "${INSTALL_DIR}/whetstone" detect-deps --project-dir "$FIXTURES" \
+          "${INSTALL_DIR}/whetstone" init --project-dir "$FIXTURES" \
             | jq -e '.dependencies | length > 0'
 
-          "${INSTALL_DIR}/whetstone" ci-check \
+          "${INSTALL_DIR}/whetstone" ci \
             --json --no-drift-check --project-dir "$FIXTURES" \
             | jq -e '.freshness_status'
 
-          "${INSTALL_DIR}/whetstone" validate-rules \
+          "${INSTALL_DIR}/whetstone" validate \
             --project-dir "$GITHUB_WORKSPACE" | grep -q "All schema checks passed."
 
   actionlint:
