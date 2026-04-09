@@ -94,6 +94,33 @@ Practices that require some judgment to enforce but can be decomposed into mostl
 
 **Example**: "Error messages SHOULD be actionable" — decomposed into: uses f-string (ast), references a variable (pattern), contains expectation language (pattern), suggests remediation (ai).
 
+## Multi-Section Content
+
+When the resolve pipeline provides multiple sections per dependency (e.g., README + changelog), extract from each section with different priorities:
+
+### Changelog Sections
+- **Highest signal for**: `migration`, `breaking-change` categories
+- Look for: deprecated APIs, removed features, required migration steps, new defaults
+- These are the most valuable rules because they represent recent changes LLMs may not know about
+- Set `source_kind: changelog` on rules derived primarily from changelog evidence
+
+### README / Documentation Sections
+- **Highest signal for**: `convention`, `default` categories
+- Look for: recommended patterns, configuration best practices, common pitfalls
+- Set `source_kind: official_docs` for vendor documentation
+
+### Cross-Referencing
+- A changelog deprecation confirmed by README guidance → high confidence
+- A README convention that contradicts the changelog's direction → investigate, may be stale
+- Multiple sections agreeing on a pattern → stronger evidence
+
+### Source Kind Attribution
+Every proposed rule MUST include a `source_kind` field indicating what kind of source provided the primary evidence. This enables filtering (e.g., "show me only changelog-derived rules") and trust assessment.
+
+Common values: `official_docs`, `changelog`, `migration_guide`, `blog`, `social`, `community`, `team_guide`, `manual`. Any string is valid — use what best describes the source.
+
+---
+
 ## Signal Decomposition Guide
 
 Every rule is a spectrum of signals. The goal is to maximize deterministic coverage before resorting to AI.

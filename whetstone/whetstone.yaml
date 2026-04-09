@@ -1,0 +1,14 @@
+discovery:
+  exclude: [node_modules, target, dist]
+  include: []
+
+generate:
+  formats:
+    - agents.md
+
+sources:
+  custom:
+    - url: https://docs.rs/anyhow/latest/anyhow/
+      name: "Anyhow API Docs"
+      language: rust
+      source_kind: official_docs

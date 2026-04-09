@@ -1,0 +1,198 @@
+source:
+  name: "whetstone:recommended/rust"
+  docs_url: "https://doc.rust-lang.org/book/"
+  version: "1.0.0"
+  content_hash: "sha256:builtin-v1"
+  resolved_at: "2026-04-09T00:00:00Z"
+  registry: manual
+  content_origin: manual
+
+rules:
+  - id: rust.expect-over-unwrap
+    severity: should
+    confidence: high
+    category: convention
+    source_kind: official_docs
+    description: >
+      SHOULD use .expect("reason") instead of .unwrap() in application code.
+      .expect() documents invariants and produces actionable panic messages.
+    source_url: "https://doc.rust-lang.org/book/ch09-03-to-panic-or-not-to-panic.html"
+    risk: >
+      .unwrap() produces opaque panics with no context about why the value
+      was expected to be present.
+    linter_gap: >
+      Clippy has unwrap_used but it is allow-by-default and flags all unwrap
+      usage indiscriminately, including test code.
+    approved: true
+    status: approved
+    proposed_at: "2026-04-09T00:00:00Z"
+    proposed_by: whetstone-builtin
+    signals:
+      - id: bare-unwrap
+        strategy: pattern
+        description: "Detects .unwrap() calls without preceding expect or context"
+        weight: required
+    golden_examples:
+      - code: |
+          let port = env::var("PORT").expect("PORT env var must be set");
+        verdict: pass
+        reason: "Documents the invariant"
+      - code: |
+          let port = env::var("PORT").unwrap();
+        verdict: fail
+        reason: "Bare unwrap with no context"
+      - code: |
+          // In tests, unwrap is acceptable
+          #[test]
+          fn test_parse() {
+              let result = parse("valid").unwrap();
+          }
+        verdict: pass
+        reason: "Test code — unwrap is acceptable in tests"
+
+  - id: rust.timeout-on-http-clients
+    severity: must
+    confidence: high
+    category: default
+    source_kind: official_docs
+    description: >
+      MUST set explicit timeouts on HTTP clients. Most Rust HTTP libraries
+      (reqwest, hyper, ureq) default to no timeout or very long timeouts.
+    source_url: "https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html#method.timeout"
+    risk: >
+      Without a timeout, a single unresponsive upstream hangs the process
+      or exhausts the thread pool.
+    linter_gap: >
+      No linter checks library-specific configuration defaults.
+    approved: true
+    status: approved
+    proposed_at: "2026-04-09T00:00:00Z"
+    proposed_by: whetstone-builtin
+    signals:
+      - id: client-no-timeout
+        strategy: pattern
+        description: "Client::new() or ClientBuilder without .timeout()"
+        weight: required
+    golden_examples:
+      - code: |
+          let client = reqwest::Client::builder()
+              .timeout(Duration::from_secs(30))
+              .build()?;
+        verdict: pass
+        reason: "Explicit timeout configured"
+      - code: |
+          let client = reqwest::Client::new();
+        verdict: fail
+        reason: "Default client has no timeout"
+
+  - id: rust.error-context
+    severity: should
+    confidence: high
+    category: convention
+    source_kind: official_docs
+    description: >
+      SHOULD add context to errors using .context() or .with_context()
+      instead of .map_err(). Preserves the error chain and produces
+      better diagnostics.
+    source_url: "https://docs.rs/anyhow/latest/anyhow/trait.Context.html"
+    risk: >
+      .map_err() discards the original error chain. Stack traces become
+      less useful for debugging.
+    linter_gap: >
+      Clippy does not lint for anyhow/eyre-specific idioms.
+    approved: true
+    status: approved
+    proposed_at: "2026-04-09T00:00:00Z"
+    proposed_by: whetstone-builtin
+    signals:
+      - id: map-err-pattern
+        strategy: pattern
+        description: "Detects .map_err followed by format! or anyhow! instead of .context()"
+        weight: required
+    golden_examples:
+      - code: |
+          let data = fs::read_to_string(path)
+              .context("failed to read config")?;
+        verdict: pass
+        reason: "Uses .context() idiomatically"
+      - code: |
+          let data = fs::read_to_string(path)
+              .map_err(|e| anyhow!("read error: {}", e))?;
+        verdict: fail
+        reason: "map_err+anyhow! instead of .context()"
+
+  - id: rust.prefer-str-params
+    severity: may
+    confidence: high
+    category: convention
+    source_kind: official_docs
+    description: >
+      MAY accept &str instead of String in function parameters when the
+      function doesn't need ownership. Avoids unnecessary allocations at
+      call sites.
+    source_url: "https://doc.rust-lang.org/book/ch04-03-slices.html"
+    risk: >
+      Requiring String forces callers to allocate even when passing
+      string literals or borrowed data.
+    linter_gap: >
+      Clippy does not flag String parameters that could be &str.
+    approved: true
+    status: approved
+    proposed_at: "2026-04-09T00:00:00Z"
+    proposed_by: whetstone-builtin
+    signals:
+      - id: string-param
+        strategy: ast
+        description: "Function parameter typed as String that is only read, never mutated or moved"
+        weight: required
+    golden_examples:
+      - code: |
+          fn greet(name: &str) -> String {
+              format!("Hello, {name}!")
+          }
+        verdict: pass
+        reason: "Borrows instead of taking ownership"
+      - code: |
+          fn greet(name: String) -> String {
+              format!("Hello, {name}!")
+          }
+        verdict: fail
+        reason: "Takes ownership unnecessarily"
+
+  - id: rust.must-use-results
+    severity: should
+    confidence: high
+    category: convention
+    source_kind: official_docs
+    description: >
+      SHOULD not discard Result values. Every Result should be handled
+      via ?, .unwrap(), .expect(), match, or explicit let _ = assignment.
+    source_url: "https://doc.rust-lang.org/reference/attributes/diagnostics.html#the-must_use-attribute"
+    risk: >
+      Discarded Results silently ignore errors, leading to data loss,
+      incomplete operations, or silent corruption.
+    linter_gap: >
+      Rust warns on unused Results by default, but some patterns
+      (e.g., write! in Display impls) suppress the warning.
+    approved: true
+    status: approved
+    proposed_at: "2026-04-09T00:00:00Z"
+    proposed_by: whetstone-builtin
+    signals:
+      - id: discarded-result
+        strategy: pattern
+        description: "Function call returning Result with no binding or ? operator"
+        weight: required
+    golden_examples:
+      - code: |
+          fs::remove_file(path)?;
+        verdict: pass
+        reason: "Result propagated with ?"
+      - code: |
+          let _ = fs::remove_file(path);
+        verdict: pass
+        reason: "Explicitly discarded — deliberate choice"
+      - code: |
+          fs::remove_file(path);
+        verdict: fail
+        reason: "Result silently discarded"

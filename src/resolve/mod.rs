@@ -588,6 +588,81 @@ pub fn format_human_output(result: &Value) -> String {
     lines.join("\n")
 }
 
+/// Resolve custom sources from config. Each custom URL is fetched directly
+/// (llms.txt probe first, then HTML conversion fallback).
+pub fn resolve_custom_sources(
+    custom: &[crate::config::CustomSource],
+    timeout: u64,
+) -> Vec<Value> {
+    custom
+        .iter()
+        .filter_map(|src| {
+            let url = &src.url;
+            let name = src
+                .name
+                .as_deref()
+                .unwrap_or(url.as_str());
+
+            // Try llms.txt first
+            let (content, llms_url, source_type) = probe_llms_txt(url, timeout);
+            if let Some(content) = content {
+                let hash = content_hash(&content);
+                return Some(serde_json::json!({
+                    "name": name,
+                    "language": src.language.as_deref().unwrap_or("any"),
+                    "version": "custom",
+                    "docs_url": url,
+                    "llms_txt_url": llms_url,
+                    "source_type": source_type,
+                    "content": content,
+                    "content_hash": hash,
+                    "source_kind": src.source_kind.as_deref().unwrap_or("custom"),
+                    "freshness": { "confidence": "high" },
+                }));
+            }
+
+            // Try HTML conversion
+            if let Some(text) = http::http_get_html_as_text(url, timeout) {
+                let hash = content_hash(&text);
+                return Some(serde_json::json!({
+                    "name": name,
+                    "language": src.language.as_deref().unwrap_or("any"),
+                    "version": "custom",
+                    "docs_url": url,
+                    "llms_txt_url": null,
+                    "source_type": "custom_url",
+                    "content": text,
+                    "content_hash": hash,
+                    "source_kind": src.source_kind.as_deref().unwrap_or("custom"),
+                    "freshness": { "confidence": "medium" },
+                }));
+            }
+
+            // Try plain text
+            if let Some(text) = http::http_get(url, timeout) {
+                if text.len() > 100 && !text.trim_start().to_lowercase().starts_with("<!doctype") {
+                    let hash = content_hash(&text);
+                    return Some(serde_json::json!({
+                        "name": name,
+                        "language": src.language.as_deref().unwrap_or("any"),
+                        "version": "custom",
+                        "docs_url": url,
+                        "llms_txt_url": null,
+                        "source_type": "custom_url",
+                        "content": text,
+                        "content_hash": hash,
+                        "source_kind": src.source_kind.as_deref().unwrap_or("custom"),
+                        "freshness": { "confidence": "medium" },
+                    }));
+                }
+            }
+
+            eprintln!("  warning: could not fetch custom source: {url}");
+            None
+        })
+        .collect()
+}
+
 pub fn content_hash(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());

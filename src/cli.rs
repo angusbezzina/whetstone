@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::{
     ci_check, detect, detect_patterns, doctor, generate_context, generate_tests, output, resolve,
@@ -280,6 +280,18 @@ enum Commands {
         /// Only check changed deps
         #[arg(long)]
         changed_only: bool,
+    },
+
+    /// Check for dependency drift and re-resolve changed sources
+    #[command(alias = "refresh-rules")]
+    Refresh {
+        /// Project directory
+        #[arg(long, default_value = ".")]
+        project_dir: String,
+
+        /// Exit non-zero if drift exists (for CI)
+        #[arg(long)]
+        check: bool,
     },
 
     /// Update whetstone to the latest release
@@ -756,6 +768,56 @@ pub fn run() -> i32 {
                     "Check project directory and script dependencies",
                 ));
                 1
+            }
+        },
+
+        Commands::Refresh { project_dir, check } => {
+            let project_path = Path::new(&project_dir);
+
+            // Run doctor with changed-only + refresh to detect drift and re-resolve
+            let result = doctor::doctor(doctor::DoctorOptions {
+                project_dir: project_path,
+                skip_dev: true,
+                json_mode,
+                deps_filter: None,
+                verbose: false,
+                changed_only: true,
+                refresh: true,
+                resume: false,
+                max_deps: None,
+                ready_only: false,
+                workers: None,
+                full_run: false,
+            });
+
+            match result {
+                Ok(result) => {
+                    let drift_count = result
+                        .get("scan")
+                        .and_then(|s| s.get("drift_count"))
+                        .or_else(|| result.get("summary").and_then(|s| s.get("drift_count")))
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+
+                    if json_mode {
+                        output::print_json(&result);
+                    } else if drift_count == 0 {
+                        println!("No dependency drift detected. Rules are current.");
+                        println!("Next: wh status");
+                    } else {
+                        println!("{drift_count} dependencies re-resolved.");
+                        println!("Next: review extraction_context and update rules.");
+                    }
+
+                    if check && drift_count > 0 { 1 } else { 0 }
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "wh doctor",
+                    ));
+                    1
+                }
             }
         },
 

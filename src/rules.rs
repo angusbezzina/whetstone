@@ -29,7 +29,7 @@ const VALID_CONFIDENCES: &[&str] = &["high", "medium"];
 // --- Serde deserialization types ---
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RuleFile {
     #[serde(default)]
     pub source: RuleSource,
@@ -38,7 +38,7 @@ pub struct RuleFile {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct RuleSource {
     #[serde(default)]
     pub name: String,
@@ -60,7 +60,7 @@ pub struct RuleSource {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Rule {
     #[serde(default)]
     pub id: String,
@@ -100,7 +100,7 @@ pub struct Rule {
     pub golden_examples: Vec<GoldenExample>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Signal {
     #[serde(default)]
     pub id: Option<String>,
@@ -112,7 +112,7 @@ pub struct Signal {
     pub weight: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct GoldenExample {
     #[serde(default)]
     pub code: String,
@@ -590,6 +590,62 @@ pub fn load_approved_rules(
     }
 
     (approved, warnings)
+}
+
+/// Convert already-loaded rule files to approved rules (for built-in rules).
+pub fn approved_from_loaded(
+    loaded: &[LoadedRuleFile],
+    lang_filter: Option<&str>,
+) -> (Vec<ApprovedRule>, Vec<String>) {
+    let mut approved = Vec::new();
+
+    for lrf in loaded {
+        let language = lrf.language.as_deref().unwrap_or("generic");
+        if let Some(filter) = lang_filter {
+            if language != filter {
+                continue;
+            }
+        }
+        for rule in &lrf.rule_file.rules {
+            if !rule.approved {
+                continue;
+            }
+            approved.push(ApprovedRule {
+                id: rule.id.clone(),
+                severity: rule.severity.clone().unwrap_or_default(),
+                confidence: rule.confidence.clone().unwrap_or_default(),
+                category: rule.category.clone().unwrap_or_default(),
+                description: rule.description.clone().unwrap_or_default(),
+                source_url: rule.source_url.clone().unwrap_or_default(),
+                source_name: lrf.rule_file.source.name.clone(),
+                language: language.to_string(),
+                signals: rule
+                    .signals
+                    .iter()
+                    .map(|s| ApprovedSignal {
+                        id: s.id.clone().unwrap_or_default(),
+                        strategy: s.strategy.clone(),
+                        description: s.description.clone().unwrap_or_default(),
+                        weight: s.weight.clone().unwrap_or_default(),
+                    })
+                    .collect(),
+                golden_examples: rule
+                    .golden_examples
+                    .iter()
+                    .map(|e| ApprovedExample {
+                        code: e.code.clone(),
+                        verdict: e.verdict.clone(),
+                        reason: e.reason.clone().unwrap_or_default(),
+                        language: e.language.clone(),
+                    })
+                    .collect(),
+                risk: rule.risk.clone(),
+                linter_gap: rule.linter_gap.clone(),
+            });
+        }
+    }
+
+    (approved, Vec::new())
 }
 
 #[allow(dead_code)]

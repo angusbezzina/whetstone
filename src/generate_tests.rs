@@ -18,7 +18,19 @@ pub fn generate_tests(
     dry_run: bool,
 ) -> Result<Value> {
     let rules_dir = project_dir.join("whetstone").join("rules");
-    let (approved, warnings) = rules::load_approved_rules(&rules_dir, lang_filter);
+    let (project_approved, warnings) = rules::load_approved_rules(&rules_dir, lang_filter);
+
+    // Merge built-in rules when whetstone config exists (real project, not test fixtures)
+    let whetstone_config_exists = project_dir.join("whetstone").join("whetstone.yaml").exists()
+        || project_dir.join("whetstone.yaml").exists();
+    let approved = if whetstone_config_exists {
+        let config = crate::config::WhetstoneConfig::load(project_dir);
+        let builtin = crate::builtin::load_builtin_rules();
+        let (builtin_approved, _) = rules::approved_from_loaded(&builtin, lang_filter);
+        crate::builtin::merge_approved_rules(&builtin_approved, &project_approved, &config.deny)
+    } else {
+        project_approved
+    };
 
     if approved.is_empty() {
         return Ok(serde_json::json!({

@@ -1,3 +1,4 @@
+mod builtin;
 mod ci_check;
 mod cli;
 mod config;

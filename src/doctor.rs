@@ -426,11 +426,21 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
         "failed": errors.iter().map(|e| serde_json::json!({"name": e.get("name")})).collect::<Vec<_>>(),
     });
 
-    let extraction_sources: Vec<Value> = if ready_only {
+    let mut extraction_sources: Vec<Value> = if ready_only {
         ready_now.iter().map(|s| (*s).clone()).collect()
     } else {
         sources.clone()
     };
+
+    // Resolve custom sources from config
+    let config = crate::config::WhetstoneConfig::load(project_dir);
+    if !config.sources.custom.is_empty() {
+        let custom = crate::resolve::resolve_custom_sources(&config.sources.custom, 15);
+        if !custom.is_empty() {
+            eprintln!("  Resolved {} custom source(s)", custom.len());
+            extraction_sources.extend(custom);
+        }
+    }
 
     let extraction_context = serde_json::json!({
         "sources": extraction_sources,

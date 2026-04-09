@@ -8,7 +8,7 @@ license: MIT
 compatibility: Requires the whetstone binary (Rust), git, and internet access for registry lookups.
 metadata:
   author: whetstone
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Whetstone
@@ -27,12 +27,11 @@ If the user says "wh doctor", "doctor", "scan my project", or "bootstrap rules",
 
 Most users need three steps:
 
-1. **Bootstrap**: `wh doctor` — detects deps, resolves docs
-2. **Extract + Approve**: Read the doctor's `extraction_context`, apply the Extraction Prompt below for each source, present rules for approval using the Rule Card format
+1. **Bootstrap**: `wh doctor` — detects deps, resolves docs + changelogs
+2. **Extract + Approve**: Read the doctor output's `extraction_context` (includes content and sections per dep), apply the Extraction Prompt for each, present rules for approval
 3. **Generate**: `wh context` and `wh tests`
 
-After that, check health with `wh status` anytime.
-When deps update, run `wh doctor --changed-only` to resolve only changed deps, then re-extract.
+Check health with `wh status` anytime. When deps update, run `wh doctor --changed-only` to re-resolve, then re-extract.
 
 ### Repeat Runs
 
@@ -45,84 +44,76 @@ Whetstone caches manifest fingerprints and source resolution results under `whet
 | Resume interrupted run | `wh doctor --resume` | Picks up where last run stopped |
 | Force re-resolve | `wh doctor --refresh` | Ignores cache, re-fetches all docs |
 | Cap resolution count | `wh doctor --max-deps 5` | Resolves top 5 ranked deps only |
-| Extract ready subset | `wh doctor --ready-only` | Hands off only extraction-ready deps |
 | Retry failed deps | `wh set-sources --retry-failed` | Re-resolves only failed deps |
-
-See the **Doctor** workflow below for the detailed version.
 
 ---
 
-## Binary Usage
+## Architecture
 
-The `whetstone` binary is the primary interface. When using Whetstone as an agent skill, the agent invokes the binary directly. All commands accept `--project-dir` (default: `.`).
-
-## Quick Reference
-
-| Command | Purpose | Input | Output |
-|---------|---------|-------|--------|
-| `wh doctor` | **One-command bootstrap** | Project dir | JSON: extraction context |
-| `wh status` | **Project health summary** | Rule YAML files | JSON: health dimensions |
-| `wh ci` | **CI freshness check** | Project dir | JSON: CI outputs |
-| `wh init` | Detect dependencies | Manifest files | JSON: deps list |
-| `wh set-sources` | Resolve docs URLs | JSON from detect-deps | JSON: source content |
-| `wh context` | Generate agent files | Rule YAML files | AGENTS.md, CLAUDE.md, etc. |
-| `wh tests` | Generate tests + lint | Rule YAML files | pytest/vitest/cargo tests |
-
-### Common Flags
-
-All scripts accept `--project-dir` (default: `.`). User-facing scripts support these output modes:
-
-| Flag | Behavior | Available in |
-|------|----------|-------------|
-| `--json` | JSON only to stdout (suppress human output) | doctor, status, ci-check |
-| `--score` | Just the numeric score + label | status |
-| `--pr-comment` | GitHub PR comment markdown | ci-check |
-| `--changed-only` | Only process deps with drift | detect-deps, doctor, ci-check |
-| `--dry-run` | Preview without writing files | generate-context, generate-tests |
-| `--check-drift` | Include drift info in output | detect-deps |
-| `--incremental` | Fingerprint manifests, persist inventory | detect-deps |
-| `--resume` | Skip already-resolved deps | resolve-sources, doctor |
-| `--retry-failed` | Re-resolve only failed deps | resolve-sources |
-| `--force-refresh` | Ignore cache, re-fetch all | resolve-sources |
-| `--refresh` | Force re-resolve even cached deps | doctor |
-| `--ttl N` | Cache TTL in seconds (default: 7 days) | resolve-sources |
-| `--workers N` | Parallel resolution workers (default: auto, capped) | resolve-sources |
-| `--max-deps N` | Cap how many deps to resolve | doctor |
-| `--ready-only` | Only hand off extraction-ready deps | doctor |
-| `--extraction-ready` | List deps in extraction_ready state | status |
-
-All core binary commands output JSON to stdout. Pattern detection is exposed as an opt-in subcommand (`wh patterns`) and is not invoked automatically by `doctor`.
-
-### JSON Output Contract
-
-Every script follows this contract:
-
-| Field | Type | Present | Description |
-|-------|------|---------|-------------|
-| `status` | `"ok"` \| `"error"` | Sometimes | Overall result status |
-| `error` | string | On error | Human-readable error message |
-| `next_command` | string | Always | Suggested next command to run |
-| `warnings` | string[] | Sometimes | Non-fatal issues encountered |
-
-**Success responses** include domain-specific data (e.g., `dependencies`, `sources`, `generated`).
-**Error responses** always include `error` and `next_command` — never a traceback to stdout.
-
-Progress messages go to stderr so stdout stays clean for JSON piping.
-
-### Script vs Agent Responsibilities
+The binary does all deterministic work. The agent does all judgment. The user has final say.
 
 | Task | Handled by | Why |
 |------|-----------|-----|
 | Dependency detection | **Binary** | Deterministic manifest parsing |
-| Source resolution | **Binary** | Deterministic registry API calls |
+| Source resolution + content fetching | **Binary** | HTTP, caching, parallel fetching |
+| Changelog discovery + recency filtering | **Binary** | GitHub API, date parsing |
 | Rule extraction | **Agent** | Requires reading and understanding documentation |
 | Rule approval | **Agent + User** | Requires judgment and user consent |
-| Test generation | **Binary** | Deterministic code generation from approved YAML |
-| Agent context generation | **Binary** | Deterministic markdown generation from approved YAML |
-| Health monitoring | **Binary** | Deterministic metric computation |
-| CI gating | **Binary** | Deterministic pass/fail decision |
+| Test + lint config generation | **Binary** | Deterministic codegen from YAML |
+| Agent context generation | **Binary** | Deterministic markdown from YAML |
+| Health monitoring + CI gating | **Binary** | Deterministic scoring |
 
-The binary handles all deterministic work. The agent brings judgment to rule extraction and approval.
+## Quick Reference
+
+| Command | Purpose | Output |
+|---------|---------|--------|
+| `wh doctor` | **One-command bootstrap** | JSON: deps, sources, content, sections, recommendations |
+| `wh status` | **Health summary** | JSON: score 0-100, dimensions, recommendations |
+| `wh ci` | **CI freshness check** | Exit 0/1, optional PR comment |
+| `wh init` | Detect dependencies | JSON: deps list with counts |
+| `wh set-sources` | Resolve docs URLs | JSON: source content + cache stats |
+| `wh validate` | Check rule YAML schema | Pass/fail per rule |
+| `wh context` | Generate agent context files | AGENTS.md, CLAUDE.md, .cursorrules, etc. |
+| `wh tests` | Generate test files + lint configs | pytest, vitest, cargo test files |
+| `wh patterns` | Mine style patterns | JSON: patterns from transcripts/git/PRs |
+
+All commands support `--json` (auto-enabled when piped) and `--project-dir`.
+
+---
+
+## Content Model
+
+The resolve pipeline fetches documentation through multiple tiers:
+
+| Tier | Source | Confidence | What it provides |
+|------|--------|-----------|-----------------|
+| 1 | `llms.txt` / `llms-full.txt` | High | Structured, purpose-built for LLMs |
+| 2 | Registry README (npm readme, PyPI description, crates.io /readme) | Medium | Package overview, usage patterns |
+| 3 | HTML docs → text conversion (scraper extracts main content) | Medium | Full documentation pages |
+| 4 | GitHub CHANGELOG.md (recency-filtered to last 18 months) | Medium | Breaking changes, deprecations, new APIs |
+
+Each dependency in the doctor output has:
+- `content` — the primary (best-tier) content
+- `source_type` — which tier provided it (llms_txt, readme, html_converted, changelog)
+- `sections` — array of all available content, labeled by type:
+
+```json
+{
+  "name": "clap",
+  "source_type": "readme",
+  "content": "# clap\n\nA full-featured...",
+  "sections": [
+    {"type": "readme", "content": "...", "url": "https://crates.io/api/v1/crates/clap/4.6.0/readme"},
+    {"type": "changelog", "content": "## [4.6.0] - 2026-03-12\n...", "url": "https://raw.githubusercontent.com/...", "versions_covered": "4.5.21–4.6.0"}
+  ]
+}
+```
+
+**When extracting rules, examine each section separately:**
+- **Changelog** sections → highest signal for `migration` and `breaking-change` rules
+- **README** sections → highest signal for `convention` and `default` rules
+- **llms.txt** → comprehensive, use for all categories
+- Cross-reference sections for stronger confidence
 
 ---
 
@@ -130,359 +121,247 @@ The binary handles all deterministic work. The agent brings judgment to rule ext
 
 ### Doctor (Recommended First Run)
 
-Run when the user says "wh doctor", "doctor", "scan my project", "bootstrap rules", or when they want the fastest path from zero to working rules. This is the **recommended** entry point — it chains detect → resolve → extract → generate in one flow.
+Run when the user says "wh doctor", "doctor", "scan my project", "bootstrap rules". This is the fastest path from zero to working rules.
 
-**Step 1: Run the doctor orchestrator**
+**Step 1: Run the doctor**
 
 ```bash
 wh doctor
 ```
 
-This runs dependency detection and source resolution automatically. Progress is printed to stderr; the JSON result (including fetched source content) is printed to stdout.
-
-Review the summary output. It will show:
+Progress goes to stderr; JSON result to stdout. Review the summary:
 - Dependencies found (runtime + dev, per language)
-- Sources resolved (how many deps have docs, how many have llms.txt)
-- Warnings (any deps whose docs couldn't be resolved)
+- Sources resolved (how many have content, how many have changelogs)
+- Recommendations (what to extract next)
 
-**Step 2: Extract rules from sources**
+**Step 2: Extract rules from content**
 
-Read the `extraction_context` from the doctor output. For each source in `extraction_context.sources`, apply the **Extraction Prompt** below.
+Read `extraction_context.sources` from the doctor output. For each dependency that has content:
 
-Propose rules following the rule YAML schema. Maximum 5 rules per dependency. **Prioritize rules about recent changes (last 18 months) that LLMs were likely not trained on.**
+1. Read the `sections` array — examine README and changelog separately
+2. Apply the **Extraction Prompt** (see below)
+3. For changelog content: focus on `migration` and `breaking-change` categories
+4. For README content: focus on `convention` and `default` categories
+5. Maximum 5 rules per dependency
+6. **Prioritize rules about recent changes (last 18 months)**
+
+Every proposed rule MUST include:
+- `source_kind` — what kind of source backs it (`official_docs`, `changelog`, `migration_guide`, `blog`, etc.)
+- At least one deterministic signal (`ast` or `pattern`)
+- A specific `source_url` pointing to the exact documentation
 
 **Step 3: Interactive approval**
 
-Present proposed rules for approval. For each rule, show:
-- **Rule ID** and **Description** (with RFC 2119 severity)
-- **Category** and **Confidence**
-- **Source URL** with the relevant quote from documentation
-- **Signals** — how it will be checked (ast/pattern/lint_proxy/ai)
-- **Why this matters** — what goes wrong if this rule is ignored
-- **Why linters miss it** — brief note on why ruff/biome/clippy don't catch this
-- **Golden examples** — pass and fail code
-
-Batch option: offer to "approve all high-confidence rules" first, then review medium-confidence individually.
-
-For each rule, the user can: **Approve**, **Edit**, **Deny**, or **Skip**.
-
-Save approved rules to `whetstone/rules/{language}/{dependency}.yaml`.
-
-**Step 4: Generate outputs**
-
-```bash
-wh context
-wh tests
-```
-
-**Step 5: Create config (if first run)**
-
-If `whetstone/whetstone.yaml` doesn't exist, create it from `assets/whetstone.yaml.template` with the detected languages, confirmed agents list, and trigger mode (default: manual).
-
-**Step 6: Summary**
-
-Present a final summary:
-- Rules: N approved across M dependencies
-- Tests: paths to generated test files
-- Agent context: which files were generated
-
-**Next:** "Run your tests to verify: `pytest whetstone/evals/python/`" (or `npx vitest` / `cargo test` for the relevant language). Then run `wh status` to confirm health.
-
----
-
-### Init (First Run — Step-by-Step)
-
-Run when the user says "whetstone init", "extract rules", or wants more control than the Doctor workflow provides. The Doctor workflow above is recommended for most users — use Init when you need to customize each step.
-
-**Step 1: Detect dependencies**
-
-```bash
-wh init
-```
-
-Present the findings: "Found N dependencies across [languages]." List the dependencies with name, version, and language. Ask the user which dependencies to extract rules for. Default: all non-dev dependencies.
-
-**Step 2: Resolve documentation sources**
-
-```bash
-wh init | wh set-sources --deps dep1,dep2,dep3
-```
-
-Pass only the user-confirmed dependencies. Present: "Resolved docs for N/M deps, K have llms.txt." For any deps where resolution failed, note why and ask if the user wants to provide a manual docs URL.
-
-**Step 3: Detect style patterns (optional)**
-
-Skip this step unless the user explicitly wants pattern mining. When requested:
-
-```bash
-wh patterns --sources transcript,git,pr
-```
-
-Transcript mining is project-scoped by default; pass `--global-transcripts` only with explicit user consent.
-
-**Step 4: Extract rules**
-
-Read the source content from Step 2. For each dependency, apply the extraction prompt below. When filling in the prompt template, use the `latest_version` and `latest_release_date` fields from the resolve-sources output. Set `{today}` to the current date. Propose rules following the rule YAML schema. Maximum 5 rules per dependency. **Prioritize rules about recent changes (last 18 months) that LLMs were likely not trained on.**
-
-**Step 5: Interactive approval**
-
-Present each proposed rule to the user with:
-- Rule ID and description (using RFC 2119 severity: MUST, SHOULD, MAY)
-- Category and confidence level
-- Source URL
-- Signals (how it will be checked)
-- Golden examples (pass and fail code)
-
-For each rule, the user can:
-- **Approve** — save as-is
-- **Edit** — modify description, severity, signals, or examples, then save
-- **Deny** — discard (optionally note why for future reference)
-- **Skip** — defer decision to later
-
-Save approved rules to `whetstone/rules/{language}/{dependency}.yaml`.
-
-**Step 6: Generate outputs**
-
-```bash
-wh context
-wh tests
-```
-
-Present summary: "Generated N rules across M deps. Tests: whetstone/evals/. Agent context: CLAUDE.md, AGENTS.md."
-
-**Step 7: Create config (if first run)**
-
-If `whetstone/whetstone.yaml` doesn't exist, create it from `assets/whetstone.yaml.template` with the detected languages, confirmed agents list, and trigger mode (default: manual).
-
-**Next:** "Run your tests to verify: `pytest whetstone/evals/python/`" (or the equivalent for your language). Then run `wh status` to confirm health.
-
-### Update (Subsequent Runs)
-
-Run when the user says "update whetstone", "refresh rules", "check for rule updates".
-
-By default, update only processes dependencies that have changed (diff-only mode). Use this unless the user explicitly requests a full re-extraction.
-
-**Step 1: Check for drift (changed deps only)**
-
-```bash
-wh init --changed-only
-```
-
-This outputs only dependencies whose versions have drifted since last extraction. If no drift is found, inform the user and suggest running `wh status` instead. For a full check, use `--check-drift` (shows drift info but still outputs all deps).
-
-**Step 2: Re-resolve changed sources only**
-
-```bash
-wh init --changed-only | wh set-sources --changed-only
-```
-
-Only re-fetches documentation for dependencies with version drift AND content changes. This is fast and avoids unnecessary network calls.
-
-**Step 3: Check for new patterns (optional)**
-
-Skip unless requested. To mine new style signals since the last run:
-
-```bash
-wh patterns --since-last-run --quiet
-```
-
-**Step 4: Extract and diff**
-
-For changed dependencies, re-run extraction. Compare proposed rules against existing rules. Present only the changes: new rules, modified rules, rules to remove.
-
-**Step 5: Approve changes, regenerate**
-
-Same approval flow as init, but only for changes. After approval, regenerate:
-
-```bash
-wh context
-wh tests
-```
-
-**Next:** "Run updated tests to verify: `pytest whetstone/evals/python/`". Then run `wh status` to confirm the drift is resolved.
-
-### Status
-
-Run when the user says "wh status", "check health", "how are my rules", or similar.
-
-```bash
-wh status
-```
-
-This outputs a compact health summary with five dimensions:
-- **Freshness** — days since last rule extraction
-- **Rules count** — total approved rules
-- **High confidence ratio** — % of rules backed directly by documentation
-- **Deterministic coverage** — % of signals that don't need AI (ast/pattern/lint_proxy)
-- **Pending updates** — deps with version drift since last extraction
-
-The output includes a status label (**Healthy**, **Needs Review**, **Stale**, **No Rules**) and specific recommendations with exact commands to run.
-
-Present the human-readable summary to the user. If they want detail, offer `--json` for the full breakdown or `--score` for just the numeric score.
-
-**Next:** Follow the `next_command` from the status JSON output — it suggests the most relevant action (e.g., `wh doctor` to re-resolve sources when drift is detected, or `wh doctor` for initial setup).
-
-### Generate Only
-
-Run when the user says "regenerate tests", "regenerate agent context", or when rules have been manually edited.
-
-```bash
-wh context
-wh tests
-```
-
-**Next:** "Run tests to verify the regenerated outputs." Then run `wh status` to check overall health.
-
----
-
-## Extraction Prompt
-
-When extracting rules from dependency documentation, follow the full extraction prompt at [references/extraction-prompt.md](references/extraction-prompt.md). Key principles:
-
-- **Recency priority**: Focus on changes from the last 18 months that LLMs were likely not trained on
-- **Hard filters**: 90%+ confidence, at least one deterministic signal, max 5 per dep, must cite specific doc URL, must not duplicate ruff/biome/clippy
-- **Categories**: `migration`, `default`, `convention`, `breaking-change`, `semantic`
-- **Signals**: Each rule needs `ast`, `pattern`, or `lint_proxy` signals. `ai` is supplement only.
-- **Golden examples**: 3-5 per rule (mix of pass/fail), used for test generation
-
-Output valid YAML following the [rule schema](references/rule-schema.yaml). See [signal strategies](references/signal-strategies.md) for decomposition guidance.
-
----
-
-## Interactive Approval
-
-Present rules using a compact **rule card** format. Goal: approve/reject in under 10 seconds per rule.
+Present proposed rules using the **Rule Card** format:
 
 ```
-[MUST] fastapi.async-routes — high confidence — convention — candidate
-  Route handlers MUST use async def.
-  Source: https://fastapi.tiangolo.com/async/
-  Risk:   Blocks the event loop under concurrent load.
-  Signals: ast (required) — 1/1 deterministic
+[MUST] reqwest.set-timeout — high confidence — default
+  Source kind: official_docs
+  MUST set an explicit timeout on reqwest clients. Default is no timeout.
+  Source: https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html#method.timeout
+  Risk:   Hangs indefinitely on unresponsive servers.
+  Signals: pattern (required) — 1/1 deterministic
   > Approve / Edit / Deny / Skip?
 ```
 
 **Batch option**: Offer "Approve all N high-confidence rules for {dep}?" before individual review.
 
-**Actions**: Approve (write to YAML), Edit (modify then approve), Deny (prevents re-proposal), Skip (defer).
+For each rule, the user can:
+- **Approve** — write to `whetstone/rules/{language}/{dependency}.yaml` with `approved: true`
+- **Edit** — modify severity, signals, or examples, then approve
+- **Deny** — skip (optionally note why)
+- **Skip** — defer to later
 
-**Lifecycle**: `candidate` → `approved` | `denied` | `deprecated`. Denied rules stay in YAML to prevent re-proposal.
+**Step 4: Validate and generate**
 
-Save approved rules to `whetstone/rules/{language}/{dependency}.yaml`.
+```bash
+wh validate        # verify rule YAML schema
+wh context         # generate agent context files
+wh tests           # generate test files + lint configs
+```
+
+**Step 5: Confirm health**
+
+```bash
+wh status
+```
+
+Present the score and next steps. A healthy project scores 80+.
+
+---
+
+### Update (Subsequent Runs)
+
+Run when the user says "update whetstone", "refresh rules", "check for rule updates".
+
+**Step 1: Check for drift**
+
+```bash
+wh doctor --changed-only
+```
+
+This re-resolves only dependencies whose versions have changed. If nothing changed, inform the user — rules are current.
+
+**Step 2: Extract from changes**
+
+For each dep with new content or changelog entries:
+- Focus extraction on **what changed** (new changelog sections, version bumps)
+- Propose: new rules, modified rules, rules to deprecate
+- Present only the changes, not the full rule set
+
+**Step 3: Approve and regenerate**
+
+Same approval flow, then:
+
+```bash
+wh validate
+wh context
+wh tests
+wh status
+```
+
+---
+
+### Status
+
+```bash
+wh status
+```
+
+Five dimensions:
+- **Freshness** — days since last extraction
+- **Rules count** — total approved rules
+- **High confidence ratio** — % backed by high-quality sources
+- **Deterministic coverage** — % of signals that don't need AI
+- **Pending updates** — deps with version drift
+
+Labels: **Healthy** (80+), **Needs Review** (50-80), **Stale** (<50), **No Rules**.
+
+---
+
+## Extraction Prompt
+
+When extracting rules, follow [references/extraction-prompt.md](references/extraction-prompt.md). Key principles:
+
+- **Recency priority**: Changes from the last 18 months rank highest
+- **Hard filters**: 90%+ confidence, ≥1 deterministic signal, max 5 per dep, cite specific doc URL, don't duplicate ruff/biome/clippy
+- **Categories**: `migration`, `default`, `convention`, `breaking-change`, `semantic`
+- **Signals**: Every rule needs `ast`, `pattern`, or `lint_proxy`. `ai` is supplement only.
+- **Golden examples**: 3-5 per rule (mix of pass/fail)
+- **Source kind**: Every rule MUST include `source_kind` (e.g., `official_docs`, `changelog`, `blog`, `community`)
+
+**Using sections for extraction:**
+
+When a dependency has multiple sections (e.g., README + changelog):
+1. Read changelog first — look for deprecations, breaking changes, new patterns
+2. Read README — look for conventions, defaults, common misconfigurations
+3. Cross-reference: a changelog deprecation confirmed by README guidance is high confidence
+4. Set `source_kind` based on which section provided primary evidence
+
+Output valid YAML following the [rule schema](references/rule-schema.yaml).
+
+---
+
+## Rule YAML Format
+
+```yaml
+source:
+  name: reqwest
+  docs_url: "https://docs.rs/reqwest"
+  version: "0.12"
+  content_hash: "sha256:abc123..."
+  resolved_at: "2026-04-05T00:00:00Z"
+  registry: crates_io
+  content_origin: readme          # How binary fetched it (auto-set)
+
+rules:
+  - id: reqwest.set-timeout
+    severity: must                 # must | should | may
+    confidence: high               # high | medium
+    category: default              # migration | default | convention | breaking-change | semantic
+    source_kind: official_docs     # What kind of source (agent/user sets this)
+    description: >
+      MUST set an explicit timeout on reqwest clients.
+    source_url: "https://docs.rs/reqwest/latest/..."
+    risk: "Hangs indefinitely on unresponsive servers"
+    linter_gap: "Clippy doesn't check library defaults"
+    approved: true
+    status: approved
+    proposed_at: "2026-04-05T00:00:00Z"
+    proposed_by: whetstone-extraction
+    signals:
+      - id: client-without-timeout
+        strategy: pattern
+        description: "Client::new() or ClientBuilder without .timeout()"
+        weight: required
+    golden_examples:
+      - code: |
+          let client = Client::builder()
+              .timeout(Duration::from_secs(15))
+              .build()?;
+        verdict: pass
+        reason: "Explicit timeout set"
+      - code: |
+          let client = Client::new();
+        verdict: fail
+        reason: "No timeout — infinite by default"
+```
+
+**`source_kind` values** (open-ended — use any string for custom filtering):
+
+| Value | Use for |
+|-------|---------|
+| `official_docs` | Vendor documentation, API reference |
+| `changelog` | Release notes, CHANGELOG.md entries |
+| `migration_guide` | Upgrade/migration documentation |
+| `blog` | Blog posts, articles |
+| `social` | Twitter/X threads, community posts |
+| `community` | Wikis, awesome-lists, StackOverflow |
+| `team_guide` | Internal team conventions |
+| `manual` | Manually authored by user |
 
 ---
 
 ## Configuration
 
-Whetstone reads `whetstone/whetstone.yaml` for project settings:
+`whetstone/whetstone.yaml`:
 
 ```yaml
-languages:
-  - python
-  - typescript
+discovery:
+  exclude: [node_modules, target, dist]
+  include: []
 
-trigger:
-  mode: manual          # manual | session | post-merge | scheduled
-  auto_detect_patterns: true
-
-agents:
-  - claude.md
-  - agents.md
-  - cursorrules
-  - copilot-instructions.md
-  - windsurfrules
-  - codex.md
-
-# Source overrides (optional)
-sources:
-  custom:
-    - url: https://team-style-guide.example.com
-      name: Team Style Guide
+generate:
+  formats:
+    - agents.md
+    - claude.md
+    - .cursorrules
 ```
 
 ---
 
-## File Structure (User's Project)
-
-After running Whetstone, the user's project will contain:
+## File Structure
 
 ```
 whetstone/
   whetstone.yaml              # Config
   rules/
-    python/                   # Rule YAML files per language
+    python/                   # Rule YAML per language
     typescript/
     rust/
-    patterns/                 # Rules from detect-patterns
   evals/
     python/                   # pytest files
     typescript/               # vitest files
     rust/                     # cargo test files
   lint/
-    ruff.whetstone.toml       # Ruff overlay
-    biome.whetstone.json      # Biome overlay
-    clippy.whetstone.toml     # Clippy overlay
-  .state/                     # Pipeline cache (gitignored)
-    manifests.json            # Manifest fingerprints
-    inventory.json            # Dependency lifecycle state
-    source-cache.json         # Source resolution cache
-    refresh-log.json          # Cache invalidation log
-  .last-run                   # Timestamp for --since-last-run
-
-# Agent context files at project root
-CLAUDE.md
-AGENTS.md
-.cursorrules
-.github/copilot-instructions.md
-.windsurfrules
-codex.md
+    ruff.whetstone.toml
+    biome.whetstone.json
+  context/
+    AGENTS.md                 # Generated agent context
+  .state/                     # Cache (gitignored)
 ```
 
-For detailed reference material, see:
-- [Rule YAML schema](references/rule-schema.yaml)
-- [Signal strategies guide](references/signal-strategies.md)
-- [Extraction prompt details](references/extraction-prompt.md)
-
----
-
-## Quickstart
-
-### Local
-
-```bash
-# Install (pick one)
-curl -fsSL https://raw.githubusercontent.com/angusbezzina/whetstone/main/install.sh | bash
-# OR: cargo install --git https://github.com/angusbezzina/whetstone.git
-
-# Bootstrap rules
-wh doctor          # detect deps, resolve docs, prepare extraction context
-# Agent extracts rules, user approves/denies each
-wh context  # generate CLAUDE.md, AGENTS.md, etc.
-wh tests    # generate test files
-
-# Verify
-pytest whetstone/evals/python/           # Python
-npx vitest run whetstone/evals/typescript/  # TypeScript
-cargo test --test whetstone              # Rust
-```
-
-### CI
-
-```yaml
-# .github/workflows/whetstone.yml
-name: Whetstone Check
-on:
-  pull_request:
-    branches: [main]
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: angusbezzina/whetstone@main
-        with:
-          fail-on: stale
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-```
+For reference material:
+- [Rule schema](references/rule-schema.yaml)
+- [Signal strategies](references/signal-strategies.md)
+- [Extraction prompt](references/extraction-prompt.md)
