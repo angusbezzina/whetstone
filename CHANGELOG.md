@@ -4,6 +4,42 @@ All notable changes to Whetstone are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-04-12
+
+### Added
+- **Multi-tier content fetching** — 4-tier resolve pipeline: llms.txt →
+  registry README (npm/PyPI/crates.io) → HTML docs conversion → GitHub
+  changelog. All dependencies now get content (previously null for non-llms.txt).
+- **Changelog discovery** — probes GitHub repos for CHANGELOG.md, filters
+  to last 18 months, includes as a separate `sections` entry alongside README.
+- **Sections array** — resolver output now includes labeled sections (readme,
+  changelog, llms_txt) for per-section extraction.
+- **Custom source support** — `sources.custom` in `whetstone.yaml` lets
+  users add arbitrary URLs (blogs, team guides, any public page).
+- **Built-in rules** — 5 Rust rules ship embedded in the binary
+  (`whetstone:recommended`). Project rules override by ID. Deny list support.
+- **`match` field on signals** — concrete regex patterns that enable real
+  test generation instead of TODO stubs.
+- **Real regex test generation** — generated tests scan source files with
+  actual regex checks, reporting violations with file path and line number.
+- **`wh refresh` command** — detect drift and re-resolve changed deps.
+  `--check` flag for CI exits non-zero on drift.
+- **Source attribution** — `content_origin` (how binary fetched it) and
+  `source_kind` (official_docs, changelog, blog, social, etc.) fields.
+- **`wh validate` checks real rules** — now validates `whetstone/rules/`
+  in addition to test fixtures.
+
+### Changed
+- **SKILL.md rewritten** — teaches agents the sections/changelog/source_kind
+  model, match patterns for signals, and the full extraction workflow.
+- **README.md** — comparison table (vs Semgrep, Continue.dev, CodeRabbit),
+  worked example showing full extraction flow, updated capabilities section.
+- **Extraction prompt** — multi-section content guidance, source_kind
+  attribution requirement, match pattern documentation.
+
+### Fixed
+- `wh validate` now checks `whetstone/rules/` (was only checking test fixtures).
+
 ## [0.1.2] - 2026-04-05
 
 ### Added
