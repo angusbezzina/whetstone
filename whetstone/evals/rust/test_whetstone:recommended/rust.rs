@@ -1,5 +1,5 @@
-//! Whetstone eval: anyhow.expect-over-unwrap
-//! SHOULD use .expect("reason") instead of .unwrap() in application code using anyhow. When an operation is expected to succeed, .expect() documents the invariant and produces actionable panic messages.
+//! Whetstone eval: rust.must-use-results
+//! SHOULD not discard Result values. Every Result should be handled via ?, .unwrap(), .expect(), match, or explicit let _ = assignment.
 
 use std::fs;
 use std::path::Path;
@@ -23,19 +23,15 @@ fn find_rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
 }
 
 #[test]
-fn test_anyhow_expect_over_unwrap_signal_0() {
-    // Signal: Detects .unwrap() calls in source files (pattern)
+fn test_rust_must_use_results_signal_0() {
+    // Signal: Function call returning Result with no binding or ? operator (pattern)
     let files = find_rust_files(Path::new("src"));
     let mut violations = Vec::new();
-    let pattern = regex::Regex::new(r"\.unwrap\s*\(\)").unwrap();
     for file in &files {
         if let Ok(content) = fs::read_to_string(file) {
-            for (line_num, line) in content.lines().enumerate() {
-                if pattern.is_match(line) {
-                    violations.push(format!("{}:{}: {}", file.display(), line_num + 1, line.trim()));
-                }
-            }
+            // TODO: implement check for: Function call returning Result with no binding or ? operator
+            let _ = content;
         }
     }
-    assert!(violations.is_empty(), "{} violations for anyhow.expect-over-unwrap:\n{}", violations.len(), violations.join("\n"));
+    assert!(violations.is_empty(), "{} violations for rust.must-use-results:\n{}", violations.len(), violations.join("\n"));
 }

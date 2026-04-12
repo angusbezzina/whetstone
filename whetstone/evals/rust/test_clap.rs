@@ -27,11 +27,15 @@ fn test_clap_derive_over_builder_signal_0() {
     // Signal: Detects Command::new() or App::new() (legacy) in clap argument definitions (pattern)
     let files = find_rust_files(Path::new("src"));
     let mut violations = Vec::new();
+    let pattern = regex::Regex::new(r"(Command|App)::new\s*\(").unwrap();
     for file in &files {
         if let Ok(content) = fs::read_to_string(file) {
-            // TODO: implement check for: Detects Command::new() or App::new() (legacy) in clap argument definitions
-            let _ = content;
+            for (line_num, line) in content.lines().enumerate() {
+                if pattern.is_match(line) {
+                    violations.push(format!("{}:{}: {}", file.display(), line_num + 1, line.trim()));
+                }
+            }
         }
     }
-    assert!(violations.is_empty(), "{} violations for clap.derive-over-builder", violations.len());
+    assert!(violations.is_empty(), "{} violations for clap.derive-over-builder:\n{}", violations.len(), violations.join("\n"));
 }

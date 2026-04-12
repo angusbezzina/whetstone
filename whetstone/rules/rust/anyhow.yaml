@@ -34,6 +34,7 @@ rules:
       - id: map-err-anyhow-bang
         strategy: pattern
         description: "Detects .map_err followed by anyhow! macro call"
+        match: '\.map_err\s*\(.*anyhow!'
         weight: required
 
     golden_examples:
@@ -80,6 +81,7 @@ rules:
       - id: unwrap-call
         strategy: pattern
         description: "Detects .unwrap() calls in source files"
+        match: '\.unwrap\s*\(\)'
         weight: required
 
     golden_examples:

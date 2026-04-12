@@ -35,6 +35,7 @@ rules:
       - id: imports-serde-yaml
         strategy: pattern
         description: "Cargo.toml or source files reference serde_yaml"
+        match: 'serde_yaml'
         weight: required
 
     golden_examples:

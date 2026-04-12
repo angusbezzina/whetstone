@@ -121,6 +121,27 @@ Common values: `official_docs`, `changelog`, `migration_guide`, `blog`, `social`
 
 ---
 
+## Match Patterns for Signals
+
+Every `pattern`-strategy signal SHOULD include a `match` field with a concrete regex pattern. This is critical: without `match`, generated tests produce TODO stubs that check nothing. With `match`, generated tests contain real regex checks that catch violations in CI.
+
+```yaml
+signals:
+  - id: bare-unwrap
+    strategy: pattern
+    description: "Detects .unwrap() calls"
+    match: '\.unwrap\s*\(\)'     # Concrete regex — enables real tests
+    weight: required
+```
+
+**Guidelines for writing match patterns:**
+- Use standard regex syntax (Rust `regex` crate, Python `re` module)
+- Keep patterns simple — one pattern per signal, not compound regex
+- Test the pattern mentally against the golden examples
+- For complex checks that need multi-line or AST awareness, use `strategy: ast` without `match` (deferred to tree-sitter)
+
+---
+
 ## Signal Decomposition Guide
 
 Every rule is a spectrum of signals. The goal is to maximize deterministic coverage before resorting to AI.

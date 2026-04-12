@@ -54,6 +54,7 @@ pub fn merge_approved_rules(
                     strategy: s.strategy.clone(),
                     description: s.description.clone(),
                     weight: s.weight.clone(),
+                    match_pattern: s.match_pattern.clone(),
                 }).collect(),
                 golden_examples: rule.golden_examples.iter().map(|e| crate::rules::ApprovedExample {
                     code: e.code.clone(),
@@ -84,6 +85,7 @@ pub fn merge_approved_rules(
                     strategy: s.strategy.clone(),
                     description: s.description.clone(),
                     weight: s.weight.clone(),
+                    match_pattern: s.match_pattern.clone(),
                 }).collect(),
                 golden_examples: rule.golden_examples.iter().map(|e| crate::rules::ApprovedExample {
                     code: e.code.clone(),

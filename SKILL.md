@@ -247,6 +247,7 @@ When extracting rules, follow [references/extraction-prompt.md](references/extra
 - **Hard filters**: 90%+ confidence, ≥1 deterministic signal, max 5 per dep, cite specific doc URL, don't duplicate ruff/biome/clippy
 - **Categories**: `migration`, `default`, `convention`, `breaking-change`, `semantic`
 - **Signals**: Every rule needs `ast`, `pattern`, or `lint_proxy`. `ai` is supplement only.
+- **Match patterns**: Every `pattern` signal SHOULD include a `match` field with a concrete regex. This enables real test generation (without it, tests are TODO stubs).
 - **Golden examples**: 3-5 per rule (mix of pass/fail)
 - **Source kind**: Every rule MUST include `source_kind` (e.g., `official_docs`, `changelog`, `blog`, `community`)
 
@@ -293,6 +294,7 @@ rules:
       - id: client-without-timeout
         strategy: pattern
         description: "Client::new() or ClientBuilder without .timeout()"
+        match: 'Client::new\s*\(\)'    # Concrete regex — enables real test generation
         weight: required
     golden_examples:
       - code: |

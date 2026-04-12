@@ -31,6 +31,7 @@ rules:
       - id: bare-unwrap
         strategy: pattern
         description: "Detects .unwrap() calls without preceding expect or context"
+        match: '\.unwrap\s*\(\)'
         weight: required
     golden_examples:
       - code: |
@@ -72,6 +73,7 @@ rules:
       - id: client-no-timeout
         strategy: pattern
         description: "Client::new() or ClientBuilder without .timeout()"
+        match: 'Client::new\s*\(\)'
         weight: required
     golden_examples:
       - code: |
@@ -108,6 +110,7 @@ rules:
       - id: map-err-pattern
         strategy: pattern
         description: "Detects .map_err followed by format! or anyhow! instead of .context()"
+        match: '\.map_err\s*\('
         weight: required
     golden_examples:
       - code: |
@@ -144,6 +147,7 @@ rules:
       - id: string-param
         strategy: ast
         description: "Function parameter typed as String that is only read, never mutated or moved"
+        match: 'fn\s+\w+\s*\([^)]*:\s*String[^)]'
         weight: required
     golden_examples:
       - code: |

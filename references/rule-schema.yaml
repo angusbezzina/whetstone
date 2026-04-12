@@ -107,6 +107,9 @@ rules:
                            #   required — rule fails if this signal fires
                            #   strong   — significant indicator
                            #   moderate — supporting evidence
+        match: string      # Optional. Concrete regex pattern for `pattern` strategy signals.
+                           # When present, generated tests use this regex for actual checking
+                           # instead of producing TODO stubs. Example: '\.unwrap\s*\(\)'
 
     golden_examples:       # Required. 3-5 examples (mix of pass and fail).
       - code: string       # Required. Code snippet (use | for multiline YAML).

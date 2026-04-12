@@ -524,17 +524,50 @@ fn generate_rust_test(rule: &ApprovedRule) -> String {
                 ));
                 lines.push("    let files = find_rust_files(Path::new(\"src\"));".to_string());
                 lines.push("    let mut violations = Vec::new();".to_string());
-                lines.push("    for file in &files {".to_string());
-                lines.push("        if let Ok(content) = fs::read_to_string(file) {".to_string());
+
+                if let Some(ref pattern) = signal.match_pattern {
+                    // Real regex check using the match pattern
+                    // Pattern goes inside r"..." raw string — no extra escaping needed
+                    // except for double quotes which would close the raw string
+                    let escaped = pattern.replace('"', "'");
+                    lines.push(format!(
+                        "    let pattern = regex::Regex::new(r\"{escaped}\").unwrap();"
+                    ));
+                    lines.push("    for file in &files {".to_string());
+                    lines.push(
+                        "        if let Ok(content) = fs::read_to_string(file) {".to_string(),
+                    );
+                    lines.push(
+                        "            for (line_num, line) in content.lines().enumerate() {"
+                            .to_string(),
+                    );
+                    lines.push(
+                        "                if pattern.is_match(line) {".to_string(),
+                    );
+                    lines.push(
+                        "                    violations.push(format!(\"{}:{}: {}\", file.display(), line_num + 1, line.trim()));".to_string(),
+                    );
+                    lines.push("                }".to_string());
+                    lines.push("            }".to_string());
+                    lines.push("        }".to_string());
+                    lines.push("    }".to_string());
+                } else {
+                    // No match pattern — fall back to TODO stub
+                    lines.push("    for file in &files {".to_string());
+                    lines.push(
+                        "        if let Ok(content) = fs::read_to_string(file) {".to_string(),
+                    );
+                    lines.push(format!(
+                        "            // TODO: implement check for: {}",
+                        signal.description
+                    ));
+                    lines.push("            let _ = content;".to_string());
+                    lines.push("        }".to_string());
+                    lines.push("    }".to_string());
+                }
+
                 lines.push(format!(
-                    "            // TODO: implement check for: {}",
-                    signal.description
-                ));
-                lines.push("            let _ = content;".to_string());
-                lines.push("        }".to_string());
-                lines.push("    }".to_string());
-                lines.push(format!(
-                    "    assert!(violations.is_empty(), \"{{}} violations for {}\", violations.len());",
+                    "    assert!(violations.is_empty(), \"{{}} violations for {}:\\n{{}}\", violations.len(), violations.join(\"\\n\"));",
                     rule.id
                 ));
                 lines.push("}".to_string());

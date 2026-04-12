@@ -34,6 +34,7 @@ rules:
       - id: client-without-timeout
         strategy: pattern
         description: "Detects Client::new() or ClientBuilder::new()...build() without .timeout()"
+        match: 'Client::new\s*\(\)'
         weight: required
 
     golden_examples:
@@ -87,6 +88,7 @@ rules:
       - id: no-status-check
         strategy: pattern
         description: "Detects .get()/.post() chains without .error_for_status() or .status() check"
+        match: '\.send\s*\(\)\s*\?\s*\.\s*text\s*\('
         weight: required
 
     golden_examples:

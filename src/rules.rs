@@ -110,6 +110,10 @@ pub struct Signal {
     pub description: Option<String>,
     #[serde(default)]
     pub weight: Option<String>,
+    /// Concrete regex pattern for `pattern` strategy signals.
+    /// When present, test generation produces real regex checks instead of TODO stubs.
+    #[serde(default, alias = "match")]
+    pub match_pattern: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -571,6 +575,7 @@ pub fn load_approved_rules(
                         strategy: s.strategy.clone(),
                         description: s.description.clone().unwrap_or_default(),
                         weight: s.weight.clone().unwrap_or_default(),
+                        match_pattern: s.match_pattern.clone(),
                     })
                     .collect(),
                 golden_examples: rule
@@ -627,6 +632,7 @@ pub fn approved_from_loaded(
                         strategy: s.strategy.clone(),
                         description: s.description.clone().unwrap_or_default(),
                         weight: s.weight.clone().unwrap_or_default(),
+                        match_pattern: s.match_pattern.clone(),
                     })
                     .collect(),
                 golden_examples: rule
@@ -670,6 +676,7 @@ pub struct ApprovedSignal {
     pub strategy: String,
     pub description: String,
     pub weight: String,
+    pub match_pattern: Option<String>,
 }
 
 #[allow(dead_code)]

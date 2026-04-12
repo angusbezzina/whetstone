@@ -34,6 +34,7 @@ rules:
       - id: builder-api-usage
         strategy: pattern
         description: "Detects Command::new() or App::new() (legacy) in clap argument definitions"
+        match: '(Command|App)::new\s*\('
         weight: required
 
     golden_examples:

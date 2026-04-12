@@ -27,11 +27,15 @@ fn test_serde_yaml_crate_deprecated_signal_0() {
     // Signal: Cargo.toml or source files reference serde_yaml (pattern)
     let files = find_rust_files(Path::new("src"));
     let mut violations = Vec::new();
+    let pattern = regex::Regex::new(r"serde_yaml").unwrap();
     for file in &files {
         if let Ok(content) = fs::read_to_string(file) {
-            // TODO: implement check for: Cargo.toml or source files reference serde_yaml
-            let _ = content;
+            for (line_num, line) in content.lines().enumerate() {
+                if pattern.is_match(line) {
+                    violations.push(format!("{}:{}: {}", file.display(), line_num + 1, line.trim()));
+                }
+            }
         }
     }
-    assert!(violations.is_empty(), "{} violations for serde_yaml.crate-deprecated", violations.len());
+    assert!(violations.is_empty(), "{} violations for serde_yaml.crate-deprecated:\n{}", violations.len(), violations.join("\n"));
 }
