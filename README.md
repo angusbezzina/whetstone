@@ -22,9 +22,16 @@ Whetstone solves all three. It treats documentation as a living source of truth,
 
 5 rules you trust completely beats 50 you have to review. Whetstone only proposes rules backed by specific documentation with deterministic signals. A project with 40 dependencies might get rules for 8 of them — those are the 8 that have something worth enforcing.
 
-### What Whetstone is NOT
+### How Whetstone compares
 
-Whetstone is not a general AI code reviewer, a replacement for ruff/biome/clippy, or a broad semantic-eval platform. It complements existing tools by filling the gap between what linters catch and what dependency docs recommend.
+| Tool | What it does | Whetstone's angle |
+|------|-------------|-------------------|
+| **Semgrep / CodeQL** | Custom SAST rules you write manually | Whetstone derives rules from docs — you review, not author |
+| **Continue.dev** | AI code review from hand-written markdown rules | Whetstone generates the rules from dependency documentation |
+| **CodeRabbit** | AI PR review (2M+ repos) | Reads Whetstone's output — `.cursorrules`, `CLAUDE.md`, `AGENTS.md` |
+| **Ruff / Biome / Clippy** | Language-level linting | Whetstone catches dependency-specific rules they don't cover |
+
+Whetstone is not a general AI code reviewer or a replacement for linters. It's the **rule-intelligence layer** — it decides which rules are worth enforcing, proves them with documentation, and generates enforcement artifacts for the tools you already use.
 
 ## Quick Start
 
@@ -99,7 +106,59 @@ wh tests
 wh status
 ```
 
-> **Agent skill mode:** When using Whetstone as an agent skill, say "wh doctor" or "wh status" and the agent runs the corresponding command. The binary handles everything — no Python runtime required.
+> **Agent skill mode:** When using Whetstone as an agent skill, say "wh doctor" or "extract rules" and the agent runs the full workflow. The binary handles deterministic work; your existing LLM does the extraction.
+
+### Worked Example: Extracting Rules for a Rust Project
+
+Here's what a real run looks like on Whetstone's own codebase (Rust, 10 dependencies):
+
+```bash
+$ wh doctor
+────────────────────────────────────────
+  Whetstone Doctor — 2026-04-09
+────────────────────────────────────────
+  Dependencies: 16 runtime (+2 dev) across python, rust
+  Sources:      10 resolved with content (README + changelog)
+  Changelogs:   5 found (clap, chrono, rayon, reqwest, regex)
+  Ready:        10 dependencies ready for extraction
+────────────────────────────────────────
+```
+
+The agent reads the resolved content and proposes rules. Each rule is presented as a card:
+
+```
+[MUST] reqwest.set-timeout — high confidence — default
+  Source kind: official_docs
+  MUST set an explicit timeout on reqwest clients. Default is no timeout.
+  Source: https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html
+  Risk:   Hangs indefinitely on unresponsive servers.
+  Signal: pattern — Client::new\s*\(\)  [match: regex]
+  > Approve / Edit / Deny / Skip?
+```
+
+You approve or deny each rule. Approved rules are written to `whetstone/rules/rust/reqwest.yaml`.
+
+Then generate outputs:
+
+```bash
+$ wh validate     # ✓ All schema checks passed
+$ wh context      # → whetstone/context/AGENTS.md (11 rules, 302 lines)
+$ wh tests        # → whetstone/evals/rust/test_reqwest.rs (real regex checks)
+$ wh status       # → Score: 95 | Label: Healthy
+```
+
+The generated test for `reqwest.set-timeout` actually scans your source code:
+
+```rust
+let pattern = regex::Regex::new(r"Client::new\s*\(\)").unwrap();
+for (line_num, line) in content.lines().enumerate() {
+    if pattern.is_match(line) {
+        violations.push(format!("{}:{}: {}", file.display(), line_num + 1, line.trim()));
+    }
+}
+```
+
+Run `cargo test` and the test catches any `Client::new()` calls without explicit timeouts. Meanwhile, `AGENTS.md` tells your AI coding agent to use timeouts from the start — enforcement before AND after code is written, from the same approved rule.
 
 ## Canonical Workflow
 
@@ -368,7 +427,20 @@ No. Whetstone is an Agent Skill — the agent running it (Claude, Cursor, etc.) 
 That's correct behavior. If the documentation doesn't clearly state practices worth enforcing, Whetstone stays silent. You can always add rules manually.
 
 **Can I add custom sources beyond dependency docs?**
-The extraction prompt works with any documentation content — team style guides, blog posts, migration guides. Currently, you provide custom source content to the agent manually during extraction. *Planned: automated custom URL ingestion.*
+Yes. Add any URL to `whetstone.yaml` and Whetstone fetches it alongside registry sources:
+
+```yaml
+sources:
+  custom:
+    - url: https://team-guide.internal/rust-conventions
+      name: "Team Rust Guide"
+      source_kind: team_guide
+    - url: https://blog.example.com/fastapi-pitfalls
+      name: "FastAPI Pitfalls"
+      source_kind: blog
+```
+
+Custom sources appear in the doctor output for extraction. Each rule you extract from them gets tagged with `source_kind` for filtering.
 
 **What happens if I don't install Whetstone?**
 Nothing breaks. The generated tests, lint configs, and agent context files are standard files in your repo. They run with your existing CI and work with any agent that reads `AGENTS.md` or `.cursorrules`.
@@ -401,25 +473,31 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 
 **Shipped today:**
 - Dependency detection across Python, TypeScript, and Rust (including monorepos)
-- Documentation resolution via registry APIs with llms.txt probing
+- 4-tier content resolution: llms.txt → registry README → HTML docs → GitHub changelog
+- Changelog fetching with 18-month recency filtering
+- Custom source URLs in `whetstone.yaml` (blogs, team guides, any public URL)
+- 5 built-in Rust rules (`whetstone:recommended`) that ship with the binary
 - Agent-mediated rule extraction with structured approval flow
-- Test generation (pytest, vitest, cargo test) and lint overlays (ruff, biome, clippy)
-- Agent context generation (AGENTS.md, CLAUDE.md, .cursorrules, and 3 more formats)
+- Test generation with real regex checks (via `match` field on signals)
+- Lint overlay generation (ruff, biome, clippy)
+- Agent context generation (AGENTS.md, CLAUDE.md, .cursorrules, copilot, windsurf, codex)
+- Source attribution: `content_origin` (how fetched) + `source_kind` (what kind of source)
 - Health monitoring with drift detection, freshness scoring, and metric history
 - CI integration via GitHub Action with PR comments
-- Rust-first dependency detection, docs resolution, generation, and status workflows
+- Drift-based refresh command (`wh refresh --check`)
 
 **Opt-in:**
-- Pattern detection from agent transcripts, git history, and PR comments via `wh patterns` (Rust subcommand; not run automatically by `doctor`).
+- Pattern detection from agent transcripts, git history, and PR comments via `wh patterns`.
 
-**Planned (not yet implemented):**
-- AI eval runner for ambiguous signals (`check --ai-only`)
+**Planned:**
+- ast-grep pattern generation (structural enforcement via CodeRabbit-compatible rules)
+- MCP server for agent-native rule queries
+- Continue.dev check generation for CI status checks
+- AI eval runner with threshold gating and calibration
 - Layer system (personal → project → team → built-in)
-- Rule promotion across layers (`promote` command)
-- Automated custom URL ingestion for non-registry sources
 - Shared rule registry with community-ranked rules
 
-See `planning/roadmap.md` for the full phased delivery plan.
+See `planning/whetstone-roadmap-v2.md` for the full plan.
 
 ## Troubleshooting
 
