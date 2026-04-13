@@ -95,9 +95,28 @@ pub struct Rule {
     #[serde(default)]
     pub source_kind: Option<String>,
     #[serde(default)]
+    pub deterministic_pass_threshold: Option<u32>,
+    #[serde(default)]
+    pub deterministic_fail_threshold: Option<u32>,
+    #[serde(default)]
+    pub ai_eval: Option<AiEval>,
+    #[serde(default)]
     pub signals: Vec<Signal>,
     #[serde(default)]
     pub golden_examples: Vec<GoldenExample>,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct AiEval {
+    /// When to run AI eval: "ambiguous" or "always"
+    #[serde(default)]
+    pub trigger: String,
+    /// Binary question for the AI judge
+    #[serde(default)]
+    pub question: String,
+    /// Lines of surrounding context to include
+    #[serde(default)]
+    pub context_lines: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -590,6 +609,9 @@ pub fn load_approved_rules(
                     .collect(),
                 risk: rule.risk.clone(),
                 linter_gap: rule.linter_gap.clone(),
+                deterministic_pass_threshold: rule.deterministic_pass_threshold,
+                deterministic_fail_threshold: rule.deterministic_fail_threshold,
+                ai_eval: rule.ai_eval.clone(),
             });
         }
     }
@@ -647,6 +669,9 @@ pub fn approved_from_loaded(
                     .collect(),
                 risk: rule.risk.clone(),
                 linter_gap: rule.linter_gap.clone(),
+                deterministic_pass_threshold: rule.deterministic_pass_threshold,
+                deterministic_fail_threshold: rule.deterministic_fail_threshold,
+                ai_eval: rule.ai_eval.clone(),
             });
         }
     }
@@ -668,6 +693,9 @@ pub struct ApprovedRule {
     pub golden_examples: Vec<ApprovedExample>,
     pub risk: Option<String>,
     pub linter_gap: Option<String>,
+    pub deterministic_pass_threshold: Option<u32>,
+    pub deterministic_fail_threshold: Option<u32>,
+    pub ai_eval: Option<AiEval>,
 }
 
 #[allow(dead_code)]

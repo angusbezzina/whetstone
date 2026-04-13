@@ -5,6 +5,7 @@ mod config;
 mod detect;
 mod detect_patterns;
 mod doctor;
+mod eval;
 mod generate_context;
 mod generate_tests;
 mod output;

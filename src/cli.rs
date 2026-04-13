@@ -2,8 +2,8 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    ci_check, detect, detect_patterns, doctor, generate_context, generate_tests, output, resolve,
-    rules, status, update,
+    ci_check, detect, detect_patterns, doctor, eval, generate_context, generate_tests, output,
+    resolve, rules, status, update,
 };
 
 #[derive(Parser)]
@@ -292,6 +292,32 @@ enum Commands {
         /// Exit non-zero if drift exists (for CI)
         #[arg(long)]
         check: bool,
+    },
+
+    /// AI evaluation: threshold gating, eval requests, calibration
+    Eval {
+        /// Action: generate, run, or calibrate
+        action: String,
+
+        /// Project directory
+        #[arg(long, default_value = ".")]
+        project_dir: String,
+
+        /// Collect verdicts from agent (for run --collect and calibrate --collect)
+        #[arg(long)]
+        collect: bool,
+
+        /// Only run deterministic checks, skip AI requests
+        #[arg(long)]
+        deterministic_only: bool,
+
+        /// Filter by language
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Preview without writing files
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Update whetstone to the latest release
@@ -768,6 +794,39 @@ pub fn run() -> i32 {
                     "Check project directory and script dependencies",
                 ));
                 1
+            }
+        },
+
+        Commands::Eval {
+            action,
+            project_dir,
+            collect,
+            deterministic_only,
+            lang,
+            dry_run,
+        } => {
+            let project_path = Path::new(&project_dir);
+            let lang_filter = lang.as_deref();
+
+            let result = match action.as_str() {
+                "generate" => eval::generate_eval_definitions(project_path, lang_filter, dry_run),
+                "run" => eval::run_evals(project_path, lang_filter, collect, deterministic_only),
+                "calibrate" => eval::calibrate(project_path, lang_filter, collect),
+                _ => {
+                    eprintln!("Unknown eval action: {action}. Use: generate, run, or calibrate");
+                    return 1;
+                }
+            };
+
+            match result {
+                Ok(result) => {
+                    output::print_json(&result);
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(&e.to_string(), "wh eval --help"));
+                    1
+                }
             }
         },
 

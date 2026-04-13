@@ -64,6 +64,9 @@ pub fn merge_approved_rules(
                 }).collect(),
                 risk: rule.risk.clone(),
                 linter_gap: rule.linter_gap.clone(),
+                deterministic_pass_threshold: rule.deterministic_pass_threshold,
+                deterministic_fail_threshold: rule.deterministic_fail_threshold,
+                ai_eval: rule.ai_eval.clone(),
             });
         }
     }
@@ -95,6 +98,9 @@ pub fn merge_approved_rules(
                 }).collect(),
                 risk: rule.risk.clone(),
                 linter_gap: rule.linter_gap.clone(),
+                deterministic_pass_threshold: rule.deterministic_pass_threshold,
+                deterministic_fail_threshold: rule.deterministic_fail_threshold,
+                ai_eval: rule.ai_eval.clone(),
             });
         }
     }
