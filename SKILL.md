@@ -70,11 +70,14 @@ The binary does all deterministic work. The agent does all judgment. The user ha
 | `wh doctor` | **One-command bootstrap** | JSON: deps, sources, content, sections, recommendations |
 | `wh status` | **Health summary** | JSON: score 0-100, dimensions, recommendations |
 | `wh ci` | **CI freshness check** | Exit 0/1, optional PR comment |
+| `wh eval run` | **Check rules against source** | JSON: violations with file/line/code |
+| `wh eval calibrate` | **Validate AI eval prompts** | JSON: agreement rate against golden examples |
 | `wh init` | Detect dependencies | JSON: deps list with counts |
 | `wh set-sources` | Resolve docs URLs | JSON: source content + cache stats |
 | `wh validate` | Check rule YAML schema | Pass/fail per rule |
 | `wh context` | Generate agent context files | AGENTS.md, CLAUDE.md, .cursorrules, etc. |
 | `wh tests` | Generate test files + lint configs | pytest, vitest, cargo test files |
+| `wh eval generate` | Generate AI eval definitions | YAML files for rules with ai signals |
 | `wh patterns` | Mine style patterns | JSON: patterns from transcripts/git/PRs |
 
 All commands support `--json` (auto-enabled when piped) and `--project-dir`.
@@ -236,6 +239,41 @@ Five dimensions:
 - **Pending updates** — deps with version drift
 
 Labels: **Healthy** (80+), **Needs Review** (50-80), **Stale** (<50), **No Rules**.
+
+---
+
+### Eval (Check Rules Against Code)
+
+Run when the user says "check rules", "run evals", "scan for violations".
+
+```bash
+wh eval run --deterministic-only    # Fast: regex checks only, no AI
+wh eval run                          # Full: deterministic + AI requests for ambiguous cases
+```
+
+The eval runner scans source files against all rule signals with `match` patterns. It reports violations with file path, line number, and code snippet.
+
+**For rules with `ai_eval` config:** The runner generates structured eval requests at `whetstone/.state/eval-requests.json`. The agent reads these, judges each code snippet (PASS/FAIL with reason), and writes verdicts to `whetstone/.state/eval-verdicts.json`. Then:
+
+```bash
+wh eval run --collect               # Merge agent verdicts into final report
+```
+
+**Calibration** validates that AI eval prompts agree with golden examples:
+
+```bash
+wh eval calibrate                    # Generate calibration requests
+# Agent judges golden examples independently
+wh eval calibrate --collect          # Check agreement rate
+```
+
+If agreement < 100%, the eval prompt needs revision. This catches model drift and prompt regressions.
+
+**In CI**, use `--deterministic-only` (no agent available):
+
+```bash
+wh eval run --deterministic-only     # Exits 0, reports violations in JSON
+```
 
 ---
 
