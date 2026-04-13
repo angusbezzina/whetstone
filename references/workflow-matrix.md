@@ -30,15 +30,17 @@ stages:
 |---------|---------|--------|---------------|----------------|-------|
 | `wh doctor` | `start` | detect + resolve + hand off | `manifests.json`, `inventory.json`, `source-cache.json` | `extraction-handoff.json`, cache, inventory, manifests | One-command bootstrap. Writes `whetstone/.state/extraction-handoff.json` describing what the agent should extract next. |
 | `wh refresh` | `refresh-rules` | detect + resolve + hand off (changed-only) | same as doctor | `refresh-diff.json`, cache, inventory | `wh refresh --check` exits non-zero if drift was detected — wire this into CI. |
-| `wh init` | `deps`, `detect-deps` | detect | `manifests.json`, `inventory.json` | `manifests.json`, `inventory.json` (with `--incremental`) | Lower-level slice of doctor. |
+| `wh init` | `deps`, `detect-deps` | detect / setup | `manifests.json`, `inventory.json` | `manifests.json`, `inventory.json` (with `--incremental`) | Default mode is dependency detection. `--personal` scaffolds `whetstone/.personal/` + gitignore. `--hooks` installs session + post-merge git hooks. `--ci --schedule=<cadence>` writes `.github/workflows/whetstone-check.yml`. |
 | `wh set-sources` | `sources`, `resolve-sources` | resolve | stdin or `--input` JSON from `wh init`, `source-cache.json` | `source-cache.json` | Lower-level slice of doctor. |
-| `wh validate` | `validate-rules` | — | `references/rule-schema.yaml`, `whetstone/rules/**`, `tests/fixtures/**` | — | Schema + fixtures validator. CI-friendly. |
-| `wh context` | `generate-context` | generate | `whetstone/rules/**`, built-in rules | `whetstone/context/*` and equivalents | Built-in rules merge unless `whetstone.yaml` denies them. |
-| `wh tests` | `generate-tests` | generate | `whetstone/rules/**`, built-in rules | `whetstone/evals/**`, `whetstone/lint/*` | Signals with a `match` regex produce real checks; without, tests are TODO stubs (see "Test fidelity" below). |
-| `wh status` | — | monitor | `whetstone/rules/**`, `whetstone/.state/*`, `whetstone/.metrics.jsonl` | `whetstone/.metrics.jsonl` (snapshot) | `--score`, `--history`, `--no-snapshot`, `--no-drift-check` are the common flags. |
+| `wh validate` | `validate-rules` | — | `references/rule-schema.yaml` (or binary-embedded fallback), all layers | — | Schema + fixtures validator. CI-friendly. |
+| `wh context` | `generate-context` | generate | layered rules (personal is excluded from committed output) | `whetstone/context/*` by default; `--personal` routes to `whetstone/.personal/context/` | `--personal` emits personal-only context. Committed output never leaks personal rules. |
+| `wh tests` | `generate-tests` | generate | layered rules | `whetstone/evals/**`, `whetstone/lint/*` by default; `--personal` routes to `whetstone/.personal/evals/` etc. | Signals with a `match` regex produce real checks; without, tests are TODO stubs (see "Test fidelity" below). |
+| `wh layers` | — | inspect | all four layers | — | Prints a JSON summary of rule counts per layer and which layer each rule resolves to. Use this to debug merges + deny lists. |
+| `wh promote` | — | lifecycle | source layer rule file | target layer rule file | `wh promote <rule-id> --to personal\|project\|team`. Monotonic — cannot promote downward. `--keep-source` copies instead of moving. |
+| `wh status` | — | monitor | project rules, `whetstone/.state/*`, `whetstone/.metrics.jsonl` | `whetstone/.metrics.jsonl` (snapshot) | `--score`, `--history`, `--no-snapshot`, `--no-drift-check` are the common flags. Status today reports project-only totals; built-in/team/personal counts live in `wh layers`. |
 | `wh ci` | `check`, `ci-check` | monitor (CI) | same as status | — | Exits non-zero with `--fail-on stale` or `--fail-on needs_review`. |
-| `wh eval generate` | — | monitor | `whetstone/rules/**`, built-in rules | `whetstone/evals/ai/*.yaml` | Only emits definitions for rules with `ai` signals or `ai_eval` config. |
-| `wh eval run` | — | monitor | `whetstone/rules/**`, `src/**` | `whetstone/.state/eval-requests.json` when AI review is needed | `--deterministic-only` skips AI requests (use in CI). `--collect` merges agent verdicts. |
+| `wh eval generate` | — | monitor | layered rules | `whetstone/evals/ai/*.yaml` | Only emits definitions for rules with `ai` signals or `ai_eval` config. |
+| `wh eval run` | — | monitor | layered rules, `src/**` | `whetstone/.state/eval-requests.json` when AI review is needed | `--deterministic-only` skips AI requests (use in CI). `--collect` merges agent verdicts. |
 | `wh eval calibrate` | — | monitor | rules with `ai_eval` | `whetstone/.state/calibration-requests.json` | `--collect` compares agent verdicts to golden examples and reports agreement rate. |
 | `wh patterns` | `detect-patterns` | extract (optional) | agent transcripts (scoped), git log, GitHub PRs | `whetstone/.last-run` | Opt-in. Scoped to the current project by default; use `--global-transcripts` to widen. |
 | `wh update` | — | — | — | replaces the `whetstone` binary | Self-update from GitHub Releases. Does **not** touch rules. |
@@ -105,15 +107,75 @@ Fidelity depends on the signal type:
 
 ---
 
+## Rule layer precedence
+
+Whetstone resolves rules through four layers. Precedence is most-specific-wins:
+
+```
+personal > project > team > built-in
+```
+
+| Layer | Location | Committed? | Deny list |
+|-------|----------|------------|-----------|
+| personal | `whetstone/.personal/rules/**` | NO (`.gitignored`) | `whetstone/.personal/config.yaml` `deny:` |
+| project | `whetstone/rules/**` | yes | `whetstone/whetstone.yaml` `deny:` |
+| team | `extends:` clones (under `whetstone/.cache/teams/...`) or `whetstone/.team/rules/**` | team repos commit, local `.team/` is optional | team config `deny:` (future) |
+| built-in | embedded in the binary (`whetstone:recommended/*`) | n/a | any layer's `deny:` excludes built-in by id |
+
+At every level, a deny list removes a rule **from that level and every
+broader level** — so a project deny silences both project-level and built-in
+rules with that id, while personal deny silences everything except a
+personal rule with the same id.
+
+`whetstone/.personal/` is auto-added to `.gitignore` by `wh init --personal`.
+`wh context` / `wh tests` run without flags emit committed output that
+**excludes** the personal layer. Personal outputs live under
+`whetstone/.personal/context/` and `whetstone/.personal/evals/` and require
+the `--personal` flag.
+
+## Extends
+
+`whetstone.yaml extends:` references external team rulesets:
+
+```yaml
+extends:
+  - whetstone:recommended            # embedded built-in — no fetch
+  - github.com/acme/whetstone-rules  # cloned to whetstone/.cache/teams/acme/whetstone-rules
+  - "@acme/rules"                    # future shared registry (not shipped)
+```
+
+Git-cloned repos are expected to contain `whetstone/rules/**` (project
+layout) or `rules/**` (team-only publisher layout). `wh refresh` re-pulls
+cached clones; otherwise the cache is reused.
+
+## Global personal config
+
+`~/.whetstone/config.yaml` holds user-wide defaults that merge into every
+project's `WhetstoneConfig`:
+
+```yaml
+default_formats: [agents.md, .cursorrules]
+deny:
+  - rust.prefer-str-params   # global silence across all projects
+sources:
+  custom:
+    - url: https://my-site.example/llms.txt
+      name: My personal reference
+```
+
+Project `whetstone.yaml` wins on any field it explicitly sets; deny lists
+**union** rather than override.
+
 ## Planned (not shipped)
 
 The following are referenced in the roadmap but not yet available. Do not link
 users to them as working features:
 
-- `wh promote` — move rules between personal/project/team layers
 - `wh evolve` — signal promotion from AI verdicts to deterministic signals
 - Tree-sitter-backed `ast` signal analysis
 - MCP server
-- Shared rule registry
+- Shared rule registry (the `@user/config` extends form is accepted by the
+  parser but currently reports `not_implemented`)
+- Single-file HTTP `extends:` (accepted by the parser; `not_implemented`)
 
 See [`planning/whetstone-roadmap-v2.md`](../planning/whetstone-roadmap-v2.md) for the epic-level plan.

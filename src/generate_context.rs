@@ -29,22 +29,54 @@ pub fn generate_context(
     formats_filter: Option<&str>,
     lang_filter: Option<&str>,
     dry_run: bool,
+    personal_output: bool,
 ) -> Result<Value> {
-    let rules_dir = project_dir.join("whetstone").join("rules");
-    let output_dir = project_dir.join("whetstone").join("context");
-
-    let (project_approved, warnings) = rules::load_approved_rules(&rules_dir, lang_filter);
-
-    // Merge built-in rules when whetstone config exists (real project, not test fixtures)
     let whetstone_config_exists = project_dir.join("whetstone").join("whetstone.yaml").exists()
         || project_dir.join("whetstone.yaml").exists();
-    let approved = if whetstone_config_exists {
+
+    // Personal output mode: ONLY render rules from the personal layer into
+    // whetstone/.personal/context/. Nothing from the project / team / built-in
+    // layers is written there — otherwise personal context would duplicate
+    // content that's already committed.
+    let (approved, output_dir, warnings): (Vec<ApprovedRule>, _, Vec<String>) = if personal_output {
+        let (rules, warns) = crate::layers::load_personal_only(project_dir, lang_filter);
+        let dir = project_dir
+            .join("whetstone")
+            .join(".personal")
+            .join("context");
+        (rules, dir, warns)
+    } else if whetstone_config_exists {
+        // Full 4-layer merge for committed context output.
         let config = crate::config::WhetstoneConfig::load(project_dir);
-        let builtin = crate::builtin::load_builtin_rules();
-        let (builtin_approved, _) = rules::approved_from_loaded(&builtin, lang_filter);
-        crate::builtin::merge_approved_rules(&builtin_approved, &project_approved, &config.deny)
+        let (mut layers, warns) = crate::layers::LayerSet::load(project_dir, lang_filter, true);
+        // Committed context must NOT leak personal rules into the
+        // project/team/built-in outputs. Strip the personal layer here.
+        layers.personal.clear();
+
+        // Pull in team extensions via extends:.
+        if !config.extends.is_empty() {
+            let resolution = crate::team::resolve(project_dir, &config.extends, false)
+                .ok()
+                .map(|r| r.rules_dirs)
+                .unwrap_or_default();
+            for dir in resolution {
+                let (mut rules, _) = rules::load_approved_rules(&dir, lang_filter);
+                layers.team.append(&mut rules);
+            }
+        }
+
+        let merged = layers
+            .merge()
+            .into_iter()
+            .map(|lr| lr.rule)
+            .collect();
+        (merged, project_dir.join("whetstone").join("context"), warns)
     } else {
-        project_approved
+        // Fixtures / minimal test projects with no whetstone.yaml: fall back
+        // to project rules only, matching legacy behaviour.
+        let rules_dir = project_dir.join("whetstone").join("rules");
+        let (approved, warns) = rules::load_approved_rules(&rules_dir, lang_filter);
+        (approved, project_dir.join("whetstone").join("context"), warns)
     };
 
     if approved.is_empty() {

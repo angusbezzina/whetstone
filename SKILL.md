@@ -19,9 +19,9 @@ Whetstone derives coding rules from the documentation of your actual dependencie
 
 ## Activation
 
-Activate when the user says any of: "whetstone", "wh doctor", "extract rules", "update standards", "update rules", "init whetstone", "run whetstone", "check rules", "refresh rules", "generate tests from rules", "run evals", "calibrate evals".
+Activate when the user says any of: "whetstone", "wh doctor", "extract rules", "update standards", "update rules", "init whetstone", "run whetstone", "check rules", "refresh rules", "generate tests from rules", "run evals", "calibrate evals", "promote a rule", "personal rules", "install hooks", "install ci", "scheduled check", "what layer".
 
-If the user says "wh doctor", "doctor", "scan my project", or "bootstrap rules", use the **Doctor** workflow — it's the fastest path from zero to working rules. If the user says "refresh rules" or similar, jump to the **Refresh** workflow.
+If the user says "wh doctor", "doctor", "scan my project", or "bootstrap rules", use the **Doctor** workflow — it's the fastest path from zero to working rules. If the user says "refresh rules" or similar, jump to the **Refresh** workflow. If the user says "personal rules" or asks about rule layers, see **Layers** below.
 
 See [`references/workflow-matrix.md`](references/workflow-matrix.md) for the single source-of-truth table that maps every shipped command to a lifecycle step.
 
@@ -74,11 +74,13 @@ The binary does all deterministic work. The agent does all judgment. The user ha
 | `wh ci` | **CI freshness check** | Exit 0/1, optional PR comment |
 | `wh eval run` | **Check rules against source** | JSON: violations with file/line/code |
 | `wh eval calibrate` | **Validate AI eval prompts** | JSON: agreement rate against golden examples |
-| `wh init` | Detect dependencies | JSON: deps list with counts |
+| `wh init` | Detect dependencies — or run `--personal` / `--hooks` / `--ci` setup | JSON: deps list with counts, or setup report |
 | `wh set-sources` | Resolve docs URLs | JSON: source content + cache stats |
 | `wh validate` | Check rule YAML schema | Pass/fail per rule |
-| `wh context` | Generate agent context files | AGENTS.md, CLAUDE.md, .cursorrules, etc. |
-| `wh tests` | Generate test files + lint configs | pytest, vitest, cargo test files |
+| `wh context` | Generate agent context files (`--personal` for personal-only output) | AGENTS.md, CLAUDE.md, .cursorrules, etc. |
+| `wh tests` | Generate test files + lint configs (`--personal` for personal-only output) | pytest, vitest, cargo test files |
+| `wh layers` | Show the 4-layer merge summary + per-rule provenance | JSON |
+| `wh promote` | Move a rule between layers (`--to personal\|project\|team`) | JSON |
 | `wh eval generate` | Generate AI eval definitions | YAML files for rules with ai signals |
 | `wh patterns` | Mine style patterns | JSON: patterns from transcripts/git/PRs |
 
@@ -267,6 +269,72 @@ Five dimensions:
 - **Pending updates** — deps with version drift
 
 Labels: **Healthy** (80+), **Needs Review** (50-80), **Stale** (<50), **No Rules**.
+
+---
+
+### Layers (Personal, Project, Team, Built-in)
+
+Whetstone resolves rules through four layers. More-specific layers override
+broader ones: `personal > project > team > built-in`.
+
+```bash
+wh init --personal     # scaffold whetstone/.personal/, auto-gitignore
+wh layers              # print JSON summary of each layer + per-rule provenance
+wh context --personal  # emit personal-only agent context under .personal/context/
+wh tests --personal    # emit personal-only tests under .personal/evals/
+wh promote <rule-id> --to project   # promote personal → project
+wh promote <rule-id> --to team      # promote project → team (local staging)
+```
+
+**Invariants:**
+
+- `whetstone/.personal/` is gitignored and never leaks into committed outputs.
+- `wh context` and `wh tests` (no flag) always render from project + team + built-in. The personal layer is stripped before rendering to guarantee personal rules cannot end up in a PR.
+- `--personal` renders the personal layer alone to `whetstone/.personal/context|evals/`. Local pytest / vitest / `cargo test` run against both directories; CI only sees committed files.
+- `wh promote` is monotonic — you can move a rule "up" (personal → project → team) but not "down". Copying down is a manual override, not a promotion.
+- Each layer's `deny:` list removes rules from that layer and every broader layer.
+
+**Team rules via extends:**
+
+```yaml
+# whetstone/whetstone.yaml
+extends:
+  - whetstone:recommended              # embedded built-in — no fetch
+  - github.com/acme/whetstone-rules    # git clone into whetstone/.cache/teams/acme/whetstone-rules
+```
+
+Git-cloned team rulesets should publish either `whetstone/rules/**` (mirrored
+project layout) or `rules/**` (team-only layout). `wh refresh` re-pulls the
+cache; otherwise the clone is reused.
+
+**Global personal config:**
+
+`~/.whetstone/config.yaml` (optional) applies defaults to every project:
+
+```yaml
+default_formats: [agents.md, .cursorrules]
+deny: ["rust.prefer-str-params"]
+sources:
+  custom:
+    - url: https://my-site.example/llms.txt
+      name: My reference
+```
+
+Project `whetstone.yaml` wins on explicitly-set fields; `deny:` unions.
+
+---
+
+### Triggers (Advisory Automation)
+
+`wh init --hooks` installs advisory hooks that do not block anything:
+
+| Trigger | File | What it does |
+|---------|------|--------------|
+| Post-merge | `.githooks/post-merge` | After `git pull` / `git merge`, prints a one-line warning if dependency drift is detected. Exit code is always 0. |
+| Session start | `.claude/whetstone-session-hook.sh` + merged `.claude/settings.json` | On Claude Code session start, runs `wh status` and surfaces a short label if the project is stale. |
+| Cursor | `.cursor/whetstone-session.md` | Documentary advisory — Cursor does not standardise startup hooks, so this is a note for the user. |
+
+`wh init --ci --schedule=<cadence>` writes `.github/workflows/whetstone-check.yml` that runs `wh status` + `wh ci --fail-on=stale` on the chosen cadence (`daily`, `weekly` (default), `biweekly`, `monthly`, or a literal 5-field cron).
 
 ---
 

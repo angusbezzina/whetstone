@@ -242,10 +242,12 @@ Shipped commands (primary name first, aliases in parentheses):
 | `refresh` | `refresh-rules` | Re-resolve changed sources and prepare refresh handoff | `--check` (exits non-zero if drift), `--project-dir` |
 | `status` | — | Project health summary with 5-dimension score | `--json`, `--score`, `--history`, `--no-drift-check` |
 | `ci` | `check`, `ci-check` | CI freshness check | `--json`, `--pr-comment`, `--fail-on`, `--changed-only` |
-| `init` | `deps`, `detect-deps` | Detect dependencies from manifests | `--check-drift`, `--changed-only`, `--incremental` |
+| `init` | `deps`, `detect-deps` | Detect dependencies from manifests (or run setup modes) | `--check-drift`, `--changed-only`, `--incremental`, `--personal`, `--hooks`, `--ci --schedule=<cadence>` |
 | `set-sources` | `sources`, `resolve-sources` | Resolve documentation URLs | `--changed-only`, `--force-refresh`, `--resume`, `--retry-failed` |
-| `context` | `generate-context` | Generate agent context files | `--dry-run`, `--formats`, `--lang` |
-| `tests` | `generate-tests` | Generate test files + lint overlays | `--dry-run`, `--lang` |
+| `context` | `generate-context` | Generate agent context files | `--dry-run`, `--formats`, `--lang`, `--personal` |
+| `tests` | `generate-tests` | Generate test files + lint overlays | `--dry-run`, `--lang`, `--personal` |
+| `layers` | — | Show the 4-layer merge summary and per-rule layer provenance | `--lang` |
+| `promote` | — | Move a rule between layers (personal → project → team) | `<rule-id>`, `--to`, `--keep-source` |
 | `validate` | `validate-rules` | Validate rule schema and every rule fixture | `--project-dir` |
 | `eval` | — | AI eval lifecycle: `generate`, `run`, `calibrate` | `--collect`, `--deterministic-only`, `--lang`, `--dry-run` |
 | `patterns` | `detect-patterns` | Mine style patterns from transcripts/git/PRs | `--sources`, `--since`, `--quiet`, `--global-transcripts` |
@@ -503,6 +505,10 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - CI integration via GitHub Action with PR comments
 - Drift-based refresh command (`wh refresh` / `wh refresh --check`) with reviewable diff artifact
 - AI eval runner with threshold gating and calibration (`wh eval generate|run|calibrate`)
+- **4-layer rule resolution** — `personal > project > team > built-in` with per-layer deny lists, auto-gitignored personal overrides, `wh promote` between layers, and `wh layers` for merge introspection
+- **Team extends** — `extends:` references in `whetstone.yaml` pull team rulesets from `github.com/...` via git clone, cached under `whetstone/.cache/teams/`
+- **Global personal config** — `~/.whetstone/config.yaml` supplies user-wide deny lists, default formats, and custom sources that merge into every project
+- **Advisory automation hooks** — `wh init --hooks` installs a post-merge git hook + Claude Code `SessionStart` advisory; `wh init --ci --schedule=<cadence>` generates a scheduled GitHub Actions freshness check
 - Binary self-update via `wh update`
 
 **Opt-in:**
@@ -513,8 +519,8 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - MCP server for agent-native rule queries
 - Continue.dev check generation for CI status checks
 - Tree-sitter-backed AST signal analysis (today's `ast` signals fall back to regex)
-- Layer system (personal → project → team → built-in)
-- Shared rule registry with community-ranked rules
+- Shared rule registry with community-ranked rules (the `@user/config` `extends:` form is parsed but currently reports `not_implemented`)
+- `wh evolve` — signal promotion from AI verdicts to deterministic signals
 
 See [`planning/whetstone-roadmap-v2.md`](planning/whetstone-roadmap-v2.md) for the full plan and [`references/workflow-matrix.md`](references/workflow-matrix.md) for the command-to-lifecycle mapping.
 

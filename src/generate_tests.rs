@@ -16,21 +16,47 @@ pub fn generate_tests(
     project_dir: &Path,
     lang_filter: Option<&str>,
     dry_run: bool,
+    personal_output: bool,
 ) -> Result<Value> {
-    let rules_dir = project_dir.join("whetstone").join("rules");
-    let (project_approved, warnings) = rules::load_approved_rules(&rules_dir, lang_filter);
-
-    // Merge built-in rules when whetstone config exists (real project, not test fixtures)
     let whetstone_config_exists = project_dir.join("whetstone").join("whetstone.yaml").exists()
         || project_dir.join("whetstone.yaml").exists();
-    let approved = if whetstone_config_exists {
-        let config = crate::config::WhetstoneConfig::load(project_dir);
-        let builtin = crate::builtin::load_builtin_rules();
-        let (builtin_approved, _) = rules::approved_from_loaded(&builtin, lang_filter);
-        crate::builtin::merge_approved_rules(&builtin_approved, &project_approved, &config.deny)
-    } else {
-        project_approved
-    };
+
+    let (approved, warnings, output_base): (Vec<ApprovedRule>, Vec<String>, std::path::PathBuf) =
+        if personal_output {
+            // Personal mode — only render the personal layer into .personal/evals/
+            let (rules, warns) = crate::layers::load_personal_only(project_dir, lang_filter);
+            (
+                rules,
+                warns,
+                project_dir.join("whetstone").join(".personal"),
+            )
+        } else if whetstone_config_exists {
+            let config = crate::config::WhetstoneConfig::load(project_dir);
+            let (mut layers, warns) =
+                crate::layers::LayerSet::load(project_dir, lang_filter, true);
+            // Tests emitted to whetstone/evals/ are committed — strip personal.
+            layers.personal.clear();
+            if !config.extends.is_empty() {
+                let extra = crate::team::resolve(project_dir, &config.extends, false)
+                    .ok()
+                    .map(|r| r.rules_dirs)
+                    .unwrap_or_default();
+                for dir in extra {
+                    let (mut rules, _) = rules::load_approved_rules(&dir, lang_filter);
+                    layers.team.append(&mut rules);
+                }
+            }
+            let merged = layers
+                .merge()
+                .into_iter()
+                .map(|lr| lr.rule)
+                .collect();
+            (merged, warns, project_dir.join("whetstone"))
+        } else {
+            let rules_dir = project_dir.join("whetstone").join("rules");
+            let (approved, warns) = rules::load_approved_rules(&rules_dir, lang_filter);
+            (approved, warns, project_dir.join("whetstone"))
+        };
 
     if approved.is_empty() {
         return Ok(serde_json::json!({
@@ -57,19 +83,19 @@ pub fn generate_tests(
     for (language, rules) in &by_language {
         match language.as_str() {
             "python" => {
-                let (tests, lints, warns) = generate_python(rules, project_dir, dry_run);
+                let (tests, lints, warns) = generate_python(rules, &output_base, dry_run);
                 test_files.extend(tests);
                 lint_configs.extend(lints);
                 all_warnings.extend(warns);
             }
             "typescript" => {
-                let (tests, lints, warns) = generate_typescript(rules, project_dir, dry_run);
+                let (tests, lints, warns) = generate_typescript(rules, &output_base, dry_run);
                 test_files.extend(tests);
                 lint_configs.extend(lints);
                 all_warnings.extend(warns);
             }
             "rust" => {
-                let (tests, lints, warns) = generate_rust(rules, project_dir, dry_run);
+                let (tests, lints, warns) = generate_rust(rules, &output_base, dry_run);
                 test_files.extend(tests);
                 lint_configs.extend(lints);
                 all_warnings.extend(warns);
@@ -107,12 +133,12 @@ pub fn generate_tests(
 
 fn generate_python(
     rules: &[&ApprovedRule],
-    project_dir: &Path,
+    output_base: &Path,
     dry_run: bool,
 ) -> (Vec<Value>, Vec<Value>, Vec<String>) {
     let mut test_files = Vec::new();
     let mut lint_configs = Vec::new();
-    let evals_dir = project_dir.join("whetstone").join("evals").join("python");
+    let evals_dir = output_base.join("evals").join("python");
 
     // Generate conftest.py
     let conftest = generate_python_conftest();
@@ -156,8 +182,7 @@ fn generate_python(
     let ruff_rules = extract_lint_proxy_codes(rules, "ruff");
     if !ruff_rules.is_empty() {
         let ruff_content = generate_ruff_config(&ruff_rules);
-        let ruff_path = project_dir
-            .join("whetstone")
+        let ruff_path = output_base
             .join("lint")
             .join("ruff.whetstone.toml");
         if write_generated(&ruff_path, &ruff_content, dry_run) {
@@ -309,17 +334,14 @@ fn generate_python_test(rule: &ApprovedRule) -> String {
 
 fn generate_typescript(
     rules: &[&ApprovedRule],
-    project_dir: &Path,
+    output_base: &Path,
     dry_run: bool,
 ) -> (Vec<Value>, Vec<Value>, Vec<String>) {
     let mut test_files = Vec::new();
     let mut lint_configs = Vec::new();
     let warnings = Vec::new();
 
-    let evals_dir = project_dir
-        .join("whetstone")
-        .join("evals")
-        .join("typescript");
+    let evals_dir = output_base.join("evals").join("typescript");
 
     // Generate setup.ts
     let setup = generate_ts_setup();
@@ -363,8 +385,7 @@ fn generate_typescript(
     let biome_rules = extract_lint_proxy_codes(rules, "biome");
     if !biome_rules.is_empty() {
         let biome_content = generate_biome_config(&biome_rules);
-        let biome_path = project_dir
-            .join("whetstone")
+        let biome_path = output_base
             .join("lint")
             .join("biome.whetstone.json");
         if write_generated(&biome_path, &biome_content, dry_run) {
@@ -505,14 +526,14 @@ fn generate_ts_test(rule: &ApprovedRule) -> String {
 
 fn generate_rust(
     rules: &[&ApprovedRule],
-    project_dir: &Path,
+    output_base: &Path,
     dry_run: bool,
 ) -> (Vec<Value>, Vec<Value>, Vec<String>) {
     let mut test_files = Vec::new();
     let mut lint_configs = Vec::new();
     let warnings = Vec::new();
 
-    let evals_dir = project_dir.join("whetstone").join("evals").join("rust");
+    let evals_dir = output_base.join("evals").join("rust");
 
     // Group rules by source_name so deps with multiple rules share one test file.
     let mut by_dep: BTreeMap<String, Vec<&ApprovedRule>> = BTreeMap::new();
@@ -545,8 +566,7 @@ fn generate_rust(
     let clippy_rules = extract_lint_proxy_codes(rules, "clippy");
     if !clippy_rules.is_empty() {
         let clippy_content = generate_clippy_config(&clippy_rules);
-        let clippy_path = project_dir
-            .join("whetstone")
+        let clippy_path = output_base
             .join("lint")
             .join("clippy.whetstone.toml");
         if write_generated(&clippy_path, &clippy_content, dry_run) {

@@ -2,8 +2,8 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    ci_check, detect, detect_patterns, doctor, eval, generate_context, generate_tests, output,
-    resolve, rules, status, update,
+    ci_check, detect, detect_patterns, doctor, eval, generate_context, generate_tests, layers,
+    output, personal, resolve, rules, status, triggers, update,
 };
 
 #[derive(Parser)]
@@ -23,7 +23,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Scan project and detect dependencies
+    /// Scan project and detect dependencies (or run --personal / --hooks / --ci setup)
     #[command(name = "init", visible_alias = "deps", alias = "detect-deps")]
     Init {
         /// Root directory to search for manifest files
@@ -49,6 +49,22 @@ enum Commands {
         /// Compare manifest fingerprints and persist dependency inventory
         #[arg(long)]
         incremental: bool,
+
+        /// Scaffold whetstone/.personal/ (rules, evals, lint, context) + .gitignore entries
+        #[arg(long)]
+        personal: bool,
+
+        /// Install session + post-merge git hooks under .githooks/
+        #[arg(long)]
+        hooks: bool,
+
+        /// Generate .github/workflows/whetstone-check.yml for scheduled freshness checks
+        #[arg(long)]
+        ci: bool,
+
+        /// Schedule for the CI workflow (daily|weekly|biweekly|monthly or a 5-field cron)
+        #[arg(long, default_value = "weekly")]
+        schedule: String,
     },
 
     /// Resolve documentation URLs and fetch content for dependencies
@@ -200,6 +216,10 @@ enum Commands {
         /// Show what would be generated without writing files
         #[arg(long)]
         dry_run: bool,
+
+        /// Render personal-layer-only context into whetstone/.personal/context/
+        #[arg(long)]
+        personal: bool,
     },
 
     /// Generate test files and linter configs from approved rules
@@ -216,6 +236,39 @@ enum Commands {
         /// Show what would be generated without writing files
         #[arg(long)]
         dry_run: bool,
+
+        /// Emit personal-layer tests into whetstone/.personal/evals/
+        #[arg(long)]
+        personal: bool,
+    },
+
+    /// Move a rule between layers (personal → project → team)
+    Promote {
+        /// Rule id (e.g., "reqwest.set-timeout") to move
+        rule_id: String,
+
+        /// Target layer (personal|project|team)
+        #[arg(long = "to", default_value = "project")]
+        to: String,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Keep the source rule in place (copy instead of move)
+        #[arg(long)]
+        keep_source: bool,
+    },
+
+    /// Show the 4-layer rule merge summary (personal + project + team + built-in)
+    Layers {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Filter by language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
     },
 
     /// Validate the rule schema and all rule fixtures
@@ -344,7 +397,64 @@ pub fn run() -> i32 {
             exclude,
             include,
             incremental,
+            personal,
+            hooks,
+            ci,
+            schedule,
         } => {
+            // Setup flags short-circuit detection. They can compose — e.g.
+            // `wh init --personal --hooks --ci --schedule=weekly`.
+            if personal || hooks || ci {
+                let mut setup = serde_json::Map::new();
+                setup.insert("status".to_string(), serde_json::json!("ok"));
+
+                if personal {
+                    match personal::init_personal(&project_dir) {
+                        Ok(v) => {
+                            setup.insert("personal".to_string(), v);
+                        }
+                        Err(e) => {
+                            output::print_json(&output::error_json(
+                                &e.to_string(),
+                                "Check filesystem permissions on the project directory",
+                            ));
+                            return 1;
+                        }
+                    }
+                }
+                if hooks {
+                    match triggers::install_hooks(&project_dir, &triggers::HookOptions::all()) {
+                        Ok(v) => {
+                            setup.insert("hooks".to_string(), v);
+                        }
+                        Err(e) => {
+                            output::print_json(&output::error_json(
+                                &e.to_string(),
+                                "Ensure the project is a git repository before running --hooks",
+                            ));
+                            return 1;
+                        }
+                    }
+                }
+                if ci {
+                    match triggers::install_ci_workflow(&project_dir, &schedule) {
+                        Ok(v) => {
+                            setup.insert("ci".to_string(), v);
+                        }
+                        Err(e) => {
+                            output::print_json(&output::error_json(
+                                &e.to_string(),
+                                "Pass --schedule=daily|weekly|biweekly|monthly or a 5-field cron expression",
+                            ));
+                            return 1;
+                        }
+                    }
+                }
+
+                output::print_json(&serde_json::Value::Object(setup));
+                return 0;
+            }
+
             let cli_excludes: Vec<String> = exclude
                 .map(|s| s.split(',').map(|e| e.trim().to_string()).collect())
                 .unwrap_or_default();
@@ -602,12 +712,14 @@ pub fn run() -> i32 {
             formats,
             lang,
             dry_run,
+            personal,
         } => {
             match generate_context::generate_context(
                 &project_dir,
                 formats.as_deref(),
                 lang.as_deref(),
                 dry_run,
+                personal,
             ) {
                 Ok(result) => {
                     if json_mode {
@@ -647,7 +759,8 @@ pub fn run() -> i32 {
             project_dir,
             lang,
             dry_run,
-        } => match generate_tests::generate_tests(&project_dir, lang.as_deref(), dry_run) {
+            personal,
+        } => match generate_tests::generate_tests(&project_dir, lang.as_deref(), dry_run, personal) {
             Ok(result) => {
                 if json_mode {
                     output::print_json(&result);
@@ -897,6 +1010,53 @@ pub fn run() -> i32 {
                 }
             }
         },
+
+        Commands::Promote {
+            rule_id,
+            to,
+            project_dir,
+            keep_source,
+        } => match personal::promote_rule(&project_dir, &rule_id, &to, keep_source) {
+            Ok(result) => {
+                output::print_json(&result);
+                0
+            }
+            Err(e) => {
+                output::print_json(&output::error_json(
+                    &e.to_string(),
+                    "wh promote <rule-id> --to personal|project|team",
+                ));
+                1
+            }
+        },
+
+        Commands::Layers { project_dir, lang } => {
+            let (layer_set, warnings) =
+                layers::LayerSet::load(&project_dir, lang.as_deref(), true);
+            let summary = layer_set.summary();
+            let merged = layer_set.merge();
+            let rules_list: Vec<serde_json::Value> = merged
+                .iter()
+                .map(|lr| {
+                    serde_json::json!({
+                        "id": lr.rule.id,
+                        "layer": lr.layer.as_str(),
+                        "language": lr.rule.language,
+                        "severity": lr.rule.severity,
+                        "source_name": lr.rule.source_name,
+                    })
+                })
+                .collect();
+            let result = serde_json::json!({
+                "status": "ok",
+                "summary": summary,
+                "rules": rules_list,
+                "warnings": warnings,
+                "next_command": "wh validate && wh context && wh tests",
+            });
+            output::print_json(&result);
+            0
+        }
 
         Commands::Update { check, force } => {
             match update::check_and_update(force, check) {

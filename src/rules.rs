@@ -397,13 +397,15 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
         return (out, false);
     }
 
-    // Collect YAML files from test fixtures, project rules, and (when present)
-    // the embedded built-in rule directory — so `wh validate` in the Whetstone
-    // source tree catches schema drift in the shipped `whetstone:recommended`
-    // baseline.
+    // Collect YAML files from every layer that can carry rules: test
+    // fixtures, project rules, the personal layer (local-only overrides),
+    // local team staging (`wh promote --to team`), and the binary-embedded
+    // built-in directory — so `wh validate` catches schema drift everywhere.
     let scan_roots = [
         project_root.join("tests").join("fixtures"),
         project_root.join("whetstone").join("rules"),
+        project_root.join("whetstone").join(".personal").join("rules"),
+        project_root.join("whetstone").join(".team").join("rules"),
         project_root.join("src").join("builtin"),
     ];
     let mut fixtures: Vec<std::path::PathBuf> = Vec::new();

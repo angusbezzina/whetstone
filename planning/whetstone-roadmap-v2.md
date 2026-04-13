@@ -87,9 +87,8 @@ Five CLI calls. The agent reasons between them. SKILL.md teaches it how. See `pl
 | Config depth | Medium | Only discovery + formats; no extraction settings, no timeouts |
 | Tera templates | Medium | Codegen uses string concatenation; works but doesn't scale |
 | tree-sitter AST signals | Medium | `ast` signals fall back to regex; real tree-sitter analysis is not yet wired up |
-| Layer system | Deferred | No personal/team layers, no promote, no extends |
-| Trigger modes | Deferred | No session/post-merge/scheduled hooks |
-| Shared registry | Deferred | No community-ranked published rulesets |
+| Shared registry | Deferred | `@user/config` is parseable in `extends:` but reports `not_implemented` — a community-ranked registry is still future work |
+| `wh evolve` | Deferred | Signal promotion from AI verdicts → deterministic signals is not yet implemented |
 
 ### Dogfooding Results (2026-04-05)
 
@@ -152,20 +151,34 @@ Close the gap between Whetstone's strong infrastructure and its missing product 
 
 ### Epic 2: Layers + Triggers
 
-> **Planned in:** `planning/archive/layer-system.md` | **Status:** Not started
+> **Tracked as:** `whetstone-vkh` in beads | **Status:** Closed (2026-04-13)
 
-Scale Whetstone from solo developer to org-wide policy.
+Scaled Whetstone from solo-developer extraction to a preference-aware policy
+system. Every child below ships with integration-test coverage.
 
-- **Personal layer** — `whetstone/.personal/` (gitignored, local only)
-- **Team layer** — Shared config via `extends:` from external repos
-- **Layer merge** — personal > project > team > built-in cascade
-- **Promote command** — Move rules between layers
-- **Trigger: session hook** — `wh status` on session start
-- **Trigger: post-merge hook** — Drift check after `git pull`
-- **Trigger: scheduled CI** — Periodic freshness checks
-- **Global personal config** — `~/.whetstone/config.yaml`
-
-Depends on Epic 1 completion (needs working extraction flow, built-in rules, validated pipeline).
+- **Personal layer** — `whetstone/.personal/` is auto-gitignored by
+  `wh init --personal`; `rules/`, `evals/`, `lint/`, and `context/` all live
+  under that root.
+- **Team layer** — `whetstone.yaml extends:` accepts `whetstone:recommended`,
+  `github.com/owner/repo` (git-cloned into `whetstone/.cache/teams/`), plus
+  `@user/config` / `https://…` forms that are parsed and report
+  `not_implemented` until the registry lands.
+- **Layer merge** — `LayerSet::merge()` implements
+  `personal > project > team > built-in` with per-layer deny lists. `wh layers`
+  surfaces the merged set for debugging.
+- **Promote command** — `wh promote <rule-id> --to personal|project|team`
+  moves (or with `--keep-source`, copies) rule files between layers.
+  Monotonic: downward promotions are rejected.
+- **Trigger: session hook** — `wh init --hooks` installs
+  `.claude/whetstone-session-hook.sh` and merges a `SessionStart` entry into
+  `.claude/settings.json` without clobbering other hooks.
+- **Trigger: post-merge hook** — Same command writes
+  `.githooks/post-merge` and wires `core.hooksPath` when it is unset.
+- **Trigger: scheduled CI** — `wh init --ci --schedule=<cadence>` writes
+  `.github/workflows/whetstone-check.yml` running `wh status` + `wh ci`.
+- **Global personal config** — `~/.whetstone/config.yaml` merges into every
+  project's resolved `WhetstoneConfig`; deny lists union, explicit fields in
+  the project override.
 
 ---
 
