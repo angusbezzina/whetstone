@@ -1207,6 +1207,671 @@ fn test_detect_patterns_python_parity_git() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+// ── nq8.3.1: Refresh contract tests ──
+
+/// Build a tiny project with a `whetstone.yaml` but no dependencies, so refresh
+/// can run fully offline (no sources to resolve, no drift possible).
+fn empty_whetstone_project(name: &str) -> std::path::PathBuf {
+    let tmp = std::env::temp_dir().join(format!("{name}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "discovery:\n  exclude: []\n",
+    )
+    .unwrap();
+    // Minimal Cargo.toml so detect_deps does not error on missing manifests.
+    std::fs::write(
+        tmp.join("Cargo.toml"),
+        "[package]\nname = \"empty\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    tmp
+}
+
+#[test]
+fn test_refresh_on_empty_project_no_drift() {
+    let tmp = empty_whetstone_project("whetstone_refresh_empty");
+    let project = tmp.to_str().unwrap();
+
+    let (stdout, _stderr, success) = run_whetstone(&["refresh", "--json"], project);
+    assert!(
+        success,
+        "refresh on an empty project must succeed:\n{stdout}"
+    );
+
+    // Artifact contract
+    let diff_path = tmp.join("whetstone/.state/refresh-diff.json");
+    assert!(diff_path.exists(), "refresh must write refresh-diff.json");
+    let diff: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&diff_path).unwrap()).unwrap();
+    assert_eq!(diff["version"], 1, "diff must set version=1");
+    for key in ["generated_at", "drift_count", "changed", "removed", "failed"] {
+        assert!(diff.get(key).is_some(), "refresh-diff missing key: {key}");
+    }
+    assert_eq!(diff["drift_count"], 0, "empty project has no drift");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_refresh_check_exits_zero_when_no_drift() {
+    let tmp = empty_whetstone_project("whetstone_refresh_check_ok");
+    let project = tmp.to_str().unwrap();
+
+    let (stdout, _stderr, success) = run_whetstone(&["refresh", "--check", "--json"], project);
+    // No deps → no drift → --check MUST exit 0.
+    assert!(
+        success,
+        "refresh --check on a drift-free project must exit 0:\n{stdout}"
+    );
+    let diff_path = tmp.join("whetstone/.state/refresh-diff.json");
+    assert!(diff_path.exists(), "refresh --check still writes the diff");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_refresh_emits_extraction_handoff_with_trigger_refresh() {
+    let tmp = empty_whetstone_project("whetstone_refresh_handoff");
+    let project = tmp.to_str().unwrap();
+
+    let (_stdout, _stderr, success) = run_whetstone(&["refresh", "--json"], project);
+    assert!(success);
+
+    let handoff_path = tmp.join("whetstone/.state/extraction-handoff.json");
+    assert!(handoff_path.exists(), "refresh must rewrite the handoff");
+    let handoff: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&handoff_path).unwrap()).unwrap();
+    assert_eq!(handoff["version"], 1);
+    assert_eq!(
+        handoff["trigger"], "refresh",
+        "refresh-triggered handoff must be labeled 'refresh'"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_doctor_writes_extraction_handoff_with_trigger_doctor() {
+    let dir = fixtures_dir();
+    // Run against fixtures (has fastapi + react rules); doctor completes fine
+    // even without network because no deps need resolving to emit a handoff.
+    let (_stdout, _stderr, _success) = run_whetstone(
+        &[
+            "doctor",
+            "--json",
+            "--max-deps",
+            "0",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        dir.to_str().unwrap(),
+    );
+
+    let handoff_path = dir.join("whetstone/.state/extraction-handoff.json");
+    if handoff_path.exists() {
+        let handoff: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&handoff_path).unwrap()).unwrap();
+        assert_eq!(handoff["version"], 1);
+        assert_eq!(handoff["trigger"], "doctor");
+        for key in ["candidates", "skipped", "next_action", "generated_at"] {
+            assert!(handoff.get(key).is_some(), "handoff missing key: {key}");
+        }
+    }
+}
+
+// ── nq8.3.2: AI eval lifecycle coverage ──
+
+fn write_ai_eval_rule_project(root: &std::path::Path) {
+    // Minimal Python project with one approved rule that has an ai_eval config
+    // and concrete golden examples. Used by the eval generate/run/calibrate tests.
+    std::fs::create_dir_all(root.join("whetstone/rules/python")).unwrap();
+    std::fs::write(
+        root.join("whetstone/whetstone.yaml"),
+        "discovery:\n  exclude: []\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname='eval-fixture'\nversion='0.0.0'\ndependencies=['example>=0.1']\n",
+    )
+    .unwrap();
+    // A dummy source file so eval run has something to scan.
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("src/uses_subprocess.py"),
+        "import subprocess\nresult = subprocess.run(['ls'], shell=True)\n",
+    )
+    .unwrap();
+
+    // Rule uses a pattern signal (triggers a violation) with ai_eval for judgment.
+    std::fs::write(
+        root.join("whetstone/rules/python/example.yaml"),
+        r#"source:
+  name: example
+  docs_url: https://example.com
+  version: "0.1.0"
+  content_hash: sha256:abc
+  resolved_at: "2026-04-13T00:00:00Z"
+  registry: pypi
+  content_origin: readme
+rules:
+  - id: example.no-shell-true
+    severity: must
+    confidence: high
+    category: default
+    source_kind: official_docs
+    description: >
+      MUST NOT call subprocess.run with shell=True on untrusted input.
+    source_url: https://docs.python.org/3/library/subprocess.html
+    approved: true
+    status: approved
+    proposed_at: "2026-04-13T00:00:00Z"
+    signals:
+      - id: shell-true
+        strategy: pattern
+        description: "subprocess call with shell=True"
+        match: 'subprocess\.run\([^)]*shell\s*=\s*True'
+        weight: required
+    golden_examples:
+      - code: |
+          subprocess.run(['ls', '-l'])
+        verdict: pass
+        reason: "No shell=True — safe"
+      - code: |
+          subprocess.run('ls -l', shell=True)
+        verdict: fail
+        reason: "shell=True with string command is unsafe"
+      - code: |
+          subprocess.run(user_cmd, shell=True)
+        verdict: fail
+        reason: "shell=True with untrusted input"
+    ai_eval:
+      trigger: ambiguous
+      question: "Is the shell=True call on untrusted input? Answer PASS only if the input is a hardcoded safe string."
+      context_lines: 6
+"#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn test_eval_generate_dry_run_reports_ai_rules() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_eval_gen_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    write_ai_eval_rule_project(&tmp);
+
+    let project = tmp.to_str().unwrap();
+    let (stdout, _stderr, success) = run_whetstone(
+        &["eval", "generate", "--dry-run", "--project-dir", project],
+        project,
+    );
+    assert!(success, "eval generate --dry-run should succeed:\n{stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    let generated = result["generated"].as_array().expect("generated array");
+    assert_eq!(
+        generated.len(),
+        1,
+        "should generate one definition for the single ai_eval rule"
+    );
+    assert_eq!(generated[0]["rule_id"], "example.no-shell-true");
+    assert_eq!(generated[0]["golden_examples"].as_u64(), Some(3));
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_eval_generate_no_ai_rules_emits_message() {
+    // Project with a deterministic-only rule; no ai_eval config anywhere.
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_eval_no_ai_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone/rules/rust")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "discovery:\n  exclude: []\ndeny:\n  - rust.expect-over-unwrap\n  - rust.timeout-on-http-clients\n  - rust.error-context\n  - rust.prefer-str-params\n  - rust.must-use-results\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("whetstone/rules/rust/fake.yaml"),
+        r#"source:
+  name: fake
+  version: "0.1"
+  content_hash: sha256:abc
+  resolved_at: "2026-04-13T00:00:00Z"
+  registry: crates_io
+rules:
+  - id: fake.simple
+    severity: may
+    confidence: high
+    category: convention
+    source_kind: manual
+    description: example
+    source_url: https://example.com
+    approved: true
+    status: approved
+    proposed_at: "2026-04-13T00:00:00Z"
+    signals:
+      - id: s1
+        strategy: pattern
+        description: example
+        match: 'foo'
+        weight: required
+    golden_examples:
+      - code: "foo"
+        verdict: fail
+        reason: "matches"
+      - code: "bar"
+        verdict: pass
+        reason: "does not match"
+"#,
+    )
+    .unwrap();
+
+    let project = tmp.to_str().unwrap();
+    let (stdout, _stderr, success) = run_whetstone(
+        &["eval", "generate", "--dry-run", "--project-dir", project],
+        project,
+    );
+    assert!(success, "eval generate --dry-run should succeed:\n{stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert!(
+        result["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("No rules with AI signals"),
+        "expected no-AI message, got: {result}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_eval_run_deterministic_only_reports_violations() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_eval_det_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    write_ai_eval_rule_project(&tmp);
+
+    let project = tmp.to_str().unwrap();
+    let (stdout, _stderr, success) = run_whetstone(
+        &[
+            "eval",
+            "run",
+            "--deterministic-only",
+            "--project-dir",
+            project,
+        ],
+        project,
+    );
+    assert!(success, "eval run --deterministic-only should succeed:\n{stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+
+    let violations = result["violations"].as_array().expect("violations array");
+    assert!(
+        !violations.is_empty(),
+        "deterministic-only eval must still report violations"
+    );
+    assert!(violations
+        .iter()
+        .any(|v| v["rule_id"] == "example.no-shell-true"));
+    // Deterministic-only path does NOT emit pending AI requests
+    assert_eq!(result["pending_requests"], serde_json::Value::Null);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_eval_run_ai_path_writes_requests() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_eval_ai_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    write_ai_eval_rule_project(&tmp);
+
+    let project = tmp.to_str().unwrap();
+    let (stdout, _stderr, success) = run_whetstone(
+        &["eval", "run", "--project-dir", project],
+        project,
+    );
+    assert!(success, "eval run should succeed:\n{stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+
+    let requests_path = tmp.join("whetstone/.state/eval-requests.json");
+    assert!(
+        requests_path.exists(),
+        "eval run with an ai_eval rule + match must write eval-requests.json"
+    );
+    let batch: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&requests_path).unwrap()).unwrap();
+    assert_eq!(batch["version"], 1);
+    let requests = batch["requests"].as_array().unwrap();
+    assert!(
+        !requests.is_empty(),
+        "eval-requests.json must include at least one request"
+    );
+    for req in requests {
+        assert!(req.get("id").is_some());
+        assert!(req.get("rule_id").is_some());
+        assert!(req.get("question").is_some());
+        assert!(req.get("code_snippet").is_some());
+        assert!(req.get("golden_examples").is_some());
+    }
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_eval_run_collect_merges_verdicts() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_eval_collect_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    write_ai_eval_rule_project(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone/.state")).unwrap();
+
+    // Simulate an agent having judged the requests.
+    std::fs::write(
+        tmp.join("whetstone/.state/eval-verdicts.json"),
+        r#"{
+            "version": 1,
+            "judged_at": "2026-04-13T00:00:00Z",
+            "verdicts": [
+                {"id": "example.no-shell-true:src/uses_subprocess.py:2", "verdict": "fail", "reason": "shell=True on untrusted input"}
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let project = tmp.to_str().unwrap();
+    let (stdout, _stderr, success) = run_whetstone(
+        &["eval", "run", "--collect", "--project-dir", project],
+        project,
+    );
+    assert!(success, "eval run --collect should succeed:\n{stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    let summary = &result["summary"];
+    assert_eq!(summary["verdicts_collected"], 1);
+    assert_eq!(summary["ai_failures"], 1);
+    assert_eq!(summary["ai_passes"], 0);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_eval_calibrate_writes_requests() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_eval_cal_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    write_ai_eval_rule_project(&tmp);
+
+    let project = tmp.to_str().unwrap();
+    let (stdout, _stderr, success) = run_whetstone(
+        &["eval", "calibrate", "--project-dir", project],
+        project,
+    );
+    assert!(success, "eval calibrate should succeed:\n{stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["rules_tested"], 1);
+    assert_eq!(result["calibration_requests"], 3); // 3 golden examples
+
+    let path = tmp.join("whetstone/.state/calibration-requests.json");
+    assert!(path.exists());
+    let batch: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(batch["type"], "calibration");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_eval_calibrate_collect_reports_agreement() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_eval_cal_collect_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    write_ai_eval_rule_project(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone/.state")).unwrap();
+
+    // Perfectly aligned verdicts — should report 100% agreement.
+    std::fs::write(
+        tmp.join("whetstone/.state/calibration-verdicts.json"),
+        r#"{
+            "version": 1,
+            "verdicts": [
+                {"id": "calibrate:example.no-shell-true:example_0", "verdict": "pass", "reason": "matches expected pass"},
+                {"id": "calibrate:example.no-shell-true:example_1", "verdict": "fail", "reason": "matches expected fail"},
+                {"id": "calibrate:example.no-shell-true:example_2", "verdict": "fail", "reason": "matches expected fail"}
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let project = tmp.to_str().unwrap();
+    let (stdout, _stderr, success) = run_whetstone(
+        &["eval", "calibrate", "--collect", "--project-dir", project],
+        project,
+    );
+    assert!(
+        success,
+        "eval calibrate --collect should succeed:\n{stdout}"
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["calibration_passed"], true);
+    let summary = &result["summary"];
+    assert_eq!(summary["agreements"], 3);
+    assert_eq!(summary["disagreements"], 0);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+// ── nq8.3.3: Built-in + project merge regression ──
+
+#[test]
+fn test_builtin_rules_merged_into_generate_context() {
+    // Project with a whetstone.yaml but no project rules — context generation
+    // should still emit output containing built-in Rust rules.
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_builtin_context_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "discovery:\n  exclude: []\n",
+    )
+    .unwrap();
+    // Minimal Rust manifest so the project is classified as rust.
+    std::fs::write(
+        tmp.join("Cargo.toml"),
+        "[package]\nname='builtin-merge'\nversion='0.0.0'\nedition='2021'\n",
+    )
+    .unwrap();
+
+    let project = tmp.to_str().unwrap();
+    let (stdout, _stderr, success) = run_whetstone(
+        &[
+            "context",
+            "--dry-run",
+            "--json",
+            "--lang",
+            "rust",
+            "--project-dir",
+            project,
+        ],
+        project,
+    );
+    assert!(success, "generate-context should succeed:\n{stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert!(
+        result["rules_count"].as_i64().unwrap_or(0) >= 1,
+        "built-in Rust rules must merge in when project has no rules, got: {result}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_deny_excludes_builtin_rule_from_generation() {
+    // Deny every built-in Rust rule id; confirm context generation emits zero rules.
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_deny_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "discovery:\n  exclude: []\ndeny:\n  - rust.expect-over-unwrap\n  - rust.timeout-on-http-clients\n  - rust.error-context\n  - rust.prefer-str-params\n  - rust.must-use-results\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("Cargo.toml"),
+        "[package]\nname='deny-all'\nversion='0.0.0'\nedition='2021'\n",
+    )
+    .unwrap();
+
+    let project = tmp.to_str().unwrap();
+    let (stdout, _stderr, success) = run_whetstone(
+        &[
+            "tests",
+            "--dry-run",
+            "--json",
+            "--lang",
+            "rust",
+            "--project-dir",
+            project,
+        ],
+        project,
+    );
+    assert!(success, "generate-tests should succeed:\n{stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    // With every built-in denied and no project rules, nothing should generate.
+    let rules_count = result["rules_count"].as_i64().unwrap_or(0);
+    assert_eq!(
+        rules_count, 0,
+        "denying every built-in rule must leave nothing to generate, got {rules_count}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_project_rule_overrides_builtin_by_id() {
+    // Project defines a rule whose id collides with a built-in. The merge must
+    // keep the project definition (and drop the built-in version of the same id).
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_override_{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone/rules/rust")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "discovery:\n  exclude: []\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("Cargo.toml"),
+        "[package]\nname='override'\nversion='0.0.0'\nedition='2021'\n",
+    )
+    .unwrap();
+    // Use the same id as a built-in rule to force the collision.
+    std::fs::write(
+        tmp.join("whetstone/rules/rust/expect.yaml"),
+        r#"source:
+  name: "local:expect"
+  version: "1.0.0"
+  content_hash: sha256:local
+  resolved_at: "2026-04-13T00:00:00Z"
+  registry: manual
+rules:
+  - id: rust.expect-over-unwrap
+    severity: must
+    confidence: high
+    category: convention
+    source_kind: team_guide
+    description: >
+      Project override: MUST use .expect("…") instead of .unwrap() — team convention.
+    source_url: https://team-guide.internal/rust-unwrap
+    approved: true
+    status: approved
+    proposed_at: "2026-04-13T00:00:00Z"
+    signals:
+      - id: local-bare-unwrap
+        strategy: pattern
+        description: overridden
+        match: '\.unwrap\s*\(\)'
+        weight: required
+    golden_examples:
+      - code: 'x.expect("reason")'
+        verdict: pass
+        reason: explicit
+      - code: 'x.unwrap()'
+        verdict: fail
+        reason: no reason
+"#,
+    )
+    .unwrap();
+
+    let project = tmp.to_str().unwrap();
+    let (stdout, _stderr, success) = run_whetstone(
+        &[
+            "tests",
+            "--dry-run",
+            "--json",
+            "--lang",
+            "rust",
+            "--project-dir",
+            project,
+        ],
+        project,
+    );
+    assert!(success, "generate-tests should succeed:\n{stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+
+    // Built-ins contribute 4 remaining rules (one id is overridden); project contributes 1.
+    // Expected total: 4 (built-in, minus the overridden id) + 1 (project) = 5.
+    let rules_count = result["rules_count"].as_i64().unwrap_or(0);
+    assert_eq!(
+        rules_count, 5,
+        "project rule must override built-in by id (expected 5 total)"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 #[test]
 fn test_detect_patterns_quiet_mode() {
     let tmp = std::env::temp_dir().join(format!(

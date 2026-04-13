@@ -104,6 +104,15 @@ wh tests
 
 # 4. Check project health anytime
 wh status
+
+# 5. When dependencies drift, re-resolve only what changed
+wh refresh              # writes whetstone/.state/refresh-diff.json
+wh refresh --check      # same, but exits non-zero when drift is detected (CI-friendly)
+
+# 6. Optional: judge ambiguous rules with AI eval
+wh eval generate        # produce eval definitions for ai-signal rules
+wh eval run             # deterministic + AI requests; --deterministic-only for CI
+wh eval calibrate       # agreement check between judge and golden examples
 ```
 
 > **Agent skill mode:** When using Whetstone as an agent skill, say "wh doctor" or "extract rules" and the agent runs the full workflow. The binary handles deterministic work; your existing LLM does the extraction.
@@ -166,14 +175,16 @@ Whetstone follows a six-step lifecycle. The doctor command handles steps 1-2 aut
 
 | Step | Command | What happens |
 |------|---------|-------------|
-| **1. Detect** | `doctor` (or `detect-deps`) | Scan manifests for dependencies |
-| **2. Resolve** | `doctor` (or `resolve-sources`) | Resolve docs URLs from registries, probe for llms.txt |
+| **1. Detect** | `wh doctor` (or `wh init`) | Scan manifests for dependencies |
+| **2. Resolve** | `wh doctor` (or `wh set-sources`) | Resolve docs URLs from registries, probe for llms.txt |
 | **3. Extract** | Agent-mediated | LLM reads docs, proposes candidate rules |
 | **4. Approve** | Agent-mediated | User reviews each rule (approve/edit/deny/skip) |
-| **5. Generate** | `generate-tests` + `generate-context` | Produce tests, lint configs, agent context |
-| **6. Monitor** | `status` / `ci-check` | Track freshness, drift, and health |
+| **5. Generate** | `wh tests` + `wh context` | Produce tests, lint configs, agent context |
+| **6. Monitor** | `wh status` / `wh ci` | Track freshness, drift, and health |
 
-When dependencies update, run `detect-deps --changed-only` to see what drifted, then re-extract only the changed sources.
+When dependencies update, run `wh refresh` to re-resolve changed sources, then re-extract rules for what changed. `wh refresh --check` exits non-zero if drift was detected (useful in CI).
+
+See [`references/workflow-matrix.md`](references/workflow-matrix.md) for the full command matrix, including every alias and which lifecycle step each command serves.
 
 ## How It Works
 
@@ -220,21 +231,27 @@ When dependencies update, run `detect-deps --changed-only` to see what drifted, 
 ## Commands
 
 ```bash
-whetstone <command> [options]
+whetstone <command> [options]   # `wh` is the shorter alias
 ```
 
-| Command | Alias | Purpose | Key Flags |
-|---------|-------|---------|-----------|
-| `doctor` | — | One-command bootstrap | `--json`, `--full-run`, `--resume`, `--changed-only` |
-| `status` | — | Project health summary | `--json`, `--score`, `--history`, `--no-drift-check` |
-| `ci-check` | `check` | CI freshness check | `--json`, `--pr-comment`, `--fail-on`, `--changed-only` |
-| `detect-deps` | `deps` | Detect dependencies | `--check-drift`, `--changed-only`, `--incremental` |
-| `resolve-sources` | `resolve` | Resolve documentation URLs | `--changed-only`, `--force-refresh`, `--resume` |
-| `generate-context` | `context` | Generate agent files | `--dry-run`, `--formats`, `--lang` |
-| `generate-tests` | `tests` | Generate test + lint files | `--dry-run`, `--lang` |
-| `detect-patterns` | `patterns` | Mine style patterns from transcripts/git/PRs | `--sources`, `--since`, `--quiet`, `--global-transcripts` |
+Shipped commands (primary name first, aliases in parentheses):
 
-All commands accept `--project-dir` (default: `.`) and output JSON to stdout. Human-readable progress goes to stderr. JSON responses include a `next_command` field suggesting what to run next.
+| Command | Aliases | Purpose | Key Flags |
+|---------|---------|---------|-----------|
+| `doctor` | `start` | One-command bootstrap (detect → resolve → handoff) | `--json`, `--full-run`, `--resume`, `--changed-only`, `--refresh` |
+| `refresh` | `refresh-rules` | Re-resolve changed sources and prepare refresh handoff | `--check` (exits non-zero if drift), `--project-dir` |
+| `status` | — | Project health summary with 5-dimension score | `--json`, `--score`, `--history`, `--no-drift-check` |
+| `ci` | `check`, `ci-check` | CI freshness check | `--json`, `--pr-comment`, `--fail-on`, `--changed-only` |
+| `init` | `deps`, `detect-deps` | Detect dependencies from manifests | `--check-drift`, `--changed-only`, `--incremental` |
+| `set-sources` | `sources`, `resolve-sources` | Resolve documentation URLs | `--changed-only`, `--force-refresh`, `--resume`, `--retry-failed` |
+| `context` | `generate-context` | Generate agent context files | `--dry-run`, `--formats`, `--lang` |
+| `tests` | `generate-tests` | Generate test files + lint overlays | `--dry-run`, `--lang` |
+| `validate` | `validate-rules` | Validate rule schema and every rule fixture | `--project-dir` |
+| `eval` | — | AI eval lifecycle: `generate`, `run`, `calibrate` | `--collect`, `--deterministic-only`, `--lang`, `--dry-run` |
+| `patterns` | `detect-patterns` | Mine style patterns from transcripts/git/PRs | `--sources`, `--since`, `--quiet`, `--global-transcripts` |
+| `update` | — | Update the `whetstone` binary to the latest release | `--check`, `--force` |
+
+All commands accept `--project-dir` (default: `.`) and `--json` (auto-enabled when piped). Human-readable progress goes to stderr. JSON responses include a `next_command` field suggesting what to run next.
 
 > **Python is not a runtime dependency.** Every user-facing command ships from the Rust binary. Archived Python reference implementations live under `scripts/legacy/` solely so `tests/test_script_contracts.py` can parity-test the Rust ports.
 
@@ -446,7 +463,7 @@ Custom sources appear in the doctor output for extraction. Each rule you extract
 Nothing breaks. The generated tests, lint configs, and agent context files are standard files in your repo. They run with your existing CI and work with any agent that reads `AGENTS.md` or `.cursorrules`.
 
 **How do I update rules when dependencies change?**
-Run `wh status` or `wh ci` to see which dependencies have drifted. Then run `wh doctor --changed-only` to re-extract rules only for what changed.
+Run `wh status` or `wh ci` to see which dependencies have drifted. Then run `wh refresh` (or `wh doctor --changed-only`) to re-resolve only what changed, and re-extract rules against the new content. Use `wh refresh --check` in CI to fail a build when drift is detected.
 
 **What's the `next_command` field in every output?**
 Every script suggests what to do next. Agent clients can use this to chain commands automatically without reading documentation.
@@ -476,15 +493,17 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - 4-tier content resolution: llms.txt → registry README → HTML docs → GitHub changelog
 - Changelog fetching with 18-month recency filtering
 - Custom source URLs in `whetstone.yaml` (blogs, team guides, any public URL)
-- 5 built-in Rust rules (`whetstone:recommended`) that ship with the binary
-- Agent-mediated rule extraction with structured approval flow
-- Test generation with real regex checks (via `match` field on signals)
+- Built-in rules (`whetstone:recommended`) that ship with the binary for Rust, Python, and TypeScript
+- Agent-mediated rule extraction with structured approval flow and explicit candidate handoff
+- Test generation with real regex checks (via `match` field on signals) for Python, TypeScript, and Rust
 - Lint overlay generation (ruff, biome, clippy)
 - Agent context generation (AGENTS.md, CLAUDE.md, .cursorrules, copilot, windsurf, codex)
 - Source attribution: `content_origin` (how fetched) + `source_kind` (what kind of source)
 - Health monitoring with drift detection, freshness scoring, and metric history
 - CI integration via GitHub Action with PR comments
-- Drift-based refresh command (`wh refresh --check`)
+- Drift-based refresh command (`wh refresh` / `wh refresh --check`) with reviewable diff artifact
+- AI eval runner with threshold gating and calibration (`wh eval generate|run|calibrate`)
+- Binary self-update via `wh update`
 
 **Opt-in:**
 - Pattern detection from agent transcripts, git history, and PR comments via `wh patterns`.
@@ -493,11 +512,11 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - ast-grep pattern generation (structural enforcement via CodeRabbit-compatible rules)
 - MCP server for agent-native rule queries
 - Continue.dev check generation for CI status checks
-- AI eval runner with threshold gating and calibration
+- Tree-sitter-backed AST signal analysis (today's `ast` signals fall back to regex)
 - Layer system (personal → project → team → built-in)
 - Shared rule registry with community-ranked rules
 
-See `planning/whetstone-roadmap-v2.md` for the full plan.
+See [`planning/whetstone-roadmap-v2.md`](planning/whetstone-roadmap-v2.md) for the full plan and [`references/workflow-matrix.md`](references/workflow-matrix.md) for the command-to-lifecycle mapping.
 
 ## Troubleshooting
 

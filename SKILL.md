@@ -19,9 +19,11 @@ Whetstone derives coding rules from the documentation of your actual dependencie
 
 ## Activation
 
-Activate when the user says any of: "whetstone", "wh doctor", "extract rules", "update standards", "update rules", "init whetstone", "run whetstone", "check rules", "refresh rules", "generate tests from rules".
+Activate when the user says any of: "whetstone", "wh doctor", "extract rules", "update standards", "update rules", "init whetstone", "run whetstone", "check rules", "refresh rules", "generate tests from rules", "run evals", "calibrate evals".
 
-If the user says "wh doctor", "doctor", "scan my project", or "bootstrap rules", use the **Doctor** workflow below — it's the fastest path from zero to working rules.
+If the user says "wh doctor", "doctor", "scan my project", or "bootstrap rules", use the **Doctor** workflow — it's the fastest path from zero to working rules. If the user says "refresh rules" or similar, jump to the **Refresh** workflow.
+
+See [`references/workflow-matrix.md`](references/workflow-matrix.md) for the single source-of-truth table that maps every shipped command to a lifecycle step.
 
 ## Happy Path (TL;DR)
 
@@ -170,10 +172,31 @@ Present proposed rules using the **Rule Card** format:
 **Batch option**: Offer "Approve all N high-confidence rules for {dep}?" before individual review.
 
 For each rule, the user can:
-- **Approve** — write to `whetstone/rules/{language}/{dependency}.yaml` with `approved: true`
+- **Approve** — write to `whetstone/rules/{language}/{dependency}.yaml` with `approved: true` and `status: approved`
 - **Edit** — modify severity, signals, or examples, then approve
-- **Deny** — skip (optionally note why)
-- **Skip** — defer to later
+- **Deny** — persist with `approved: false`, `status: denied`, and `denied_reason: "…"` so the decision is auditable
+- **Skip** — leave the candidate as-is (`status: candidate`) to defer
+
+### Rule lifecycle
+
+Every rule carries a `status` field that records where it is in the review
+lifecycle. The transitions:
+
+```
+        candidate ──approve──▶ approved ──refresh─▶ deprecated
+            │                     │
+            └───── deny ─────▶ denied
+```
+
+| Status | Meaning | Required extra fields |
+|--------|---------|------------------------|
+| `candidate` | Proposed by extraction, not yet reviewed | — |
+| `approved` | Reviewed and accepted; `approved: true` | `approved_at` |
+| `denied` | Reviewed and rejected; kept for audit | `denied_reason` |
+| `deprecated` | Previously approved, now superseded or stale | `deprecated_reason` (and `superseded_by` when a replacement exists) |
+
+`wh validate` warns if `approved` and `status` disagree, or if a `denied` /
+`deprecated` rule is missing its reason. Keep them consistent.
 
 **Step 4: Validate and generate**
 
@@ -193,23 +216,28 @@ Present the score and next steps. A healthy project scores 80+.
 
 ---
 
-### Update (Subsequent Runs)
+### Refresh (Subsequent Runs)
 
-Run when the user says "update whetstone", "refresh rules", "check for rule updates".
+Run when the user says "refresh rules", "update rules", "check for rule updates", or "update whetstone".
 
-**Step 1: Check for drift**
+> ⚠️ `wh update` updates the Whetstone **binary** itself (self-update from GitHub Releases). It does NOT touch rules. Use `wh refresh` to re-resolve dependency documentation.
+
+**Step 1: Re-resolve changed sources**
 
 ```bash
-wh doctor --changed-only
+wh refresh              # re-resolves stale/missing deps, writes refresh-diff.json
+wh refresh --check      # same, but exits non-zero when drift exists (for CI)
 ```
 
-This re-resolves only dependencies whose versions have changed. If nothing changed, inform the user — rules are current.
+This re-resolves only dependencies whose versions changed. The machine-readable diff lands at `whetstone/.state/refresh-diff.json` — read it to see which deps changed, with before/after source hashes.
+
+If nothing changed, inform the user — rules are current.
 
 **Step 2: Extract from changes**
 
 For each dep with new content or changelog entries:
 - Focus extraction on **what changed** (new changelog sections, version bumps)
-- Propose: new rules, modified rules, rules to deprecate
+- Propose: new rules, modified rules, rules to deprecate (set `status: deprecated`)
 - Present only the changes, not the full rule set
 
 **Step 3: Approve and regenerate**
@@ -393,15 +421,24 @@ whetstone/
     python/                   # pytest files
     typescript/               # vitest files
     rust/                     # cargo test files
+    ai/                       # AI eval definitions for rules with ai_eval config
   lint/
     ruff.whetstone.toml
     biome.whetstone.json
   context/
     AGENTS.md                 # Generated agent context
   .state/                     # Cache (gitignored)
+    extraction-handoff.json   # written by doctor/refresh; agent reads to extract rules
+    refresh-diff.json         # written by refresh; agent reads to focus re-extraction
+    eval-requests.json        # written by eval run; agent writes verdicts below
+    eval-verdicts.json        # written by agent; read by eval run --collect
+    calibration-requests.json # written by eval calibrate
+    calibration-verdicts.json # written by agent; read by eval calibrate --collect
 ```
 
 For reference material:
+- [Workflow matrix](references/workflow-matrix.md) — commands, lifecycle stages, artifacts
+- [Handoff schema](references/handoff-schema.md) — JSON contracts for every `.state/` file
 - [Rule schema](references/rule-schema.yaml)
 - [Signal strategies](references/signal-strategies.md)
 - [Extraction prompt](references/extraction-prompt.md)

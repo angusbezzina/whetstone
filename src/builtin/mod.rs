@@ -1,23 +1,32 @@
 use crate::rules::{LoadedRuleFile, RuleFile};
 
-/// Embedded built-in rule YAML for Rust.
+/// Embedded built-in rule YAML.
 const RUST_RULES: &str = include_str!("rust.yaml");
+const PYTHON_RULES: &str = include_str!("python.yaml");
+const TYPESCRIPT_RULES: &str = include_str!("typescript.yaml");
 
 /// Load all built-in rules, returning parsed rule files.
 pub fn load_builtin_rules() -> Vec<LoadedRuleFile> {
     let mut rules = Vec::new();
 
-    if let Ok(rf) = serde_yaml::from_str::<RuleFile>(RUST_RULES) {
-        rules.push(LoadedRuleFile {
-            file_path: "builtin:rust".to_string(),
-            language: Some("rust".to_string()),
-            rule_file: rf,
-        });
+    for (label, language, text) in [
+        ("builtin:rust", "rust", RUST_RULES),
+        ("builtin:python", "python", PYTHON_RULES),
+        ("builtin:typescript", "typescript", TYPESCRIPT_RULES),
+    ] {
+        match serde_yaml::from_str::<RuleFile>(text) {
+            Ok(rf) => rules.push(LoadedRuleFile {
+                file_path: label.to_string(),
+                language: Some(language.to_string()),
+                rule_file: rf,
+            }),
+            Err(e) => {
+                eprintln!(
+                    "Warning: failed to parse built-in {label} rules: {e} — ignoring built-in set"
+                );
+            }
+        }
     }
-
-    // Future: add Python, TypeScript built-in rules here
-    // const PYTHON_RULES: &str = include_str!("python.yaml");
-    // const TYPESCRIPT_RULES: &str = include_str!("typescript.yaml");
 
     rules
 }

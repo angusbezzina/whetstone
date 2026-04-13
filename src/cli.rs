@@ -504,6 +504,7 @@ pub fn run() -> i32 {
                 ready_only,
                 workers,
                 full_run,
+                trigger: "doctor",
             }) {
                 Ok(result) => {
                     // Remove private fields before output
@@ -847,16 +848,30 @@ pub fn run() -> i32 {
                 ready_only: false,
                 workers: None,
                 full_run: false,
+                trigger: "refresh",
             });
 
             match result {
-                Ok(result) => {
-                    let drift_count = result
-                        .get("scan")
-                        .and_then(|s| s.get("drift_count"))
-                        .or_else(|| result.get("summary").and_then(|s| s.get("drift_count")))
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0);
+                Ok(mut result) => {
+                    // Write the refresh diff artifact and use its drift_count as authoritative.
+                    let drift_count = match crate::handoff::write_refresh_diff(project_path, &result) {
+                        Ok((path, dc)) => {
+                            result["refresh_diff"] = serde_json::json!({
+                                "path": path.display().to_string(),
+                                "drift_count": dc,
+                            });
+                            dc
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: failed to write refresh diff: {e}");
+                            result
+                                .get("scan")
+                                .and_then(|s| s.get("drift_count"))
+                                .or_else(|| result.get("summary").and_then(|s| s.get("drift_count")))
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(0)
+                        }
+                    };
 
                     if json_mode {
                         output::print_json(&result);
@@ -865,7 +880,10 @@ pub fn run() -> i32 {
                         println!("Next: wh status");
                     } else {
                         println!("{drift_count} dependencies re-resolved.");
-                        println!("Next: review extraction_context and update rules.");
+                        println!(
+                            "Diff: whetstone/.state/refresh-diff.json (schema: references/handoff-schema.md)"
+                        );
+                        println!("Next: review the diff and update rules for changed deps.");
                     }
 
                     if check && drift_count > 0 { 1 } else { 0 }

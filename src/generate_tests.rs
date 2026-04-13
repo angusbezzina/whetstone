@@ -124,20 +124,31 @@ fn generate_python(
         }));
     }
 
-    // Generate test file per dependency
+    // Group rules by source_name so a rule file with N rules writes a single
+    // test file containing N tests instead of N files that overwrite each other.
+    let mut by_dep: BTreeMap<String, Vec<&ApprovedRule>> = BTreeMap::new();
     for rule in rules {
-        let safe_name = rule.source_name.replace(['-', '.'], "_");
+        by_dep
+            .entry(rule.source_name.clone())
+            .or_default()
+            .push(rule);
+    }
+
+    for (source_name, dep_rules) in &by_dep {
+        let safe_name = sanitize_name(source_name);
         let test_filename = format!("test_{safe_name}.py");
         let test_path = evals_dir.join(&test_filename);
 
-        let content = generate_python_test(rule);
+        let content = generate_python_test_file(source_name, dep_rules);
         if write_generated(&test_path, &content, dry_run) {
-            test_files.push(serde_json::json!({
-                "path": test_path.display().to_string(),
-                "type": "test",
-                "rule_id": rule.id,
-                "dependency": rule.source_name,
-            }));
+            for rule in dep_rules {
+                test_files.push(serde_json::json!({
+                    "path": test_path.display().to_string(),
+                    "type": "test",
+                    "rule_id": rule.id,
+                    "dependency": rule.source_name,
+                }));
+            }
         }
     }
 
@@ -190,68 +201,79 @@ def python_source_files():
     .to_string()
 }
 
+fn generate_python_test_file(source_name: &str, rules: &[&ApprovedRule]) -> String {
+    let mut out = Vec::new();
+    out.push(format!(
+        "\"\"\"Whetstone evals for dependency: {source_name}.\"\"\""
+    ));
+    out.push(String::new());
+    out.push("import re".to_string());
+    out.push(String::new());
+    out.push(String::new());
+    for rule in rules {
+        out.push(generate_python_test(rule));
+    }
+    out.join("\n")
+}
+
 fn generate_python_test(rule: &ApprovedRule) -> String {
     let mut lines = Vec::new();
     let safe_id = rule.id.replace(['.', '-'], "_");
 
     lines.push(format!(
-        "\"\"\"Whetstone eval: {} — {}\"\"\"\n",
+        "# Rule: {} — {}",
         rule.id,
         rule.description.lines().next().unwrap_or("")
     ));
-    lines.push("import ast".to_string());
-    lines.push("import re".to_string());
-    lines.push("import os".to_string());
-    lines.push(String::new());
-    lines.push(String::new());
 
     for (i, signal) in rule.signals.iter().enumerate() {
         let test_name = format!("test_{safe_id}_signal_{i}");
         match signal.strategy.as_str() {
-            "pattern" => {
+            "pattern" | "ast" => {
+                let ast_hint = if signal.strategy == "ast" {
+                    // Until tree-sitter lands, `ast` signals still scan as regex.
+                    // Flag this in-source so readers know the check is weaker than
+                    // a true AST walk.
+                    "    # NOTE: ast signal regex fallback — replace with tree-sitter when available.\n"
+                } else {
+                    ""
+                };
                 lines.push(format!("def {test_name}(python_source_files):"));
                 lines.push(format!(
-                    "    \"\"\"Signal: {} (pattern)\"\"\"\n    violations = []",
-                    signal.description
+                    "    \"\"\"Signal: {} ({})\"\"\"",
+                    signal.description, signal.strategy
                 ));
+                lines.push("    violations = []".to_string());
                 lines.push("    for filepath in python_source_files:".to_string());
-                lines.push("        with open(filepath) as f:".to_string());
+                lines.push("        with open(filepath, encoding=\"utf-8\") as f:".to_string());
                 lines.push("            for lineno, line in enumerate(f, 1):".to_string());
-                lines.push(format!(
-                    "                if re.search(r\"{}\", line):",
-                    escape_pattern(&signal.description)
-                ));
-                lines.push(
-                    "                    violations.append(f\"{filepath}:{lineno}: {line.strip()}\")"
-                        .to_string(),
-                );
+
+                if let Some(ref pattern) = signal.match_pattern {
+                    // Real regex check from the rule's match field.
+                    // Emit as a Python raw triple-quoted string so embedded quotes and backslashes survive.
+                    lines.push(format!(
+                        "                if re.search(r\"\"\"{}\"\"\", line):",
+                        pattern.replace("\"\"\"", "\\\"\\\"\\\"")
+                    ));
+                    lines.push(
+                        "                    violations.append(f\"{filepath}:{lineno}: {line.strip()}\")"
+                            .to_string(),
+                    );
+                } else {
+                    // No concrete match regex — emit a TODO stub that documents the rule
+                    // but enforces nothing. Extraction should add a `match:` field to
+                    // upgrade this from a stub to a real check.
+                    lines.push(format!(
+                        "                pass  # TODO: add `match:` regex to rule {} signal {} to enable this check.",
+                        rule.id, signal.id
+                    ));
+                }
+
+                if !ast_hint.is_empty() {
+                    lines.push(ast_hint.trim_end().to_string());
+                }
                 lines.push(format!(
                     "    assert not violations, f\"{{len(violations)}} violation(s) for {}: {{violations[:5]}}\"",
-                    rule.id
-                ));
-                lines.push(String::new());
-            }
-            "ast" => {
-                lines.push(format!("def {test_name}(python_source_files):"));
-                lines.push(format!(
-                    "    \"\"\"Signal: {} (ast)\"\"\"\n    violations = []",
-                    signal.description
-                ));
-                lines.push("    for filepath in python_source_files:".to_string());
-                lines.push("        with open(filepath) as f:".to_string());
-                lines.push("            try:".to_string());
-                lines.push(
-                    "                tree = ast.parse(f.read(), filename=filepath)".to_string(),
-                );
-                lines.push("            except SyntaxError:".to_string());
-                lines.push("                continue".to_string());
-                lines.push("            for node in ast.walk(tree):".to_string());
-                lines.push(format!(
-                    "                pass  # TODO: implement AST check for: {}",
-                    signal.description
-                ));
-                lines.push(format!(
-                    "    assert not violations, f\"{{len(violations)}} violation(s) for {}\"",
                     rule.id
                 ));
                 lines.push(String::new());
@@ -259,6 +281,13 @@ fn generate_python_test(rule: &ApprovedRule) -> String {
             "lint_proxy" => {
                 lines.push(format!(
                     "# Signal {i}: {} — deferred to ruff linter config",
+                    signal.description
+                ));
+                lines.push(String::new());
+            }
+            "ai" => {
+                lines.push(format!(
+                    "# Signal {i}: {} — deferred to `wh eval run`",
                     signal.description
                 ));
                 lines.push(String::new());
@@ -302,20 +331,31 @@ fn generate_typescript(
         }));
     }
 
-    // Generate test file per dependency
+    // Group rules by source_name so a dep with N rules writes a single file
+    // with N describe blocks instead of N files that overwrite each other.
+    let mut by_dep: BTreeMap<String, Vec<&ApprovedRule>> = BTreeMap::new();
     for rule in rules {
-        let safe_name = rule.source_name.replace('@', "").replace(['/', '-'], "_");
+        by_dep
+            .entry(rule.source_name.clone())
+            .or_default()
+            .push(rule);
+    }
+
+    for (source_name, dep_rules) in &by_dep {
+        let safe_name = sanitize_name(source_name);
         let test_filename = format!("{safe_name}.test.ts");
         let test_path = evals_dir.join(&test_filename);
 
-        let content = generate_ts_test(rule);
+        let content = generate_ts_test_file(dep_rules);
         if write_generated(&test_path, &content, dry_run) {
-            test_files.push(serde_json::json!({
-                "path": test_path.display().to_string(),
-                "type": "test",
-                "rule_id": rule.id,
-                "dependency": rule.source_name,
-            }));
+            for rule in dep_rules {
+                test_files.push(serde_json::json!({
+                    "path": test_path.display().to_string(),
+                    "type": "test",
+                    "rule_id": rule.id,
+                    "dependency": rule.source_name,
+                }));
+            }
         }
     }
 
@@ -364,13 +404,21 @@ export function violation(file: string, line: number, text: string): Violation {
     .to_string()
 }
 
+fn generate_ts_test_file(rules: &[&ApprovedRule]) -> String {
+    let mut out = Vec::new();
+    out.push("import { describe, it, expect } from 'vitest';".to_string());
+    out.push("import { findSourceFiles, readLines } from './setup';".to_string());
+    out.push(String::new());
+    for rule in rules {
+        out.push(generate_ts_test(rule));
+        out.push(String::new());
+    }
+    out.join("\n")
+}
+
 fn generate_ts_test(rule: &ApprovedRule) -> String {
     let mut lines = Vec::new();
     let _safe_id = rule.id.replace(['.', '-'], "_").replace('@', "");
-
-    lines.push("import { describe, it, expect } from 'vitest';".to_string());
-    lines.push("import { findSourceFiles, readLines, violation } from './setup';".to_string());
-    lines.push(String::new());
 
     lines.push(format!(
         "describe('{}', () => {{",
@@ -386,15 +434,41 @@ fn generate_ts_test(rule: &ApprovedRule) -> String {
                 ));
                 lines.push("    const files = findSourceFiles();".to_string());
                 lines.push("    const violations: string[] = [];".to_string());
-                lines.push("    for (const file of files) {".to_string());
-                lines.push("      const lines = readLines(file);".to_string());
-                lines.push("      lines.forEach((line, idx) => {".to_string());
-                lines.push(format!(
-                    "        // TODO: implement check for: {}",
-                    signal.description
-                ));
-                lines.push("      });".to_string());
-                lines.push("    }".to_string());
+
+                if let Some(ref pattern) = signal.match_pattern {
+                    // Real regex check using the rule's match field. Escape backticks
+                    // so the regex can live inside a TypeScript template literal safely.
+                    let escaped = pattern.replace('\\', "\\\\").replace('`', "\\`");
+                    lines.push(format!(
+                        "    const pattern = new RegExp(`{escaped}`);"
+                    ));
+                    lines.push("    for (const file of files) {".to_string());
+                    lines.push("      const lines = readLines(file);".to_string());
+                    lines.push("      lines.forEach((line, idx) => {".to_string());
+                    lines.push("        if (pattern.test(line)) {".to_string());
+                    lines.push("          violations.push(`${file}:${idx + 1}: ${line.trim()}`);".to_string());
+                    lines.push("        }".to_string());
+                    lines.push("      });".to_string());
+                    lines.push("    }".to_string());
+                } else {
+                    // No concrete match regex — TODO stub that documents the gap.
+                    lines.push("    for (const file of files) {".to_string());
+                    lines.push("      const lines = readLines(file);".to_string());
+                    lines.push("      lines.forEach((line, idx) => {".to_string());
+                    lines.push(format!(
+                        "        // TODO: add `match:` regex to rule {} signal {} to enable this check.",
+                        rule.id, signal.id
+                    ));
+                    lines.push("      });".to_string());
+                    lines.push("    }".to_string());
+                }
+
+                if signal.strategy == "ast" {
+                    lines.push(
+                        "    // NOTE: ast signal regex fallback — upgrade to tree-sitter when available."
+                            .to_string(),
+                    );
+                }
                 lines.push(format!(
                     "    expect(violations).toEqual([]);  // {}",
                     rule.id
@@ -404,6 +478,12 @@ fn generate_ts_test(rule: &ApprovedRule) -> String {
             "lint_proxy" => {
                 lines.push(format!(
                     "  // signal {i}: {} — deferred to biome config",
+                    signal.description
+                ));
+            }
+            "ai" => {
+                lines.push(format!(
+                    "  // signal {i}: {} — deferred to `wh eval run`",
                     signal.description
                 ));
             }
@@ -434,19 +514,30 @@ fn generate_rust(
 
     let evals_dir = project_dir.join("whetstone").join("evals").join("rust");
 
+    // Group rules by source_name so deps with multiple rules share one test file.
+    let mut by_dep: BTreeMap<String, Vec<&ApprovedRule>> = BTreeMap::new();
     for rule in rules {
-        let safe_name = rule.source_name.replace(['-', '.'], "_");
+        by_dep
+            .entry(rule.source_name.clone())
+            .or_default()
+            .push(rule);
+    }
+
+    for (source_name, dep_rules) in &by_dep {
+        let safe_name = sanitize_name(source_name);
         let test_filename = format!("test_{safe_name}.rs");
         let test_path = evals_dir.join(&test_filename);
 
-        let content = generate_rust_test(rule);
+        let content = generate_rust_test_file(source_name, dep_rules);
         if write_generated(&test_path, &content, dry_run) {
-            test_files.push(serde_json::json!({
-                "path": test_path.display().to_string(),
-                "type": "test",
-                "rule_id": rule.id,
-                "dependency": rule.source_name,
-            }));
+            for rule in dep_rules {
+                test_files.push(serde_json::json!({
+                    "path": test_path.display().to_string(),
+                    "type": "test",
+                    "rule_id": rule.id,
+                    "dependency": rule.source_name,
+                }));
+            }
         }
     }
 
@@ -470,47 +561,49 @@ fn generate_rust(
     (test_files, lint_configs, warnings)
 }
 
+fn generate_rust_test_file(source_name: &str, rules: &[&ApprovedRule]) -> String {
+    let mut out = Vec::new();
+    out.push(format!("//! Whetstone evals for dependency: {source_name}"));
+    out.push(String::new());
+    out.push("use std::fs;".to_string());
+    out.push("use std::path::Path;".to_string());
+    out.push(String::new());
+    out.push(FIND_RUST_FILES_HELPER.to_string());
+    out.push(String::new());
+    for rule in rules {
+        out.push(generate_rust_test(rule));
+        out.push(String::new());
+    }
+    out.join("\n")
+}
+
+const FIND_RUST_FILES_HELPER: &str = "fn find_rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                if !matches!(name.as_ref(), \"target\" | \".git\" | \"whetstone\") {
+                    files.extend(find_rust_files(&path));
+                }
+            } else if path.extension().and_then(|e| e.to_str()) == Some(\"rs\") {
+                files.push(path);
+            }
+        }
+    }
+    files
+}";
+
 fn generate_rust_test(rule: &ApprovedRule) -> String {
     let mut lines = Vec::new();
     let safe_id = rule.id.replace(['.', '-'], "_");
 
-    lines.push(format!("//! Whetstone eval: {}", rule.id));
     lines.push(format!(
-        "//! {}",
+        "// Rule: {} — {}",
+        rule.id,
         rule.description.lines().next().unwrap_or("")
     ));
-    lines.push(String::new());
-    lines.push("use std::fs;".to_string());
-    lines.push("use std::path::Path;".to_string());
-    lines.push(String::new());
-
-    lines.push("fn find_rust_files(dir: &Path) -> Vec<std::path::PathBuf> {".to_string());
-    lines.push("    let mut files = Vec::new();".to_string());
-    lines.push("    if let Ok(entries) = fs::read_dir(dir) {".to_string());
-    lines.push("        for entry in entries.flatten() {".to_string());
-    lines.push("            let path = entry.path();".to_string());
-    lines.push("            if path.is_dir() {".to_string());
-    lines.push(
-        "                let name = path.file_name().unwrap_or_default().to_string_lossy();"
-            .to_string(),
-    );
-    lines.push(
-        "                if !matches!(name.as_ref(), \"target\" | \".git\" | \"whetstone\") {"
-            .to_string(),
-    );
-    lines.push("                    files.extend(find_rust_files(&path));".to_string());
-    lines.push("                }".to_string());
-    lines.push(
-        "            } else if path.extension().and_then(|e| e.to_str()) == Some(\"rs\") {"
-            .to_string(),
-    );
-    lines.push("                files.push(path);".to_string());
-    lines.push("            }".to_string());
-    lines.push("        }".to_string());
-    lines.push("    }".to_string());
-    lines.push("    files".to_string());
-    lines.push("}".to_string());
-    lines.push(String::new());
 
     for (i, signal) in rule.signals.iter().enumerate() {
         let test_name = format!("test_{safe_id}_signal_{i}");
@@ -525,6 +618,12 @@ fn generate_rust_test(rule: &ApprovedRule) -> String {
                 lines.push("    let files = find_rust_files(Path::new(\"src\"));".to_string());
                 lines.push("    let mut violations = Vec::new();".to_string());
 
+                if signal.strategy == "ast" {
+                    lines.push(
+                        "    // NOTE: ast signal regex fallback — upgrade to tree-sitter when available."
+                            .to_string(),
+                    );
+                }
                 if let Some(ref pattern) = signal.match_pattern {
                     // Real regex check using the match pattern
                     // Pattern goes inside r"..." raw string — no extra escaping needed
@@ -552,14 +651,16 @@ fn generate_rust_test(rule: &ApprovedRule) -> String {
                     lines.push("        }".to_string());
                     lines.push("    }".to_string());
                 } else {
-                    // No match pattern — fall back to TODO stub
+                    // No `match:` regex on the signal — produce a TODO stub so the
+                    // test compiles but enforces nothing. Extraction should add a
+                    // concrete `match:` regex to upgrade this to a real check.
                     lines.push("    for file in &files {".to_string());
                     lines.push(
                         "        if let Ok(content) = fs::read_to_string(file) {".to_string(),
                     );
                     lines.push(format!(
-                        "            // TODO: implement check for: {}",
-                        signal.description
+                        "            // TODO: add `match:` regex to rule {} signal {} to enable this check.",
+                        rule.id, signal.id
                     ));
                     lines.push("            let _ = content;".to_string());
                     lines.push("        }".to_string());
@@ -576,6 +677,13 @@ fn generate_rust_test(rule: &ApprovedRule) -> String {
             "lint_proxy" => {
                 lines.push(format!(
                     "// Signal {i}: {} — deferred to clippy config",
+                    signal.description
+                ));
+                lines.push(String::new());
+            }
+            "ai" => {
+                lines.push(format!(
+                    "// Signal {i}: {} — deferred to `wh eval run`",
                     signal.description
                 ));
                 lines.push(String::new());
@@ -664,13 +772,32 @@ fn generate_clippy_config(lints: &[String]) -> String {
 
 // --- Helpers ---
 
-fn escape_pattern(desc: &str) -> String {
-    // Generate a basic regex pattern from the signal description
-    // This is a best-effort heuristic
-    desc.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('(', "\\(")
-        .replace(')', "\\)")
+/// Produce a filesystem-safe identifier from a dependency source name.
+/// Strips `@`, folds `/`, `:`, `-`, `.`, and whitespace to `_`, and collapses
+/// runs so `whetstone:recommended/python` → `whetstone_recommended_python`.
+fn sanitize_name(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut last_underscore = false;
+    for ch in raw.chars() {
+        let keep = match ch {
+            '@' => None, // drop entirely
+            'a'..='z' | 'A'..='Z' | '0'..='9' => Some(ch),
+            _ => Some('_'),
+        };
+        if let Some(c) = keep {
+            if c == '_' {
+                if !last_underscore {
+                    out.push('_');
+                    last_underscore = true;
+                }
+            } else {
+                out.push(c);
+                last_underscore = false;
+            }
+        }
+    }
+    // Trim leading/trailing underscores so filenames do not start/end with `_`.
+    out.trim_matches('_').to_string()
 }
 
 fn write_generated(path: &Path, content: &str, dry_run: bool) -> bool {

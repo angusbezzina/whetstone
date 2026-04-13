@@ -24,6 +24,8 @@ pub struct DoctorOptions<'a> {
     pub ready_only: bool,
     pub workers: Option<usize>,
     pub full_run: bool,
+    /// Label for the extraction handoff artifact — `"doctor"` or `"refresh"`.
+    pub trigger: &'a str,
 }
 
 pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
@@ -40,6 +42,7 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
         ready_only,
         workers,
         full_run,
+        trigger,
     } = options;
     let total_start = Instant::now();
     let mut steps: Vec<Value> = Vec::new();
@@ -154,7 +157,7 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
     }
 
     if target_deps.is_empty() {
-        return Ok(serde_json::json!({
+        let result = serde_json::json!({
             "status": "ok",
             "warning": "No dependencies to extract rules for",
             "steps": steps,
@@ -167,9 +170,18 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
             },
             "recommendations": [],
             "source_details": [],
+            "extraction_context": {"sources": [], "patterns": [], "languages": languages, "dep_names": []},
+            "extraction_subsets": {"ready_now": [], "resolved_not_ready": [], "pending": [], "failed": []},
+            "resolution_buckets": {"ready_now": [], "resolved_low": [], "failed": [], "cached": []},
             "scan": {"cache_stats": {}, "ranked_queue": []},
             "next_command": "Add dependencies to your project, then run wh doctor again",
-        }));
+        });
+        // Still emit a handoff artifact so the agent knows the run produced
+        // nothing to extract — prevents stale handoffs from lingering across runs.
+        if let Err(e) = crate::handoff::write_extraction_handoff(project_dir, trigger, &result) {
+            eprintln!("Warning: failed to write extraction handoff: {e}");
+        }
+        return Ok(result);
     }
 
     // Reload state (detect may have updated it, including detected_totals)
@@ -512,6 +524,12 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
     if !json_mode {
         let report = format_report(&result, project_dir, verbose);
         eprintln!("{report}");
+    }
+
+    // Persist the extraction handoff artifact so the agent and the user can
+    // resume, review, and audit the run durably.
+    if let Err(e) = crate::handoff::write_extraction_handoff(project_dir, trigger, &result) {
+        eprintln!("Warning: failed to write extraction handoff: {e}");
     }
 
     Ok(result)

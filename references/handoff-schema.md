@@ -1,0 +1,187 @@
+# Whetstone Handoff Schema
+
+> The contract between the Whetstone binary (deterministic) and the agent
+> (judgment). All handoff artifacts live under `whetstone/.state/` and are JSON
+> with a top-level `version: 1` field for forward compatibility.
+
+These artifacts are **agent-readable** and **user-reviewable**. They exist so
+that extraction, refresh, and eval workflows are reproducible and resumable —
+an agent can crash mid-run and a fresh agent can resume from the file rather
+than re-doing the work.
+
+---
+
+## Extraction handoff
+
+**File:** `whetstone/.state/extraction-handoff.json`
+**Writer:** `wh doctor`, `wh refresh` (always rewrite on run)
+**Reader:** agent (extraction), user (review)
+
+Produced whenever a doctor or refresh run finishes resolving sources and has
+dependencies that still need rule extraction.
+
+### Shape
+
+```json
+{
+  "version": 1,
+  "generated_at": "2026-04-13T12:34:56Z",
+  "trigger": "doctor | refresh",
+  "project_dir": "/path/to/project",
+  "languages": ["python", "rust", "typescript"],
+  "candidates": [
+    {
+      "name": "reqwest",
+      "language": "rust",
+      "version": "0.12.0",
+      "source_type": "readme | llms_txt | llms_full_txt | html_converted | changelog | docs_url_only",
+      "source_url": "https://docs.rs/reqwest",
+      "content_hash": "sha256:...",
+      "sections": [
+        { "type": "readme", "url": "...", "bytes": 12345 },
+        { "type": "changelog", "url": "...", "bytes": 4567, "versions_covered": "0.11.20–0.12.0" }
+      ],
+      "existing_rules": 0,
+      "priority": "ready_now | resolved_low | pending | failed",
+      "reason": "optional: why this bucket"
+    }
+  ],
+  "skipped": [
+    { "name": "foo", "reason": "already has approved rules; source unchanged" }
+  ],
+  "next_action": "Apply extraction prompt to each candidate; approve or deny; then wh validate && wh context && wh tests"
+}
+```
+
+### Lifecycle notes
+
+- `candidates` are ordered highest-priority-first (bucketed by `priority`).
+- `priority: ready_now` — source is `llms_txt` / `llms_full_txt` with high confidence.
+- `priority: resolved_low` — source is readme / html_converted / docs_url_only.
+- `priority: pending` — source hasn't been resolved yet (missing from cache).
+- `priority: failed` — resolution failed this run; `reason` explains why.
+- The agent MUST re-read `extraction-handoff.json` on resume, not the doctor
+  output (the doctor output is ephemeral but this file is durable).
+
+---
+
+## Refresh diff
+
+**File:** `whetstone/.state/refresh-diff.json`
+**Writer:** `wh refresh` (only; always rewrites)
+**Reader:** agent (focused re-extraction), user (review)
+
+Produced every time `wh refresh` runs. Captures **what changed** between the
+previous cache and the current resolution, so the agent can re-extract only
+against the delta instead of re-reading every source.
+
+### Shape
+
+```json
+{
+  "version": 1,
+  "generated_at": "2026-04-13T12:34:56Z",
+  "project_dir": "/path/to/project",
+  "drift_count": 2,
+  "changed": [
+    {
+      "name": "pydantic",
+      "language": "python",
+      "previous_version": "2.6.4",
+      "current_version": "2.7.0",
+      "previous_content_hash": "sha256:aaa",
+      "current_content_hash": "sha256:bbb",
+      "changed_sections": ["changelog", "readme"],
+      "affected_rule_ids": ["pydantic.schema-method", "pydantic.validate-assignment"],
+      "source_urls": {
+        "docs": "https://docs.pydantic.dev/latest/",
+        "changelog": "https://raw.githubusercontent.com/pydantic/pydantic/main/HISTORY.md"
+      }
+    }
+  ],
+  "unchanged_with_stale_cache": [
+    { "name": "fastapi", "language": "python", "reason": "cache TTL expired; content unchanged" }
+  ],
+  "removed": [
+    { "name": "six", "language": "python", "reason": "dropped from manifest" }
+  ],
+  "failed": [
+    { "name": "obscurelib", "language": "python", "error": "HTTP 404" }
+  ],
+  "next_action": "For each changed dep, re-read its new content and propose: new rules, modified rules, rules to deprecate (status: deprecated)."
+}
+```
+
+### Lifecycle notes
+
+- `drift_count` is authoritative for `wh refresh --check` gating (non-zero
+  drift = exit 1).
+- `affected_rule_ids` lists approved rules that cite the changed dep's source;
+  the agent should review each for possible deprecation.
+- `previous_content_hash` / `current_content_hash` let an agent decide whether
+  extraction is worthwhile even on version bumps (unchanged hash = skip).
+
+---
+
+## Eval requests
+
+**File:** `whetstone/.state/eval-requests.json`
+**Writer:** `wh eval run` (when any rule with `ai_eval` fires on a non-deterministic case)
+**Reader:** agent (judgment)
+
+### Shape
+
+```json
+{
+  "version": 1,
+  "generated_at": "2026-04-13T12:34:56Z",
+  "instructions": "For each request, answer PASS or FAIL with a one-line reason. Write to eval-verdicts.json.",
+  "response_format": {
+    "version": 1,
+    "verdicts": [{ "id": "...", "verdict": "pass|fail", "reason": "..." }]
+  },
+  "requests": [
+    {
+      "id": "reqwest.set-timeout:src/client.rs:42",
+      "rule_id": "reqwest.set-timeout",
+      "question": "Does this client have an explicit timeout?",
+      "code_snippet": "let c = Client::new();",
+      "file_path": "src/client.rs",
+      "line_start": 38,
+      "line_end": 48,
+      "golden_examples": [
+        { "code": "...", "verdict": "pass", "reason": "..." }
+      ]
+    }
+  ]
+}
+```
+
+## Eval verdicts
+
+**File:** `whetstone/.state/eval-verdicts.json`
+**Writer:** agent
+**Reader:** `wh eval run --collect`
+
+### Shape
+
+```json
+{
+  "version": 1,
+  "judged_at": "2026-04-13T12:45:00Z",
+  "verdicts": [
+    { "id": "reqwest.set-timeout:src/client.rs:42", "verdict": "fail", "reason": "Client::new() has no timeout" }
+  ]
+}
+```
+
+---
+
+## Invariants and compatibility
+
+- Every file has a top-level `version: 1`. Increment only on breaking schema changes.
+- Writers use atomic writes (write to `*.tmp`, then rename) to survive crashes.
+- Readers MUST tolerate unknown fields (forward compatibility).
+- Readers MUST reject `version` values they do not recognize.
+- Files are safe to commit only under an explicit user decision; by default
+  they live in `whetstone/.state/` which SHOULD be gitignored.

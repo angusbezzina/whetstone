@@ -26,6 +26,10 @@ const VALID_SEVERITIES: &[&str] = &["must", "should", "may"];
 /// Valid confidence levels.
 const VALID_CONFIDENCES: &[&str] = &["high", "medium"];
 
+/// Valid rule lifecycle statuses.
+/// See `references/handoff-schema.md` and `references/workflow-matrix.md`.
+const VALID_STATUSES: &[&str] = &["candidate", "approved", "denied", "deprecated"];
+
 // --- Serde deserialization types ---
 
 #[allow(dead_code)]
@@ -90,6 +94,15 @@ pub struct Rule {
     pub proposed_at: Option<String>,
     #[serde(default)]
     pub proposed_by: Option<String>,
+    /// Required when `status: denied`. Free-text reason, persisted for audit.
+    #[serde(default)]
+    pub denied_reason: Option<String>,
+    /// Required when `status: deprecated`. Free-text reason.
+    #[serde(default)]
+    pub deprecated_reason: Option<String>,
+    /// Optional rule ID that replaces this one when deprecated.
+    #[serde(default)]
+    pub superseded_by: Option<String>,
     /// What kind of source backs this rule: official_docs, changelog, migration_guide,
     /// blog, social, community, team_guide, conference, manual, or any custom string.
     #[serde(default)]
@@ -264,6 +277,56 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
                 message: format!("{rule_ctx}: approved rule has no golden_examples"),
             });
         }
+
+        // Lifecycle status transitions
+        if let Some(ref status) = rule.status {
+            if !VALID_STATUSES.contains(&status.as_str()) {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!(
+                        "{rule_ctx}: invalid status '{status}' (expected one of: {})",
+                        VALID_STATUSES.join(", ")
+                    ),
+                });
+            } else {
+                // Consistency: the `approved` boolean and the `status` enum must
+                // agree. `approved: true` must pair with status=approved (or the
+                // terminal deprecated variant — previously approved, now retired).
+                let status_s = status.as_str();
+                if rule.approved && !matches!(status_s, "approved" | "deprecated") {
+                    warnings.push(ValidationWarning {
+                        file: file_path.to_string(),
+                        message: format!(
+                            "{rule_ctx}: approved=true but status='{status}' (expected 'approved' or 'deprecated')"
+                        ),
+                    });
+                }
+                if !rule.approved && matches!(status_s, "approved") {
+                    warnings.push(ValidationWarning {
+                        file: file_path.to_string(),
+                        message: format!(
+                            "{rule_ctx}: status='approved' but approved=false — set approved: true or change status to candidate/denied"
+                        ),
+                    });
+                }
+                if status_s == "deprecated" && rule.deprecated_reason.is_none() {
+                    warnings.push(ValidationWarning {
+                        file: file_path.to_string(),
+                        message: format!(
+                            "{rule_ctx}: status='deprecated' should include a deprecated_reason"
+                        ),
+                    });
+                }
+                if status_s == "denied" && rule.denied_reason.is_none() {
+                    warnings.push(ValidationWarning {
+                        file: file_path.to_string(),
+                        message: format!(
+                            "{rule_ctx}: status='denied' should include a denied_reason"
+                        ),
+                    });
+                }
+            }
+        }
     }
 
     warnings
@@ -287,6 +350,10 @@ const SCHEMA_REQUIRED_FIELDS: &[&str] = &[
 const INTENTIONALLY_INVALID_FIXTURES: &[&str] =
     &["tests/fixtures/whetstone/rules/python/malformed.yaml"];
 
+/// The rule-schema YAML embedded at compile time so `wh validate` works for
+/// downstream projects that do not carry the Whetstone source tree.
+const EMBEDDED_SCHEMA: &str = include_str!("../references/rule-schema.yaml");
+
 /// Validate the schema file and all rule fixtures under the given project root.
 ///
 /// Produces a human-readable report (matching the legacy Python contract) and
@@ -296,19 +363,26 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
     let mut out = String::new();
     let mut ok = true;
 
+    // Prefer the project-local schema (so Whetstone itself + forks are
+    // self-validating), but fall back to the binary-embedded schema for
+    // external projects that only have rule files — not the whole Whetstone
+    // source tree.
     let schema_path = project_root.join("references").join("rule-schema.yaml");
-    if !schema_path.exists() {
-        out.push_str("FAIL: references/rule-schema.yaml not found\n");
-        return (out, false);
-    }
-    let schema_text = match std::fs::read_to_string(&schema_path) {
-        Ok(t) => t,
-        Err(e) => {
-            out.push_str(&format!("FAIL: cannot read {}: {e}\n", schema_path.display()));
-            return (out, false);
+    let schema_text = if schema_path.exists() {
+        match std::fs::read_to_string(&schema_path) {
+            Ok(t) => {
+                out.push_str("Schema file found and readable.\n");
+                t
+            }
+            Err(e) => {
+                out.push_str(&format!("FAIL: cannot read {}: {e}\n", schema_path.display()));
+                return (out, false);
+            }
         }
+    } else {
+        out.push_str("Schema file (project-local) not found — using binary-embedded schema.\n");
+        EMBEDDED_SCHEMA.to_string()
     };
-    out.push_str("Schema file found and readable.\n");
     for field in SCHEMA_REQUIRED_FIELDS {
         if !schema_text.contains(field) {
             out.push_str(&format!(
@@ -323,10 +397,14 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
         return (out, false);
     }
 
-    // Collect YAML files from both test fixtures and actual rules
+    // Collect YAML files from test fixtures, project rules, and (when present)
+    // the embedded built-in rule directory — so `wh validate` in the Whetstone
+    // source tree catches schema drift in the shipped `whetstone:recommended`
+    // baseline.
     let scan_roots = [
         project_root.join("tests").join("fixtures"),
         project_root.join("whetstone").join("rules"),
+        project_root.join("src").join("builtin"),
     ];
     let mut fixtures: Vec<std::path::PathBuf> = Vec::new();
     for root in &scan_roots {

@@ -1,6 +1,7 @@
 # Whetstone Roadmap v2
 
-> Last updated: 2026-04-05 | Version: 0.1.1 | Previous planning docs archived in `planning/archive/`
+> Last updated: 2026-04-13 | Version: 0.2.0 | Previous planning docs archived in `planning/archive/`
+> See [`references/workflow-matrix.md`](../references/workflow-matrix.md) for the shipped command matrix.
 
 ---
 
@@ -58,7 +59,7 @@ Five CLI calls. The agent reasons between them. SKILL.md teaches it how. See `pl
 
 ---
 
-## Current State (v0.1.1)
+## Current State (v0.2.0)
 
 ### What's Built and Working
 
@@ -66,31 +67,29 @@ Five CLI calls. The agent reasons between them. SKILL.md teaches it how. See `pl
 |--------|--------|-------|
 | Dependency detection | Production-quality | 3 languages, 4 manifest formats, monorepo-aware, incremental |
 | Source resolution | Production-quality | Parallel (rayon), cached (7d TTL), resumable, crash-safe |
-| Doctor orchestration | Strong | Fast-first strategy, dependency ranking, readiness buckets |
-| State management | Solid | 4 stores, atomic writes, lifecycle tracking, audit log |
-| Rule schema + validation | Complete | Full enum validation, golden example checks |
+| Doctor orchestration | Strong | Fast-first strategy, dependency ranking, readiness buckets, explicit handoff artifact |
+| State management | Solid | 4 stores plus refresh-diff + extraction-handoff, atomic writes, lifecycle tracking |
+| Rule schema + validation | Complete | Full enum validation, golden example checks, lifecycle status transitions |
 | Agent context generation | Implemented | 6 formats (agents.md, claude.md, .cursorrules, copilot, windsurf, codex) |
-| Test + lint generation | Implemented | pytest, vitest, cargo test + ruff, biome, clippy overlays |
+| Test + lint generation | Implemented | pytest, vitest, cargo test with real regex checks + ruff, biome, clippy overlays |
 | Status + CI gate | Implemented | Health scoring 0-100, configurable thresholds, PR comments |
+| Refresh flow | Implemented | `wh refresh` / `wh refresh --check`, reviewable diff under `whetstone/.state/refresh-diff.json` |
+| AI eval runner | Implemented | threshold gating, eval generate/run/calibrate, file-based agent handoff |
+| Built-in rules | Implemented | `whetstone:recommended` baseline for Rust, Python, and TypeScript |
+| Custom sources | Implemented | Arbitrary URLs declared in `whetstone.yaml` flow through the normal resolve pipeline |
 | Pattern mining | Implemented | Transcripts, git history, PR comments |
-| Binary distribution | Shipped | GitHub Releases, install.sh, `wh` alias |
+| Binary distribution | Shipped | GitHub Releases, install.sh, `wh` alias, `wh update` self-update |
 
 ### What's Missing
 
 | Gap | Severity | Notes |
 |-----|----------|-------|
-| Content fetching for non-llms.txt deps | Fixed | 3-tier fallback: llms.txt → registry README → HTML conversion. All deps now get content. (fixed 2026-04-05) |
-| SKILL.md extraction workflow | High | Skill needs clearer per-dep extraction loop using doctor output |
-| Custom sources | High | Can't add arbitrary URLs, only registry-resolved docs |
-| Diff-based updates | High | No `update` command for changed sources |
-| `validate` only checked fixtures | Fixed | Now checks `whetstone/rules/` too (fixed 2026-04-05) |
 | Config depth | Medium | Only discovery + formats; no extraction settings, no timeouts |
 | Tera templates | Medium | Codegen uses string concatenation; works but doesn't scale |
-| tree-sitter | Medium | Generated tests are TODO stubs. Need tree-sitter for real signal checks. |
-| AI eval system | Low (for now) | Signal decomposition spec exists but no runtime |
-| Built-in rules | Low (for now) | No `whetstone:recommended` baseline |
+| tree-sitter AST signals | Medium | `ast` signals fall back to regex; real tree-sitter analysis is not yet wired up |
 | Layer system | Deferred | No personal/team layers, no promote, no extends |
 | Trigger modes | Deferred | No session/post-merge/scheduled hooks |
+| Shared registry | Deferred | No community-ranked published rulesets |
 
 ### Dogfooding Results (2026-04-05)
 
@@ -202,18 +201,20 @@ Not planned in detail. Depends on community adoption and Epic 1-2 validation.
 
 | Command | Aliases | What It Returns |
 |---------|---------|----------------|
-| `wh doctor` | `start` | Summary: deps found, sources resolved, readiness, recommendations |
+| `wh doctor` | `start` | Summary: deps found, sources resolved, readiness, recommendations, extraction-handoff artifact |
+| `wh refresh` | `refresh-rules` | Drift summary; rewrites `whetstone/.state/refresh-diff.json`; `--check` gates CI |
 | `wh init` | `deps`, `detect-deps` | Detected dependencies with counts and drift |
 | `wh set-sources` | `sources`, `resolve-sources` | Resolution results with cache stats |
 | `wh validate` | `validate-rules` | Schema validation pass/fail |
 | `wh context` | `generate-context` | Generated agent context files |
 | `wh tests` | `generate-tests` | Generated test files + lint configs |
 | `wh status` | — | Health score, freshness, coverage, drift |
-| `wh update` | — | *(Epic 1)* Changed sources and diff summary |
 | `wh ci` | `check`, `ci-check` | Pass/fail with optional PR comment |
+| `wh eval` | — | `generate`/`run`/`calibrate` — AI eval lifecycle with file-based agent handoff |
 | `wh patterns` | `detect-patterns` | Discovered style patterns from transcripts/git/PRs |
+| `wh update` | — | Self-update the `whetstone` binary from GitHub Releases (does NOT touch rules) |
 
-All commands support `--json` (auto-enabled when piped) and `--project-dir`.
+All commands support `--json` (auto-enabled when piped) and `--project-dir`. For the full matrix — including which lifecycle step each command serves and which artifacts it reads/writes — see [`references/workflow-matrix.md`](../references/workflow-matrix.md).
 
 ---
 
@@ -229,8 +230,8 @@ All commands support `--json` (auto-enabled when piped) and `--project-dir`.
 
 ## Beads State
 
-14 open issues remain after triaging 47 stale/superseded beads (2026-04-05).
-All tracked under `whetstone-d2t` epic. Run `bd ready` for available work.
+Active work is tracked under epic `whetstone-nq8` (reconcile contract, explicit handoffs,
+broaden baseline coverage, dogfood). Run `bd ready` for the next available child.
 
 ---
 

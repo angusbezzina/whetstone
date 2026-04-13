@@ -8,6 +8,7 @@ mod doctor;
 mod eval;
 mod generate_context;
 mod generate_tests;
+mod handoff;
 mod output;
 mod resolve;
 mod rules;

@@ -1,0 +1,236 @@
+source:
+  name: "whetstone:recommended/python"
+  docs_url: "https://docs.python.org/3/"
+  version: "1.0.0"
+  content_hash: "sha256:builtin-python-v1"
+  resolved_at: "2026-04-13T00:00:00Z"
+  registry: manual
+  content_origin: manual
+
+rules:
+  - id: python.no-shell-true
+    severity: must
+    confidence: high
+    category: default
+    source_kind: official_docs
+    description: >
+      MUST NOT call subprocess.run / Popen / call / check_output with shell=True.
+      With shell=True, a string command is passed to the system shell and any
+      attacker-controlled substring becomes executable.
+    source_url: "https://docs.python.org/3/library/subprocess.html#security-considerations"
+    risk: >
+      Shell injection. A single unescaped user input flips a local utility
+      into remote code execution.
+    linter_gap: >
+      Bandit's B602/B603 catch many cases but are off-by-default in projects
+      that only run ruff.
+    approved: true
+    status: approved
+    proposed_at: "2026-04-13T00:00:00Z"
+    proposed_by: whetstone-builtin
+    signals:
+      - id: shell-true-subprocess
+        strategy: pattern
+        description: "subprocess.(run|Popen|call|check_output|check_call) with shell=True"
+        match: 'subprocess\.(run|Popen|call|check_output|check_call)\s*\([^)]*shell\s*=\s*True'
+        weight: required
+    golden_examples:
+      - code: |
+          import subprocess
+          subprocess.run(["ls", "-l", path])
+        verdict: pass
+        reason: "Argv list — no shell interpretation"
+      - code: |
+          import subprocess
+          subprocess.run(f"ls -l {path}", shell=True)
+        verdict: fail
+        reason: "Interpolated string with shell=True is shell injection"
+      - code: |
+          import subprocess
+          subprocess.check_output(user_cmd, shell=True)
+        verdict: fail
+        reason: "shell=True on user input"
+
+  - id: python.mutable-default-arguments
+    severity: must
+    confidence: high
+    category: default
+    source_kind: official_docs
+    description: >
+      MUST NOT use mutable objects (list, dict, set) as default parameter
+      values. Defaults are evaluated once at function definition, so the same
+      object is shared across every call that uses the default.
+    source_url: "https://docs.python.org/3/tutorial/controlflow.html#default-argument-values"
+    risk: >
+      Silent state leakage between calls. A list default builds up entries
+      across unrelated invocations; debugging these cases is tedious.
+    linter_gap: >
+      Ruff's B006 flags this, but is in the "bugbear" ruleset which is
+      off-by-default.
+    approved: true
+    status: approved
+    proposed_at: "2026-04-13T00:00:00Z"
+    proposed_by: whetstone-builtin
+    signals:
+      - id: mutable-default-list
+        strategy: pattern
+        description: "def foo(arg=[]) or def foo(arg={}) literal default"
+        match: 'def\s+\w+\s*\([^)]*=\s*(\[\s*\]|\{\s*\})'
+        weight: required
+    golden_examples:
+      - code: |
+          def append_item(item, bucket=None):
+              if bucket is None:
+                  bucket = []
+              bucket.append(item)
+              return bucket
+        verdict: pass
+        reason: "Uses sentinel + fresh list per call"
+      - code: |
+          def append_item(item, bucket=[]):
+              bucket.append(item)
+              return bucket
+        verdict: fail
+        reason: "Shared list default leaks state across calls"
+      - code: |
+          def keyed(items, lookup={}):
+              lookup.update(items)
+              return lookup
+        verdict: fail
+        reason: "Shared dict default accumulates across invocations"
+
+  - id: python.no-except-pass
+    severity: should
+    confidence: high
+    category: convention
+    source_kind: official_docs
+    description: >
+      SHOULD NOT swallow bare exceptions with `except:` or `except Exception:
+      pass`. Silencing errors hides real bugs and makes incidents impossible
+      to diagnose after the fact.
+    source_url: "https://docs.python.org/3/tutorial/errors.html#handling-exceptions"
+    risk: >
+      Bugs become invisible. Errors like ImportError, AttributeError, and
+      network timeouts all disappear into the same silent catch-all.
+    linter_gap: >
+      Ruff's E722 flags bare `except:` but not `except Exception: pass`, which
+      is the more common pattern in production code.
+    approved: true
+    status: approved
+    proposed_at: "2026-04-13T00:00:00Z"
+    proposed_by: whetstone-builtin
+    signals:
+      - id: bare-except-pass
+        strategy: pattern
+        description: "except clause whose only body is `pass`"
+        match: 'except[^:]*:\s*pass\b'
+        weight: required
+    golden_examples:
+      - code: |
+          try:
+              do_work()
+          except ValueError:
+              logger.exception("work failed")
+              raise
+        verdict: pass
+        reason: "Narrow except with logging and re-raise"
+      - code: |
+          try:
+              do_work()
+          except:
+              pass
+        verdict: fail
+        reason: "Bare except: pass silences every failure"
+      - code: |
+          try:
+              do_work()
+          except Exception:
+              pass
+        verdict: fail
+        reason: "Blanket Exception: pass hides all error conditions"
+
+  - id: python.no-requests-without-timeout
+    severity: must
+    confidence: high
+    category: default
+    source_kind: official_docs
+    description: >
+      MUST pass an explicit `timeout=` to `requests.get/post/put/delete/head/
+      patch/request`. The default is no timeout — a slow server can hang the
+      process forever.
+    source_url: "https://requests.readthedocs.io/en/latest/user/advanced/#timeouts"
+    risk: >
+      A single unresponsive upstream hangs the request, blocks the caller,
+      and can exhaust a worker pool.
+    linter_gap: >
+      No standard linter checks library defaults. Bandit has B113 but it is
+      off-by-default in most ruff-only setups.
+    approved: true
+    status: approved
+    proposed_at: "2026-04-13T00:00:00Z"
+    proposed_by: whetstone-builtin
+    signals:
+      - id: requests-call-no-timeout
+        strategy: pattern
+        description: "requests.<method>(...) call without timeout=..."
+        match: 'requests\.(get|post|put|delete|head|patch|request)\s*\([^)]*\)'
+        weight: required
+    golden_examples:
+      - code: |
+          import requests
+          resp = requests.get(url, timeout=5)
+        verdict: pass
+        reason: "Explicit timeout"
+      - code: |
+          import requests
+          resp = requests.get(url)
+        verdict: fail
+        reason: "No timeout — hangs indefinitely on a slow host"
+      - code: |
+          import requests
+          resp = requests.post(url, json=payload)
+        verdict: fail
+        reason: "Missing timeout on POST too"
+
+  - id: python.open-without-encoding
+    severity: should
+    confidence: high
+    category: default
+    source_kind: official_docs
+    description: >
+      SHOULD pass an explicit `encoding=` to `open()` for text mode. Without
+      it, Python uses the platform locale, which differs between CI, macOS,
+      and Windows and produces UnicodeDecodeError on non-ASCII data.
+    source_url: "https://docs.python.org/3/library/functions.html#open"
+    risk: >
+      Non-deterministic encoding behaviour. Works on dev boxes, fails on CI
+      or production with a UnicodeDecodeError that is hard to reproduce.
+    linter_gap: >
+      Ruff's PLW1514 covers this but is in the pylint ruleset which is not
+      enabled in most ruff-only configurations.
+    approved: true
+    status: approved
+    proposed_at: "2026-04-13T00:00:00Z"
+    proposed_by: whetstone-builtin
+    signals:
+      - id: open-text-no-encoding
+        strategy: pattern
+        description: "open(path) / open(path, 'r'|'w') call without encoding="
+        match: 'open\s*\([^)]*\)'
+        weight: required
+    golden_examples:
+      - code: |
+          with open(path, "r", encoding="utf-8") as f:
+              data = f.read()
+        verdict: pass
+        reason: "Explicit UTF-8 encoding"
+      - code: |
+          with open(path, "rb") as f:
+              data = f.read()
+        verdict: pass
+        reason: "Binary mode — encoding does not apply"
+      - code: |
+          with open(path) as f:
+              data = f.read()
+        verdict: fail
+        reason: "Text mode without encoding defers to locale"
