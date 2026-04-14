@@ -33,27 +33,19 @@ pub fn generate_context(
 ) -> Result<Value> {
     let whetstone_config_exists = project_dir.join("whetstone").join("whetstone.yaml").exists()
         || project_dir.join("whetstone.yaml").exists();
+    let config = WhetstoneConfig::load(project_dir);
+    let paths = crate::layers::LayerPaths::for_project(project_dir);
 
-    // Personal output mode: ONLY render rules from the personal layer into
-    // whetstone/.personal/context/. Nothing from the project / team / built-in
-    // layers is written there — otherwise personal context would duplicate
-    // content that's already committed.
     let (approved, output_dir, warnings): (Vec<ApprovedRule>, _, Vec<String>) = if personal_output {
+        // Personal output renders ONLY the personal layer so .personal/context/
+        // never duplicates content that's already committed.
         let (rules, warns) = crate::layers::load_personal_only(project_dir, lang_filter);
-        let dir = project_dir
-            .join("whetstone")
-            .join(".personal")
-            .join("context");
-        (rules, dir, warns)
+        (rules, paths.personal_context(), warns)
     } else if whetstone_config_exists {
-        // Full 4-layer merge for committed context output.
-        let config = crate::config::WhetstoneConfig::load(project_dir);
         let (mut layers, warns) = crate::layers::LayerSet::load(project_dir, lang_filter, true);
-        // Committed context must NOT leak personal rules into the
-        // project/team/built-in outputs. Strip the personal layer here.
+        // Committed context never carries personal rules.
         layers.personal.clear();
 
-        // Pull in team extensions via extends:.
         if !config.extends.is_empty() {
             let resolution = crate::team::resolve(project_dir, &config.extends, false)
                 .ok()
@@ -65,18 +57,18 @@ pub fn generate_context(
             }
         }
 
+        let denies = crate::layers::load_denies(project_dir);
         let merged = layers
-            .merge()
+            .merge(&denies)
             .into_iter()
             .map(|lr| lr.rule)
             .collect();
-        (merged, project_dir.join("whetstone").join("context"), warns)
+        (merged, paths.whetstone_dir.join("context"), warns)
     } else {
-        // Fixtures / minimal test projects with no whetstone.yaml: fall back
-        // to project rules only, matching legacy behaviour.
-        let rules_dir = project_dir.join("whetstone").join("rules");
-        let (approved, warns) = rules::load_approved_rules(&rules_dir, lang_filter);
-        (approved, project_dir.join("whetstone").join("context"), warns)
+        // Fixtures / minimal test projects with no whetstone.yaml fall back to
+        // project rules only, matching legacy behaviour.
+        let (approved, warns) = rules::load_approved_rules(&paths.project_rules_dir, lang_filter);
+        (approved, paths.whetstone_dir.join("context"), warns)
     };
 
     if approved.is_empty() {
@@ -88,8 +80,6 @@ pub fn generate_context(
         }));
     }
 
-    // Determine which formats to generate
-    let config = WhetstoneConfig::load(project_dir);
     let formats: Vec<String> = if let Some(filter) = formats_filter {
         filter.split(',').map(|s| s.trim().to_lowercase()).collect()
     } else if !config.generate.formats.is_empty() {
@@ -98,7 +88,6 @@ pub fn generate_context(
         DEFAULT_FORMATS.iter().map(|s| s.to_string()).collect()
     };
 
-    // Validate format names
     for f in &formats {
         if !ALL_FORMATS.contains(&f.as_str()) {
             return Ok(serde_json::json!({
@@ -108,7 +97,6 @@ pub fn generate_context(
         }
     }
 
-    // Group rules by category for content generation
     let content = generate_rules_content(&approved);
 
     let mut generated = Vec::new();
@@ -145,7 +133,6 @@ pub fn generate_context(
         }
     }
 
-    // Collect dependency names
     let dep_names: Vec<&str> = {
         let mut names: Vec<&str> = approved.iter().map(|r| r.source_name.as_str()).collect();
         names.sort();

@@ -759,6 +759,7 @@ pub fn approved_from_loaded(
     (approved, Vec::new())
 }
 
+#[derive(Clone)]
 #[allow(dead_code)]
 pub struct ApprovedRule {
     pub id: String,
@@ -778,6 +779,7 @@ pub struct ApprovedRule {
     pub ai_eval: Option<AiEval>,
 }
 
+#[derive(Clone)]
 #[allow(dead_code)]
 pub struct ApprovedSignal {
     pub id: String,
@@ -787,6 +789,7 @@ pub struct ApprovedSignal {
     pub match_pattern: Option<String>,
 }
 
+#[derive(Clone)]
 #[allow(dead_code)]
 pub struct ApprovedExample {
     pub code: String,

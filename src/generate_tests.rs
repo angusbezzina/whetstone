@@ -20,21 +20,17 @@ pub fn generate_tests(
 ) -> Result<Value> {
     let whetstone_config_exists = project_dir.join("whetstone").join("whetstone.yaml").exists()
         || project_dir.join("whetstone.yaml").exists();
+    let paths = crate::layers::LayerPaths::for_project(project_dir);
 
     let (approved, warnings, output_base): (Vec<ApprovedRule>, Vec<String>, std::path::PathBuf) =
         if personal_output {
-            // Personal mode — only render the personal layer into .personal/evals/
             let (rules, warns) = crate::layers::load_personal_only(project_dir, lang_filter);
-            (
-                rules,
-                warns,
-                project_dir.join("whetstone").join(".personal"),
-            )
+            (rules, warns, paths.personal_dir.clone())
         } else if whetstone_config_exists {
             let config = crate::config::WhetstoneConfig::load(project_dir);
             let (mut layers, warns) =
                 crate::layers::LayerSet::load(project_dir, lang_filter, true);
-            // Tests emitted to whetstone/evals/ are committed — strip personal.
+            // Committed evals never carry personal rules.
             layers.personal.clear();
             if !config.extends.is_empty() {
                 let extra = crate::team::resolve(project_dir, &config.extends, false)
@@ -46,16 +42,17 @@ pub fn generate_tests(
                     layers.team.append(&mut rules);
                 }
             }
+            let denies = crate::layers::load_denies(project_dir);
             let merged = layers
-                .merge()
+                .merge(&denies)
                 .into_iter()
                 .map(|lr| lr.rule)
                 .collect();
-            (merged, warns, project_dir.join("whetstone"))
+            (merged, warns, paths.whetstone_dir.clone())
         } else {
-            let rules_dir = project_dir.join("whetstone").join("rules");
-            let (approved, warns) = rules::load_approved_rules(&rules_dir, lang_filter);
-            (approved, warns, project_dir.join("whetstone"))
+            let (approved, warns) =
+                rules::load_approved_rules(&paths.project_rules_dir, lang_filter);
+            (approved, warns, paths.whetstone_dir.clone())
         };
 
     if approved.is_empty() {
@@ -67,7 +64,6 @@ pub fn generate_tests(
         }));
     }
 
-    // Group rules by language
     let mut by_language: BTreeMap<String, Vec<&ApprovedRule>> = BTreeMap::new();
     for rule in &approved {
         by_language

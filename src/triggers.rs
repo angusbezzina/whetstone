@@ -132,12 +132,12 @@ fn install_session_hooks(project_dir: &Path) -> Result<Vec<PathBuf>> {
     set_executable(&claude_path)?;
     written.push(claude_path.clone());
 
-    // Claude Code settings.json — merge into an existing file if present so we
-    // don't clobber user-configured hooks. The structure below follows the
-    // Claude Code hooks convention (SessionStart event with a shell command).
+    // settings.json merges into any existing file so user-configured hooks
+    // survive. `atomic_write` guards against mid-write crashes corrupting the
+    // user's Claude Code config.
     let settings_path = claude_dir.join("settings.json");
     let merged = merge_claude_settings(&settings_path, &claude_path);
-    std::fs::write(&settings_path, serde_json::to_string_pretty(&merged)?)?;
+    crate::state::atomic_write(&settings_path, &merged);
     written.push(settings_path);
 
     // Cursor settings live at .cursor/config.json. We write a small advisory

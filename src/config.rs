@@ -52,6 +52,26 @@ impl GlobalConfig {
     }
 }
 
+/// Per-user, per-project config at `whetstone/.personal/config.yaml`.
+///
+/// Gitignored. Today only carries a `deny:` list; the struct exists so that
+/// future personal-only knobs (e.g. preferred formats) can land without
+/// re-plumbing callers.
+#[derive(Debug, Default, Deserialize)]
+pub struct PersonalConfig {
+    #[serde(default)]
+    pub deny: Vec<String>,
+}
+
+impl PersonalConfig {
+    pub fn load(path: &Path) -> Self {
+        match std::fs::read_to_string(path) {
+            Ok(text) => serde_yaml::from_str::<PersonalConfig>(&text).unwrap_or_default(),
+            Err(_) => Self::default(),
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct DiscoveryConfig {
     #[serde(default)]

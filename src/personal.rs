@@ -11,6 +11,8 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::layers::Layer;
+
 const PERSONAL_SUBDIRS: &[&str] = &["rules", "evals", "lint", "context"];
 
 const GITIGNORE_MARKER: &str = "# Whetstone personal layer (do not commit)";
@@ -34,12 +36,12 @@ deny: []
 /// Initialize `whetstone/.personal/` on disk: create subdirectories, write a
 /// default config file, and ensure `.gitignore` hides the layer.
 pub fn init_personal(project_dir: &Path) -> Result<Value> {
-    let personal_dir = project_dir.join("whetstone").join(".personal");
+    let paths = crate::layers::LayerPaths::for_project(project_dir);
     let mut created: Vec<String> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
 
     for sub in PERSONAL_SUBDIRS {
-        let path = personal_dir.join(sub);
+        let path = paths.personal_dir.join(sub);
         if path.exists() {
             skipped.push(path.display().to_string());
         } else {
@@ -48,19 +50,18 @@ pub fn init_personal(project_dir: &Path) -> Result<Value> {
         }
     }
 
-    let config_path = personal_dir.join("config.yaml");
-    if !config_path.exists() {
-        fs::write(&config_path, DEFAULT_PERSONAL_CONFIG)?;
-        created.push(config_path.display().to_string());
+    if !paths.personal_config.exists() {
+        fs::write(&paths.personal_config, DEFAULT_PERSONAL_CONFIG)?;
+        created.push(paths.personal_config.display().to_string());
     } else {
-        skipped.push(config_path.display().to_string());
+        skipped.push(paths.personal_config.display().to_string());
     }
 
     let gitignore_status = ensure_gitignore_entries(project_dir)?;
 
     Ok(json!({
         "status": "ok",
-        "personal_dir": personal_dir.display().to_string(),
+        "personal_dir": paths.personal_dir.display().to_string(),
         "created": created,
         "skipped_existing": skipped,
         "gitignore": gitignore_status,
@@ -134,76 +135,68 @@ pub fn promote_rule(
     target: &str,
     keep_source: bool,
 ) -> Result<Value> {
-    let target_layer = match target {
-        "project" | "team" | "personal" => target,
-        other => {
-            return Err(anyhow!(
-                "Unknown --to layer '{other}'. Expected: personal, project, team."
-            ))
-        }
-    };
+    let target_layer = parse_promote_target(target)?;
 
-    let whetstone_dir = project_dir.join("whetstone");
-    let personal_rules = whetstone_dir.join(".personal").join("rules");
-    let project_rules = whetstone_dir.join("rules");
-    let team_rules = whetstone_dir.join(".team").join("rules");
+    let paths = crate::layers::LayerPaths::for_project(project_dir);
+    let source = find_rule_source(&paths, rule_id)?;
 
-    let source = find_rule_source(&personal_rules, &project_rules, rule_id)?;
-
-    // Enforce monotonic promotion (never go "down").
-    let direction = (source.layer, target_layer);
-    let allowed = matches!(
-        direction,
-        ("personal", "project")
-            | ("personal", "team")
-            | ("project", "team")
-    );
-    if !allowed {
+    if !is_monotonic_promotion(source.layer, target_layer) {
         return Err(anyhow!(
-            "Cannot promote from {} to {target_layer}. Promotion is monotonic (personal → project → team).",
-            source.layer
+            "Cannot promote from {} to {}. Promotion is monotonic (personal → project → team).",
+            source.layer.as_str(),
+            target_layer.as_str(),
         ));
     }
 
     let dest_dir = match target_layer {
-        "project" => project_rules,
-        "team" => team_rules,
-        "personal" => personal_rules,
-        _ => unreachable!(),
+        Layer::Personal => &paths.personal_rules_dir,
+        Layer::Project => &paths.project_rules_dir,
+        Layer::Team => &paths.team_staging_rules_dir,
+        Layer::BuiltIn => {
+            return Err(anyhow!(
+                "Cannot promote into the built-in layer — built-ins ship inside the binary."
+            ));
+        }
     };
 
     let dest_filename = source
         .file
         .file_name()
-        .map(PathBuf::from)
         .ok_or_else(|| anyhow!("Source rule file has no filename"))?;
 
-    // Preserve language subdirectory if the source was placed under one.
     let lang_subdir = source
         .file
         .parent()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     let dest_parent = if matches!(lang_subdir.as_str(), "python" | "typescript" | "rust") {
         dest_dir.join(&lang_subdir)
     } else {
-        dest_dir
+        dest_dir.clone()
     };
     fs::create_dir_all(&dest_parent)?;
-    let dest_path = dest_parent.join(&dest_filename);
+    let dest_path = dest_parent.join(dest_filename);
 
-    if dest_path.exists() {
-        return Err(anyhow!(
-            "Destination already exists: {}. Delete it first, or pick a different target.",
-            dest_path.display()
-        ));
-    }
-
-    // Perform the move/copy of the full rule file. We preserve the whole YAML
-    // so siblings travel with the promoted rule — if the user wanted to split,
-    // they would have done so already. Document this in the returned status.
+    // Atomic create-new: open-or-fail, no TOCTOU race with a concurrent writer.
     let body = fs::read_to_string(&source.file)?;
-    fs::write(&dest_path, body)?;
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&dest_path)
+    {
+        Ok(mut f) => {
+            use std::io::Write as _;
+            f.write_all(body.as_bytes())?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(anyhow!(
+                "Destination already exists: {}. Delete it first, or pick a different target.",
+                dest_path.display()
+            ));
+        }
+        Err(e) => return Err(e.into()),
+    }
 
     if !keep_source {
         fs::remove_file(&source.file)?;
@@ -212,8 +205,8 @@ pub fn promote_rule(
     Ok(json!({
         "status": "ok",
         "rule_id": rule_id,
-        "from": source.layer,
-        "to": target_layer,
+        "from": source.layer.as_str(),
+        "to": target_layer.as_str(),
         "source_file": source.file.display().to_string(),
         "destination_file": dest_path.display().to_string(),
         "kept_source": keep_source,
@@ -222,26 +215,38 @@ pub fn promote_rule(
     }))
 }
 
-struct SourceRule {
-    file: PathBuf,
-    layer: &'static str,
+fn parse_promote_target(raw: &str) -> Result<Layer> {
+    match raw {
+        "personal" => Ok(Layer::Personal),
+        "project" => Ok(Layer::Project),
+        "team" => Ok(Layer::Team),
+        other => Err(anyhow!(
+            "Unknown --to layer '{other}'. Expected: personal, project, team."
+        )),
+    }
 }
 
-fn find_rule_source(
-    personal_rules: &Path,
-    project_rules: &Path,
-    rule_id: &str,
-) -> Result<SourceRule> {
-    if let Some(p) = crate::layers::find_rule_file(personal_rules, rule_id) {
+fn is_monotonic_promotion(from: Layer, to: Layer) -> bool {
+    use Layer::*;
+    matches!((from, to), (Personal, Project) | (Personal, Team) | (Project, Team))
+}
+
+struct SourceRule {
+    file: PathBuf,
+    layer: Layer,
+}
+
+fn find_rule_source(paths: &crate::layers::LayerPaths, rule_id: &str) -> Result<SourceRule> {
+    if let Some(p) = crate::layers::find_rule_file(&paths.personal_rules_dir, rule_id) {
         return Ok(SourceRule {
             file: p,
-            layer: "personal",
+            layer: Layer::Personal,
         });
     }
-    if let Some(p) = crate::layers::find_rule_file(project_rules, rule_id) {
+    if let Some(p) = crate::layers::find_rule_file(&paths.project_rules_dir, rule_id) {
         return Ok(SourceRule {
             file: p,
-            layer: "project",
+            layer: Layer::Project,
         });
     }
     Err(anyhow!(

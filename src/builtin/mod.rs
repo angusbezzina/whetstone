@@ -45,72 +45,14 @@ pub fn merge_approved_rules(
 
     let mut merged: Vec<crate::rules::ApprovedRule> = Vec::new();
 
-    // Add built-in rules not overridden and not denied
     for rule in builtin {
         if !project_ids.contains(rule.id.as_str()) && !deny_set.contains(rule.id.as_str()) {
-            // Clone by reconstructing (ApprovedRule doesn't derive Clone)
-            merged.push(crate::rules::ApprovedRule {
-                id: rule.id.clone(),
-                severity: rule.severity.clone(),
-                confidence: rule.confidence.clone(),
-                category: rule.category.clone(),
-                description: rule.description.clone(),
-                source_url: rule.source_url.clone(),
-                source_name: rule.source_name.clone(),
-                language: rule.language.clone(),
-                signals: rule.signals.iter().map(|s| crate::rules::ApprovedSignal {
-                    id: s.id.clone(),
-                    strategy: s.strategy.clone(),
-                    description: s.description.clone(),
-                    weight: s.weight.clone(),
-                    match_pattern: s.match_pattern.clone(),
-                }).collect(),
-                golden_examples: rule.golden_examples.iter().map(|e| crate::rules::ApprovedExample {
-                    code: e.code.clone(),
-                    verdict: e.verdict.clone(),
-                    reason: e.reason.clone(),
-                    language: e.language.clone(),
-                }).collect(),
-                risk: rule.risk.clone(),
-                linter_gap: rule.linter_gap.clone(),
-                deterministic_pass_threshold: rule.deterministic_pass_threshold,
-                deterministic_fail_threshold: rule.deterministic_fail_threshold,
-                ai_eval: rule.ai_eval.clone(),
-            });
+            merged.push(rule.clone());
         }
     }
-
-    // Add all project rules not denied
     for rule in project {
         if !deny_set.contains(rule.id.as_str()) {
-            merged.push(crate::rules::ApprovedRule {
-                id: rule.id.clone(),
-                severity: rule.severity.clone(),
-                confidence: rule.confidence.clone(),
-                category: rule.category.clone(),
-                description: rule.description.clone(),
-                source_url: rule.source_url.clone(),
-                source_name: rule.source_name.clone(),
-                language: rule.language.clone(),
-                signals: rule.signals.iter().map(|s| crate::rules::ApprovedSignal {
-                    id: s.id.clone(),
-                    strategy: s.strategy.clone(),
-                    description: s.description.clone(),
-                    weight: s.weight.clone(),
-                    match_pattern: s.match_pattern.clone(),
-                }).collect(),
-                golden_examples: rule.golden_examples.iter().map(|e| crate::rules::ApprovedExample {
-                    code: e.code.clone(),
-                    verdict: e.verdict.clone(),
-                    reason: e.reason.clone(),
-                    language: e.language.clone(),
-                }).collect(),
-                risk: rule.risk.clone(),
-                linter_gap: rule.linter_gap.clone(),
-                deterministic_pass_threshold: rule.deterministic_pass_threshold,
-                deterministic_fail_threshold: rule.deterministic_fail_threshold,
-                ai_eval: rule.ai_eval.clone(),
-            });
+            merged.push(rule.clone());
         }
     }
 

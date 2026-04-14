@@ -1033,8 +1033,8 @@ pub fn run() -> i32 {
         Commands::Layers { project_dir, lang } => {
             let (layer_set, warnings) =
                 layers::LayerSet::load(&project_dir, lang.as_deref(), true);
-            let summary = layer_set.summary();
-            let merged = layer_set.merge();
+            let denies = layers::load_denies(&project_dir);
+            let merged = layer_set.merge(&denies);
             let rules_list: Vec<serde_json::Value> = merged
                 .iter()
                 .map(|lr| {
@@ -1049,7 +1049,7 @@ pub fn run() -> i32 {
                 .collect();
             let result = serde_json::json!({
                 "status": "ok",
-                "summary": summary,
+                "summary": layers::summary_from(&merged),
                 "rules": rules_list,
                 "warnings": warnings,
                 "next_command": "wh validate && wh context && wh tests",

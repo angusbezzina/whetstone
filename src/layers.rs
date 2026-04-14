@@ -15,11 +15,8 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::config::WhetstoneConfig;
-use crate::rules::{
-    self, approved_from_loaded, load_approved_rules, load_rule_files, ApprovedExample,
-    ApprovedRule, ApprovedSignal,
-};
+use crate::config::{PersonalConfig, WhetstoneConfig};
+use crate::rules::{self, approved_from_loaded, load_approved_rules, load_rule_files, ApprovedRule};
 
 /// Identifies which layer a merged rule came from. Written into generated
 /// outputs so users can tell at a glance where a rule originated.
@@ -44,26 +41,37 @@ impl Layer {
 
 /// Directory paths for each layer. Missing directories are treated as empty.
 pub struct LayerPaths {
+    pub whetstone_dir: PathBuf,
+    pub personal_dir: PathBuf,
     pub personal_rules_dir: PathBuf,
+    pub personal_config: PathBuf,
     pub project_rules_dir: PathBuf,
+    pub team_staging_rules_dir: PathBuf,
     pub team_rules_dirs: Vec<PathBuf>,
 }
 
 impl LayerPaths {
     pub fn for_project(project_dir: &Path) -> Self {
-        let base = project_dir.join("whetstone");
+        let whetstone_dir = project_dir.join("whetstone");
+        let personal_dir = whetstone_dir.join(".personal");
+        let team_staging = whetstone_dir.join(".team").join("rules");
         let mut team_rules_dirs = Vec::new();
-        // Local team-publish staging (`wh promote --to team` writes here) feeds
-        // the team layer alongside anything pulled in by `extends:`.
-        let local_team = base.join(".team").join("rules");
-        if local_team.exists() {
-            team_rules_dirs.push(local_team);
+        if team_staging.exists() {
+            team_rules_dirs.push(team_staging.clone());
         }
         LayerPaths {
-            personal_rules_dir: base.join(".personal").join("rules"),
-            project_rules_dir: base.join("rules"),
+            personal_rules_dir: personal_dir.join("rules"),
+            personal_config: personal_dir.join("config.yaml"),
+            personal_dir,
+            project_rules_dir: whetstone_dir.join("rules"),
+            team_staging_rules_dir: team_staging,
             team_rules_dirs,
+            whetstone_dir,
         }
+    }
+
+    pub fn personal_context(&self) -> PathBuf {
+        self.personal_dir.join("context")
     }
 }
 
@@ -86,7 +94,6 @@ pub struct LayerSet {
     pub project: Vec<ApprovedRule>,
     pub team: Vec<ApprovedRule>,
     pub builtin: Vec<ApprovedRule>,
-    pub denies: LayerDenies,
 }
 
 impl LayerSet {
@@ -102,23 +109,15 @@ impl LayerSet {
         let (project, mut pw) = load_approved_rules(&paths.project_rules_dir, lang_filter);
         warnings.append(&mut pw);
 
-        // Personal layer: load only if the directory exists. Rules are loaded
-        // with the same schema + validation as project rules.
-        let (personal, mut person_w) = if paths.personal_rules_dir.exists() {
-            load_approved_rules(&paths.personal_rules_dir, lang_filter)
-        } else {
-            (Vec::new(), Vec::new())
-        };
+        let (personal, mut person_w) =
+            load_approved_rules(&paths.personal_rules_dir, lang_filter);
         warnings.append(&mut person_w);
 
-        // Team layers: merge all team extensions into a single Vec.
         let mut team = Vec::new();
         for dir in &paths.team_rules_dirs {
-            if dir.exists() {
-                let (mut rules, mut w) = load_approved_rules(dir, lang_filter);
-                team.append(&mut rules);
-                warnings.append(&mut w);
-            }
+            let (mut rules, mut w) = load_approved_rules(dir, lang_filter);
+            team.append(&mut rules);
+            warnings.append(&mut w);
         }
 
         let builtin = if include_builtin {
@@ -128,15 +127,12 @@ impl LayerSet {
             Vec::new()
         };
 
-        let denies = load_denies(project_dir);
-
         (
             LayerSet {
                 personal,
                 project,
                 team,
                 builtin,
-                denies,
             },
             warnings,
         )
@@ -146,128 +142,93 @@ impl LayerSet {
     ///
     /// Precedence: personal > project > team > built-in. Deny lists at each
     /// level excise the denied id from that level and all broader levels.
-    pub fn merge(&self) -> Vec<LayeredRule> {
+    pub fn merge(&self, denies: &LayerDenies) -> Vec<LayeredRule> {
         let personal_ids: HashSet<&str> = self.personal.iter().map(|r| r.id.as_str()).collect();
         let project_ids: HashSet<&str> = self.project.iter().map(|r| r.id.as_str()).collect();
         let team_ids: HashSet<&str> = self.team.iter().map(|r| r.id.as_str()).collect();
 
-        let personal_deny: HashSet<&str> =
-            self.denies.personal.iter().map(|s| s.as_str()).collect();
-        let project_deny: HashSet<&str> =
-            self.denies.project.iter().map(|s| s.as_str()).collect();
-        let team_deny: HashSet<&str> = self.denies.team.iter().map(|s| s.as_str()).collect();
+        let personal_deny: HashSet<&str> = denies.personal.iter().map(String::as_str).collect();
+        let project_deny: HashSet<&str> = denies.project.iter().map(String::as_str).collect();
+        let team_deny: HashSet<&str> = denies.team.iter().map(String::as_str).collect();
 
-        // Any id that a narrower deny excludes is removed from broader layers too.
+        // Each layer's entry lists every id-set whose membership means "skip
+        // this rule". Narrower denies cascade outward: project deny silences
+        // the project/team/built-in layers; a personal override shadows the
+        // same id in every broader layer.
+        type Plan<'a> = (&'a Vec<ApprovedRule>, Layer, Vec<&'a HashSet<&'a str>>);
+        let plans: [Plan; 4] = [
+            (&self.personal, Layer::Personal, vec![&personal_deny]),
+            (
+                &self.project,
+                Layer::Project,
+                vec![&personal_deny, &project_deny, &personal_ids],
+            ),
+            (
+                &self.team,
+                Layer::Team,
+                vec![
+                    &personal_deny,
+                    &project_deny,
+                    &team_deny,
+                    &personal_ids,
+                    &project_ids,
+                ],
+            ),
+            (
+                &self.builtin,
+                Layer::BuiltIn,
+                vec![
+                    &personal_deny,
+                    &project_deny,
+                    &team_deny,
+                    &personal_ids,
+                    &project_ids,
+                    &team_ids,
+                ],
+            ),
+        ];
+
         let mut merged = Vec::new();
-
-        for rule in &self.personal {
-            if personal_deny.contains(rule.id.as_str()) {
-                continue;
+        for (rules, layer, excludes) in plans {
+            for rule in rules {
+                if excludes.iter().any(|s| s.contains(rule.id.as_str())) {
+                    continue;
+                }
+                merged.push(LayeredRule {
+                    rule: rule.clone(),
+                    layer,
+                });
             }
-            merged.push(LayeredRule {
-                rule: clone_rule(rule),
-                layer: Layer::Personal,
-            });
         }
-
-        for rule in &self.project {
-            if personal_deny.contains(rule.id.as_str())
-                || project_deny.contains(rule.id.as_str())
-                || personal_ids.contains(rule.id.as_str())
-            {
-                continue;
-            }
-            merged.push(LayeredRule {
-                rule: clone_rule(rule),
-                layer: Layer::Project,
-            });
-        }
-
-        for rule in &self.team {
-            if personal_deny.contains(rule.id.as_str())
-                || project_deny.contains(rule.id.as_str())
-                || team_deny.contains(rule.id.as_str())
-                || personal_ids.contains(rule.id.as_str())
-                || project_ids.contains(rule.id.as_str())
-            {
-                continue;
-            }
-            merged.push(LayeredRule {
-                rule: clone_rule(rule),
-                layer: Layer::Team,
-            });
-        }
-
-        for rule in &self.builtin {
-            if personal_deny.contains(rule.id.as_str())
-                || project_deny.contains(rule.id.as_str())
-                || team_deny.contains(rule.id.as_str())
-                || personal_ids.contains(rule.id.as_str())
-                || project_ids.contains(rule.id.as_str())
-                || team_ids.contains(rule.id.as_str())
-            {
-                continue;
-            }
-            merged.push(LayeredRule {
-                rule: clone_rule(rule),
-                layer: Layer::BuiltIn,
-            });
-        }
-
         merged
     }
-
-    /// Summary used by the CLI and tests — tallies by layer and total after merge.
-    pub fn summary(&self) -> BTreeMap<String, usize> {
-        let merged = self.merge();
-        let mut out = BTreeMap::new();
-        out.insert("personal".to_string(), 0);
-        out.insert("project".to_string(), 0);
-        out.insert("team".to_string(), 0);
-        out.insert("built-in".to_string(), 0);
-        for lr in &merged {
-            *out.entry(lr.layer.as_str().to_string()).or_insert(0) += 1;
-        }
-        out.insert("total".to_string(), merged.len());
-        out
-    }
 }
 
-/// Load deny lists from the three relevant config files:
-/// - `whetstone/whetstone.yaml` (project layer)
+/// Summary keyed by `Layer::as_str()` plus a `"total"` entry.
+pub fn summary_from(merged: &[LayeredRule]) -> BTreeMap<String, usize> {
+    let mut out = BTreeMap::new();
+    for layer in [Layer::Personal, Layer::Project, Layer::Team, Layer::BuiltIn] {
+        out.insert(layer.as_str().to_string(), 0);
+    }
+    for lr in merged {
+        *out.entry(lr.layer.as_str().to_string()).or_insert(0) += 1;
+    }
+    out.insert("total".to_string(), merged.len());
+    out
+}
+
+/// Load deny lists from the relevant config files:
+/// - `whetstone/whetstone.yaml` (project layer — merges global config too)
 /// - `whetstone/.personal/config.yaml` (personal layer)
-/// - team denies are embedded in team configs — `LayerSet::load` currently
-///   leaves this empty; hydrate via `LayerSet::denies.team` before calling
-///   `merge()` if you want team-level deny semantics.
+/// - team denies travel with team configs; for extends-driven layers the
+///   caller is expected to hydrate `denies.team` if they want that semantics.
 pub fn load_denies(project_dir: &Path) -> LayerDenies {
     let project_cfg = WhetstoneConfig::load(project_dir);
-    let personal_cfg_path = project_dir
-        .join("whetstone")
-        .join(".personal")
-        .join("config.yaml");
-    let personal = if personal_cfg_path.exists() {
-        load_personal_deny(&personal_cfg_path)
-    } else {
-        Vec::new()
-    };
+    let paths = LayerPaths::for_project(project_dir);
     LayerDenies {
-        personal,
+        personal: PersonalConfig::load(&paths.personal_config).deny,
         project: project_cfg.deny,
         team: Vec::new(),
-    }
-}
-
-fn load_personal_deny(path: &Path) -> Vec<String> {
-    #[derive(serde::Deserialize)]
-    struct Shape {
-        #[serde(default)]
-        deny: Vec<String>,
-    }
-    match std::fs::read_to_string(path) {
-        Ok(text) => serde_yaml::from_str::<Shape>(&text)
-            .map(|s| s.deny)
-            .unwrap_or_default(),
-        Err(_) => Vec::new(),
     }
 }
 
@@ -277,54 +238,12 @@ fn load_personal_deny(path: &Path) -> Vec<String> {
 #[allow(dead_code)]
 pub fn merge_to_approved(project_dir: &Path, lang_filter: Option<&str>) -> Vec<ApprovedRule> {
     let (layers, _) = LayerSet::load(project_dir, lang_filter, true);
+    let denies = load_denies(project_dir);
     layers
-        .merge()
+        .merge(&denies)
         .into_iter()
         .map(|lr| lr.rule)
         .collect()
-}
-
-// ── helpers ──
-
-/// `ApprovedRule` does not implement `Clone`, so spell it out here. Keep this
-/// in sync with `ApprovedRule` — if you add a field there, mirror it here.
-pub fn clone_rule(rule: &ApprovedRule) -> ApprovedRule {
-    ApprovedRule {
-        id: rule.id.clone(),
-        severity: rule.severity.clone(),
-        confidence: rule.confidence.clone(),
-        category: rule.category.clone(),
-        description: rule.description.clone(),
-        source_url: rule.source_url.clone(),
-        source_name: rule.source_name.clone(),
-        language: rule.language.clone(),
-        signals: rule
-            .signals
-            .iter()
-            .map(|s| ApprovedSignal {
-                id: s.id.clone(),
-                strategy: s.strategy.clone(),
-                description: s.description.clone(),
-                weight: s.weight.clone(),
-                match_pattern: s.match_pattern.clone(),
-            })
-            .collect(),
-        golden_examples: rule
-            .golden_examples
-            .iter()
-            .map(|e| ApprovedExample {
-                code: e.code.clone(),
-                verdict: e.verdict.clone(),
-                reason: e.reason.clone(),
-                language: e.language.clone(),
-            })
-            .collect(),
-        risk: rule.risk.clone(),
-        linter_gap: rule.linter_gap.clone(),
-        deterministic_pass_threshold: rule.deterministic_pass_threshold,
-        deterministic_fail_threshold: rule.deterministic_fail_threshold,
-        ai_eval: rule.ai_eval.clone(),
-    }
 }
 
 /// Load just the personal approved rules (no merging). Used by personal
@@ -334,25 +253,18 @@ pub fn load_personal_only(
     lang_filter: Option<&str>,
 ) -> (Vec<ApprovedRule>, Vec<String>) {
     let paths = LayerPaths::for_project(project_dir);
-    if !paths.personal_rules_dir.exists() {
-        return (Vec::new(), Vec::new());
-    }
     rules::load_approved_rules(&paths.personal_rules_dir, lang_filter)
 }
 
 /// Shared helper: locate the YAML file a given rule id lives in. Used by the
 /// `promote` command to rewrite rule files without re-parsing every layer.
 pub fn find_rule_file(rules_dir: &Path, rule_id: &str) -> Option<PathBuf> {
-    if !rules_dir.exists() {
-        return None;
-    }
     let (files, _) = load_rule_files(rules_dir);
-    for lrf in &files {
-        for rule in &lrf.rule_file.rules {
-            if rule.id == rule_id {
-                return Some(PathBuf::from(&lrf.file_path));
-            }
-        }
-    }
-    None
+    files.into_iter().find_map(|lrf| {
+        lrf.rule_file
+            .rules
+            .iter()
+            .any(|r| r.id == rule_id)
+            .then(|| PathBuf::from(&lrf.file_path))
+    })
 }
