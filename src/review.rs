@@ -73,7 +73,12 @@ pub fn list(opts: ReviewListOptions<'_>) -> Result<Value> {
     let mut by_status: std::collections::BTreeMap<String, Vec<Value>> =
         std::collections::BTreeMap::new();
     collect(&mut by_status, &project_files, "project", opts.lang_filter);
-    collect(&mut by_status, &personal_files, "personal", opts.lang_filter);
+    collect(
+        &mut by_status,
+        &personal_files,
+        "personal",
+        opts.lang_filter,
+    );
 
     if let Some(filter) = opts.status_filter {
         by_status.retain(|k, _| k == filter);
@@ -106,10 +111,13 @@ fn collect(
             }
         }
         for rule in &lrf.rule_file.rules {
-            let status = rule
-                .status
-                .clone()
-                .unwrap_or_else(|| if rule.approved { "approved".into() } else { "candidate".into() });
+            let status = rule.status.clone().unwrap_or_else(|| {
+                if rule.approved {
+                    "approved".into()
+                } else {
+                    "candidate".into()
+                }
+            });
             out.entry(status).or_default().push(json!({
                 "id": rule.id,
                 "severity": rule.severity,
@@ -192,10 +200,13 @@ pub fn apply(opts: ApplyOptions<'_>) -> Result<Value> {
         .find(|r| r.id == opts.rule_id)
         .ok_or_else(|| anyhow!("rule {} not found after load", opts.rule_id))?;
 
-    let current_status = rule
-        .status
-        .clone()
-        .unwrap_or_else(|| if rule.approved { "approved".into() } else { "candidate".into() });
+    let current_status = rule.status.clone().unwrap_or_else(|| {
+        if rule.approved {
+            "approved".into()
+        } else {
+            "candidate".into()
+        }
+    });
     let target_status = opts.transition.target_status();
 
     validate_transition(&current_status, target_status)?;
@@ -270,8 +281,8 @@ pub struct BatchEntry {
 
 pub fn apply_batch(project_dir: &Path, batch_file: &Path, dry_run: bool) -> Result<Value> {
     let text = fs::read_to_string(batch_file)?;
-    let entries: Vec<BatchEntry> = serde_json::from_str(&text)
-        .map_err(|e| anyhow!("invalid batch file: {e}"))?;
+    let entries: Vec<BatchEntry> =
+        serde_json::from_str(&text).map_err(|e| anyhow!("invalid batch file: {e}"))?;
 
     let mut applied = Vec::new();
     let mut failed = Vec::new();
@@ -355,10 +366,7 @@ pub fn queue(project_dir: &Path) -> Result<Value> {
 
     let stale_rules = collect_stale_rules(&changed);
 
-    let total = pending_candidates
-        .as_array()
-        .map(|v| v.len())
-        .unwrap_or(0)
+    let total = pending_candidates.as_array().map(|v| v.len()).unwrap_or(0)
         + stale_rules.len()
         + removed.len();
 
@@ -454,17 +462,35 @@ fn validate_transition(from: &str, to: &str) -> Result<()> {
 /// project's approved ruleset, so typos cannot silently write a dangling
 /// pointer into the YAML + audit log.
 fn validate_supersedes_target(project_dir: &Path, target_id: &str) -> Result<()> {
-    let paths = LayerPaths::for_project(project_dir);
-    for dir in [&paths.project_rules_dir, &paths.personal_rules_dir] {
-        let (files, _) = load_rule_files(dir);
-        for lrf in &files {
-            if lrf.rule_file.rules.iter().any(|r| r.id == target_id) {
-                return Ok(());
+    let whetstone_config_exists = project_dir
+        .join("whetstone")
+        .join("whetstone.yaml")
+        .exists()
+        || project_dir.join("whetstone.yaml").exists();
+
+    if whetstone_config_exists {
+        let merged = crate::layers::resolve_merged(project_dir, None, true, true, false);
+        if merged.merged.iter().any(|lr| lr.rule.id == target_id) {
+            return Ok(());
+        }
+    } else {
+        let paths = LayerPaths::for_project(project_dir);
+        for dir in [&paths.project_rules_dir, &paths.personal_rules_dir] {
+            let (files, _) = load_rule_files(dir);
+            for lrf in &files {
+                if lrf
+                    .rule_file
+                    .rules
+                    .iter()
+                    .any(|r| r.id == target_id && r.approved)
+                {
+                    return Ok(());
+                }
             }
         }
     }
     Err(anyhow!(
-        "--superseded-by target '{target_id}' not found in whetstone/rules/ or whetstone/.personal/rules/"
+        "--superseded-by target '{target_id}' not found in the current approved layered ruleset"
     ))
 }
 
@@ -480,9 +506,12 @@ fn validate_reasons(
         Transition::Deprecate if reason.is_none() => Err(anyhow!(
             "--deprecate requires --reason (explain why the rule is retired)"
         )),
-        Transition::Supersede if superseded_by.is_none() => Err(anyhow!(
-            "--supersede requires --superseded-by <rule-id>"
+        Transition::Supersede if reason.is_none() => Err(anyhow!(
+            "--supersede requires --reason (explain why the rule is being replaced)"
         )),
+        Transition::Supersede if superseded_by.is_none() => {
+            Err(anyhow!("--supersede requires --superseded-by <rule-id>"))
+        }
         _ => Ok(()),
     }
 }
@@ -572,10 +601,15 @@ fn build_removes(transition: Transition) -> Vec<&'static str> {
 /// minimum necessary escaping.
 fn quote_yaml_string(value: &str) -> String {
     let needs_quotes = value.is_empty()
-        || value.starts_with([' ', '\t', '-', '?', ':', '#', '&', '*', '!', '|', '>', '\'', '"'])
-        || value
-            .chars()
-            .any(|c| matches!(c, ':' | '#' | '\n' | '\t' | '{' | '}' | '[' | ']' | ',' | '`'))
+        || value.starts_with([
+            ' ', '\t', '-', '?', ':', '#', '&', '*', '!', '|', '>', '\'', '"',
+        ])
+        || value.chars().any(|c| {
+            matches!(
+                c,
+                ':' | '#' | '\n' | '\t' | '{' | '}' | '[' | ']' | ',' | '`'
+            )
+        })
         || matches!(
             value.to_ascii_lowercase().as_str(),
             "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "~"
@@ -604,12 +638,25 @@ fn apply_rule_updates(
     // lands in a predictable position.
     for key in removes {
         let mut current_end = mut_block_end(&mutated, block_start);
-        remove_field_in_block(&mut mutated, block_start, &mut current_end, field_indent, key);
+        remove_field_in_block(
+            &mut mutated,
+            block_start,
+            &mut current_end,
+            field_indent,
+            key,
+        );
     }
 
     for (key, value) in updates {
         let current_end = mut_block_end(&mutated, block_start);
-        if !replace_field_in_block(&mut mutated, block_start, current_end, field_indent, key, value) {
+        if !replace_field_in_block(
+            &mut mutated,
+            block_start,
+            current_end,
+            field_indent,
+            key,
+            value,
+        ) {
             insert_field_at_end(&mut mutated, current_end, field_indent, key, value);
         }
     }
@@ -679,10 +726,7 @@ fn mut_block_end(lines: &[String], start: usize) -> usize {
     // Locate the end again using the mutated lines; cheap for our file sizes.
     let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
     let start_re = Regex::id_line();
-    let id_indent = refs[start]
-        .chars()
-        .take_while(|c| *c == ' ')
-        .count();
+    let id_indent = refs[start].chars().take_while(|c| *c == ' ').count();
     for (offset, line) in refs.iter().enumerate().skip(start + 1) {
         if line.trim().is_empty() {
             continue;
@@ -736,7 +780,10 @@ fn remove_field_in_block(
     let prefix = format!("{}{key}:", " ".repeat(field_indent));
     let mut i = start + 1;
     while i < *end {
-        if lines[i].trim_end_matches(&['\n', '\r'][..]).starts_with(&prefix) {
+        if lines[i]
+            .trim_end_matches(&['\n', '\r'][..])
+            .starts_with(&prefix)
+        {
             lines.remove(i);
             *end -= 1;
         } else {
@@ -912,6 +959,11 @@ mod tests {
     fn validate_reasons_requires_supersede_target() {
         assert!(validate_reasons(Transition::Supersede, Some("r"), None).is_err());
         assert!(validate_reasons(Transition::Supersede, Some("r"), Some("other.id")).is_ok());
+    }
+
+    #[test]
+    fn validate_reasons_requires_supersede_reason() {
+        assert!(validate_reasons(Transition::Supersede, None, Some("other.id")).is_err());
     }
 
     const SAMPLE_YAML: &str = r#"source:

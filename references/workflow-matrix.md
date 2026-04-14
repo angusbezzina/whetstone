@@ -35,6 +35,11 @@ stages:
 | `wh validate` | `validate-rules` | — | `references/rule-schema.yaml` (or binary-embedded fallback), all layers | — | Schema + fixtures validator. CI-friendly. |
 | `wh context` | `generate-context` | generate | layered rules (personal is excluded from committed output) | `whetstone/context/*` by default; `--personal` routes to `whetstone/.personal/context/` | `--personal` emits personal-only context. Committed output never leaks personal rules. |
 | `wh tests` | `generate-tests` | generate | layered rules | `whetstone/evals/**`, `whetstone/lint/*` by default; `--personal` routes to `whetstone/.personal/evals/` etc. | Signals with a `match` regex produce real checks; without, tests are TODO stubs (see "Test fidelity" below). |
+| `wh check` | — | monitor / enforce | layered rules, source files, linter config | — | Deterministic enforcement runner. Uses tree-sitter for `ast_query` and `ast_scope`, regex for `match:`, and linter-config verification for `lint_proxy`. Exits non-zero on violations or config gaps unless `--no-fail` is set. |
+| `wh review` | — | approve | writable rules (`whetstone/rules/**`, `whetstone/.personal/rules/**`), handoff artifacts | — | Lists rules by lifecycle status, shows per-rule context, or builds a focused queue from `extraction-handoff.json` + `refresh-diff.json`. |
+| `wh apply` | — | approve / lifecycle | writable rules, current layered approved ruleset | `whetstone/.state/review-log.jsonl` | Applies lifecycle transitions without hand-editing YAML. Supports approve / deny / deprecate / supersede, dry-run, and batch JSON input. |
+| `wh bench run` | — | monitor / trust | benchmark corpus, `wh check` output | — | Runs the benchmark corpus and reports precision/recall/F1 per scenario. `--check` exits non-zero on regressions below `--min-f1`. |
+| `wh bench snapshot` | — | monitor / trust | same as `wh bench run` | `whetstone/.state/bench-snapshot.json` | Persists the latest benchmark result as a baseline snapshot. |
 | `wh layers` | — | inspect | all four layers | — | Prints a JSON summary of rule counts per layer and which layer each rule resolves to. Use this to debug merges + deny lists. |
 | `wh promote` | — | lifecycle | source layer rule file | target layer rule file | `wh promote <rule-id> --to personal\|project\|team`. Monotonic — cannot promote downward. `--keep-source` copies instead of moving. |
 | `wh status` | — | monitor | project rules, `whetstone/.state/*`, `whetstone/.metrics.jsonl` | `whetstone/.metrics.jsonl` (snapshot) | `--score`, `--history`, `--no-snapshot`, `--no-drift-check` are the common flags. Status today reports project-only totals; built-in/team/personal counts live in `wh layers`. |
@@ -45,9 +50,9 @@ stages:
 | `wh patterns` | `detect-patterns` | extract (optional) | agent transcripts (scoped), git log, GitHub PRs | `whetstone/.last-run` | Opt-in. Scoped to the current project by default; use `--global-transcripts` to widen. |
 | `wh update` | — | — | — | replaces the `whetstone` binary | Self-update from GitHub Releases. Does **not** touch rules. |
 
-> All commands accept `--json` (auto-enabled when piped) and `--project-dir`
-> (default: `.`). Human-readable progress goes to stderr; JSON payloads go to
-> stdout.
+> All commands accept `--json` (auto-enabled when piped). Project-scoped
+> commands accept `--project-dir` (default: `.`). Human-readable progress goes
+> to stderr; JSON payloads go to stdout.
 
 ---
 
@@ -96,8 +101,8 @@ Fidelity depends on the signal type:
 | `pattern` with `match:` | TypeScript | real `RegExp.test` loop | always |
 | `pattern` with `match:` | Rust | real `regex::Regex::new` loop | always |
 | `pattern` without `match:` | any | TODO stub | when extraction omitted the regex |
-| `ast` with `match:` | any | regex fallback with a `// TODO: upgrade to AST` note | always (tree-sitter not yet wired in) |
-| `ast` without `match:` | any | TODO stub | when extraction omitted the regex |
+| `ast` with `match:` | any | regex fallback with a `// TODO: upgrade to AST` note | always; structural enforcement lives in `wh check` |
+| `ast` without `match:` | any | TODO stub | when extraction omitted the regex; use `wh check` for structural enforcement |
 | `lint_proxy` | any | deferred to ruff/biome/clippy overlay | always |
 | `ai` | any | deferred to `wh eval run` (produces an eval definition instead of a test case) | always |
 

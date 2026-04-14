@@ -249,7 +249,11 @@ Shipped commands (primary name first, aliases in parentheses):
 | `layers` | — | Show the 4-layer merge summary and per-rule layer provenance | `--lang` |
 | `promote` | — | Move a rule between layers (personal → project → team) | `<rule-id>`, `--to`, `--keep-source` |
 | `validate` | `validate-rules` | Validate rule schema and every rule fixture | `--project-dir` |
+| `check` | — | Scan source files for rule violations and linter-config gaps | `<paths>`, `--lang`, `--rule`, `--no-fail` |
 | `eval` | — | AI eval lifecycle: `generate`, `run`, `calibrate` | `--collect`, `--deterministic-only`, `--lang`, `--dry-run` |
+| `review` | — | Review rules by lifecycle status or build a refresh review queue | `show <rule-id>`, `queue`, `--status`, `--lang` |
+| `apply` | — | Apply lifecycle transitions without hand-editing YAML | `<rule-id>`, `--approve|--deny|--deprecate|--supersede`, `--reason`, `--batch`, `--dry-run` |
+| `bench` | — | Run the benchmark corpus or snapshot a baseline | `run|snapshot`, `--scenario`, `--min-f1`, `--check` |
 | `patterns` | `detect-patterns` | Mine style patterns from transcripts/git/PRs | `--sources`, `--since`, `--quiet`, `--global-transcripts` |
 | `update` | — | Update the `whetstone` binary to the latest release | `--check`, `--force` |
 
@@ -497,6 +501,9 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - Custom source URLs in `whetstone.yaml` (blogs, team guides, any public URL)
 - Built-in rules (`whetstone:recommended`) that ship with the binary for Rust, Python, and TypeScript
 - Agent-mediated rule extraction with structured approval flow and explicit candidate handoff
+- Tree-sitter-backed `wh check` across Python, TypeScript, and Rust, including AST-query and AST-scoped regex enforcement
+- Rule lifecycle workflow via `wh review` / `wh apply`, with audit logging and refresh-driven review queues
+- Benchmark harness via `wh bench run` / `wh bench snapshot`, with CI-friendly regression gating
 - Test generation with real regex checks (via `match` field on signals) for Python, TypeScript, and Rust
 - Lint overlay generation (ruff, biome, clippy)
 - Agent context generation under `whetstone/context/` (AGENTS.md, CLAUDE.md, .cursorrules, copilot, windsurf, codex)

@@ -474,7 +474,10 @@ mod tests {
         ctx.insert("rules", &tmpl_rules);
         let out = render(&tera, "python_test.py.tera", &ctx);
         assert!(out.contains("def test_demo_foo_signal_0"), "got: {out}");
-        assert!(out.contains(r#"re.search(r"""\.unwrap\(\)""", line)"#), "got: {out}");
+        assert!(
+            out.contains(r#"re.search(r"""\.unwrap\(\)""", line)"#),
+            "got: {out}"
+        );
     }
 
     #[test]
@@ -524,6 +527,9 @@ mod tests {
     #[test]
     fn sanitize_name_strips_at_and_folds_separators() {
         assert_eq!(sanitize_name("@scope/pkg-name.v1"), "scope_pkg_name_v1");
-        assert_eq!(sanitize_name("whetstone:recommended/python"), "whetstone_recommended_python");
+        assert_eq!(
+            sanitize_name("whetstone:recommended/python"),
+            "whetstone_recommended_python"
+        );
     }
 }

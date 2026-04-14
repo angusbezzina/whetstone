@@ -77,8 +77,9 @@ pub fn parse(lang: AstLang, source: &str) -> Option<Tree> {
         let mut map = parsers.borrow_mut();
         let parser = map.entry(lang).or_insert_with(|| {
             let mut p = Parser::new();
-            p.set_language(&lang.ts_language())
-                .expect("tree-sitter grammar ABI mismatch — rebuild with matching tree-sitter crate");
+            p.set_language(&lang.ts_language()).expect(
+                "tree-sitter grammar ABI mismatch — rebuild with matching tree-sitter crate",
+            );
             p
         });
         parser.parse(source, None)
@@ -114,7 +115,11 @@ pub fn run_query(
     let query = match Query::new(&language, query_src) {
         Ok(q) => q,
         Err(e) => {
-            eprintln!("Whetstone: invalid tree-sitter query for {}: {}", lang.as_str(), e);
+            eprintln!(
+                "Whetstone: invalid tree-sitter query for {}: {}",
+                lang.as_str(),
+                e
+            );
             return Vec::new();
         }
     };

@@ -86,7 +86,10 @@ fn parse_lint_codes(description: &str) -> Vec<(String, String)> {
     for (i, part) in parts.iter().enumerate() {
         let normalized = part.to_ascii_lowercase();
         if matches!(normalized.as_str(), "ruff" | "biome" | "clippy") && i + 1 < parts.len() {
-            out.push((normalized, parts[i + 1].trim_matches(&[',', '.', ';'][..]).to_string()));
+            out.push((
+                normalized,
+                parts[i + 1].trim_matches(&[',', '.', ';'][..]).to_string(),
+            ));
         }
     }
     out
@@ -104,7 +107,9 @@ impl RuffConfig {
         if self.selects.iter().any(|s| s.eq_ignore_ascii_case("ALL")) {
             return true;
         }
-        self.selects.iter().any(|s| code_matches_ruff_select(s, code))
+        self.selects
+            .iter()
+            .any(|s| code_matches_ruff_select(s, code))
     }
 }
 
@@ -126,7 +131,11 @@ fn load_ruff_selects(project_dir: &Path) -> RuffConfig {
                 Ok(v) => v,
                 Err(_) => continue,
             };
-            let root = if path.file_name().map(|f| f == "pyproject.toml").unwrap_or(false) {
+            let root = if path
+                .file_name()
+                .map(|f| f == "pyproject.toml")
+                .unwrap_or(false)
+            {
                 parsed
                     .get("tool")
                     .and_then(|t| t.get("ruff"))
@@ -172,7 +181,10 @@ fn load_ruff_selects(project_dir: &Path) -> RuffConfig {
 /// entry is a prefix of it.
 fn code_matches_ruff_select(select: &str, code: &str) -> bool {
     let s = select.trim();
-    code.eq_ignore_ascii_case(s) || code.to_ascii_uppercase().starts_with(&s.to_ascii_uppercase())
+    code.eq_ignore_ascii_case(s)
+        || code
+            .to_ascii_uppercase()
+            .starts_with(&s.to_ascii_uppercase())
 }
 
 fn verify_ruff(cfg: &RuffConfig, code: &str) -> Verdict {
@@ -215,10 +227,17 @@ fn load_biome_enabled(project_dir: &Path) -> BiomeConfig {
             Err(_) => continue,
         };
         let linter = parsed.get("linter");
-        if linter.and_then(|l| l.get("enabled")).and_then(|v| v.as_bool()) == Some(false) {
+        if linter
+            .and_then(|l| l.get("enabled"))
+            .and_then(|v| v.as_bool())
+            == Some(false)
+        {
             continue;
         }
-        if let Some(rules) = linter.and_then(|l| l.get("rules")).and_then(|r| r.as_object()) {
+        if let Some(rules) = linter
+            .and_then(|l| l.get("rules"))
+            .and_then(|r| r.as_object())
+        {
             for (category, body) in rules {
                 if let Some(obj) = body.as_object() {
                     for (name, severity) in obj {

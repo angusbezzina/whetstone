@@ -24,9 +24,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum ReviewAction {
     /// Show full context for a single rule
-    Show {
-        rule_id: String,
-    },
+    Show { rule_id: String },
     /// Build a review queue from extraction-handoff + refresh-diff artifacts
     Queue,
 }
@@ -1022,12 +1020,16 @@ pub fn run() -> i32 {
                         .get("violations_count")
                         .and_then(|v| v.as_i64())
                         .unwrap_or(0);
+                    let config_issues_count = result
+                        .get("config_issues_count")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
                     if json_mode {
                         output::print_json(&result);
                     } else {
                         println!("{}", check::format_human_output(&result));
                     }
-                    if violations_count > 0 && !no_fail {
+                    if (violations_count > 0 || config_issues_count > 0) && !no_fail {
                         1
                     } else {
                         0
@@ -1367,6 +1369,13 @@ pub fn run() -> i32 {
             min_f1,
             check: fail_on_regress,
         } => {
+            if action != "run" && action != "snapshot" {
+                output::print_json(&output::error_json(
+                    &format!("unknown bench action: {action}"),
+                    "wh bench run|snapshot [--check]",
+                ));
+                return 1;
+            }
             let result = bench::run(bench::BenchOptions {
                 project_dir: &project_dir,
                 corpus_dir: corpus_dir.as_deref(),
@@ -1374,10 +1383,17 @@ pub fn run() -> i32 {
                 min_f1,
             });
             match result {
-                Ok(value) => {
+                Ok(mut value) => {
                     if action == "snapshot" {
-                        if let Err(e) = bench::snapshot(&project_dir, &value) {
-                            eprintln!("Warning: failed to write bench snapshot: {e}");
+                        match bench::snapshot(&project_dir, &value) {
+                            Ok(path) => {
+                                value["snapshot"] = serde_json::json!({
+                                    "path": path.display().to_string(),
+                                });
+                            }
+                            Err(e) => {
+                                eprintln!("Warning: failed to write bench snapshot: {e}");
+                            }
                         }
                     }
                     let failing = value

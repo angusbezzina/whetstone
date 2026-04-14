@@ -29,7 +29,13 @@ const DECORATOR_QUERY: &str = r#"
 "#;
 
 pub fn functions(tree: &Tree, source: &str) -> Vec<AstMatch> {
-    run_query(AstLang::TypeScript, tree, source, FUNCTION_QUERY, "function")
+    run_query(
+        AstLang::TypeScript,
+        tree,
+        source,
+        FUNCTION_QUERY,
+        "function",
+    )
 }
 
 pub fn classes(tree: &Tree, source: &str) -> Vec<AstMatch> {

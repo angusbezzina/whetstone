@@ -55,7 +55,12 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
 
     let rules: Vec<&ApprovedRule> = rules
         .iter()
-        .filter(|r| rule_filter.as_ref().map(|set| set.contains(r.id.as_str())).unwrap_or(true))
+        .filter(|r| {
+            rule_filter
+                .as_ref()
+                .map(|set| set.contains(r.id.as_str()))
+                .unwrap_or(true)
+        })
         .collect();
 
     if rules.is_empty() {
@@ -592,7 +597,10 @@ mod tests {
         let rules = vec![&rule];
         let compiled = compile_rules(&rules);
         assert!(compiled[0].signals.is_empty());
-        assert!(compiled[0].notes.iter().any(|n| n.contains("invalid regex")));
+        assert!(compiled[0]
+            .notes
+            .iter()
+            .any(|n| n.contains("invalid regex")));
     }
 
     #[test]
@@ -650,7 +658,11 @@ mod tests {
             ast_scope: None,
         };
         let hits = apply_signal(&sig, AstLang::Rust, "let x = y.unwrap();\n", None);
-        assert_eq!(hits.len(), 1, "regex fallback should fire when tree is None");
+        assert_eq!(
+            hits.len(),
+            1,
+            "regex fallback should fire when tree is None"
+        );
     }
 
     #[test]

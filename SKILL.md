@@ -72,6 +72,7 @@ The binary does all deterministic work. The agent does all judgment. The user ha
 | `wh doctor` | **One-command bootstrap** | JSON: deps, sources, content, sections, recommendations |
 | `wh status` | **Health summary** | JSON: score 0-100, dimensions, recommendations |
 | `wh ci` | **CI freshness check** | Exit 0/1, optional PR comment |
+| `wh check` | **Deterministic rule scan** | JSON: violations + linter-config gaps |
 | `wh eval run` | **Check rules against source** | JSON: violations with file/line/code |
 | `wh eval calibrate` | **Validate AI eval prompts** | JSON: agreement rate against golden examples |
 | `wh init` | Detect dependencies — or run `--personal` / `--hooks` / `--ci` setup | JSON: deps list with counts, or setup report |
@@ -81,10 +82,13 @@ The binary does all deterministic work. The agent does all judgment. The user ha
 | `wh tests` | Generate test files + lint configs (`--personal` for personal-only output) | `whetstone/evals/**` + `whetstone/lint/*` by default; `whetstone/.personal/evals/**` with `--personal` |
 | `wh layers` | Show the 4-layer merge summary + per-rule provenance | JSON |
 | `wh promote` | Move a rule between layers (`--to personal\|project\|team`) | JSON |
+| `wh review` | List rules by lifecycle status or build a refresh review queue | JSON |
+| `wh apply` | Apply approve / deny / deprecate / supersede transitions | JSON |
+| `wh bench` | Run the benchmark corpus or snapshot a baseline | JSON |
 | `wh eval generate` | Generate AI eval definitions | YAML files for rules with ai signals |
 | `wh patterns` | Mine style patterns | JSON: patterns from transcripts/git/PRs |
 
-All commands support `--json` (auto-enabled when piped) and `--project-dir`.
+All commands support `--json` (auto-enabled when piped). Project-scoped commands support `--project-dir`.
 
 ---
 
@@ -338,16 +342,35 @@ Project `whetstone.yaml` wins on explicitly-set fields; `deny:` unions.
 
 ---
 
-### Eval (Check Rules Against Code)
+### Check (Deterministic Rule Scan)
 
-Run when the user says "check rules", "run evals", "scan for violations".
+Run when the user says "check rules", "scan for violations", or "run the deterministic checks".
+
+```bash
+wh check src --lang rust             # tree-sitter + regex + lint_proxy validation
+wh check src --lang python --no-fail # preview results without exiting non-zero
+```
+
+`wh check` is the primary enforcement path for deterministic signals:
+
+- `ast_query` signals run through tree-sitter
+- `ast_scope` narrows regex checks to specific AST node kinds
+- `lint_proxy` signals verify the project's linter configuration and report config gaps
+
+Use `--no-fail` when you want a preview without failing the command.
+
+---
+
+### Eval (AI-assisted / ambiguous checks)
+
+Run when the user says "run evals", "judge ambiguous cases", or "calibrate eval prompts".
 
 ```bash
 wh eval run --deterministic-only    # Fast: regex checks only, no AI
 wh eval run                          # Full: deterministic + AI requests for ambiguous cases
 ```
 
-The eval runner scans source files against all rule signals with `match` patterns. It reports violations with file path, line number, and code snippet.
+The eval runner handles ambiguous or AI-assisted checks. Deterministic enforcement belongs in `wh check`; `wh eval run` layers AI judgment on top when a rule carries `ai_eval` config or `ai` signals.
 
 **For rules with `ai_eval` config:** The runner generates structured eval requests at `whetstone/.state/eval-requests.json`. The agent reads these, judges each code snippet (PASS/FAIL with reason), and writes verdicts to `whetstone/.state/eval-verdicts.json`. Then:
 

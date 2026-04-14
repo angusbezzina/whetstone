@@ -428,10 +428,7 @@ pub fn format_human_output(result: &Value) -> String {
     ));
     if let Some(scenarios) = result.get("scenarios").and_then(|v| v.as_array()) {
         for s in scenarios {
-            let name = s
-                .get("scenario")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
+            let name = s.get("scenario").and_then(|v| v.as_str()).unwrap_or("?");
             let f1 = s.get("f1").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let passed = s.get("passed").and_then(|v| v.as_bool()).unwrap_or(false);
             let sigil = if passed { "✓" } else { "✗" };
