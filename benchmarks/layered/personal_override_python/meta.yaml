@@ -1,0 +1,11 @@
+scenario: personal_override_python
+language: python
+category: layered
+self_contained: true
+description: |
+  Exercise the personal > project layer precedence. The project layer
+  defines example.shared with match `X`; the personal layer redefines
+  example.shared to match `Y`. The bench expects Y to fire and X to be
+  ignored, proving the personal override wins.
+rules:
+  - example.shared

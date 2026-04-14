@@ -110,6 +110,15 @@ rules:
         match: string      # Optional. Concrete regex pattern for `pattern` strategy signals.
                            # When present, generated tests use this regex for actual checking
                            # instead of producing TODO stubs. Example: '\.unwrap\s*\(\)'
+        ast_query: string  # Optional. Raw tree-sitter S-expression query for `ast` signals.
+                           # Every node captured by `@match` becomes a violation when `wh check`
+                           # parses a file of the rule's language. Example for Python:
+                           #   '(function_definition "async") @match'
+                           # If absent, an `ast` signal falls back to regex (weaker).
+        ast_scope: string  # Optional. AST node kind that scopes a `pattern` signal's regex.
+                           # When set, the regex is only applied inside nodes whose kind equals
+                           # this value (e.g. 'function_definition'), eliminating hits in
+                           # comments or module-level code. Requires tree-sitter parse success.
 
     golden_examples:       # Required. 3-5 examples (mix of pass and fail).
       - code: string       # Required. Code snippet (use | for multiline YAML).

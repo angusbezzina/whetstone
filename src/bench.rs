@@ -89,6 +89,8 @@ pub fn run(opts: BenchOptions<'_>) -> Result<Value> {
         })
         .collect();
 
+    let category_counts = count_by_category(&reports);
+
     Ok(json!({
         "status": if failing == 0 { "ok" } else { "regressed" },
         "corpus_dir": corpus_root.display().to_string(),
@@ -97,6 +99,7 @@ pub fn run(opts: BenchOptions<'_>) -> Result<Value> {
             "passing": passing,
             "failing": failing,
             "min_f1": opts.min_f1,
+            "categories": category_counts,
             "regressions": regressions.iter().filter_map(|r| r.get("scenario")).cloned().collect::<Vec<_>>(),
         },
         "scenarios": reports,
@@ -126,6 +129,8 @@ struct Scenario {
     dir: PathBuf,
     rules: Vec<String>,
     expected: ExpectedSet,
+    category: String,
+    self_contained: bool,
 }
 
 #[derive(Deserialize)]
@@ -134,6 +139,16 @@ struct Meta {
     language: String,
     #[serde(default)]
     rules: Vec<String>,
+    /// One of: deterministic | layered | eval. Used purely for reporting so
+    /// the summary can group scenarios by the behaviour they exercise.
+    #[serde(default)]
+    category: String,
+    /// When true, the scenario directory is used as the project_dir for
+    /// `wh check`. This lets a scenario ship its own `whetstone/rules/`
+    /// tree — essential for layered-resolution and eval-skipping scenarios
+    /// that can't run against the outer project's ruleset.
+    #[serde(default)]
+    self_contained: bool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -182,6 +197,8 @@ fn discover_scenarios(root: &Path) -> Result<Vec<Scenario>> {
                 Meta {
                     language: language.clone(),
                     rules: Vec::new(),
+                    category: String::new(),
+                    self_contained: false,
                 }
             };
 
@@ -206,12 +223,19 @@ fn discover_scenarios(root: &Path) -> Result<Vec<Scenario>> {
             } else {
                 meta.language.clone()
             };
+            let category = if meta.category.is_empty() {
+                "deterministic".to_string()
+            } else {
+                meta.category.clone()
+            };
             out.push(Scenario {
                 name,
                 language: scenario_language,
                 dir,
                 rules: meta.rules,
                 expected,
+                category,
+                self_contained: meta.self_contained,
             });
         }
     }
@@ -224,6 +248,7 @@ fn discover_scenarios(root: &Path) -> Result<Vec<Scenario>> {
 struct ScenarioReport {
     scenario: String,
     language: String,
+    category: String,
     expected_count: usize,
     actual_count: usize,
     true_positives: usize,
@@ -239,6 +264,7 @@ impl ScenarioReport {
         json!({
             "scenario": self.scenario,
             "language": self.language,
+            "category": self.category,
             "expected_count": self.expected_count,
             "actual_count": self.actual_count,
             "true_positives": self.true_positives,
@@ -272,10 +298,23 @@ fn score_scenario(project_dir: &Path, scenario: &Scenario) -> Result<ScenarioRep
     } else {
         Some(scenario.language.as_str())
     };
-    let scan_paths = vec![scenario.dir.clone()];
+    let (effective_project_dir, scan_paths): (&Path, Vec<PathBuf>) = if scenario.self_contained {
+        // Self-contained scenarios bring their own whetstone/rules tree, so
+        // the bench resolves rules from the scenario dir and scans its
+        // `src/` subtree (or the whole scenario dir as a fallback).
+        let src = scenario.dir.join("src");
+        let scan = if src.exists() {
+            vec![src]
+        } else {
+            vec![scenario.dir.clone()]
+        };
+        (scenario.dir.as_path(), scan)
+    } else {
+        (project_dir, vec![scenario.dir.clone()])
+    };
 
     let result = check::run(CheckOptions {
-        project_dir,
+        project_dir: effective_project_dir,
         scan_paths: &scan_paths,
         lang_filter,
         rule_filter: rule_slice,
@@ -305,14 +344,27 @@ fn score_scenario(project_dir: &Path, scenario: &Scenario) -> Result<ScenarioRep
     let fp: Vec<_> = actual.difference(expected).cloned().collect();
     let fn_: Vec<_> = expected.difference(&actual).cloned().collect();
 
-    let precision = ratio(tp.len(), actual.len());
-    let recall = ratio(tp.len(), expected.len());
+    let perfect_empty = expected.is_empty() && actual.is_empty();
+    // Precision and recall collapse sanely here: an empty expected set with
+    // spurious actuals must report precision=0 (false positives), and an
+    // empty actual set with missed expected must report recall=0. Only the
+    // degenerate "no expected, no actual" case gets the free 1.0.
+    let precision = if perfect_empty {
+        1.0
+    } else if actual.is_empty() {
+        0.0
+    } else {
+        tp.len() as f64 / actual.len() as f64
+    };
+    let recall = if perfect_empty {
+        1.0
+    } else if expected.is_empty() {
+        0.0
+    } else {
+        tp.len() as f64 / expected.len() as f64
+    };
     let f1 = if precision + recall == 0.0 {
-        if expected.is_empty() && actual.is_empty() {
-            1.0
-        } else {
-            0.0
-        }
+        0.0
     } else {
         2.0 * precision * recall / (precision + recall)
     };
@@ -320,6 +372,7 @@ fn score_scenario(project_dir: &Path, scenario: &Scenario) -> Result<ScenarioRep
     Ok(ScenarioReport {
         scenario: scenario.name.clone(),
         language: scenario.language.clone(),
+        category: scenario.category.clone(),
         expected_count: expected.len(),
         actual_count: actual.len(),
         true_positives: tp.len(),
@@ -331,12 +384,20 @@ fn score_scenario(project_dir: &Path, scenario: &Scenario) -> Result<ScenarioRep
     })
 }
 
-fn ratio(num: usize, denom: usize) -> f64 {
-    if denom == 0 {
-        1.0
-    } else {
-        num as f64 / denom as f64
+fn count_by_category(reports: &[Value]) -> serde_json::Map<String, Value> {
+    let mut out = serde_json::Map::new();
+    for r in reports {
+        let cat = r
+            .get("category")
+            .and_then(|v| v.as_str())
+            .unwrap_or("deterministic")
+            .to_string();
+        let entry = out.entry(cat.clone()).or_insert(Value::from(0));
+        if let Some(n) = entry.as_i64() {
+            *entry = Value::from(n + 1);
+        }
     }
+    out
 }
 
 fn relative_path(base: &Path, p: &Path) -> String {
@@ -383,12 +444,6 @@ pub fn format_human_output(result: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ratio_handles_zero_denominator() {
-        assert_eq!(ratio(0, 0), 1.0);
-        assert_eq!(ratio(1, 2), 0.5);
-    }
 
     #[test]
     fn relative_path_strips_prefix_when_possible() {

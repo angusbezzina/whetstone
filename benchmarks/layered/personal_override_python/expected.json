@@ -1,0 +1,5 @@
+{
+  "violations": [
+    {"rule_id": "example.shared", "file": "src/app.py", "line": 2}
+  ]
+}

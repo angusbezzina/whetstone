@@ -1,0 +1,12 @@
+scenario: ai_signal_skipped_python
+language: python
+category: eval
+self_contained: true
+description: |
+  A rule whose only deterministic signal is lint_proxy plus an ai signal.
+  `wh check` must skip both: lint_proxy defers to the linter overlay
+  (no ruff config shipped here) and ai defers to `wh eval run`. The
+  expected violations list is empty — the runner must not emit any
+  regex-flavoured violation and must not blow up on the ai signal.
+rules:
+  - example.ai-judgement

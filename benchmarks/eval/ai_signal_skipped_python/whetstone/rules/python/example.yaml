@@ -1,0 +1,38 @@
+source:
+  name: example
+  docs_url: https://example.com
+  version: "1.0"
+  content_hash: "sha256:test"
+  resolved_at: "2026-04-14T00:00:00Z"
+  registry: pypi
+
+rules:
+  - id: example.ai-judgement
+    severity: should
+    confidence: medium
+    category: semantic
+    description: >
+      Rule that defers entirely to downstream tooling. Its only signals are a
+      lint_proxy entry for ruff B006 and an ai judgement question; neither
+      should produce violations under `wh check`.
+    source_url: https://example.com/ai-rule
+    approved: true
+    status: approved
+    proposed_at: "2026-04-14T00:00:00Z"
+    signals:
+      - id: ruff-proxy
+        strategy: lint_proxy
+        description: "ruff B006"
+        weight: strong
+      - id: ai-question
+        strategy: ai
+        description: "Is this function violating the intent?"
+        weight: moderate
+    ai_eval:
+      trigger: ambiguous
+      question: "Does this function violate the intent?"
+      context_lines: 10
+    golden_examples:
+      - code: ""
+        verdict: pass
+        reason: placeholder

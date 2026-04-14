@@ -1,0 +1,10 @@
+scenario: ast_query_unwrap
+language: rust
+category: deterministic
+self_contained: true
+description: |
+  Exercise the tree-sitter `ast_query` path. Matches every call expression
+  whose method is `unwrap`, independent of source formatting. This gives
+  the bench a non-regex deterministic scenario.
+rules:
+  - rust.ast-unwrap

@@ -1,0 +1,34 @@
+source:
+  name: example
+  docs_url: https://example.com
+  version: "1.0"
+  content_hash: "sha256:test"
+  resolved_at: "2026-04-14T00:00:00Z"
+  registry: crates_io
+
+rules:
+  - id: rust.ast-unwrap
+    severity: should
+    confidence: high
+    category: convention
+    description: >
+      Flag every `.unwrap()` call via a tree-sitter query rather than regex.
+      This survives creative formatting that would dodge line-level regex
+      (multi-line method chains, etc.).
+    source_url: https://doc.rust-lang.org/std/result/enum.Result.html#method.unwrap
+    approved: true
+    status: approved
+    proposed_at: "2026-04-14T00:00:00Z"
+    signals:
+      - id: unwrap-call
+        strategy: ast
+        description: "call of method `unwrap`"
+        weight: required
+        ast_query: |
+          (call_expression
+            function: (field_expression
+              field: (field_identifier) @method (#eq? @method "unwrap"))) @match
+    golden_examples:
+      - code: ""
+        verdict: pass
+        reason: placeholder

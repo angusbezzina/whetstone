@@ -1,0 +1,28 @@
+source:
+  name: example
+  docs_url: https://example.com
+  version: "1.0"
+  content_hash: "sha256:test-personal"
+  resolved_at: "2026-04-14T00:00:00Z"
+  registry: pypi
+
+rules:
+  - id: example.shared
+    severity: must
+    confidence: high
+    category: default
+    description: Personal override that matches literal `Y` instead.
+    source_url: https://example.com/personal
+    approved: true
+    status: approved
+    proposed_at: "2026-04-14T00:00:00Z"
+    signals:
+      - id: match-y
+        strategy: pattern
+        description: matches literal Y
+        weight: required
+        match: 'Y'
+    golden_examples:
+      - code: ""
+        verdict: pass
+        reason: placeholder

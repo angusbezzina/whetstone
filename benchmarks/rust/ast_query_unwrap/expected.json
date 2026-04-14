@@ -1,0 +1,6 @@
+{
+  "violations": [
+    {"rule_id": "rust.ast-unwrap", "file": "src/main.rs", "line": 2},
+    {"rule_id": "rust.ast-unwrap", "file": "src/main.rs", "line": 10}
+  ]
+}

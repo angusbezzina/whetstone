@@ -2871,6 +2871,49 @@ fn test_bench_runs_repo_corpus_and_reports_scenarios() {
 }
 
 #[test]
+fn test_bench_corpus_covers_layered_and_eval_categories() {
+    let (stdout, _stderr, ok) = run_whetstone(
+        &["--json", "bench", "run"],
+        env!("CARGO_MANIFEST_DIR"),
+    );
+    assert!(ok);
+    let result = parse_json(&stdout);
+    let cats = result["summary"]["categories"].as_object().unwrap();
+    // The corpus must exercise all three categories, not just deterministic.
+    assert!(
+        cats.get("deterministic")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            >= 1
+    );
+    assert!(cats.get("layered").and_then(|v| v.as_i64()).unwrap_or(0) >= 1);
+    assert!(cats.get("eval").and_then(|v| v.as_i64()).unwrap_or(0) >= 1);
+}
+
+#[test]
+fn test_bench_layered_scenario_exercises_personal_override() {
+    let (stdout, _stderr, ok) = run_whetstone(
+        &[
+            "--json",
+            "bench",
+            "run",
+            "--scenario",
+            "layered/personal_override_python",
+        ],
+        env!("CARGO_MANIFEST_DIR"),
+    );
+    assert!(ok);
+    let result = parse_json(&stdout);
+    let scenarios = result["scenarios"].as_array().unwrap();
+    assert_eq!(scenarios.len(), 1);
+    assert_eq!(scenarios[0]["category"], "layered");
+    assert!(
+        (scenarios[0]["f1"].as_f64().unwrap() - 1.0).abs() < 0.001,
+        "layered override scenario regressed: {result}"
+    );
+}
+
+#[test]
 fn test_bench_check_exits_nonzero_on_regression() {
     // Create a corpus where the expected violations are impossible to match
     // so every scenario fails, then verify --check exits non-zero.
@@ -2911,6 +2954,226 @@ fn test_bench_check_exits_nonzero_on_regression() {
 }
 
 // ── wh check (rule scanning) ──
+
+#[test]
+fn test_check_ast_query_signal_reports_tree_sitter_match() {
+    // Build a project with a single `ast` rule carrying a real tree-sitter
+    // `ast_query`; the runner must report hits based on the parsed tree, not
+    // regex. The query matches every async def in Python source.
+    let tmp = std::env::temp_dir().join(format!("wh_check_ast_query_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone").join("rules").join("python")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone")
+            .join("rules")
+            .join("python")
+            .join("example.yaml"),
+        r#"source:
+  name: example
+  docs_url: https://example.com/
+  version: "1.0"
+  content_hash: "sha256:test"
+  resolved_at: "2026-04-14T00:00:00Z"
+  registry: pypi
+
+rules:
+  - id: example.no-async-defs
+    severity: must
+    confidence: high
+    category: default
+    description: "Flag every async def in the codebase."
+    source_url: https://example.com/rule
+    approved: true
+    status: approved
+    proposed_at: "2026-04-14T00:00:00Z"
+    signals:
+      - id: async-functions
+        strategy: ast
+        description: "async function definitions"
+        weight: required
+        ast_query: '(function_definition "async") @match'
+    golden_examples:
+      - code: ""
+        verdict: pass
+        reason: "placeholder"
+"#,
+    )
+    .unwrap();
+    std::fs::write(tmp.join("whetstone").join("whetstone.yaml"), "deny: []\n").unwrap();
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::write(
+        tmp.join("src").join("app.py"),
+        "async def fetch():\n    return 1\n\ndef sync_fn():\n    return 2\n\nasync def other():\n    return 3\n",
+    )
+    .unwrap();
+
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &["--json", "check", "src", "--lang", "python", "--no-fail"],
+        tmp.to_str().unwrap(),
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "violations_found");
+    let violations = result["violations"].as_array().unwrap();
+    assert_eq!(violations.len(), 2, "expected 2 async defs: {violations:?}");
+    for v in violations {
+        assert_eq!(v["signal_check_type"], "ast_query");
+        assert_eq!(v["rule_id"], "example.no-async-defs");
+    }
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_check_ast_scope_pattern_restricts_regex_to_function_bodies() {
+    // Pattern rule that would fire on a module-level TODO comment, but is
+    // scoped to function_definition. The module-level TODO must be ignored.
+    let tmp = std::env::temp_dir().join(format!("wh_check_ast_scope_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone").join("rules").join("python")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone")
+            .join("rules")
+            .join("python")
+            .join("example.yaml"),
+        r#"source:
+  name: example
+  docs_url: https://example.com/
+  version: "1.0"
+  content_hash: "sha256:test"
+  resolved_at: "2026-04-14T00:00:00Z"
+  registry: pypi
+
+rules:
+  - id: example.todo-in-fn
+    severity: should
+    confidence: high
+    category: convention
+    description: "Flag TODO comments inside function bodies only."
+    source_url: https://example.com/rule
+    approved: true
+    status: approved
+    proposed_at: "2026-04-14T00:00:00Z"
+    signals:
+      - id: body-todo
+        strategy: pattern
+        description: "TODO inside a function body"
+        weight: required
+        match: 'TODO'
+        ast_scope: 'function_definition'
+    golden_examples:
+      - code: ""
+        verdict: pass
+        reason: "placeholder"
+"#,
+    )
+    .unwrap();
+    std::fs::write(tmp.join("whetstone").join("whetstone.yaml"), "deny: []\n").unwrap();
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::write(
+        tmp.join("src").join("app.py"),
+        "# TODO in module scope should NOT fire\n\ndef foo():\n    # TODO inside body should fire\n    pass\n",
+    )
+    .unwrap();
+
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &["--json", "check", "src", "--lang", "python", "--no-fail"],
+        tmp.to_str().unwrap(),
+    );
+    let result = parse_json(&stdout);
+    let violations = result["violations"].as_array().unwrap();
+    assert_eq!(
+        violations.len(),
+        1,
+        "expected only the body-scoped TODO: {violations:?}"
+    );
+    assert_eq!(violations[0]["signal_check_type"], "ast_scoped_regex");
+    assert_eq!(violations[0]["line"], 4);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_check_reports_lint_proxy_gap_when_ruff_rule_not_selected() {
+    let tmp = std::env::temp_dir().join(format!("wh_check_lint_proxy_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone").join("rules").join("python")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone")
+            .join("rules")
+            .join("python")
+            .join("example.yaml"),
+        r#"source:
+  name: example
+  docs_url: https://example.com/
+  version: "1.0"
+  content_hash: "sha256:test"
+  resolved_at: "2026-04-14T00:00:00Z"
+  registry: pypi
+
+rules:
+  - id: example.b006
+    severity: must
+    confidence: high
+    category: default
+    description: "Mutable default args — covered by ruff B006."
+    source_url: https://example.com/rule
+    approved: true
+    status: approved
+    proposed_at: "2026-04-14T00:00:00Z"
+    signals:
+      - id: ruff-proxy
+        strategy: lint_proxy
+        description: "ruff B006"
+        weight: required
+    golden_examples:
+      - code: ""
+        verdict: pass
+        reason: "placeholder"
+"#,
+    )
+    .unwrap();
+    std::fs::write(tmp.join("whetstone").join("whetstone.yaml"), "deny: []\n").unwrap();
+
+    // Ruff config that does NOT include B006. verify_lint_proxies must flag.
+    std::fs::write(
+        tmp.join("ruff.toml"),
+        "[lint]\nselect = [\"E501\"]\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::write(tmp.join("src").join("noop.py"), "x = 1\n").unwrap();
+
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &["--json", "check", "src", "--lang", "python", "--no-fail"],
+        tmp.to_str().unwrap(),
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "config_issues_found", "{result}");
+    let issues = result["config_issues"].as_array().unwrap();
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0]["linter"], "ruff");
+    assert_eq!(issues[0]["code"], "B006");
+    assert_eq!(issues[0]["rule_id"], "example.b006");
+
+    // Now enable B006 via extend-select and verify the gap clears.
+    std::fs::write(
+        tmp.join("ruff.toml"),
+        "[lint]\nselect = [\"E501\"]\nextend-select = [\"B006\"]\n",
+    )
+    .unwrap();
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &["--json", "check", "src", "--lang", "python", "--no-fail"],
+        tmp.to_str().unwrap(),
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["config_issues"].as_array().unwrap().len(), 0);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
 
 #[test]
 fn test_check_finds_rust_unwrap_violation() {

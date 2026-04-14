@@ -4,6 +4,49 @@ All notable changes to Whetstone are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Tera template engine** — all agent context files, eval tests, and linter
+  overlays now render from `.tera` templates embedded in the binary. Language
+  escape filters (`re_escape_py`, `re_escape_ts`, `re_escape_rust`) keep
+  target-language quoting correct without hand-rolled string concatenation.
+- **Tree-sitter substrate** — `src/ast/` ships parsers for Python, TypeScript
+  (TSX), and Rust, with a thread-local parser cache and query helpers for
+  functions, classes, imports, decorators, and attributes.
+- **`wh check`** — scan source files against approved rule signals. Supports
+  `ast` signals with raw tree-sitter queries (`ast_query:`), `pattern`
+  signals with AST-scoped regex (`ast_scope:`), and a `lint_proxy` verifier
+  that reads `ruff.toml`/`pyproject.toml`/`biome.json` to confirm the mapped
+  rule is enabled in the project's lint config. Output includes a
+  `config_issues` list so linter gaps are actionable.
+- **`wh review` and `wh apply`** — first-class lifecycle CLI for candidate,
+  approved, denied, deprecated, and superseded rules. Monotonic transitions,
+  required reasons on deny/deprecate/supersede, cross-checked
+  `--superseded-by` targets, dry-run and batch apply, and a concurrency-safe
+  audit log at `whetstone/.state/review-log.jsonl`. YAML mutations use a
+  line-based editor so authored comments and formatting survive.
+- **`wh review queue`** — actionable queue built from
+  `extraction-handoff.json` + `refresh-diff.json` so refresh runs flow
+  directly into review work.
+- **`wh bench`** — benchmark harness with per-scenario precision/recall/F1.
+  Supports deterministic, layered, and eval scenarios; scenarios can declare
+  a scenario-local project_dir (`project_dir: .` in `meta.yaml`) so layered
+  rule resolution can be exercised in isolation. `--check --min-f1` gates CI
+  on regressions; the `bench-corpus` GitHub workflow job enforces F1=1.0 on
+  the shipped corpus.
+
+### Changed
+- **Rule schema** — optional `ast_query` and `ast_scope` fields on `signals`.
+  `ast_query` is a raw tree-sitter S-expression query (runs against the
+  matched language); `ast_scope` scopes a pattern regex to a specific AST
+  node kind. Existing rules continue to work unchanged.
+
+### Removed
+- **BREAKING**: `wh ci check` alias — `check` is now a top-level command
+  (`wh check`). Existing CI workflows that call `wh ci check` should switch
+  to plain `wh ci` for freshness checks, or `wh check` for rule scanning.
+
 ## [0.2.0] - 2026-04-12
 
 ### Added

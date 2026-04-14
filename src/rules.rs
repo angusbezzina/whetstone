@@ -146,6 +146,19 @@ pub struct Signal {
     /// When present, test generation produces real regex checks instead of TODO stubs.
     #[serde(default, alias = "match")]
     pub match_pattern: Option<String>,
+    /// Raw tree-sitter query (S-expression) for `ast` signals. Every node
+    /// captured by `@match` is reported as a violation. When present, the
+    /// `wh check` runner uses the project's tree-sitter grammar for the
+    /// rule's language; when absent, an `ast` signal falls back to regex
+    /// scanning of the file text.
+    #[serde(default)]
+    pub ast_query: Option<String>,
+    /// AST node kind that scopes a `pattern` signal's regex. When set, the
+    /// regex is only applied inside nodes of that kind (e.g.
+    /// `function_definition`), removing false positives from the
+    /// surrounding file text like comments and module-level code.
+    #[serde(default)]
+    pub ast_scope: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -681,6 +694,8 @@ pub fn load_approved_rules(
                         description: s.description.clone().unwrap_or_default(),
                         weight: s.weight.clone().unwrap_or_default(),
                         match_pattern: s.match_pattern.clone(),
+                        ast_query: s.ast_query.clone(),
+                        ast_scope: s.ast_scope.clone(),
                     })
                     .collect(),
                 golden_examples: rule
@@ -741,6 +756,8 @@ pub fn approved_from_loaded(
                         description: s.description.clone().unwrap_or_default(),
                         weight: s.weight.clone().unwrap_or_default(),
                         match_pattern: s.match_pattern.clone(),
+                        ast_query: s.ast_query.clone(),
+                        ast_scope: s.ast_scope.clone(),
                     })
                     .collect(),
                 golden_examples: rule
@@ -793,6 +810,8 @@ pub struct ApprovedSignal {
     pub description: String,
     pub weight: String,
     pub match_pattern: Option<String>,
+    pub ast_query: Option<String>,
+    pub ast_scope: Option<String>,
 }
 
 #[derive(Clone)]

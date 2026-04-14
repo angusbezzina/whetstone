@@ -200,6 +200,9 @@ pub fn apply(opts: ApplyOptions<'_>) -> Result<Value> {
 
     validate_transition(&current_status, target_status)?;
     validate_reasons(opts.transition, opts.reason, opts.superseded_by)?;
+    if let Some(target_id) = opts.superseded_by {
+        validate_supersedes_target(opts.project_dir, target_id)?;
+    }
 
     if opts.dry_run {
         return Ok(json!({
@@ -429,20 +432,40 @@ fn find_rule(project_dir: &Path, rule_id: &str) -> Result<FoundRule> {
 
 fn validate_transition(from: &str, to: &str) -> Result<()> {
     use std::collections::HashSet;
+    // `candidate → deprecated` is intentionally disallowed: deprecation is the
+    // retirement of something that was once adopted, so the rule must pass
+    // through `approved` first. Denied and deprecated are terminal.
     let allowed: HashSet<(&str, &str)> = [
         ("candidate", "approved"),
         ("candidate", "denied"),
-        ("candidate", "deprecated"),
         ("approved", "deprecated"),
     ]
     .into_iter()
     .collect();
     if !allowed.contains(&(from, to)) {
         return Err(anyhow!(
-            "illegal transition {from} → {to}. Denied and deprecated are terminal states."
+            "illegal transition {from} → {to}. Denied and deprecated are terminal; deprecate only approved rules."
         ));
     }
     Ok(())
+}
+
+/// Ensure the rule id passed via `--superseded-by` actually exists in the
+/// project's approved ruleset, so typos cannot silently write a dangling
+/// pointer into the YAML + audit log.
+fn validate_supersedes_target(project_dir: &Path, target_id: &str) -> Result<()> {
+    let paths = LayerPaths::for_project(project_dir);
+    for dir in [&paths.project_rules_dir, &paths.personal_rules_dir] {
+        let (files, _) = load_rule_files(dir);
+        for lrf in &files {
+            if lrf.rule_file.rules.iter().any(|r| r.id == target_id) {
+                return Ok(());
+            }
+        }
+    }
+    Err(anyhow!(
+        "--superseded-by target '{target_id}' not found in whetstone/rules/ or whetstone/.personal/rules/"
+    ))
 }
 
 fn validate_reasons(
@@ -464,8 +487,20 @@ fn validate_reasons(
     }
 }
 
-/// Rewrite the rule file in place, updating only the fields that belong to
-/// the named rule. Unrelated rules and source metadata pass through untouched.
+/// Rewrite the rule file in place using line-based surgery. Only the fields
+/// we actually need to mutate are touched; every comment, blank line,
+/// indentation style, and quoting choice in the rest of the file survives.
+///
+/// The mutator expects the standard schema layout:
+///   rules:
+///     - id: <name>
+///       status: ...
+///       approved: ...
+///       ...
+/// i.e. each rule is a sequence entry under top-level `rules:`, with field
+/// keys indented two spaces beyond the `- ` marker. The per-rule field
+/// indent is detected from the first field after the `- id:` line so
+/// non-standard indents still round-trip.
 fn update_yaml_file(
     path: &Path,
     rule_id: &str,
@@ -474,83 +509,293 @@ fn update_yaml_file(
     reason: Option<&str>,
     superseded_by: Option<&str>,
 ) -> Result<()> {
+    // Parse once just to validate the rule exists and the file is legal YAML;
+    // we throw this away and mutate the raw text to preserve formatting.
     let text = fs::read_to_string(path)?;
-    let mut root: YamlValue = serde_yaml::from_str(&text)
+    let _parse_check: YamlValue = serde_yaml::from_str(&text)
         .map_err(|e| anyhow!("failed to parse {}: {e}", path.display()))?;
 
-    let rules = root
-        .get_mut("rules")
-        .and_then(|v| v.as_sequence_mut())
-        .ok_or_else(|| anyhow!("{} has no `rules:` sequence", path.display()))?;
+    let updates = build_updates(transition, now_iso, reason, superseded_by);
+    let removes = build_removes(transition);
 
-    let mut found = false;
-    for rule in rules.iter_mut() {
-        let id_matches = rule
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(|s| s == rule_id)
-            .unwrap_or(false);
-        if !id_matches {
+    let new_text = apply_rule_updates(&text, rule_id, &updates, &removes)
+        .ok_or_else(|| anyhow!("rule {rule_id} not found in {}", path.display()))?;
+    fs::write(path, new_text)?;
+    Ok(())
+}
+
+type FieldUpdate = (&'static str, String);
+
+fn build_updates(
+    transition: Transition,
+    now_iso: &str,
+    reason: Option<&str>,
+    superseded_by: Option<&str>,
+) -> Vec<FieldUpdate> {
+    let mut updates: Vec<FieldUpdate> = Vec::new();
+    updates.push(("status", transition.target_status().to_string()));
+    match transition {
+        Transition::Approve => {
+            updates.push(("approved", "true".to_string()));
+            updates.push(("approved_at", quote_yaml_string(now_iso)));
+        }
+        Transition::Deny => {
+            updates.push(("approved", "false".to_string()));
+            if let Some(r) = reason {
+                updates.push(("denied_reason", quote_yaml_string(r)));
+            }
+        }
+        Transition::Deprecate | Transition::Supersede => {
+            updates.push(("approved", "false".to_string()));
+            if let Some(r) = reason {
+                updates.push(("deprecated_reason", quote_yaml_string(r)));
+            }
+            if let Some(s) = superseded_by {
+                updates.push(("superseded_by", quote_yaml_string(s)));
+            }
+        }
+    }
+    updates
+}
+
+fn build_removes(transition: Transition) -> Vec<&'static str> {
+    match transition {
+        // Approving from candidate clears any prior denied_reason that a
+        // reviewer might have queued before changing their mind.
+        Transition::Approve => vec!["denied_reason"],
+        _ => Vec::new(),
+    }
+}
+
+/// Emit a YAML-safe scalar for a string value. Plain strings with no special
+/// characters go through bare; everything else is double-quoted with the
+/// minimum necessary escaping.
+fn quote_yaml_string(value: &str) -> String {
+    let needs_quotes = value.is_empty()
+        || value.starts_with([' ', '\t', '-', '?', ':', '#', '&', '*', '!', '|', '>', '\'', '"'])
+        || value
+            .chars()
+            .any(|c| matches!(c, ':' | '#' | '\n' | '\t' | '{' | '}' | '[' | ']' | ',' | '`'))
+        || matches!(
+            value.to_ascii_lowercase().as_str(),
+            "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "~"
+        );
+    if !needs_quotes {
+        return value.to_string();
+    }
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
+}
+
+/// Locate the target rule block and apply the field updates/removes in place,
+/// returning the mutated text. Returns `None` if the rule id is not present.
+fn apply_rule_updates(
+    text: &str,
+    rule_id: &str,
+    updates: &[FieldUpdate],
+    removes: &[&str],
+) -> Option<String> {
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+
+    let (block_start, block_end, field_indent) = locate_rule_block(&lines, rule_id)?;
+    let mut mutated: Vec<String> = lines.iter().map(|s| (*s).to_string()).collect();
+
+    // Remove requested fields first so an insert for the same name afterwards
+    // lands in a predictable position.
+    for key in removes {
+        let mut current_end = mut_block_end(&mutated, block_start);
+        remove_field_in_block(&mut mutated, block_start, &mut current_end, field_indent, key);
+    }
+
+    for (key, value) in updates {
+        let current_end = mut_block_end(&mutated, block_start);
+        if !replace_field_in_block(&mut mutated, block_start, current_end, field_indent, key, value) {
+            insert_field_at_end(&mut mutated, current_end, field_indent, key, value);
+        }
+    }
+
+    let _ = block_end;
+    Some(mutated.concat())
+}
+
+/// Find the slice of lines covering the rule whose `id:` equals `rule_id`.
+/// Returns `(start_index, end_index_exclusive, field_indent)`, where
+/// `field_indent` is the number of leading spaces on the rule's field lines.
+fn locate_rule_block(lines: &[&str], rule_id: &str) -> Option<(usize, usize, usize)> {
+    let start_re = Regex::id_line();
+    let mut rule_start: Option<(usize, usize)> = None; // (index, id_line_indent)
+    for (i, line) in lines.iter().enumerate() {
+        if let Some(caps) = start_re.captures(line) {
+            let leading = caps.get(1).map(|m| m.as_str().len()).unwrap_or(0);
+            let id = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+            if id == rule_id {
+                rule_start = Some((i, leading));
+                break;
+            }
+        }
+    }
+    let (start, id_indent) = rule_start?;
+
+    // Fields are indented at least two spaces beyond the `- ` marker. The
+    // canonical layout uses `  - id:` at indent 2 and fields at indent 4,
+    // giving `field_indent = id_indent + 2`. Confirm by probing the next
+    // non-blank line.
+    let mut field_indent = id_indent + 2;
+    for line in &lines[start + 1..] {
+        if line.trim().is_empty() {
             continue;
         }
-        found = true;
-
-        let map = rule
-            .as_mapping_mut()
-            .ok_or_else(|| anyhow!("rule {rule_id} is not a mapping"))?;
-
-        let target = transition.target_status();
-        map.insert(YamlValue::from("status"), YamlValue::from(target));
-
-        match transition {
-            Transition::Approve => {
-                map.insert(YamlValue::from("approved"), YamlValue::from(true));
-                map.insert(
-                    YamlValue::from("approved_at"),
-                    YamlValue::from(now_iso),
-                );
-                // Approving clears any prior soft-denial fields.
-                map.remove(YamlValue::from("denied_reason"));
-            }
-            Transition::Deny => {
-                map.insert(YamlValue::from("approved"), YamlValue::from(false));
-                if let Some(r) = reason {
-                    map.insert(
-                        YamlValue::from("denied_reason"),
-                        YamlValue::from(r),
-                    );
-                }
-            }
-            Transition::Deprecate | Transition::Supersede => {
-                map.insert(YamlValue::from("approved"), YamlValue::from(false));
-                if let Some(r) = reason {
-                    map.insert(
-                        YamlValue::from("deprecated_reason"),
-                        YamlValue::from(r),
-                    );
-                }
-                if let Some(s) = superseded_by {
-                    map.insert(
-                        YamlValue::from("superseded_by"),
-                        YamlValue::from(s),
-                    );
-                }
-            }
+        let leading = line.chars().take_while(|c| *c == ' ').count();
+        if leading > id_indent {
+            field_indent = leading;
         }
         break;
     }
 
-    if !found {
-        return Err(anyhow!(
-            "rule {rule_id} not found in {}",
-            path.display()
-        ));
+    // End is the first subsequent line that opens a new rule (another
+    // `- id:` at the same indent) or a top-level key. The rule block itself
+    // includes every line whose indent is >= id_indent and does not start a
+    // new rule.
+    let mut end = lines.len();
+    for (offset, line) in lines.iter().enumerate().skip(start + 1) {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let leading = line.chars().take_while(|c| *c == ' ').count();
+        if leading <= id_indent && !line.starts_with(' ') && !line.trim_start().starts_with('-') {
+            end = offset;
+            break;
+        }
+        if leading == id_indent && line.trim_start().starts_with("- ") {
+            end = offset;
+            break;
+        }
     }
 
-    let serialized = serde_yaml::to_string(&root)
-        .map_err(|e| anyhow!("failed to serialize {}: {e}", path.display()))?;
-    fs::write(path, serialized)?;
-    Ok(())
+    Some((start, end, field_indent))
+}
+
+fn mut_block_end(lines: &[String], start: usize) -> usize {
+    // Locate the end again using the mutated lines; cheap for our file sizes.
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let start_re = Regex::id_line();
+    let id_indent = refs[start]
+        .chars()
+        .take_while(|c| *c == ' ')
+        .count();
+    for (offset, line) in refs.iter().enumerate().skip(start + 1) {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let leading = line.chars().take_while(|c| *c == ' ').count();
+        if leading <= id_indent && !line.starts_with(' ') && !line.trim_start().starts_with('-') {
+            return offset;
+        }
+        if leading == id_indent && line.trim_start().starts_with("- ") {
+            return offset;
+        }
+        let _ = start_re;
+    }
+    refs.len()
+}
+
+fn replace_field_in_block(
+    lines: &mut [String],
+    start: usize,
+    end: usize,
+    field_indent: usize,
+    key: &str,
+    value: &str,
+) -> bool {
+    let prefix = format!("{}{key}:", " ".repeat(field_indent));
+    for line in lines.iter_mut().take(end).skip(start + 1) {
+        let trimmed = line.trim_end_matches(&['\n', '\r'][..]);
+        if trimmed.starts_with(&prefix) {
+            // Preserve trailing comments that appear after the value.
+            let after_colon = &trimmed[prefix.len()..];
+            let comment = extract_trailing_comment(after_colon);
+            let tail = match comment {
+                Some(c) => format!("  {c}"),
+                None => String::new(),
+            };
+            let newline = if line.ends_with('\n') { "\n" } else { "" };
+            *line = format!("{prefix} {value}{tail}{newline}");
+            return true;
+        }
+    }
+    false
+}
+
+fn remove_field_in_block(
+    lines: &mut Vec<String>,
+    start: usize,
+    end: &mut usize,
+    field_indent: usize,
+    key: &str,
+) {
+    let prefix = format!("{}{key}:", " ".repeat(field_indent));
+    let mut i = start + 1;
+    while i < *end {
+        if lines[i].trim_end_matches(&['\n', '\r'][..]).starts_with(&prefix) {
+            lines.remove(i);
+            *end -= 1;
+        } else {
+            i += 1;
+        }
+    }
+}
+
+fn insert_field_at_end(
+    lines: &mut Vec<String>,
+    end: usize,
+    field_indent: usize,
+    key: &str,
+    value: &str,
+) {
+    // Insert before the block boundary. If the block's last populated line
+    // lacks a trailing newline, give it one first so the new entry starts on
+    // its own line.
+    let insert_at = skip_trailing_blank_lines(lines, end);
+    let last = insert_at.saturating_sub(1);
+    if last < lines.len() && !lines[last].ends_with('\n') {
+        lines[last].push('\n');
+    }
+    lines.insert(
+        insert_at,
+        format!("{}{key}: {value}\n", " ".repeat(field_indent)),
+    );
+}
+
+fn skip_trailing_blank_lines(lines: &[String], end: usize) -> usize {
+    let mut i = end;
+    while i > 0 && lines[i - 1].trim().is_empty() {
+        i -= 1;
+    }
+    i
+}
+
+fn extract_trailing_comment(after_colon: &str) -> Option<&str> {
+    // A `#` counts as a comment only when it's whitespace-separated from the
+    // value. This prevents us from clipping content like a URL fragment.
+    let bytes = after_colon.as_bytes();
+    for (i, b) in bytes.iter().enumerate() {
+        if *b == b'#' && (i == 0 || bytes[i - 1].is_ascii_whitespace()) {
+            return Some(&after_colon[i..]);
+        }
+    }
+    None
+}
+
+/// Tiny holder for the lazily-compiled `- id:` regex so the common path
+/// avoids re-parsing the pattern per call.
+struct Regex;
+impl Regex {
+    fn id_line() -> &'static regex::Regex {
+        static CELL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        CELL.get_or_init(|| {
+            regex::Regex::new(r#"^(\s*)- id:\s*['"]?([^'"\s]+)['"]?\s*$"#).expect("valid regex")
+        })
+    }
 }
 
 // ── Audit log ──
@@ -584,8 +829,14 @@ fn append_audit_entry(project_dir: &Path, entry: AuditEntry) -> Result<()> {
         .create(true)
         .append(true)
         .open(&path)?;
-    let line = serde_json::to_string(&entry)?;
-    writeln!(f, "{line}")?;
+    // POSIX guarantees a single write(2) to an O_APPEND file is atomic up to
+    // PIPE_BUF (4096 bytes on macOS/Linux), so we serialise the line + newline
+    // once and issue exactly one write_all. `writeln!` would split into two
+    // syscalls and interleave under concurrent `wh apply` calls.
+    let mut line = serde_json::to_string(&entry)?;
+    line.push('\n');
+    f.write_all(line.as_bytes())?;
+    f.sync_data().ok();
     Ok(())
 }
 
@@ -646,6 +897,12 @@ mod tests {
     }
 
     #[test]
+    fn validate_transition_forbids_candidate_to_deprecated() {
+        let err = validate_transition("candidate", "deprecated").unwrap_err();
+        assert!(err.to_string().contains("illegal transition"));
+    }
+
+    #[test]
     fn validate_reasons_requires_deny_reason() {
         assert!(validate_reasons(Transition::Deny, None, None).is_err());
         assert!(validate_reasons(Transition::Deny, Some("bad"), None).is_ok());
@@ -655,5 +912,87 @@ mod tests {
     fn validate_reasons_requires_supersede_target() {
         assert!(validate_reasons(Transition::Supersede, Some("r"), None).is_err());
         assert!(validate_reasons(Transition::Supersede, Some("r"), Some("other.id")).is_ok());
+    }
+
+    const SAMPLE_YAML: &str = r#"source:
+  name: demo
+  docs_url: https://example.com
+  version: "1.0"
+  content_hash: "sha256:test"
+  resolved_at: "2026-04-14T00:00:00Z"
+  registry: pypi
+
+# top-of-file comment stays
+rules:
+  - id: demo.rule
+    # rationale comment stays
+    severity: must
+    confidence: high
+    category: default
+    description: Test rule
+    source_url: https://example.com/rule
+    approved: false
+    status: candidate
+    proposed_at: "2026-04-14T00:00:00Z"
+    signals:
+      - id: s1
+        strategy: pattern
+        description: signal
+        weight: required
+        match: 'TODO'
+    golden_examples:
+      - code: ""
+        verdict: pass
+        reason: placeholder
+"#;
+
+    #[test]
+    fn apply_rule_updates_preserves_comments_and_blank_lines() {
+        let updates = vec![
+            ("status", "approved".to_string()),
+            ("approved", "true".to_string()),
+            ("approved_at", "\"2026-04-14T00:00:01Z\"".to_string()),
+        ];
+        let out = apply_rule_updates(SAMPLE_YAML, "demo.rule", &updates, &[]).unwrap();
+        assert!(
+            out.contains("# top-of-file comment stays"),
+            "top comment dropped:\n{out}"
+        );
+        assert!(
+            out.contains("# rationale comment stays"),
+            "in-block comment dropped:\n{out}"
+        );
+        assert!(out.contains("status: approved"));
+        assert!(out.contains("approved: true"));
+        assert!(out.contains("approved_at: \"2026-04-14T00:00:01Z\""));
+    }
+
+    #[test]
+    fn apply_rule_updates_appends_missing_fields() {
+        let updates = vec![
+            ("status", "denied".to_string()),
+            ("approved", "false".to_string()),
+            ("denied_reason", "\"not applicable\"".to_string()),
+        ];
+        let out = apply_rule_updates(SAMPLE_YAML, "demo.rule", &updates, &[]).unwrap();
+        assert!(
+            out.contains("denied_reason: \"not applicable\""),
+            "denied_reason not inserted:\n{out}"
+        );
+        assert_eq!(out.matches("- id: demo.rule").count(), 1);
+    }
+
+    #[test]
+    fn quote_yaml_string_quotes_reserved_values() {
+        assert_eq!(quote_yaml_string("hello"), "hello");
+        assert_eq!(quote_yaml_string("true"), "\"true\"");
+        // ISO timestamps contain `:` which is a YAML flow indicator, so we
+        // always quote them to sidestep plain-scalar ambiguity.
+        assert_eq!(
+            quote_yaml_string("2026-04-14T00:00:00Z"),
+            "\"2026-04-14T00:00:00Z\""
+        );
+        assert!(quote_yaml_string("contains: colon").starts_with('"'));
+        assert!(quote_yaml_string("# leading hash").starts_with('"'));
     }
 }

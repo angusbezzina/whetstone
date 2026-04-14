@@ -452,6 +452,8 @@ mod tests {
                 description: "signal".into(),
                 weight: "required".into(),
                 match_pattern: match_pattern.map(String::from),
+                ast_query: None,
+                ast_scope: None,
             }],
             golden_examples: Vec::new(),
             risk: None,
