@@ -181,8 +181,7 @@ pub fn detect_patterns(opts: DetectPatternsOptions) -> Result<Value> {
                 "WARNING: --global-transcripts scans ALL agent transcripts across your home directory. This may include conversations from other projects. Use with care."
             );
         }
-        let (pats, stats) =
-            mine_transcripts(opts.project_dir, since_dt, opts.global_transcripts);
+        let (pats, stats) = mine_transcripts(opts.project_dir, since_dt, opts.global_transcripts);
         all_patterns.extend(pats);
         sources_analyzed.insert("transcript".to_string(), stats);
     }
@@ -265,10 +264,11 @@ impl Pattern {
 // ----- Source 1: Conversation Transcripts -----
 
 fn project_transcript_matches(project_dir: &Path, transcript_path: &Path) -> bool {
-    let project_name = match project_dir.canonicalize().ok().and_then(|p| {
-        p.file_name()
-            .map(|n| n.to_string_lossy().to_lowercase())
-    }) {
+    let project_name = match project_dir
+        .canonicalize()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()))
+    {
         Some(n) => n,
         None => return false,
     };
@@ -412,7 +412,12 @@ fn mine_transcripts(
             }
 
             if matched {
-                let desc: String = content.chars().take(200).collect::<String>().trim().to_string();
+                let desc: String = content
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+                    .trim()
+                    .to_string();
                 let key = extract_pattern_key(&content);
                 signal_groups.entry(key).or_default().push(SignalHit {
                     text: desc,
@@ -435,7 +440,11 @@ fn mine_transcripts(
             }
             seen.into_iter().take(10).collect()
         };
-        let confidence = if sessions.len() >= 3 { "high" } else { "medium" };
+        let confidence = if sessions.len() >= 3 {
+            "high"
+        } else {
+            "medium"
+        };
         patterns.push(Pattern {
             description: key.clone(),
             source: "transcript",
@@ -496,7 +505,12 @@ fn extract_pattern_key(text: &str) -> String {
             return truncated;
         }
     }
-    trimmed.chars().take(80).collect::<String>().trim().to_string()
+    trimmed
+        .chars()
+        .take(80)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 // ----- Source 2: Git History -----
@@ -544,20 +558,24 @@ fn mine_git_history(project_dir: &Path, since: Option<&str>) -> (Vec<Pattern>, V
     let mut commit_groups: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
     for (_, message) in &style_commits {
         let msg_lower = message.to_lowercase();
-        let bucket: &'static str = if msg_lower.contains("format") || msg_lower.contains("formatting") {
-            "Code formatting standardization"
-        } else if msg_lower.contains("lint") {
-            "Linting fixes"
-        } else if msg_lower.contains("rename") {
-            "Naming convention changes"
-        } else if msg_lower.contains("style") {
-            "Style fixes"
-        } else if msg_lower.contains("refactor") {
-            "Refactoring patterns"
-        } else {
-            "Other style changes"
-        };
-        commit_groups.entry(bucket).or_default().push(message.clone());
+        let bucket: &'static str =
+            if msg_lower.contains("format") || msg_lower.contains("formatting") {
+                "Code formatting standardization"
+            } else if msg_lower.contains("lint") {
+                "Linting fixes"
+            } else if msg_lower.contains("rename") {
+                "Naming convention changes"
+            } else if msg_lower.contains("style") {
+                "Style fixes"
+            } else if msg_lower.contains("refactor") {
+                "Refactoring patterns"
+            } else {
+                "Other style changes"
+            };
+        commit_groups
+            .entry(bucket)
+            .or_default()
+            .push(message.clone());
     }
 
     for (desc, commits) in commit_groups {
@@ -714,7 +732,11 @@ fn mine_pr_comments(project_dir: &Path, _since: Option<&str>) -> (Vec<Pattern>, 
     for key in keys {
         let comments = &style_comments[key];
         if comments.len() >= 2 {
-            let confidence = if comments.len() >= 3 { "high" } else { "medium" };
+            let confidence = if comments.len() >= 3 {
+                "high"
+            } else {
+                "medium"
+            };
             patterns.push(Pattern {
                 description: key.clone(),
                 source: "pr",

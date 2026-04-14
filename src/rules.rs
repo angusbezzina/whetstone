@@ -375,7 +375,10 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
                 t
             }
             Err(e) => {
-                out.push_str(&format!("FAIL: cannot read {}: {e}\n", schema_path.display()));
+                out.push_str(&format!(
+                    "FAIL: cannot read {}: {e}\n",
+                    schema_path.display()
+                ));
                 return (out, false);
             }
         }
@@ -404,7 +407,10 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
     let scan_roots = [
         project_root.join("tests").join("fixtures"),
         project_root.join("whetstone").join("rules"),
-        project_root.join("whetstone").join(".personal").join("rules"),
+        project_root
+            .join("whetstone")
+            .join(".personal")
+            .join("rules"),
         project_root.join("whetstone").join(".team").join("rules"),
         project_root.join("src").join("builtin"),
     ];

@@ -201,7 +201,10 @@ pub fn detect_deps(
     }
 
     // Add scope field to scoped npm packages
-    if let Some(deps) = result.get_mut("dependencies").and_then(|v| v.as_array_mut()) {
+    if let Some(deps) = result
+        .get_mut("dependencies")
+        .and_then(|v| v.as_array_mut())
+    {
         for dep in deps.iter_mut() {
             if let Some(name) = dep.get("name").and_then(|v| v.as_str()).map(String::from) {
                 if name.starts_with('@') {
@@ -295,7 +298,10 @@ pub fn format_human_output(result: &Value) -> String {
             let version = dep.get("version").and_then(|v| v.as_str()).unwrap_or("*");
             if let Some(scope) = dep.get("scope").and_then(|v| v.as_str()) {
                 let short = name.strip_prefix(&format!("{scope}/")).unwrap_or(name);
-                scope_groups.entry(scope.to_string()).or_default().push(short);
+                scope_groups
+                    .entry(scope.to_string())
+                    .or_default()
+                    .push(short);
             } else {
                 standalone.push((name, version));
             }

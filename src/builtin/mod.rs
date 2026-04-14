@@ -31,34 +31,6 @@ pub fn load_builtin_rules() -> Vec<LoadedRuleFile> {
     rules
 }
 
-/// Merge built-in ApprovedRules with project ApprovedRules.
-/// Project rules override built-in by ID. Denied IDs excluded.
-pub fn merge_approved_rules(
-    builtin: &[crate::rules::ApprovedRule],
-    project: &[crate::rules::ApprovedRule],
-    deny: &[String],
-) -> Vec<crate::rules::ApprovedRule> {
-    use std::collections::HashSet;
-
-    let project_ids: HashSet<&str> = project.iter().map(|r| r.id.as_str()).collect();
-    let deny_set: HashSet<&str> = deny.iter().map(|s| s.as_str()).collect();
-
-    let mut merged: Vec<crate::rules::ApprovedRule> = Vec::new();
-
-    for rule in builtin {
-        if !project_ids.contains(rule.id.as_str()) && !deny_set.contains(rule.id.as_str()) {
-            merged.push(rule.clone());
-        }
-    }
-    for rule in project {
-        if !deny_set.contains(rule.id.as_str()) {
-            merged.push(rule.clone());
-        }
-    }
-
-    merged
-}
-
 /// Merge built-in LoadedRuleFiles with project LoadedRuleFiles.
 /// Used by status pipeline (JSON-based). Project overrides built-in by ID.
 #[allow(dead_code)]

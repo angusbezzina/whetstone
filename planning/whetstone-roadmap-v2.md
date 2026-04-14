@@ -95,7 +95,7 @@ Five CLI calls. The agent reasons between them. SKILL.md teaches it how. See `pl
 First real rules extracted for Whetstone's own Rust deps (6 rules across serde_yaml, anyhow, reqwest, clap). Key findings:
 - **Status pipeline works perfectly** — score 100, all dimensions correct
 - **Context generation works** — Do/Don't sections, source URLs, good/bad examples
-- **Test generation produces TODO scaffolds** — compiles but doesn't check anything without tree-sitter
+- **Test generation now writes real regex checks when rules include `match:`** — only signals without a concrete `match` stay as documented TODO scaffolds
 - ~~**Content gap was the real blocker**~~ — **Fixed**: added 3-tier fallback (llms.txt → registry README → HTML conversion). All 10 deps now return content with medium confidence.
 - **`extract --show` proved unnecessary** — doctor output includes content directly. Closed the bead.
 
@@ -107,45 +107,21 @@ Three epics, sequenced. Each builds on the last.
 
 ### Epic 1: Productise the Core Loop
 
-> **Tracked as:** `whetstone-d2t` in beads | **Status:** Open, ready to start
+> **Tracked as:** `whetstone-d2t` (superseded by follow-on epic `whetstone-nq8`) | **Status:** Closed / shipped
 
-Close the gap between Whetstone's strong infrastructure and its missing product surface. By completion, a user can run the full workflow end-to-end with real rules.
+The core loop is now productised and shippable:
 
-**Phase 1 — Done:**
+- `wh doctor` writes a durable extraction handoff under `whetstone/.state/extraction-handoff.json`
+- `wh refresh` / `wh refresh --check` re-resolve changed sources and write `whetstone/.state/refresh-diff.json`
+- `wh eval generate|run|calibrate` provide explicit file-based handoffs for AI judgment and calibration
+- README, SKILL, CLI help, and the workflow matrix now describe one coherent contract
+- Built-in rules exist for Rust, Python, and TypeScript
+- Dogfooding covered both Whetstone and an external mixed-language repo
 
-| Bead | Work | Status |
-|------|------|--------|
-| ~~`whetstone-exd`~~ | Dogfood: extract rules for Whetstone's Rust deps | **Closed** — 6 rules across 4 deps |
-| ~~`whetstone-dwm`~~ | Validate generate-context on real rules | **Closed** — works correctly |
-| ~~`whetstone-6bm`~~ | Validate generate-tests on real rules | **Closed** — scaffolds compile, tree-sitter needed for real checks |
-| ~~`whetstone-4aq`~~ | extract --show/--list commands | **Closed** — proved unnecessary by dogfooding |
+Remaining core-loop improvements are intentionally separated into later epics:
 
-**Phase 2 — Current focus (ordered by impact):**
-
-| Priority | Bead | Work | Depends On |
-|----------|------|------|-----------|
-| Do first | `whetstone-la2` | Rewrite SKILL.md extraction workflow | — |
-| Do first | `whetstone-dg4` | Custom source support (arbitrary URLs) | — |
-| Do first | `whetstone-kp3` | Built-in rule system | — |
-| Then | `whetstone-e51` | Curate built-in rules (3 languages) | kp3 |
-| Then | `whetstone-t32` | Diff-based update command | — |
-| Then | `whetstone-1dp` | Expand whetstone.yaml config depth | dg4 |
-| Defer | `whetstone-d41` | Integrate tera template engine | — |
-| Defer | `whetstone-5wg` | Harden doctor/status UX from dogfooding | — |
-
-**Phase 3 — Eval + AST:**
-
-| Bead | Work | Depends On |
-|------|------|-----------|
-| `whetstone-esp` | tree-sitter integration (Python, TS, Rust) | — |
-| `whetstone-16c` | tree-sitter signal analysis | esp |
-| `whetstone-7zr` | AI eval definition generation | — |
-| `whetstone-71o` | Threshold gating logic | 7zr |
-| `whetstone-ka5` | Agent-mediated eval runner + calibration | 71o, esp |
-
-**Ready to start now (no blockers):** `la2`, `d41`, `dg4`, `5wg`, `t32`, `kp3`, `esp`, `7zr`
-
-**Not in this epic:** Layer system, trigger modes, promote command, shared registry.
+- **Deferred to Epic 3B:** tree-sitter-backed structural checks and template-engine cleanup
+- **Deferred to Epic 4:** registry / evolution / service work
 
 ---
 
@@ -243,8 +219,12 @@ All commands support `--json` (auto-enabled when piped) and `--project-dir`. For
 
 ## Beads State
 
-Active work is tracked under epic `whetstone-nq8` (reconcile contract, explicit handoffs,
-broaden baseline coverage, dogfood). Run `bd ready` for the next available child.
+The first two epics are complete. Remaining work is intentionally deferred:
+
+- `whetstone-52a` — Epic 3B: structural enforcement and maintainable generation
+- `whetstone-s2a` — Epic 4: platform + registry
+
+Run `bd ready` to see the next non-deferred follow-up when those epics are resumed.
 
 ---
 

@@ -63,6 +63,7 @@ pub fn parse_extends_entry(raw: &str) -> ExtendsEntry {
 
 pub struct TeamResolution {
     pub rules_dirs: Vec<PathBuf>,
+    pub deny: Vec<String>,
     /// Per-entry resolution status — surfaced by the CLI in JSON output.
     #[allow(dead_code)]
     pub statuses: Vec<serde_json::Value>,
@@ -74,16 +75,10 @@ pub struct TeamResolution {
 ///
 /// When `refresh` is true, every git-backed clone gets a `git pull --ff-only`
 /// to pick up upstream changes. Otherwise the cache is reused as-is.
-pub fn resolve(
-    project_dir: &Path,
-    extends: &[String],
-    refresh: bool,
-) -> Result<TeamResolution> {
-    let cache_root = project_dir
-        .join("whetstone")
-        .join(".cache")
-        .join("teams");
+pub fn resolve(project_dir: &Path, extends: &[String], refresh: bool) -> Result<TeamResolution> {
+    let cache_root = project_dir.join("whetstone").join(".cache").join("teams");
     let mut rules_dirs = Vec::new();
+    let mut deny = Vec::new();
     let mut statuses = Vec::new();
 
     for raw in extends {
@@ -105,10 +100,7 @@ pub fn resolve(
                         // Team rule files can live either at the repo root under
                         // `whetstone/rules/` (mirroring a project layout) or at
                         // `rules/` directly (team-only publisher layout).
-                        let candidates = [
-                            dest.join("whetstone").join("rules"),
-                            dest.join("rules"),
-                        ];
+                        let candidates = [dest.join("whetstone").join("rules"), dest.join("rules")];
                         let mut selected: Option<PathBuf> = None;
                         for c in &candidates {
                             if c.exists() {
@@ -118,6 +110,9 @@ pub fn resolve(
                         }
                         if let Some(p) = selected {
                             rules_dirs.push(p.clone());
+                            deny.extend(
+                                crate::config::WhetstoneConfig::load_project_only(&dest).deny,
+                            );
                             statuses.push(serde_json::json!({
                                 "entry": raw,
                                 "kind": "github",
@@ -178,6 +173,7 @@ pub fn resolve(
 
     Ok(TeamResolution {
         rules_dirs,
+        deny,
         statuses,
     })
 }

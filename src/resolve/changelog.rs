@@ -16,9 +16,8 @@ pub fn probe_github_changelog(repo_url: &str, timeout: u64) -> Option<Value> {
 
     for branch in &branches {
         for filename in &filenames {
-            let raw_url = format!(
-                "https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{filename}"
-            );
+            let raw_url =
+                format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{filename}");
             if let Some(content) = http_get(&raw_url, timeout) {
                 // Reject HTML error pages
                 if content.trim_start().starts_with('<') {
@@ -88,8 +87,7 @@ pub fn filter_recent_changelog(content: &str, months: u32) -> (String, String) {
             .unwrap();
 
     // Regex for any version heading (without date)
-    let version_re =
-        Regex::new(r"(?m)^#{1,3}\s+(?:\[)?v?(\d+\.\d+(?:\.\d+)?)(?:\])?").unwrap();
+    let version_re = Regex::new(r"(?m)^#{1,3}\s+(?:\[)?v?(\d+\.\d+(?:\.\d+)?)(?:\])?").unwrap();
 
     // Try date-based filtering first
     let mut sections: Vec<(usize, &str, Option<chrono::NaiveDate>)> = Vec::new();
@@ -159,10 +157,7 @@ pub fn filter_recent_changelog(content: &str, months: u32) -> (String, String) {
         .map(|(s, _)| *s)
         .unwrap_or(content.len());
     let filtered = &content[..end];
-    let versions: Vec<&str> = headings[..max_sections]
-        .iter()
-        .map(|(_, v)| *v)
-        .collect();
+    let versions: Vec<&str> = headings[..max_sections].iter().map(|(_, v)| *v).collect();
     let versions_str = if versions.len() > 1 {
         format!("{}–{}", versions.last().unwrap(), versions.first().unwrap())
     } else {
@@ -185,16 +180,14 @@ mod tests {
 
     #[test]
     fn test_parse_github_repo_git_suffix() {
-        let (owner, repo) =
-            parse_github_repo("https://github.com/serde-rs/serde.git").unwrap();
+        let (owner, repo) = parse_github_repo("https://github.com/serde-rs/serde.git").unwrap();
         assert_eq!(owner, "serde-rs");
         assert_eq!(repo, "serde");
     }
 
     #[test]
     fn test_parse_github_repo_git_plus() {
-        let (owner, repo) =
-            parse_github_repo("git+https://github.com/user/repo.git").unwrap();
+        let (owner, repo) = parse_github_repo("git+https://github.com/user/repo.git").unwrap();
         assert_eq!(owner, "user");
         assert_eq!(repo, "repo");
     }

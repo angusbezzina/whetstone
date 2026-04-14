@@ -16,7 +16,10 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::config::{PersonalConfig, WhetstoneConfig};
-use crate::rules::{self, approved_from_loaded, load_approved_rules, load_rule_files, ApprovedRule};
+use crate::rules::{
+    self, approved_from_loaded, load_approved_rules, load_rule_files, ApprovedRule,
+};
+use serde_json::Value;
 
 /// Identifies which layer a merged rule came from. Written into generated
 /// outputs so users can tell at a glance where a rule originated.
@@ -96,6 +99,12 @@ pub struct LayerSet {
     pub builtin: Vec<ApprovedRule>,
 }
 
+pub struct ResolvedLayers {
+    pub merged: Vec<LayeredRule>,
+    pub warnings: Vec<String>,
+    pub team_statuses: Vec<Value>,
+}
+
 impl LayerSet {
     /// Load every layer that exists for this project.
     pub fn load(
@@ -109,8 +118,7 @@ impl LayerSet {
         let (project, mut pw) = load_approved_rules(&paths.project_rules_dir, lang_filter);
         warnings.append(&mut pw);
 
-        let (personal, mut person_w) =
-            load_approved_rules(&paths.personal_rules_dir, lang_filter);
+        let (personal, mut person_w) = load_approved_rules(&paths.personal_rules_dir, lang_filter);
         warnings.append(&mut person_w);
 
         let mut team = Vec::new();
@@ -225,10 +233,89 @@ pub fn summary_from(merged: &[LayeredRule]) -> BTreeMap<String, usize> {
 pub fn load_denies(project_dir: &Path) -> LayerDenies {
     let project_cfg = WhetstoneConfig::load(project_dir);
     let paths = LayerPaths::for_project(project_dir);
+    let team_cfg = paths.personal_dir.parent().map(|whetstone_dir| {
+        let team_dir = whetstone_dir.join(".team");
+        let config_candidates = [
+            team_dir.join("whetstone.yaml"),
+            team_dir.join("config.yaml"),
+        ];
+        for path in &config_candidates {
+            if let Ok(text) = std::fs::read_to_string(path) {
+                if let Ok(cfg) = serde_yaml::from_str::<WhetstoneConfig>(&text) {
+                    return cfg;
+                }
+            }
+        }
+        WhetstoneConfig::default()
+    });
     LayerDenies {
         personal: PersonalConfig::load(&paths.personal_config).deny,
         project: project_cfg.deny,
-        team: Vec::new(),
+        team: team_cfg.map(|cfg| cfg.deny).unwrap_or_default(),
+    }
+}
+
+/// Resolve every configured rule layer into a single merged rule set.
+///
+/// `include_personal=false` strips both personal rules and personal deny-list
+/// effects so committed outputs never depend on a user's local-only layer.
+pub fn resolve_merged(
+    project_dir: &Path,
+    lang_filter: Option<&str>,
+    include_builtin: bool,
+    include_personal: bool,
+    refresh_team: bool,
+) -> ResolvedLayers {
+    let config = WhetstoneConfig::load(project_dir);
+    let (mut layers, mut warnings) = LayerSet::load(project_dir, lang_filter, include_builtin);
+    let mut denies = load_denies(project_dir);
+    let mut team_statuses = Vec::new();
+
+    if !config.extends.is_empty() {
+        match crate::team::resolve(project_dir, &config.extends, refresh_team) {
+            Ok(resolution) => {
+                for dir in resolution.rules_dirs {
+                    let (mut rules, mut w) = rules::load_approved_rules(&dir, lang_filter);
+                    layers.team.append(&mut rules);
+                    warnings.append(&mut w);
+                }
+                denies.team.extend(resolution.deny);
+                denies.team.sort();
+                denies.team.dedup();
+                for status in &resolution.statuses {
+                    let state = status
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    if state != "ok" {
+                        let entry = status
+                            .get("entry")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("<unknown extends>");
+                        let detail = status
+                            .get("error")
+                            .or_else(|| status.get("note"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("team config was not loaded");
+                        warnings.push(format!("extends {entry}: {state} — {detail}"));
+                    }
+                }
+                team_statuses = resolution.statuses;
+            }
+            Err(e) => warnings.push(format!("Failed to resolve extends entries: {e}")),
+        }
+    }
+
+    if !include_personal {
+        layers.personal.clear();
+        denies.personal.clear();
+    }
+
+    let merged = layers.merge(&denies);
+    ResolvedLayers {
+        merged,
+        warnings,
+        team_statuses,
     }
 }
 
@@ -237,10 +324,8 @@ pub fn load_denies(project_dir: &Path) -> LayerDenies {
 /// layer provenance.
 #[allow(dead_code)]
 pub fn merge_to_approved(project_dir: &Path, lang_filter: Option<&str>) -> Vec<ApprovedRule> {
-    let (layers, _) = LayerSet::load(project_dir, lang_filter, true);
-    let denies = load_denies(project_dir);
-    layers
-        .merge(&denies)
+    resolve_merged(project_dir, lang_filter, true, true, false)
+        .merged
         .into_iter()
         .map(|lr| lr.rule)
         .collect()

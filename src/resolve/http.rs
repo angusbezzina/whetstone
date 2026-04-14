@@ -126,10 +126,7 @@ fn extract_doc_content(html: &str) -> String {
     extract_text_recursive(&fragment.root_element(), &mut output, 0);
 
     // Clean up excessive whitespace
-    let lines: Vec<&str> = output
-        .lines()
-        .map(|l| l.trim_end())
-        .collect();
+    let lines: Vec<&str> = output.lines().map(|l| l.trim_end()).collect();
 
     // Collapse runs of 3+ blank lines to 2
     let mut result = String::new();
@@ -168,7 +165,17 @@ fn extract_text_recursive(element: &scraper::ElementRef, output: &mut String, de
                     let tag = el.name();
 
                     // Skip noise elements
-                    if matches!(tag, "script" | "style" | "nav" | "footer" | "header" | "noscript" | "svg" | "iframe") {
+                    if matches!(
+                        tag,
+                        "script"
+                            | "style"
+                            | "nav"
+                            | "footer"
+                            | "header"
+                            | "noscript"
+                            | "svg"
+                            | "iframe"
+                    ) {
                         continue;
                     }
 

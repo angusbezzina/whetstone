@@ -228,7 +228,10 @@ fn parse_promote_target(raw: &str) -> Result<Layer> {
 
 fn is_monotonic_promotion(from: Layer, to: Layer) -> bool {
     use Layer::*;
-    matches!((from, to), (Personal, Project) | (Personal, Team) | (Project, Team))
+    matches!(
+        (from, to),
+        (Personal, Project) | (Personal, Team) | (Project, Team)
+    )
 }
 
 struct SourceRule {

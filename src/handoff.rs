@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::state::atomic_write;
@@ -56,6 +56,7 @@ pub fn write_extraction_handoff(
     let ready_names = extract_name_set(&subsets, "ready_now");
     let pending_names = extract_name_set(&subsets, "pending");
     let failed_subset = extract_name_map(&subsets, "failed");
+    let existing_rules = load_approved_counts(project_dir);
 
     let mut candidates: Vec<Value> = Vec::new();
     for source in &sources {
@@ -87,6 +88,7 @@ pub fn write_extraction_handoff(
                 .unwrap_or(Value::Null),
             "content_hash": source.get("content_hash").cloned().unwrap_or(Value::Null),
             "sections": summarize_sections(source),
+            "existing_rules": existing_rules.get(&(language.clone(), name.clone())).copied().unwrap_or(0),
             "priority": priority,
         }));
     }
@@ -156,10 +158,7 @@ pub fn write_refresh_diff(
         .unwrap_or_default();
 
     let scan = doctor_result.get("scan").cloned().unwrap_or(Value::Null);
-    let inventory_diff = scan
-        .get("inventory_diff")
-        .cloned()
-        .unwrap_or(Value::Null);
+    let inventory_diff = scan.get("inventory_diff").cloned().unwrap_or(Value::Null);
 
     let added: BTreeSet<String> = inventory_keys(&inventory_diff, "added");
     let changed_keys: BTreeSet<String> = inventory_keys(&inventory_diff, "changed");
@@ -188,8 +187,8 @@ pub fn write_refresh_diff(
 
         let affected: Vec<String> = all_rules
             .iter()
-            .filter(|(dep, _rid)| dep.as_str() == name)
-            .map(|(_dep, rid)| rid.clone())
+            .filter(|(lang, dep, _rid)| lang.as_str() == language && dep.as_str() == name)
+            .map(|(_lang, _dep, rid)| rid.clone())
             .collect();
 
         let mut urls = serde_json::Map::new();
@@ -335,11 +334,7 @@ fn section_types(source: &Value) -> Vec<Value> {
     source
         .get("sections")
         .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|s| s.get("type").cloned())
-                .collect()
-        })
+        .map(|arr| arr.iter().filter_map(|s| s.get("type").cloned()).collect())
         .unwrap_or_default()
 }
 
@@ -377,18 +372,27 @@ fn split_key(key: &str) -> (String, String) {
     }
 }
 
-/// Returns `(dep_name, rule_id)` pairs for every approved rule in the project.
-fn load_approved_index(project_dir: &Path) -> Vec<(String, String)> {
+/// Returns `(language, dep_name, rule_id)` tuples for every approved rule.
+fn load_approved_index(project_dir: &Path) -> Vec<(String, String, String)> {
     let rules_dir = project_dir.join("whetstone").join("rules");
     let (files, _) = crate::rules::load_rule_files(&rules_dir);
     let mut out = Vec::new();
     for lrf in &files {
+        let language = lrf.language.clone().unwrap_or_default();
         let source_name = lrf.rule_file.source.name.clone();
         for r in &lrf.rule_file.rules {
             if r.approved {
-                out.push((source_name.clone(), r.id.clone()));
+                out.push((language.clone(), source_name.clone(), r.id.clone()));
             }
         }
     }
     out
+}
+
+fn load_approved_counts(project_dir: &Path) -> BTreeMap<(String, String), usize> {
+    let mut counts = BTreeMap::new();
+    for (lang, dep, _rid) in load_approved_index(project_dir) {
+        *counts.entry((lang, dep)).or_insert(0) += 1;
+    }
+    counts
 }

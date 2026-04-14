@@ -68,7 +68,11 @@ enum Commands {
     },
 
     /// Resolve documentation URLs and fetch content for dependencies
-    #[command(name = "set-sources", visible_alias = "sources", alias = "resolve-sources")]
+    #[command(
+        name = "set-sources",
+        visible_alias = "sources",
+        alias = "resolve-sources"
+    )]
     SetSources {
         /// JSON input file from detect-deps (default: stdin)
         #[arg(long)]
@@ -760,7 +764,8 @@ pub fn run() -> i32 {
             lang,
             dry_run,
             personal,
-        } => match generate_tests::generate_tests(&project_dir, lang.as_deref(), dry_run, personal) {
+        } => match generate_tests::generate_tests(&project_dir, lang.as_deref(), dry_run, personal)
+        {
             Ok(result) => {
                 if json_mode {
                     output::print_json(&result);
@@ -840,11 +845,18 @@ pub fn run() -> i32 {
                             println!("No patterns found.");
                         } else {
                             println!("Found {count} pattern(s):");
-                            if let Some(patterns) = result.get("patterns").and_then(|v| v.as_array()) {
+                            if let Some(patterns) =
+                                result.get("patterns").and_then(|v| v.as_array())
+                            {
                                 for p in patterns {
-                                    let desc = p.get("description").and_then(|v| v.as_str()).unwrap_or("?");
-                                    let src = p.get("source").and_then(|v| v.as_str()).unwrap_or("?");
-                                    let occ = p.get("occurrences").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    let desc = p
+                                        .get("description")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("?");
+                                    let src =
+                                        p.get("source").and_then(|v| v.as_str()).unwrap_or("?");
+                                    let occ =
+                                        p.get("occurrences").and_then(|v| v.as_u64()).unwrap_or(0);
                                     println!("  [{src}] {desc} ({occ} occurrences)");
                                 }
                             }
@@ -942,7 +954,7 @@ pub fn run() -> i32 {
                     1
                 }
             }
-        },
+        }
 
         Commands::Refresh { project_dir, check } => {
             let project_path = Path::new(&project_dir);
@@ -967,24 +979,27 @@ pub fn run() -> i32 {
             match result {
                 Ok(mut result) => {
                     // Write the refresh diff artifact and use its drift_count as authoritative.
-                    let drift_count = match crate::handoff::write_refresh_diff(project_path, &result) {
-                        Ok((path, dc)) => {
-                            result["refresh_diff"] = serde_json::json!({
-                                "path": path.display().to_string(),
-                                "drift_count": dc,
-                            });
-                            dc
-                        }
-                        Err(e) => {
-                            eprintln!("Warning: failed to write refresh diff: {e}");
-                            result
-                                .get("scan")
-                                .and_then(|s| s.get("drift_count"))
-                                .or_else(|| result.get("summary").and_then(|s| s.get("drift_count")))
-                                .and_then(|v| v.as_i64())
-                                .unwrap_or(0)
-                        }
-                    };
+                    let drift_count =
+                        match crate::handoff::write_refresh_diff(project_path, &result) {
+                            Ok((path, dc)) => {
+                                result["refresh_diff"] = serde_json::json!({
+                                    "path": path.display().to_string(),
+                                    "drift_count": dc,
+                                });
+                                dc
+                            }
+                            Err(e) => {
+                                eprintln!("Warning: failed to write refresh diff: {e}");
+                                result
+                                    .get("scan")
+                                    .and_then(|s| s.get("drift_count"))
+                                    .or_else(|| {
+                                        result.get("summary").and_then(|s| s.get("drift_count"))
+                                    })
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0)
+                            }
+                        };
 
                     if json_mode {
                         output::print_json(&result);
@@ -999,17 +1014,18 @@ pub fn run() -> i32 {
                         println!("Next: review the diff and update rules for changed deps.");
                     }
 
-                    if check && drift_count > 0 { 1 } else { 0 }
+                    if check && drift_count > 0 {
+                        1
+                    } else {
+                        0
+                    }
                 }
                 Err(e) => {
-                    output::print_json(&output::error_json(
-                        &e.to_string(),
-                        "wh doctor",
-                    ));
+                    output::print_json(&output::error_json(&e.to_string(), "wh doctor"));
                     1
                 }
             }
-        },
+        }
 
         Commands::Promote {
             rule_id,
@@ -1031,10 +1047,19 @@ pub fn run() -> i32 {
         },
 
         Commands::Layers { project_dir, lang } => {
-            let (layer_set, warnings) =
-                layers::LayerSet::load(&project_dir, lang.as_deref(), true);
-            let denies = layers::load_denies(&project_dir);
-            let merged = layer_set.merge(&denies);
+            let whetstone_config_exists = project_dir
+                .join("whetstone")
+                .join("whetstone.yaml")
+                .exists()
+                || project_dir.join("whetstone.yaml").exists();
+            let resolved = layers::resolve_merged(
+                &project_dir,
+                lang.as_deref(),
+                whetstone_config_exists,
+                true,
+                false,
+            );
+            let merged = resolved.merged;
             let rules_list: Vec<serde_json::Value> = merged
                 .iter()
                 .map(|lr| {
@@ -1051,40 +1076,39 @@ pub fn run() -> i32 {
                 "status": "ok",
                 "summary": layers::summary_from(&merged),
                 "rules": rules_list,
-                "warnings": warnings,
+                "warnings": resolved.warnings,
+                "team_resolution": resolved.team_statuses,
                 "next_command": "wh validate && wh context && wh tests",
             });
             output::print_json(&result);
             0
         }
 
-        Commands::Update { check, force } => {
-            match update::check_and_update(force, check) {
-                Ok(result) => {
-                    if json_mode {
-                        output::print_json(&result);
-                    } else {
-                        let msg = result
-                            .get("message")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Done");
-                        println!("{msg}");
-                    }
-                    0
+        Commands::Update { check, force } => match update::check_and_update(force, check) {
+            Ok(result) => {
+                if json_mode {
+                    output::print_json(&result);
+                } else {
+                    let msg = result
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Done");
+                    println!("{msg}");
                 }
-                Err(e) => {
-                    if json_mode {
-                        output::print_json(&output::error_json(
-                            &e.to_string(),
-                            "Check network connectivity and GitHub access",
-                        ));
-                    } else {
-                        eprintln!("Update failed: {e}");
-                    }
-                    1
-                }
+                0
             }
-        }
+            Err(e) => {
+                if json_mode {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "Check network connectivity and GitHub access",
+                    ));
+                } else {
+                    eprintln!("Update failed: {e}");
+                }
+                1
+            }
+        },
     }
 }
 

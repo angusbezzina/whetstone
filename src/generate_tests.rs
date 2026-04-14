@@ -18,7 +18,10 @@ pub fn generate_tests(
     dry_run: bool,
     personal_output: bool,
 ) -> Result<Value> {
-    let whetstone_config_exists = project_dir.join("whetstone").join("whetstone.yaml").exists()
+    let whetstone_config_exists = project_dir
+        .join("whetstone")
+        .join("whetstone.yaml")
+        .exists()
         || project_dir.join("whetstone.yaml").exists();
     let paths = crate::layers::LayerPaths::for_project(project_dir);
 
@@ -27,28 +30,10 @@ pub fn generate_tests(
             let (rules, warns) = crate::layers::load_personal_only(project_dir, lang_filter);
             (rules, warns, paths.personal_dir.clone())
         } else if whetstone_config_exists {
-            let config = crate::config::WhetstoneConfig::load(project_dir);
-            let (mut layers, warns) =
-                crate::layers::LayerSet::load(project_dir, lang_filter, true);
-            // Committed evals never carry personal rules.
-            layers.personal.clear();
-            if !config.extends.is_empty() {
-                let extra = crate::team::resolve(project_dir, &config.extends, false)
-                    .ok()
-                    .map(|r| r.rules_dirs)
-                    .unwrap_or_default();
-                for dir in extra {
-                    let (mut rules, _) = rules::load_approved_rules(&dir, lang_filter);
-                    layers.team.append(&mut rules);
-                }
-            }
-            let denies = crate::layers::load_denies(project_dir);
-            let merged = layers
-                .merge(&denies)
-                .into_iter()
-                .map(|lr| lr.rule)
-                .collect();
-            (merged, warns, paths.whetstone_dir.clone())
+            let merged =
+                crate::layers::resolve_merged(project_dir, lang_filter, true, false, false);
+            let approved = merged.merged.into_iter().map(|lr| lr.rule).collect();
+            (approved, merged.warnings, paths.whetstone_dir.clone())
         } else {
             let (approved, warns) =
                 rules::load_approved_rules(&paths.project_rules_dir, lang_filter);
@@ -102,11 +87,17 @@ pub fn generate_tests(
         }
     }
 
+    let eval_root = if personal_output {
+        "whetstone/.personal/evals"
+    } else {
+        "whetstone/evals"
+    };
+
     let next_commands: Vec<String> = by_language
         .keys()
         .filter_map(|lang| match lang.as_str() {
-            "python" => Some("python3 -m pytest whetstone/evals/python/ -v".to_string()),
-            "typescript" => Some("npx vitest run whetstone/evals/typescript/".to_string()),
+            "python" => Some(format!("python3 -m pytest {eval_root}/python/ -v")),
+            "typescript" => Some(format!("npx vitest run {eval_root}/typescript/")),
             "rust" => Some("cargo test --test whetstone_evals".to_string()),
             _ => None,
         })
@@ -178,9 +169,7 @@ fn generate_python(
     let ruff_rules = extract_lint_proxy_codes(rules, "ruff");
     if !ruff_rules.is_empty() {
         let ruff_content = generate_ruff_config(&ruff_rules);
-        let ruff_path = output_base
-            .join("lint")
-            .join("ruff.whetstone.toml");
+        let ruff_path = output_base.join("lint").join("ruff.whetstone.toml");
         if write_generated(&ruff_path, &ruff_content, dry_run) {
             lint_configs.push(serde_json::json!({
                 "path": ruff_path.display().to_string(),
@@ -381,9 +370,7 @@ fn generate_typescript(
     let biome_rules = extract_lint_proxy_codes(rules, "biome");
     if !biome_rules.is_empty() {
         let biome_content = generate_biome_config(&biome_rules);
-        let biome_path = output_base
-            .join("lint")
-            .join("biome.whetstone.json");
+        let biome_path = output_base.join("lint").join("biome.whetstone.json");
         if write_generated(&biome_path, &biome_content, dry_run) {
             lint_configs.push(serde_json::json!({
                 "path": biome_path.display().to_string(),
@@ -456,14 +443,15 @@ fn generate_ts_test(rule: &ApprovedRule) -> String {
                     // Real regex check using the rule's match field. Escape backticks
                     // so the regex can live inside a TypeScript template literal safely.
                     let escaped = pattern.replace('\\', "\\\\").replace('`', "\\`");
-                    lines.push(format!(
-                        "    const pattern = new RegExp(`{escaped}`);"
-                    ));
+                    lines.push(format!("    const pattern = new RegExp(`{escaped}`);"));
                     lines.push("    for (const file of files) {".to_string());
                     lines.push("      const lines = readLines(file);".to_string());
                     lines.push("      lines.forEach((line, idx) => {".to_string());
                     lines.push("        if (pattern.test(line)) {".to_string());
-                    lines.push("          violations.push(`${file}:${idx + 1}: ${line.trim()}`);".to_string());
+                    lines.push(
+                        "          violations.push(`${file}:${idx + 1}: ${line.trim()}`);"
+                            .to_string(),
+                    );
                     lines.push("        }".to_string());
                     lines.push("      });".to_string());
                     lines.push("    }".to_string());
@@ -562,9 +550,7 @@ fn generate_rust(
     let clippy_rules = extract_lint_proxy_codes(rules, "clippy");
     if !clippy_rules.is_empty() {
         let clippy_content = generate_clippy_config(&clippy_rules);
-        let clippy_path = output_base
-            .join("lint")
-            .join("clippy.whetstone.toml");
+        let clippy_path = output_base.join("lint").join("clippy.whetstone.toml");
         if write_generated(&clippy_path, &clippy_content, dry_run) {
             lint_configs.push(serde_json::json!({
                 "path": clippy_path.display().to_string(),
@@ -656,9 +642,7 @@ fn generate_rust_test(rule: &ApprovedRule) -> String {
                         "            for (line_num, line) in content.lines().enumerate() {"
                             .to_string(),
                     );
-                    lines.push(
-                        "                if pattern.is_match(line) {".to_string(),
-                    );
+                    lines.push("                if pattern.is_match(line) {".to_string());
                     lines.push(
                         "                    violations.push(format!(\"{}:{}: {}\", file.display(), line_num + 1, line.trim()));".to_string(),
                     );

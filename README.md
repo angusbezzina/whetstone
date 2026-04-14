@@ -167,7 +167,7 @@ for (line_num, line) in content.lines().enumerate() {
 }
 ```
 
-Run `cargo test` and the test catches any `Client::new()` calls without explicit timeouts. Meanwhile, `AGENTS.md` tells your AI coding agent to use timeouts from the start — enforcement before AND after code is written, from the same approved rule.
+Run `cargo test` and the test catches any `Client::new()` calls without explicit timeouts. Meanwhile, the generated context under `whetstone/context/AGENTS.md` tells your AI coding agent to use timeouts from the start — enforcement before AND after code is written, from the same approved rule.
 
 ## Canonical Workflow
 
@@ -253,7 +253,7 @@ Shipped commands (primary name first, aliases in parentheses):
 | `patterns` | `detect-patterns` | Mine style patterns from transcripts/git/PRs | `--sources`, `--since`, `--quiet`, `--global-transcripts` |
 | `update` | — | Update the `whetstone` binary to the latest release | `--check`, `--force` |
 
-All commands accept `--project-dir` (default: `.`) and `--json` (auto-enabled when piped). Human-readable progress goes to stderr. JSON responses include a `next_command` field suggesting what to run next.
+Project-scoped commands accept `--project-dir` (default: `.`), and all commands support `--json` (auto-enabled when piped). Human-readable progress goes to stderr. JSON responses include a `next_command` field suggesting what to run next.
 
 > **Python is not a runtime dependency.** Every user-facing command ships from the Rust binary. Archived Python reference implementations live under `scripts/legacy/` solely so `tests/test_script_contracts.py` can parity-test the Rust ports.
 
@@ -290,9 +290,9 @@ See [`references/rule-schema.yaml`](references/rule-schema.yaml) for the full sc
 
 | Output | Location | Purpose |
 |--------|----------|---------|
-| Tests | `whetstone/tests/` | Native test files (pytest/vitest/cargo) |
+| Tests | `whetstone/evals/` | Native test files (pytest/vitest/cargo) |
 | Lint configs | `whetstone/lint/` | Ruff/biome/clippy configuration fragments |
-| Agent context | `AGENTS.md`, `CLAUDE.md`, `.cursorrules` | Instructions for AI coding agents |
+| Agent context | `whetstone/context/` | Generated AGENTS.md / CLAUDE.md / .cursorrules / Copilot / Windsurf / Codex instructions |
 
 ### Status output
 
@@ -424,7 +424,7 @@ Whetstone is designed to complement — not replace — your existing toolchain.
 | **ruff / biome / clippy** | Enforces syntax, formatting, and general code quality rules | Whetstone catches dependency-specific practices these linters don't know about. Where a linter rule exists but isn't enabled, Whetstone generates a lint overlay to enable it. |
 | **PR review bots** (reviewdog, danger, etc.) | Automated checks on pull requests | Whetstone generates the rules these bots enforce. Run `wh ci` in CI for freshness gating alongside your existing checks. |
 | **AI code review** (CodeRabbit, Copilot review, etc.) | LLM-powered code review | Whetstone provides deterministic, source-backed rules that don't vary between runs. Use it for the checks you want to enforce consistently, AI review for everything else. |
-| **AGENTS.md / .cursorrules** | Static agent instructions | Whetstone auto-generates and keeps these files current. When dependencies update, your agent instructions update too. |
+| **`whetstone/context/*`** | Static agent instructions | Whetstone auto-generates and keeps these files current. When dependencies update, your agent instructions update too. |
 | **Semgrep / CodeQL** | Custom static analysis rules | For TypeScript and Rust, Whetstone can generate signal patterns that map to Semgrep rules. For Python, Whetstone's pytest-based checks are simpler to maintain. |
 
 ### What Whetstone adds that nothing else does
@@ -462,7 +462,7 @@ sources:
 Custom sources appear in the doctor output for extraction. Each rule you extract from them gets tagged with `source_kind` for filtering.
 
 **What happens if I don't install Whetstone?**
-Nothing breaks. The generated tests, lint configs, and agent context files are standard files in your repo. They run with your existing CI and work with any agent that reads `AGENTS.md` or `.cursorrules`.
+Nothing breaks. The generated tests, lint configs, and agent context files are standard files in your repo. They run with your existing CI, and the generated agent context lives under `whetstone/context/` (or `whetstone/.personal/context/` for personal-only output).
 
 **How do I update rules when dependencies change?**
 Run `wh status` or `wh ci` to see which dependencies have drifted. Then run `wh refresh` (or `wh doctor --changed-only`) to re-resolve only what changed, and re-extract rules against the new content. Use `wh refresh --check` in CI to fail a build when drift is detected.
@@ -499,7 +499,7 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - Agent-mediated rule extraction with structured approval flow and explicit candidate handoff
 - Test generation with real regex checks (via `match` field on signals) for Python, TypeScript, and Rust
 - Lint overlay generation (ruff, biome, clippy)
-- Agent context generation (AGENTS.md, CLAUDE.md, .cursorrules, copilot, windsurf, codex)
+- Agent context generation under `whetstone/context/` (AGENTS.md, CLAUDE.md, .cursorrules, copilot, windsurf, codex)
 - Source attribution: `content_origin` (how fetched) + `source_kind` (what kind of source)
 - Health monitoring with drift detection, freshness scoring, and metric history
 - CI integration via GitHub Action with PR comments

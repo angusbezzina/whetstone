@@ -30,8 +30,8 @@ fn detect_target() -> Result<&'static str> {
 /// Fetch the latest release tag from GitHub.
 fn fetch_latest_version() -> Result<String> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
-    let json = http::http_get_json(&url, 15)
-        .context("Failed to fetch latest release from GitHub")?;
+    let json =
+        http::http_get_json(&url, 15).context("Failed to fetch latest release from GitHub")?;
     let tag = json
         .get("tag_name")
         .and_then(|v| v.as_str())
@@ -48,11 +48,7 @@ fn download_bytes(url: &str, show_progress: bool) -> Result<Vec<u8>> {
 
     let resp = client.get(url).send()?;
     if !resp.status().is_success() {
-        bail!(
-            "Download failed: HTTP {} from {}",
-            resp.status(),
-            url
-        );
+        bail!("Download failed: HTTP {} from {}", resp.status(), url);
     }
 
     let total_size = resp.content_length().unwrap_or(0);
@@ -102,9 +98,7 @@ fn verify_checksum(binary_bytes: &[u8], checksums_text: &str, binary_name: &str)
     let actual = format!("{:x}", hasher.finalize());
 
     if actual != expected {
-        bail!(
-            "Checksum mismatch:\n  expected: {expected}\n  actual:   {actual}"
-        );
+        bail!("Checksum mismatch:\n  expected: {expected}\n  actual:   {actual}");
     }
     Ok(())
 }
@@ -120,8 +114,7 @@ fn replace_binary(new_bytes: &[u8], target_path: &PathBuf) -> Result<()> {
 
     // Write new binary to temp file
     {
-        let mut f = fs::File::create(&tmp_path)
-            .context("Failed to create temp file for update")?;
+        let mut f = fs::File::create(&tmp_path).context("Failed to create temp file for update")?;
         f.write_all(new_bytes)
             .context("Failed to write update binary")?;
     }
@@ -153,7 +146,11 @@ pub fn check_and_update(force: bool, check_only: bool) -> Result<serde_json::Val
     let is_current = current_version == latest_version;
 
     if check_only || (is_current && !force) {
-        let status = if is_current { "up_to_date" } else { "update_available" };
+        let status = if is_current {
+            "up_to_date"
+        } else {
+            "update_available"
+        };
         return Ok(serde_json::json!({
             "status": status,
             "current_version": current_version,
@@ -180,23 +177,20 @@ pub fn check_and_update(force: bool, check_only: bool) -> Result<serde_json::Val
     let binary_name = format!("whetstone-{target}");
 
     if show_progress {
-        eprintln!(
-            "Updating {current_version} → {latest_version} ({target})"
-        );
+        eprintln!("Updating {current_version} → {latest_version} ({target})");
     }
 
     // Step 3: download binary + checksums
-    let binary_url = format!(
-        "https://github.com/{REPO}/releases/download/{latest_version}/{binary_name}"
-    );
+    let binary_url =
+        format!("https://github.com/{REPO}/releases/download/{latest_version}/{binary_name}");
     let checksums_url = format!(
         "https://github.com/{REPO}/releases/download/{latest_version}/checksums-sha256.txt"
     );
 
     let binary_bytes = download_bytes(&binary_url, show_progress)?;
 
-    let checksums_text = http::http_get(&checksums_url, 30)
-        .context("Failed to download checksums")?;
+    let checksums_text =
+        http::http_get(&checksums_url, 30).context("Failed to download checksums")?;
 
     // Step 4: verify checksum
     verify_checksum(&binary_bytes, &checksums_text, &binary_name)?;
@@ -225,9 +219,7 @@ pub fn check_and_update(force: bool, check_only: bool) -> Result<serde_json::Val
     }
 
     if show_progress {
-        eprintln!(
-            "Updated to {latest_version}!"
-        );
+        eprintln!("Updated to {latest_version}!");
     }
 
     Ok(serde_json::json!({

@@ -77,8 +77,8 @@ The binary does all deterministic work. The agent does all judgment. The user ha
 | `wh init` | Detect dependencies — or run `--personal` / `--hooks` / `--ci` setup | JSON: deps list with counts, or setup report |
 | `wh set-sources` | Resolve docs URLs | JSON: source content + cache stats |
 | `wh validate` | Check rule YAML schema | Pass/fail per rule |
-| `wh context` | Generate agent context files (`--personal` for personal-only output) | AGENTS.md, CLAUDE.md, .cursorrules, etc. |
-| `wh tests` | Generate test files + lint configs (`--personal` for personal-only output) | pytest, vitest, cargo test files |
+| `wh context` | Generate agent context files (`--personal` for personal-only output) | `whetstone/context/*` by default; `whetstone/.personal/context/*` with `--personal` |
+| `wh tests` | Generate test files + lint configs (`--personal` for personal-only output) | `whetstone/evals/**` + `whetstone/lint/*` by default; `whetstone/.personal/evals/**` with `--personal` |
 | `wh layers` | Show the 4-layer merge summary + per-rule provenance | JSON |
 | `wh promote` | Move a rule between layers (`--to personal\|project\|team`) | JSON |
 | `wh eval generate` | Generate AI eval definitions | YAML files for rules with ai signals |

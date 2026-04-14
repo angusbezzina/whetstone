@@ -105,15 +105,25 @@ pub struct CustomSource {
 
 impl WhetstoneConfig {
     pub fn load(project_dir: &Path) -> Self {
+        Self::load_inner(project_dir, true)
+    }
+
+    pub fn load_project_only(project_dir: &Path) -> Self {
+        Self::load_inner(project_dir, false)
+    }
+
+    fn load_inner(project_dir: &Path, include_global: bool) -> Self {
         let mut merged = Self::default();
 
         // Global defaults kick in first; project overrides pile on top.
-        let global = GlobalConfig::load();
-        if !global.default_formats.is_empty() {
-            merged.generate.formats = global.default_formats.clone();
+        if include_global {
+            let global = GlobalConfig::load();
+            if !global.default_formats.is_empty() {
+                merged.generate.formats = global.default_formats.clone();
+            }
+            merged.sources.custom.extend(global.sources.custom.clone());
+            merged.deny.extend(global.deny.clone());
         }
-        merged.sources.custom.extend(global.sources.custom.clone());
-        merged.deny.extend(global.deny.clone());
 
         let candidates = [
             project_dir.join("whetstone").join("whetstone.yaml"),

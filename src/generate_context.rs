@@ -31,7 +31,10 @@ pub fn generate_context(
     dry_run: bool,
     personal_output: bool,
 ) -> Result<Value> {
-    let whetstone_config_exists = project_dir.join("whetstone").join("whetstone.yaml").exists()
+    let whetstone_config_exists = project_dir
+        .join("whetstone")
+        .join("whetstone.yaml")
+        .exists()
         || project_dir.join("whetstone.yaml").exists();
     let config = WhetstoneConfig::load(project_dir);
     let paths = crate::layers::LayerPaths::for_project(project_dir);
@@ -42,28 +45,13 @@ pub fn generate_context(
         let (rules, warns) = crate::layers::load_personal_only(project_dir, lang_filter);
         (rules, paths.personal_context(), warns)
     } else if whetstone_config_exists {
-        let (mut layers, warns) = crate::layers::LayerSet::load(project_dir, lang_filter, true);
-        // Committed context never carries personal rules.
-        layers.personal.clear();
-
-        if !config.extends.is_empty() {
-            let resolution = crate::team::resolve(project_dir, &config.extends, false)
-                .ok()
-                .map(|r| r.rules_dirs)
-                .unwrap_or_default();
-            for dir in resolution {
-                let (mut rules, _) = rules::load_approved_rules(&dir, lang_filter);
-                layers.team.append(&mut rules);
-            }
-        }
-
-        let denies = crate::layers::load_denies(project_dir);
-        let merged = layers
-            .merge(&denies)
-            .into_iter()
-            .map(|lr| lr.rule)
-            .collect();
-        (merged, paths.whetstone_dir.join("context"), warns)
+        let merged = crate::layers::resolve_merged(project_dir, lang_filter, true, false, false);
+        let approved = merged.merged.into_iter().map(|lr| lr.rule).collect();
+        (
+            approved,
+            paths.whetstone_dir.join("context"),
+            merged.warnings,
+        )
     } else {
         // Fixtures / minimal test projects with no whetstone.yaml fall back to
         // project rules only, matching legacy behaviour.

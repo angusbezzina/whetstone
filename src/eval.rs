@@ -59,11 +59,7 @@ pub struct ThresholdResult {
 /// Evaluate threshold gating for a rule against file content.
 /// Returns auto_pass, auto_fail, or ambiguous based on how many
 /// deterministic signals fire.
-pub fn evaluate_thresholds(
-    rule: &ApprovedRule,
-    file_path: &str,
-    content: &str,
-) -> ThresholdResult {
+pub fn evaluate_thresholds(rule: &ApprovedRule, file_path: &str, content: &str) -> ThresholdResult {
     let deterministic_signals: Vec<&crate::rules::ApprovedSignal> = rule
         .signals
         .iter()
@@ -117,26 +113,26 @@ pub fn generate_eval_definitions(
     let rules_dir = project_dir.join("whetstone").join("rules");
     let output_dir = project_dir.join("whetstone").join("evals").join("ai");
 
-    let (approved, _) = rules::load_approved_rules(&rules_dir, lang_filter);
-
-    // Merge built-in rules
-    let whetstone_config_exists = project_dir.join("whetstone").join("whetstone.yaml").exists()
+    let whetstone_config_exists = project_dir
+        .join("whetstone")
+        .join("whetstone.yaml")
+        .exists()
         || project_dir.join("whetstone.yaml").exists();
     let approved = if whetstone_config_exists {
-        let config = crate::config::WhetstoneConfig::load(project_dir);
-        let builtin = crate::builtin::load_builtin_rules();
-        let (builtin_approved, _) = rules::approved_from_loaded(&builtin, lang_filter);
-        crate::builtin::merge_approved_rules(&builtin_approved, &approved, &config.deny)
+        crate::layers::resolve_merged(project_dir, lang_filter, true, true, false)
+            .merged
+            .into_iter()
+            .map(|lr| lr.rule)
+            .collect()
     } else {
+        let (approved, _) = rules::load_approved_rules(&rules_dir, lang_filter);
         approved
     };
 
     // Filter to rules with ai signals or ai_eval
     let eval_rules: Vec<&ApprovedRule> = approved
         .iter()
-        .filter(|r| {
-            r.ai_eval.is_some() || r.signals.iter().any(|s| s.strategy == "ai")
-        })
+        .filter(|r| r.ai_eval.is_some() || r.signals.iter().any(|s| s.strategy == "ai"))
         .collect();
 
     if eval_rules.is_empty() {
@@ -241,17 +237,19 @@ pub fn run_evals(
     let rules_dir = project_dir.join("whetstone").join("rules");
     let state_dir = project_dir.join("whetstone").join(".state");
 
-    let (approved, _) = rules::load_approved_rules(&rules_dir, lang_filter);
-
-    // Merge built-in
-    let whetstone_config_exists = project_dir.join("whetstone").join("whetstone.yaml").exists()
+    let whetstone_config_exists = project_dir
+        .join("whetstone")
+        .join("whetstone.yaml")
+        .exists()
         || project_dir.join("whetstone.yaml").exists();
     let approved = if whetstone_config_exists {
-        let config = crate::config::WhetstoneConfig::load(project_dir);
-        let builtin = crate::builtin::load_builtin_rules();
-        let (builtin_approved, _) = rules::approved_from_loaded(&builtin, lang_filter);
-        crate::builtin::merge_approved_rules(&builtin_approved, &approved, &config.deny)
+        crate::layers::resolve_merged(project_dir, lang_filter, true, true, false)
+            .merged
+            .into_iter()
+            .map(|lr| lr.rule)
+            .collect()
     } else {
+        let (approved, _) = rules::load_approved_rules(&rules_dir, lang_filter);
         approved
     };
 
@@ -456,11 +454,7 @@ fn collect_verdicts(project_dir: &Path) -> Result<Value> {
 // ─── Calibration ───
 
 /// Calibrate AI eval prompts against golden examples.
-pub fn calibrate(
-    project_dir: &Path,
-    lang_filter: Option<&str>,
-    collect: bool,
-) -> Result<Value> {
+pub fn calibrate(project_dir: &Path, lang_filter: Option<&str>, collect: bool) -> Result<Value> {
     let state_dir = project_dir.join("whetstone").join(".state");
 
     if collect {
@@ -468,13 +462,24 @@ pub fn calibrate(
     }
 
     let rules_dir = project_dir.join("whetstone").join("rules");
-    let (approved, _) = rules::load_approved_rules(&rules_dir, lang_filter);
+    let whetstone_config_exists = project_dir
+        .join("whetstone")
+        .join("whetstone.yaml")
+        .exists()
+        || project_dir.join("whetstone.yaml").exists();
+    let approved = if whetstone_config_exists {
+        crate::layers::resolve_merged(project_dir, lang_filter, true, true, false)
+            .merged
+            .into_iter()
+            .map(|lr| lr.rule)
+            .collect()
+    } else {
+        let (approved, _) = rules::load_approved_rules(&rules_dir, lang_filter);
+        approved
+    };
 
     // Filter to rules with ai_eval
-    let eval_rules: Vec<&ApprovedRule> = approved
-        .iter()
-        .filter(|r| r.ai_eval.is_some())
-        .collect();
+    let eval_rules: Vec<&ApprovedRule> = approved.iter().filter(|r| r.ai_eval.is_some()).collect();
 
     if eval_rules.is_empty() {
         return Ok(serde_json::json!({
@@ -557,7 +562,21 @@ fn collect_calibration(project_dir: &Path) -> Result<Value> {
 
     // Load golden examples to compare
     let rules_dir = project_dir.join("whetstone").join("rules");
-    let (approved, _) = rules::load_approved_rules(&rules_dir, None);
+    let whetstone_config_exists = project_dir
+        .join("whetstone")
+        .join("whetstone.yaml")
+        .exists()
+        || project_dir.join("whetstone.yaml").exists();
+    let approved = if whetstone_config_exists {
+        crate::layers::resolve_merged(project_dir, None, true, true, false)
+            .merged
+            .into_iter()
+            .map(|lr| lr.rule)
+            .collect()
+    } else {
+        let (approved, _) = rules::load_approved_rules(&rules_dir, None);
+        approved
+    };
 
     let mut golden_map: HashMap<String, String> = HashMap::new();
     for rule in &approved {

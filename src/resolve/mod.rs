@@ -558,7 +558,9 @@ pub fn format_human_output(result: &Value) -> String {
         .map(|a| a.len())
         .unwrap_or(0);
 
-    lines.push(format!("Resolved {total} dependencies ({llms_count} with llms.txt)"));
+    lines.push(format!(
+        "Resolved {total} dependencies ({llms_count} with llms.txt)"
+    ));
     if failed > 0 {
         lines.push(format!("{failed} failed to resolve"));
     }
@@ -590,18 +592,12 @@ pub fn format_human_output(result: &Value) -> String {
 
 /// Resolve custom sources from config. Each custom URL is fetched directly
 /// (llms.txt probe first, then HTML conversion fallback).
-pub fn resolve_custom_sources(
-    custom: &[crate::config::CustomSource],
-    timeout: u64,
-) -> Vec<Value> {
+pub fn resolve_custom_sources(custom: &[crate::config::CustomSource], timeout: u64) -> Vec<Value> {
     custom
         .iter()
         .filter_map(|src| {
             let url = &src.url;
-            let name = src
-                .name
-                .as_deref()
-                .unwrap_or(url.as_str());
+            let name = src.name.as_deref().unwrap_or(url.as_str());
 
             // Try llms.txt first
             let (content, llms_url, source_type) = probe_llms_txt(url, timeout);

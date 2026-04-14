@@ -376,14 +376,23 @@ fn test_help_output() {
     assert!(success);
     // New command names
     assert!(stdout.contains("init"), "help should contain 'init'");
-    assert!(stdout.contains("set-sources"), "help should contain 'set-sources'");
+    assert!(
+        stdout.contains("set-sources"),
+        "help should contain 'set-sources'"
+    );
     assert!(stdout.contains("doctor"), "help should contain 'doctor'");
     assert!(stdout.contains("status"), "help should contain 'status'");
     assert!(stdout.contains("context"), "help should contain 'context'");
     assert!(stdout.contains("tests"), "help should contain 'tests'");
     assert!(stdout.contains("ci"), "help should contain 'ci'");
-    assert!(stdout.contains("validate"), "help should contain 'validate'");
-    assert!(stdout.contains("patterns"), "help should contain 'patterns'");
+    assert!(
+        stdout.contains("validate"),
+        "help should contain 'validate'"
+    );
+    assert!(
+        stdout.contains("patterns"),
+        "help should contain 'patterns'"
+    );
 }
 
 #[test]
@@ -923,10 +932,8 @@ fn test_installed_binary_style_usage_from_outside_repo() {
 #[test]
 fn test_validate_rules_passes_on_repo() {
     let repo_root = env!("CARGO_MANIFEST_DIR");
-    let (stdout, _stderr, success) = run_whetstone(
-        &["validate-rules", "--project-dir", repo_root],
-        repo_root,
-    );
+    let (stdout, _stderr, success) =
+        run_whetstone(&["validate-rules", "--project-dir", repo_root], repo_root);
     assert!(
         success,
         "validate-rules should succeed on repo fixtures; output:\n{stdout}"
@@ -940,10 +947,7 @@ fn test_validate_rules_passes_on_repo() {
 fn test_validate_rules_fails_on_bad_fixture() {
     // Synthesize a throwaway project with a broken rule fixture and confirm
     // the validator surfaces it and exits non-zero.
-    let tmp = std::env::temp_dir().join(format!(
-        "whetstone_validate_fail_{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("whetstone_validate_fail_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(tmp.join("references")).unwrap();
     std::fs::create_dir_all(tmp.join("tests/fixtures/whetstone/rules/python")).unwrap();
@@ -1028,8 +1032,7 @@ fn git_init_with_style_commits(dir: &std::path::Path) {
 
 #[test]
 fn test_detect_patterns_git_contract() {
-    let tmp =
-        std::env::temp_dir().join(format!("whetstone_patterns_git_{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("whetstone_patterns_git_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
 
@@ -1101,10 +1104,8 @@ fn test_detect_patterns_python_parity_git() {
         return; // Python/yaml unavailable — skip, consistent with existing parity tests.
     }
 
-    let tmp = std::env::temp_dir().join(format!(
-        "whetstone_patterns_parity_{}",
-        std::process::id()
-    ));
+    let tmp =
+        std::env::temp_dir().join(format!("whetstone_patterns_parity_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     git_init_with_style_commits(&tmp);
@@ -1129,12 +1130,7 @@ fn test_detect_patterns_python_parity_git() {
     }
     let py_output = std::process::Command::new("python3")
         .arg(&py_script)
-        .args([
-            "--sources",
-            "git",
-            "--project-dir",
-            tmp.to_str().unwrap(),
-        ])
+        .args(["--sources", "git", "--project-dir", tmp.to_str().unwrap()])
         .current_dir(&tmp)
         .output()
         .expect("run python detect-patterns");
@@ -1247,7 +1243,13 @@ fn test_refresh_on_empty_project_no_drift() {
     let diff: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&diff_path).unwrap()).unwrap();
     assert_eq!(diff["version"], 1, "diff must set version=1");
-    for key in ["generated_at", "drift_count", "changed", "removed", "failed"] {
+    for key in [
+        "generated_at",
+        "drift_count",
+        "changed",
+        "removed",
+        "failed",
+    ] {
         assert!(diff.get(key).is_some(), "refresh-diff missing key: {key}");
     }
     assert_eq!(diff["drift_count"], 0, "empty project has no drift");
@@ -1399,10 +1401,7 @@ rules:
 
 #[test]
 fn test_eval_generate_dry_run_reports_ai_rules() {
-    let tmp = std::env::temp_dir().join(format!(
-        "whetstone_eval_gen_{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("whetstone_eval_gen_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     write_ai_eval_rule_project(&tmp);
@@ -1430,10 +1429,7 @@ fn test_eval_generate_dry_run_reports_ai_rules() {
 #[test]
 fn test_eval_generate_no_ai_rules_emits_message() {
     // Project with a deterministic-only rule; no ai_eval config anywhere.
-    let tmp = std::env::temp_dir().join(format!(
-        "whetstone_eval_no_ai_{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("whetstone_eval_no_ai_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(tmp.join("whetstone/rules/rust")).unwrap();
     std::fs::write(
@@ -1498,10 +1494,7 @@ rules:
 
 #[test]
 fn test_eval_run_deterministic_only_reports_violations() {
-    let tmp = std::env::temp_dir().join(format!(
-        "whetstone_eval_det_{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("whetstone_eval_det_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     write_ai_eval_rule_project(&tmp);
@@ -1517,7 +1510,10 @@ fn test_eval_run_deterministic_only_reports_violations() {
         ],
         project,
     );
-    assert!(success, "eval run --deterministic-only should succeed:\n{stdout}");
+    assert!(
+        success,
+        "eval run --deterministic-only should succeed:\n{stdout}"
+    );
     let result = parse_json(&stdout);
     assert_eq!(result["status"], "ok");
 
@@ -1537,19 +1533,14 @@ fn test_eval_run_deterministic_only_reports_violations() {
 
 #[test]
 fn test_eval_run_ai_path_writes_requests() {
-    let tmp = std::env::temp_dir().join(format!(
-        "whetstone_eval_ai_{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("whetstone_eval_ai_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     write_ai_eval_rule_project(&tmp);
 
     let project = tmp.to_str().unwrap();
-    let (stdout, _stderr, success) = run_whetstone(
-        &["eval", "run", "--project-dir", project],
-        project,
-    );
+    let (stdout, _stderr, success) =
+        run_whetstone(&["eval", "run", "--project-dir", project], project);
     assert!(success, "eval run should succeed:\n{stdout}");
     let result = parse_json(&stdout);
     assert_eq!(result["status"], "ok");
@@ -1580,10 +1571,7 @@ fn test_eval_run_ai_path_writes_requests() {
 
 #[test]
 fn test_eval_run_collect_merges_verdicts() {
-    let tmp = std::env::temp_dir().join(format!(
-        "whetstone_eval_collect_{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("whetstone_eval_collect_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     write_ai_eval_rule_project(&tmp);
@@ -1620,19 +1608,14 @@ fn test_eval_run_collect_merges_verdicts() {
 
 #[test]
 fn test_eval_calibrate_writes_requests() {
-    let tmp = std::env::temp_dir().join(format!(
-        "whetstone_eval_cal_{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("whetstone_eval_cal_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     write_ai_eval_rule_project(&tmp);
 
     let project = tmp.to_str().unwrap();
-    let (stdout, _stderr, success) = run_whetstone(
-        &["eval", "calibrate", "--project-dir", project],
-        project,
-    );
+    let (stdout, _stderr, success) =
+        run_whetstone(&["eval", "calibrate", "--project-dir", project], project);
     assert!(success, "eval calibrate should succeed:\n{stdout}");
     let result = parse_json(&stdout);
     assert_eq!(result["status"], "ok");
@@ -1650,10 +1633,8 @@ fn test_eval_calibrate_writes_requests() {
 
 #[test]
 fn test_eval_calibrate_collect_reports_agreement() {
-    let tmp = std::env::temp_dir().join(format!(
-        "whetstone_eval_cal_collect_{}",
-        std::process::id()
-    ));
+    let tmp =
+        std::env::temp_dir().join(format!("whetstone_eval_cal_collect_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     write_ai_eval_rule_project(&tmp);
@@ -1698,10 +1679,8 @@ fn test_eval_calibrate_collect_reports_agreement() {
 fn test_builtin_rules_merged_into_generate_context() {
     // Project with a whetstone.yaml but no project rules — context generation
     // should still emit output containing built-in Rust rules.
-    let tmp = std::env::temp_dir().join(format!(
-        "whetstone_builtin_context_{}",
-        std::process::id()
-    ));
+    let tmp =
+        std::env::temp_dir().join(format!("whetstone_builtin_context_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
     std::fs::write(
@@ -1743,10 +1722,7 @@ fn test_builtin_rules_merged_into_generate_context() {
 #[test]
 fn test_deny_excludes_builtin_rule_from_generation() {
     // Deny every built-in Rust rule id; confirm context generation emits zero rules.
-    let tmp = std::env::temp_dir().join(format!(
-        "whetstone_deny_{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("whetstone_deny_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
     std::fs::write(
@@ -1790,10 +1766,7 @@ fn test_deny_excludes_builtin_rule_from_generation() {
 fn test_project_rule_overrides_builtin_by_id() {
     // Project defines a rule whose id collides with a built-in. The merge must
     // keep the project definition (and drop the built-in version of the same id).
-    let tmp = std::env::temp_dir().join(format!(
-        "whetstone_override_{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("whetstone_override_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(tmp.join("whetstone/rules/rust")).unwrap();
     std::fs::write(
@@ -1932,8 +1905,10 @@ fn test_init_personal_creates_directory_and_gitignore() {
     let tmp = write_layer_project("whetstone_init_personal");
     let project = tmp.to_str().unwrap();
 
-    let (stdout, _stderr, success) =
-        run_whetstone(&["init", "--personal", "--json", "--project-dir", project], project);
+    let (stdout, _stderr, success) = run_whetstone(
+        &["init", "--personal", "--json", "--project-dir", project],
+        project,
+    );
     assert!(success, "init --personal should succeed:\n{stdout}");
 
     for sub in ["rules", "evals", "lint", "context"] {
@@ -1950,8 +1925,10 @@ fn test_init_personal_creates_directory_and_gitignore() {
     assert!(gitignore.contains("whetstone/.state/"));
 
     // Idempotent: a second run should not duplicate entries.
-    let (_stdout2, _, success2) =
-        run_whetstone(&["init", "--personal", "--json", "--project-dir", project], project);
+    let (_stdout2, _, success2) = run_whetstone(
+        &["init", "--personal", "--json", "--project-dir", project],
+        project,
+    );
     assert!(success2);
     let gitignore2 = std::fs::read_to_string(tmp.join(".gitignore")).unwrap();
     assert_eq!(
@@ -1984,17 +1961,21 @@ fn test_personal_rule_overrides_project_rule_by_id() {
     )
     .unwrap();
 
-    let (stdout, _, success) =
-        run_whetstone(&["layers", "--lang", "rust", "--project-dir", project], project);
+    let (stdout, _, success) = run_whetstone(
+        &["layers", "--lang", "rust", "--project-dir", project],
+        project,
+    );
     assert!(success);
     let result = parse_json(&stdout);
 
     let rules = result["rules"].as_array().unwrap();
-    let matching: Vec<&serde_json::Value> = rules
-        .iter()
-        .filter(|r| r["id"] == "rust.foo")
-        .collect();
-    assert_eq!(matching.len(), 1, "personal must collapse with project by id");
+    let matching: Vec<&serde_json::Value> =
+        rules.iter().filter(|r| r["id"] == "rust.foo").collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "personal must collapse with project by id"
+    );
     assert_eq!(matching[0]["layer"], "personal");
     assert_eq!(matching[0]["source_name"], "personal-foo");
 
@@ -2099,10 +2080,19 @@ fn test_tests_personal_flag_routes_to_personal_evals() {
     let result = parse_json(&stdout);
     let tests = result["generated"]["tests"].as_array().unwrap();
     assert!(
-        tests
-            .iter()
-            .any(|t| t["path"].as_str().unwrap_or("").contains(".personal/evals/python")),
+        tests.iter().any(|t| t["path"]
+            .as_str()
+            .unwrap_or("")
+            .contains(".personal/evals/python")),
         "personal tests must land under whetstone/.personal/evals/, got: {tests:?}"
+    );
+    assert!(
+        result["next_command"]
+            .as_str()
+            .unwrap_or("")
+            .contains("whetstone/.personal/evals/python"),
+        "personal next_command should point at .personal/evals/, got: {}",
+        result["next_command"]
     );
     assert_eq!(result["rules_count"], 1);
 
@@ -2129,8 +2119,10 @@ fn test_layer_deny_at_personal_removes_from_merged_set() {
     )
     .unwrap();
 
-    let (stdout, _, ok) =
-        run_whetstone(&["layers", "--lang", "rust", "--project-dir", project], project);
+    let (stdout, _, ok) = run_whetstone(
+        &["layers", "--lang", "rust", "--project-dir", project],
+        project,
+    );
     assert!(ok);
     let result = parse_json(&stdout);
     let ids: Vec<&str> = result["rules"]
@@ -2142,6 +2134,113 @@ fn test_layer_deny_at_personal_removes_from_merged_set() {
     assert!(
         !ids.contains(&"rust.foo"),
         "personal deny should filter rust.foo out of the merged set"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_personal_deny_does_not_affect_committed_generation() {
+    let tmp = write_layer_project("whetstone_personal_deny_generation");
+    let project = tmp.to_str().unwrap();
+
+    std::fs::create_dir_all(tmp.join("whetstone/rules/rust")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/rules/rust/foo.yaml"),
+        approved_rule_yaml("rust.foo", "foo", "FOO"),
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(tmp.join("whetstone/.personal")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/.personal/config.yaml"),
+        "deny:\n  - rust.foo\n",
+    )
+    .unwrap();
+
+    let (stdout, _, ok) = run_whetstone(
+        &[
+            "tests",
+            "--dry-run",
+            "--json",
+            "--lang",
+            "rust",
+            "--project-dir",
+            project,
+        ],
+        project,
+    );
+    assert!(ok, "tests should succeed:\n{stdout}");
+    let result = parse_json(&stdout);
+    let tests = result["generated"]["tests"].as_array().unwrap();
+    assert!(
+        tests.iter().any(|entry| entry["rule_id"] == "rust.foo"),
+        "personal deny must not remove project rules from committed generation: {result}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_team_deny_filters_builtins_in_layer_merge() {
+    let tmp = write_layer_project("whetstone_team_deny");
+    let project = tmp.to_str().unwrap();
+
+    std::fs::create_dir_all(tmp.join("whetstone/.team")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/.team/config.yaml"),
+        "deny:\n  - rust.expect-over-unwrap\n",
+    )
+    .unwrap();
+
+    let (stdout, _, ok) = run_whetstone(
+        &["layers", "--lang", "rust", "--project-dir", project],
+        project,
+    );
+    assert!(ok, "layers should succeed:\n{stdout}");
+    let result = parse_json(&stdout);
+    let ids: Vec<&str> = result["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["id"].as_str())
+        .collect();
+    assert!(
+        !ids.contains(&"rust.expect-over-unwrap"),
+        "team deny should filter builtin rule out of merged layers: {ids:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_eval_generate_includes_personal_rules_in_layered_view() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_eval_personal_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    write_ai_eval_rule_project(&tmp);
+
+    std::fs::create_dir_all(tmp.join("whetstone/.personal/rules/python")).unwrap();
+    std::fs::rename(
+        tmp.join("whetstone/rules/python/example.yaml"),
+        tmp.join("whetstone/.personal/rules/python/example.yaml"),
+    )
+    .unwrap();
+
+    let project = tmp.to_str().unwrap();
+    let (stdout, _stderr, success) = run_whetstone(
+        &["eval", "generate", "--dry-run", "--project-dir", project],
+        project,
+    );
+    assert!(
+        success,
+        "eval generate should include personal rules locally:\n{stdout}"
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(
+        result["eval_count"], 1,
+        "personal ai_eval rule should be visible to local eval workflows"
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
@@ -2205,8 +2304,10 @@ fn test_promote_project_to_team_shows_up_in_team_layer() {
     );
     assert!(ok);
 
-    let (stdout, _, ok2) =
-        run_whetstone(&["layers", "--lang", "rust", "--project-dir", project], project);
+    let (stdout, _, ok2) = run_whetstone(
+        &["layers", "--lang", "rust", "--project-dir", project],
+        project,
+    );
     assert!(ok2);
     let result = parse_json(&stdout);
     let matching: Vec<&serde_json::Value> = result["rules"]
@@ -2326,13 +2427,66 @@ fn test_extends_parse_forms() {
     )
     .unwrap();
 
-    let (stdout, _, ok) =
-        run_whetstone(&["layers", "--lang", "rust", "--project-dir", project], project);
+    let (stdout, _, ok) = run_whetstone(
+        &["layers", "--lang", "rust", "--project-dir", project],
+        project,
+    );
     assert!(ok, "layers should succeed with benign extends:\n{stdout}");
     let result = parse_json(&stdout);
     // whetstone:recommended is the embedded built-in layer; the built-in rust rules still show up.
     let built_in_count = result["summary"]["built-in"].as_u64().unwrap_or(0);
-    assert!(built_in_count >= 1, "built-in layer should still contribute");
+    assert!(
+        built_in_count >= 1,
+        "built-in layer should still contribute"
+    );
+    let team_resolution = result["team_resolution"].as_array().unwrap();
+    assert!(
+        team_resolution
+            .iter()
+            .any(|entry| entry["status"] == "not_implemented"),
+        "registry extends should surface explicit not_implemented status: {team_resolution:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_generation_surfaces_warning_for_unresolved_extends() {
+    let tmp = write_layer_project("whetstone_extends_warning");
+    let project = tmp.to_str().unwrap();
+
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "discovery:\n  exclude: []\nextends:\n  - \"@future/registry\"\n",
+    )
+    .unwrap();
+
+    let (stdout, _, ok) = run_whetstone(
+        &[
+            "context",
+            "--dry-run",
+            "--json",
+            "--lang",
+            "rust",
+            "--project-dir",
+            project,
+        ],
+        project,
+    );
+    assert!(
+        ok,
+        "context should succeed even when extends are unresolved:\n{stdout}"
+    );
+    let result = parse_json(&stdout);
+    let warnings = result["warnings"].as_array().unwrap();
+    assert!(
+        warnings.iter().any(|w| {
+            w.as_str()
+                .unwrap_or("")
+                .contains("@future/registry: not_implemented")
+        }),
+        "generation should surface unresolved extends as warnings: {warnings:?}"
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -2361,13 +2515,7 @@ fn test_global_config_deny_merges_into_project() {
         p
     };
     let output = std::process::Command::new(&bin)
-        .args([
-            "layers",
-            "--lang",
-            "rust",
-            "--project-dir",
-            project,
-        ])
+        .args(["layers", "--lang", "rust", "--project-dir", project])
         .current_dir(project)
         .env("HOME", home.to_str().unwrap())
         .output()
@@ -2401,10 +2549,7 @@ fn test_global_config_deny_merges_into_project() {
 
 #[test]
 fn test_detect_patterns_quiet_mode() {
-    let tmp = std::env::temp_dir().join(format!(
-        "whetstone_patterns_quiet_{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("whetstone_patterns_quiet_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
 
@@ -2425,7 +2570,8 @@ fn test_detect_patterns_quiet_mode() {
     let result = parse_json(&stdout);
     assert!(result["patterns"].as_array().unwrap().is_empty());
     assert_eq!(
-        result["next_command"], "No patterns found. Proceed to extraction."
+        result["next_command"],
+        "No patterns found. Proceed to extraction."
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
