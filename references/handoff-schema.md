@@ -87,9 +87,9 @@ against the delta instead of re-reading every source.
     {
       "name": "pydantic",
       "language": "python",
-      "previous_version": "2.6.4",
+      "previous_version": null,
       "current_version": "2.7.0",
-      "previous_content_hash": "sha256:aaa",
+      "previous_content_hash": null,
       "current_content_hash": "sha256:bbb",
       "changed_sections": ["changelog", "readme"],
       "affected_rule_ids": ["pydantic.schema-method", "pydantic.validate-assignment"],
@@ -118,8 +118,10 @@ against the delta instead of re-reading every source.
   drift = exit 1).
 - `affected_rule_ids` lists approved rules that cite the changed dep's source;
   the agent should review each for possible deprecation.
-- `previous_content_hash` / `current_content_hash` let an agent decide whether
-  extraction is worthwhile even on version bumps (unchanged hash = skip).
+- `previous_version` and `previous_content_hash` are **optional** — the
+  shipped writer leaves them `null` because the cache is overwritten during
+  refresh before the diff is assembled. A future enhancement can snapshot the
+  pre-refresh cache; readers MUST tolerate `null` in these fields.
 
 ---
 

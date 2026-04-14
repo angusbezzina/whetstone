@@ -172,44 +172,8 @@ rules:
         verdict: fail
         reason: "Non-null assertion on profile — throws if profile is undefined"
 
-  - id: typescript.prefer-const
-    severity: should
-    confidence: high
-    category: convention
-    source_kind: official_docs
-    description: >
-      SHOULD declare with `const` when a binding is never reassigned. `const`
-      communicates intent and prevents accidental reassignment.
-    source_url: "https://www.typescriptlang.org/docs/handbook/variable-declarations.html#const-declarations"
-    risk: >
-      `let` declarations that are never reassigned mislead readers and make
-      future reassignment bugs harder to spot.
-    linter_gap: >
-      biome's `useConst` is recommended, but mixed ESLint-only setups may not
-      enable it.
-    approved: true
-    status: approved
-    proposed_at: "2026-04-13T00:00:00Z"
-    proposed_by: whetstone-builtin
-    signals:
-      - id: let-with-initializer-no-reassignment
-        strategy: pattern
-        description: "`let x = …` where `x` is not reassigned in the same block"
-        match: '\blet\s+\w+\s*='
-        weight: strong
-    golden_examples:
-      - code: |
-          const threshold = 42;
-          if (value > threshold) flag();
-        verdict: pass
-        reason: "const for an immutable binding"
-      - code: |
-          let counter = 0;
-          for (const n of items) counter += n;
-        verdict: pass
-        reason: "let with actual reassignment"
-      - code: |
-          let threshold = 42;
-          if (value > threshold) flag();
-        verdict: fail
-        reason: "let that is never reassigned"
+  # typescript.prefer-const intentionally omitted from the built-in baseline:
+  # correctly distinguishing "let that is never reassigned" from "let with
+  # reassignment" requires scope analysis that a single-line regex cannot
+  # express. Biome's `useConst` is recommended-by-default and covers this
+  # case natively; ESLint-only setups should enable `prefer-const` directly.

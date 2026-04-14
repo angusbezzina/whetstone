@@ -223,10 +223,11 @@ fn schedule_to_cron(schedule: &str) -> Result<String> {
     match schedule {
         "daily" => Ok("0 9 * * *".to_string()),
         "weekly" => Ok("0 9 * * 1".to_string()),
-        "biweekly" => Ok("0 9 * * 1/2".to_string()),
+        // True "every other Monday" cannot be expressed in 5-field cron; the
+        // closest stable approximation is the 1st and 15th of each month.
+        "biweekly" => Ok("0 9 1,15 * *".to_string()),
         "monthly" => Ok("0 9 1 * *".to_string()),
         other => {
-            // Treat any unknown string as a literal cron expression (5-field).
             if other.split_whitespace().count() == 5 {
                 Ok(other.to_string())
             } else {
@@ -310,14 +311,12 @@ if ! command -v wh >/dev/null 2>&1; then
     exit 0
 fi
 
-# --check-drift flag comes from `wh init` (2.1 / 2.7 in the planning).
 drift_json="$(wh init --check-drift --changed-only --json 2>/dev/null || true)"
 if [ -z "$drift_json" ]; then
     exit 0
 fi
 
-drift_count="$(printf '%s' "$drift_json" | awk -F'"changed":' '/"drift":/ {print NF; exit}' || true)"
-if printf '%s' "$drift_json" | grep -q '"manifests_changed":\s*true'; then
+if printf '%s' "$drift_json" | grep -q '"manifests_changed":[[:space:]]*true'; then
     printf 'Whetstone: dependency drift detected after merge. Run `wh refresh` to update rules.\n' >&2
 fi
 exit 0

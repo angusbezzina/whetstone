@@ -164,7 +164,10 @@ rules:
       and can exhaust a worker pool.
     linter_gap: >
       No standard linter checks library defaults. Bandit has B113 but it is
-      off-by-default in most ruff-only setups.
+      off-by-default in most ruff-only setups. Regex-only: the deterministic
+      signal only flags single-argument calls (the common footgun); multi-arg
+      calls like `requests.post(url, json=...)` without timeout need manual
+      review or an ai_eval judgment layer.
     approved: true
     status: approved
     proposed_at: "2026-04-13T00:00:00Z"
@@ -172,8 +175,8 @@ rules:
     signals:
       - id: requests-call-no-timeout
         strategy: pattern
-        description: "requests.<method>(...) call without timeout=..."
-        match: 'requests\.(get|post|put|delete|head|patch|request)\s*\([^)]*\)'
+        description: "requests.<method>(url) single-argument call — no timeout possible"
+        match: 'requests\.(get|post|put|delete|head|patch|request)\s*\(\s*[^,)]+\s*\)'
         weight: required
     golden_examples:
       - code: |
@@ -207,7 +210,10 @@ rules:
       or production with a UnicodeDecodeError that is hard to reproduce.
     linter_gap: >
       Ruff's PLW1514 covers this but is in the pylint ruleset which is not
-      enabled in most ruff-only configurations.
+      enabled in most ruff-only configurations. Regex-only: the deterministic
+      signal only flags single-argument open() calls (the common footgun);
+      multi-arg calls like `open(path, 'w')` without encoding need ruff
+      PLW1514 or a tree-sitter signal to catch.
     approved: true
     status: approved
     proposed_at: "2026-04-13T00:00:00Z"
@@ -215,8 +221,8 @@ rules:
     signals:
       - id: open-text-no-encoding
         strategy: pattern
-        description: "open(path) / open(path, 'r'|'w') call without encoding="
-        match: 'open\s*\([^)]*\)'
+        description: "open(path) single-argument call — no encoding possible"
+        match: 'open\s*\(\s*[^,)]+\s*\)'
         weight: required
     golden_examples:
       - code: |
