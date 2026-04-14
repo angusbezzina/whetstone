@@ -30,9 +30,19 @@ rules:
     proposed_by: whetstone-builtin
     signals:
       - id: shell-true-subprocess
-        strategy: pattern
-        description: "subprocess.(run|Popen|call|check_output|check_call) with shell=True"
+        strategy: ast
+        description: "subprocess.(run|Popen|call|check_output|check_call) with shell=True literal"
         match: 'subprocess\.(run|Popen|call|check_output|check_call)\s*\([^)]*shell\s*=\s*True'
+        ast_query: |
+          (call
+            function: (attribute
+              object: (identifier) @mod (#eq? @mod "subprocess")
+              attribute: (identifier) @method
+              (#match? @method "^(run|Popen|call|check_output|check_call)$"))
+            arguments: (argument_list
+              (keyword_argument
+                name: (identifier) @kw (#eq? @kw "shell")
+                value: (true)))) @match
         weight: required
     golden_examples:
       - code: |
@@ -73,9 +83,12 @@ rules:
     proposed_by: whetstone-builtin
     signals:
       - id: mutable-default-list
-        strategy: pattern
-        description: "def foo(arg=[]) or def foo(arg={}) literal default"
+        strategy: ast
+        description: "def foo(arg=[]) or def foo(arg={}) or def foo(arg=set()) literal default"
         match: 'def\s+\w+\s*\([^)]*=\s*(\[\s*\]|\{\s*\})'
+        ast_query: |
+          (default_parameter
+            value: [(list) (dictionary) (set)] @match)
         weight: required
     golden_examples:
       - code: |
@@ -121,9 +134,12 @@ rules:
     proposed_by: whetstone-builtin
     signals:
       - id: bare-except-pass
-        strategy: pattern
-        description: "except clause whose only body is `pass`"
+        strategy: ast
+        description: "except clause whose only body is `pass` (includes multi-line form)"
         match: 'except[^:]*:\s*pass\b'
+        ast_query: |
+          (except_clause
+            (block . (pass_statement) .)) @match
         weight: required
     golden_examples:
       - code: |
@@ -177,6 +193,7 @@ rules:
         strategy: pattern
         description: "requests.<method>(url) single-argument call — no timeout possible"
         match: 'requests\.(get|post|put|delete|head|patch|request)\s*\(\s*[^,)]+\s*\)'
+        ast_scope: call
         weight: required
     golden_examples:
       - code: |
@@ -223,6 +240,7 @@ rules:
         strategy: pattern
         description: "open(path) single-argument call — no encoding possible"
         match: 'open\s*\(\s*[^,)]+\s*\)'
+        ast_scope: call
         weight: required
     golden_examples:
       - code: |

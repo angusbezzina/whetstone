@@ -3176,6 +3176,37 @@ rules:
 }
 
 #[test]
+fn test_builtin_rules_use_tree_sitter_path_when_available() {
+    // Proves the post-audit upgrade: shipped built-in rules now carry
+    // `ast_query`/`ast_scope` and the wh check runner hits the tree-sitter
+    // path instead of regex. We scan the benchmark fixture that the
+    // previous audit called out as "tree-sitter wired up but unused."
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &[
+            "--json",
+            "check",
+            "benchmarks/rust/unwrap_usage/src",
+            "--lang",
+            "rust",
+            "--rule",
+            "rust.expect-over-unwrap",
+            "--no-fail",
+        ],
+        env!("CARGO_MANIFEST_DIR"),
+    );
+    let result = parse_json(&stdout);
+    let violations = result["violations"].as_array().unwrap();
+    assert!(!violations.is_empty(), "expected at least one violation");
+    for v in violations {
+        assert_eq!(
+            v["signal_check_type"],
+            "ast_query",
+            "built-in rust.expect-over-unwrap must run via tree-sitter, got: {v}"
+        );
+    }
+}
+
+#[test]
 fn test_check_finds_rust_unwrap_violation() {
     // Self-check: Whetstone's own built-in Rust rule flags `.unwrap()` calls.
     // The repo knowingly has `.unwrap()` usages for infallible regex compiles,

@@ -254,6 +254,18 @@ impl CompiledSignal {
             "regex"
         }
     }
+
+    #[cfg(test)]
+    fn new_regex(strategy: &str, pattern: &str) -> Self {
+        CompiledSignal {
+            signal_id: "s1".into(),
+            description: "test".into(),
+            strategy: strategy.into(),
+            regex: Some(regex::Regex::new(pattern).unwrap()),
+            ast_query: None,
+            ast_scope: None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -337,11 +349,14 @@ fn apply_signal(
     text: &str,
     tree: Option<&Tree>,
 ) -> Vec<SignalHit> {
+    // Preferred path: tree-sitter query. If the tree is available, we trust
+    // its result and return. If parsing failed (tree is None), fall through
+    // so a `match:` regex can still enforce the rule rather than silently
+    // letting violations slip past.
     if let Some(query_src) = &sig.ast_query {
         if let Some(tree) = tree {
             return run_ast_query(query_src, lang, tree, text);
         }
-        return Vec::new();
     }
     let re = match &sig.regex {
         Some(r) => r,
@@ -351,7 +366,8 @@ fn apply_signal(
         if let Some(tree) = tree {
             return scan_with_ast_scope(re, scope_kind, tree, text);
         }
-        return Vec::new();
+        // Tree parse failed; treat the signal as if `ast_scope` were absent
+        // rather than dropping the check entirely.
     }
     scan_lines(re, text)
 }
@@ -618,6 +634,30 @@ mod tests {
         );
         assert_eq!(hits.len(), 1, "got: {hits:?}");
         assert_eq!(hits[0].line, 4);
+    }
+
+    #[test]
+    fn ast_query_falls_back_to_regex_when_tree_is_none() {
+        // Simulate a parse failure (tree = None). With both ast_query and a
+        // `match:` regex configured, the runner must fall back to the regex
+        // so a grammar hiccup does not silently disable enforcement.
+        let sig = CompiledSignal {
+            signal_id: "s1".into(),
+            description: "unwrap".into(),
+            strategy: "ast".into(),
+            regex: Some(regex::Regex::new(r"\.unwrap\(\)").unwrap()),
+            ast_query: Some("(call_expression) @match".into()),
+            ast_scope: None,
+        };
+        let hits = apply_signal(&sig, AstLang::Rust, "let x = y.unwrap();\n", None);
+        assert_eq!(hits.len(), 1, "regex fallback should fire when tree is None");
+    }
+
+    #[test]
+    fn compiled_signal_new_regex_builds_a_usable_regex_signal() {
+        let sig = CompiledSignal::new_regex("pattern", r"\.unwrap\(\)");
+        assert!(sig.regex.is_some());
+        assert!(sig.ast_query.is_none());
     }
 
     #[test]

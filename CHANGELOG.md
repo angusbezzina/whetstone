@@ -41,6 +41,17 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ast_query` is a raw tree-sitter S-expression query (runs against the
   matched language); `ast_scope` scopes a pattern regex to a specific AST
   node kind. Existing rules continue to work unchanged.
+- **Built-in rules upgraded to tree-sitter** — every built-in where a
+  syntactic check is stricter than the regex now ships an `ast_query` or
+  `ast_scope`: Python `no-shell-true`, `mutable-default-arguments`,
+  `no-except-pass`, `no-requests-without-timeout`, `open-without-encoding`;
+  Rust `expect-over-unwrap`, `timeout-on-http-clients`, `error-context`,
+  `prefer-str-params`; TypeScript `no-any`, `no-var`, `no-non-null-assertion`.
+  The original `match:` regex is retained as a fallback so test generation
+  (`wh tests`) and grammar-failure paths still enforce the rule.
+- **`wh check` falls back to regex on tree-parse failure** — when a rule
+  has both `ast_query` and `match:` but the grammar fails to parse a file,
+  the regex fires instead of silently skipping the rule.
 
 ### Removed
 - **BREAKING**: `wh ci check` alias — `check` is now a top-level command

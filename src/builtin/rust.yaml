@@ -29,9 +29,13 @@ rules:
     proposed_by: whetstone-builtin
     signals:
       - id: bare-unwrap
-        strategy: pattern
-        description: "Detects .unwrap() calls without preceding expect or context"
+        strategy: ast
+        description: "Method call whose field is `unwrap`"
         match: '\.unwrap\s*\(\)'
+        ast_query: |
+          (call_expression
+            function: (field_expression
+              field: (field_identifier) @method (#eq? @method "unwrap"))) @match
         weight: required
     golden_examples:
       - code: |
@@ -74,6 +78,7 @@ rules:
         strategy: pattern
         description: "Client::new() or ClientBuilder without .timeout()"
         match: 'Client::new\s*\(\)'
+        ast_scope: call_expression
         weight: required
     golden_examples:
       - code: |
@@ -108,9 +113,13 @@ rules:
     proposed_by: whetstone-builtin
     signals:
       - id: map-err-pattern
-        strategy: pattern
-        description: "Detects .map_err followed by format! or anyhow! instead of .context()"
+        strategy: ast
+        description: "Method call whose field is `map_err`"
         match: '\.map_err\s*\('
+        ast_query: |
+          (call_expression
+            function: (field_expression
+              field: (field_identifier) @method (#eq? @method "map_err"))) @match
         weight: required
     golden_examples:
       - code: |
@@ -148,6 +157,11 @@ rules:
         strategy: ast
         description: "Function parameter typed as String that is only read, never mutated or moved"
         match: 'fn\s+\w+\s*\([^)]*:\s*String[^)]'
+        ast_query: |
+          (function_item
+            parameters: (parameters
+              (parameter
+                type: (type_identifier) @ty (#eq? @ty "String")) @match))
         weight: required
     golden_examples:
       - code: |

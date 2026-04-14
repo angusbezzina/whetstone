@@ -34,6 +34,7 @@ rules:
         strategy: pattern
         description: "variable or parameter annotated as `: any`"
         match: ':\s*any(\b|\[)'
+        ast_scope: type_annotation
         weight: required
     golden_examples:
       - code: |
@@ -115,9 +116,11 @@ rules:
     proposed_by: whetstone-builtin
     signals:
       - id: var-declaration
-        strategy: pattern
-        description: "`var` keyword at the start of a declaration"
+        strategy: ast
+        description: "`var` variable declaration"
         match: '(^|\s)var\s+\w+'
+        ast_query: |
+          (variable_declaration) @match
         weight: required
     golden_examples:
       - code: |
@@ -158,9 +161,11 @@ rules:
     proposed_by: whetstone-builtin
     signals:
       - id: non-null-assertion
-        strategy: pattern
-        description: "member access via !. or call on !-asserted value"
+        strategy: ast
+        description: "postfix non-null assertion operator (`!`)"
         match: '\w+!\.'
+        ast_query: |
+          (non_null_expression) @match
         weight: required
     golden_examples:
       - code: |
