@@ -2,7 +2,7 @@
 //!
 //! Tests core commands against the fixtures directory and the whetstone repo itself.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn python_has_yaml() -> bool {
@@ -2545,6 +2545,434 @@ fn test_global_config_deny_merges_into_project() {
 
     let _ = std::fs::remove_dir_all(&tmp);
     let _ = std::fs::remove_dir_all(&home);
+}
+
+// ── wh review / wh apply (lifecycle workflow) ──
+
+fn write_candidate_rule_fixture(tmp: &Path, rule_id: &str) {
+    let rules_dir = tmp.join("whetstone").join("rules").join("python");
+    std::fs::create_dir_all(&rules_dir).unwrap();
+    let yaml = format!(
+        r#"source:
+  name: example
+  docs_url: https://example.com/docs
+  version: "1.0.0"
+  content_hash: "sha256:test"
+  resolved_at: "2026-04-14T00:00:00Z"
+  registry: pypi
+
+rules:
+  - id: {rule_id}
+    severity: must
+    confidence: high
+    category: default
+    description: >
+      Test rule used by the review/apply integration suite.
+    source_url: https://example.com/docs/rule
+    approved: false
+    status: candidate
+    proposed_at: "2026-04-14T00:00:00Z"
+    proposed_by: whetstone-extraction
+    signals:
+      - id: s1
+        strategy: pattern
+        description: "demo pattern"
+        weight: required
+        match: 'TODO'
+    golden_examples:
+      - code: ""
+        verdict: pass
+        reason: "placeholder"
+"#
+    );
+    std::fs::write(rules_dir.join("example.yaml"), yaml).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone").join("whetstone.yaml"),
+        "deny: []\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn test_review_lists_candidates_by_status() {
+    let tmp = std::env::temp_dir().join(format!("wh_review_list_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    write_candidate_rule_fixture(&tmp, "example.demo");
+
+    let (stdout, _stderr, ok) =
+        run_whetstone(&["--json", "review"], tmp.to_str().unwrap());
+    assert!(ok, "wh review should succeed");
+    let result = parse_json(&stdout);
+    let candidates = result["rules"]["candidate"].as_array().unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0]["id"], "example.demo");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_apply_approve_mutates_yaml_and_logs_audit() {
+    let tmp = std::env::temp_dir().join(format!("wh_apply_approve_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    write_candidate_rule_fixture(&tmp, "example.approve");
+
+    let (stdout, _stderr, ok) = run_whetstone(
+        &["--json", "apply", "example.approve", "--approve"],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok, "wh apply --approve should succeed: {stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["action"], "applied");
+    assert_eq!(result["from"], "candidate");
+    assert_eq!(result["to"], "approved");
+
+    let yaml = std::fs::read_to_string(
+        tmp.join("whetstone")
+            .join("rules")
+            .join("python")
+            .join("example.yaml"),
+    )
+    .unwrap();
+    assert!(yaml.contains("status: approved"), "yaml: {yaml}");
+    assert!(yaml.contains("approved: true"), "yaml: {yaml}");
+
+    let log_path = tmp
+        .join("whetstone")
+        .join(".state")
+        .join("review-log.jsonl");
+    let log = std::fs::read_to_string(&log_path).unwrap();
+    assert!(log.contains("\"rule_id\":\"example.approve\""));
+    assert!(log.contains("\"to_status\":\"approved\""));
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_apply_deny_requires_reason() {
+    let tmp = std::env::temp_dir().join(format!("wh_apply_deny_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    write_candidate_rule_fixture(&tmp, "example.deny");
+
+    let (_stdout, _stderr, ok) = run_whetstone(
+        &["--json", "apply", "example.deny", "--deny"],
+        tmp.to_str().unwrap(),
+    );
+    assert!(!ok, "wh apply --deny without --reason should fail");
+
+    let (stdout, _stderr, ok) = run_whetstone(
+        &[
+            "--json",
+            "apply",
+            "example.deny",
+            "--deny",
+            "--reason",
+            "not applicable",
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok);
+    let result = parse_json(&stdout);
+    assert_eq!(result["to"], "denied");
+
+    let yaml = std::fs::read_to_string(
+        tmp.join("whetstone")
+            .join("rules")
+            .join("python")
+            .join("example.yaml"),
+    )
+    .unwrap();
+    assert!(yaml.contains("denied_reason: not applicable"), "yaml: {yaml}");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_apply_dry_run_does_not_mutate() {
+    let tmp = std::env::temp_dir().join(format!("wh_apply_dry_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    write_candidate_rule_fixture(&tmp, "example.dry");
+
+    let yaml_path = tmp
+        .join("whetstone")
+        .join("rules")
+        .join("python")
+        .join("example.yaml");
+    let before = std::fs::read_to_string(&yaml_path).unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone(
+        &[
+            "--json",
+            "apply",
+            "example.dry",
+            "--approve",
+            "--dry-run",
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok);
+    let result = parse_json(&stdout);
+    assert_eq!(result["action"], "dry_run");
+
+    let after = std::fs::read_to_string(&yaml_path).unwrap();
+    assert_eq!(before, after, "dry-run must not mutate the YAML");
+
+    let log_path = tmp
+        .join("whetstone")
+        .join(".state")
+        .join("review-log.jsonl");
+    assert!(!log_path.exists(), "dry-run must not write audit log");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_apply_rejects_illegal_backwards_transition() {
+    let tmp = std::env::temp_dir().join(format!("wh_apply_illegal_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    write_candidate_rule_fixture(&tmp, "example.back");
+
+    // Approve first
+    let (_stdout, _stderr, ok) = run_whetstone(
+        &["--json", "apply", "example.back", "--approve"],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok);
+
+    // Then attempt approve again (approved → approved is not a forward move)
+    let (stdout, _stderr, ok) = run_whetstone(
+        &["--json", "apply", "example.back", "--approve"],
+        tmp.to_str().unwrap(),
+    );
+    assert!(!ok, "re-approving an already approved rule must fail: {stdout}");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_apply_batch_from_json_file() {
+    let tmp = std::env::temp_dir().join(format!("wh_apply_batch_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    write_candidate_rule_fixture(&tmp, "example.batch1");
+
+    // Add a second rule to the same file by appending — simpler than writing a second file.
+    let yaml_path = tmp
+        .join("whetstone")
+        .join("rules")
+        .join("python")
+        .join("example.yaml");
+    let mut yaml = std::fs::read_to_string(&yaml_path).unwrap();
+    yaml.push_str(
+        "  - id: example.batch2\n    severity: should\n    confidence: high\n    category: convention\n    description: second\n    source_url: https://example.com/docs/2\n    approved: false\n    status: candidate\n    proposed_at: \"2026-04-14T00:00:00Z\"\n    signals:\n      - id: s1\n        strategy: pattern\n        description: demo\n        weight: required\n        match: 'TODO'\n    golden_examples:\n      - code: \"\"\n        verdict: pass\n        reason: placeholder\n",
+    );
+    std::fs::write(&yaml_path, &yaml).unwrap();
+
+    let batch_path = tmp.join("batch.json");
+    std::fs::write(
+        &batch_path,
+        r#"[
+          {"rule_id": "example.batch1", "action": "approve"},
+          {"rule_id": "example.batch2", "action": "deny", "reason": "nope"}
+        ]"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone(
+        &[
+            "--json",
+            "apply",
+            "--batch",
+            batch_path.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok, "batch apply should succeed: {stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["total"], 2);
+    assert_eq!(result["failed"].as_array().unwrap().len(), 0);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_review_queue_builds_from_refresh_diff() {
+    let tmp = std::env::temp_dir().join(format!("wh_review_queue_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    write_candidate_rule_fixture(&tmp, "example.queue");
+
+    // Seed a refresh-diff artifact documenting a changed dependency with an
+    // affected rule id — the queue must surface that as a stale rule.
+    let state = tmp.join("whetstone").join(".state");
+    std::fs::create_dir_all(&state).unwrap();
+    let diff = serde_json::json!({
+        "version": 1,
+        "drift_count": 1,
+        "changed": [{
+            "name": "example",
+            "language": "python",
+            "affected_rule_ids": ["example.queue"]
+        }],
+        "removed": [],
+        "failed": [],
+    });
+    std::fs::write(
+        state.join("refresh-diff.json"),
+        serde_json::to_string(&diff).unwrap(),
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) =
+        run_whetstone(&["--json", "review", "queue"], tmp.to_str().unwrap());
+    assert!(ok, "wh review queue should succeed: {stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(
+        result["summary"]["candidates_pending_review"],
+        1,
+        "result: {result}"
+    );
+    assert_eq!(result["summary"]["rules_affected_by_source_change"], 1);
+    let stale = result["stale_rules"].as_array().unwrap();
+    assert_eq!(stale[0]["rule_id"], "example.queue");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+// ── wh bench (benchmark harness) ──
+
+#[test]
+fn test_bench_runs_repo_corpus_and_reports_scenarios() {
+    let (stdout, _stderr, ok) = run_whetstone(
+        &["--json", "bench", "run"],
+        env!("CARGO_MANIFEST_DIR"),
+    );
+    assert!(ok, "bench run should succeed: {stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    let total = result["summary"]["total"].as_i64().unwrap();
+    assert!(total >= 1, "expected at least one scenario, got: {total}");
+    let scenarios = result["scenarios"].as_array().unwrap();
+    for s in scenarios {
+        let f1 = s["f1"].as_f64().unwrap();
+        assert!(
+            (f1 - 1.0).abs() < 0.001,
+            "expected F1=1.0 on repo corpus, got {f1} for {}",
+            s["scenario"]
+        );
+    }
+}
+
+#[test]
+fn test_bench_check_exits_nonzero_on_regression() {
+    // Create a corpus where the expected violations are impossible to match
+    // so every scenario fails, then verify --check exits non-zero.
+    let tmp = std::env::temp_dir().join(format!("wh_bench_regress_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    let scenario_dir = tmp.join("benchmarks").join("rust").join("regression");
+    std::fs::create_dir_all(scenario_dir.join("src")).unwrap();
+    std::fs::write(
+        scenario_dir.join("src").join("main.rs"),
+        "fn main() { println!(\"hi\"); }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        scenario_dir.join("meta.yaml"),
+        "scenario: regression\nlanguage: rust\nrules:\n  - rust.expect-over-unwrap\n",
+    )
+    .unwrap();
+    std::fs::write(
+        scenario_dir.join("expected.json"),
+        r#"{"violations": [{"rule_id": "rust.expect-over-unwrap", "file": "src/main.rs", "line": 1}]}"#,
+    )
+    .unwrap();
+
+    let bin = whetstone_bin();
+    let status = Command::new(&bin)
+        .args(["bench", "run", "--check"])
+        .current_dir(&tmp)
+        .status()
+        .unwrap();
+    assert!(
+        !status.success(),
+        "--check should exit non-zero when a scenario regresses"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+// ── wh check (rule scanning) ──
+
+#[test]
+fn test_check_finds_rust_unwrap_violation() {
+    // Self-check: Whetstone's own built-in Rust rule flags `.unwrap()` calls.
+    // The repo knowingly has `.unwrap()` usages for infallible regex compiles,
+    // so `wh check --lang rust` must report at least one violation.
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &["--json", "check", "src", "--lang", "rust", "--no-fail"],
+        env!("CARGO_MANIFEST_DIR"),
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(
+        result["status"], "violations_found",
+        "expected built-in rust.unwrap rule to fire on Whetstone's own sources"
+    );
+    let violations = result["violations"].as_array().unwrap();
+    assert!(!violations.is_empty(), "expected at least one violation");
+    let has_unwrap = violations.iter().any(|v| {
+        v.get("rule_id")
+            .and_then(|r| r.as_str())
+            .map(|r| r.contains("unwrap"))
+            .unwrap_or(false)
+    });
+    assert!(has_unwrap, "expected an unwrap-related violation: {violations:?}");
+}
+
+#[test]
+fn test_check_no_fail_exit_zero_on_violations() {
+    // With --no-fail the command reports violations but exits zero so a user
+    // can preview results without breaking CI. Without --no-fail, violations
+    // trigger exit 1.
+    let bin = whetstone_bin();
+    let ok_exit = Command::new(&bin)
+        .args(["check", "src", "--lang", "rust", "--no-fail"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .unwrap()
+        .status
+        .success();
+    assert!(ok_exit, "--no-fail should exit 0 even with violations");
+}
+
+#[test]
+fn test_check_filters_by_rule_id() {
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &[
+            "--json",
+            "check",
+            "src",
+            "--lang",
+            "rust",
+            "--rule",
+            "rust.expect-over-unwrap",
+            "--no-fail",
+        ],
+        env!("CARGO_MANIFEST_DIR"),
+    );
+    let result = parse_json(&stdout);
+    let violations = result["violations"].as_array().unwrap();
+    for v in violations {
+        assert_eq!(v["rule_id"], "rust.expect-over-unwrap");
+    }
 }
 
 #[test]

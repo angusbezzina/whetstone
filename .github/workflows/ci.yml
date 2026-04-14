@@ -110,6 +110,19 @@ jobs:
 
           echo "All action outputs verified."
 
+  bench-corpus:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Run benchmark corpus with regression gating
+        run: ./target/release/whetstone bench run --check --min-f1 1.0
+
   release-binary-validation:
     runs-on: ubuntu-latest
     steps:

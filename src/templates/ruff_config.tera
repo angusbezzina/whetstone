@@ -1,0 +1,3 @@
+# Whetstone ruff overlay — extend your ruff.toml with these rules
+[lint]
+select = [{% for code in codes %}"{{ code }}"{% if not loop.last %}, {% endif %}{% endfor %}]

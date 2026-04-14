@@ -1,0 +1,7 @@
+scenario: unwrap_usage
+language: rust
+description: |
+  Detect .unwrap() calls against the built-in rust.expect-over-unwrap rule.
+  Pass examples use .expect("reason"); fail examples call .unwrap() directly.
+rules:
+  - rust.expect-over-unwrap

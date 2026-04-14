@@ -1,27 +1,33 @@
 //! Generate agent context files from approved Whetstone rules.
 //!
-//! Reads approved rules from whetstone/rules/**/*.yaml and generates agent context
-//! files in multiple formats: CLAUDE.md, AGENTS.md, .cursorrules, copilot-instructions.md,
-//! .windsurfrules, codex.md.
+//! Reads approved rules from whetstone/rules/**/*.yaml and renders Tera
+//! templates for each requested format (CLAUDE.md, AGENTS.md, .cursorrules,
+//! copilot-instructions.md, .windsurfrules, codex.md).
 
 use anyhow::Result;
 use serde_json::Value;
 use std::path::Path;
+use tera::Context;
 
 use crate::config::WhetstoneConfig;
 use crate::rules::{self, ApprovedRule};
+use crate::templates::{build_tera, render};
 
 /// Default formats if none specified in config.
 const DEFAULT_FORMATS: &[&str] = &["agents.md"];
 
-/// All supported format names.
-const ALL_FORMATS: &[&str] = &[
-    "claude.md",
-    "agents.md",
-    ".cursorrules",
-    "copilot-instructions.md",
-    ".windsurfrules",
-    "codex.md",
+/// All supported format names and the template + filename they resolve to.
+const FORMAT_SPECS: &[(&str, &str, &str)] = &[
+    ("claude.md", "claude_md.tera", "CLAUDE.md"),
+    ("agents.md", "agents_md.tera", "AGENTS.md"),
+    (".cursorrules", "cursorrules.tera", ".cursorrules"),
+    (
+        "copilot-instructions.md",
+        "copilot_md.tera",
+        ".github/copilot-instructions.md",
+    ),
+    (".windsurfrules", "windsurfrules.tera", ".windsurfrules"),
+    ("codex.md", "codex_md.tera", "codex.md"),
 ];
 
 pub fn generate_context(
@@ -40,8 +46,6 @@ pub fn generate_context(
     let paths = crate::layers::LayerPaths::for_project(project_dir);
 
     let (approved, output_dir, warnings): (Vec<ApprovedRule>, _, Vec<String>) = if personal_output {
-        // Personal output renders ONLY the personal layer so .personal/context/
-        // never duplicates content that's already committed.
         let (rules, warns) = crate::layers::load_personal_only(project_dir, lang_filter);
         (rules, paths.personal_context(), warns)
     } else if whetstone_config_exists {
@@ -53,8 +57,6 @@ pub fn generate_context(
             merged.warnings,
         )
     } else {
-        // Fixtures / minimal test projects with no whetstone.yaml fall back to
-        // project rules only, matching legacy behaviour.
         let (approved, warns) = rules::load_approved_rules(&paths.project_rules_dir, lang_filter);
         (approved, paths.whetstone_dir.join("context"), warns)
     };
@@ -77,56 +79,60 @@ pub fn generate_context(
     };
 
     for f in &formats {
-        if !ALL_FORMATS.contains(&f.as_str()) {
+        if FORMAT_SPECS.iter().all(|(name, _, _)| *name != f.as_str()) {
+            let valid: Vec<&str> = FORMAT_SPECS.iter().map(|(n, _, _)| *n).collect();
             return Ok(serde_json::json!({
                 "status": "error",
-                "error": format!("Unknown format: '{f}'. Valid: {}", ALL_FORMATS.join(", ")),
+                "error": format!("Unknown format: '{f}'. Valid: {}", valid.join(", ")),
             }));
         }
     }
 
-    let content = generate_rules_content(&approved);
+    let tera = build_tera();
+    let (use_rules, avoid_rules) = split_rules(&approved);
+    let deps = dedup_sorted_deps(&approved);
+    let timestamp = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+    let mut ctx = Context::new();
+    ctx.insert("use_rules", &use_rules);
+    ctx.insert("avoid_rules", &avoid_rules);
+    ctx.insert("deps", &deps);
+    ctx.insert("timestamp", &timestamp);
 
     let mut generated = Vec::new();
     let mut skipped = Vec::new();
 
     for format in &formats {
-        let (filename, file_content) = generate_format(format, &content, &approved);
-
-        let output_path = output_dir.join(&filename);
+        let (template, filename) = lookup_format(format).unwrap();
+        let rendered = render(&tera, template, &ctx);
+        let output_path = output_dir.join(filename);
 
         if dry_run {
             generated.push(serde_json::json!({
                 "format": format,
                 "path": output_path.display().to_string(),
-                "lines": file_content.lines().count(),
+                "lines": rendered.lines().count(),
                 "dry_run": true,
             }));
-        } else {
-            if let Some(parent) = output_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+            continue;
+        }
+
+        if let Some(parent) = output_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::fs::write(&output_path, &rendered) {
+            Ok(()) => {
+                generated.push(serde_json::json!({
+                    "format": format,
+                    "path": output_path.display().to_string(),
+                    "lines": rendered.lines().count(),
+                }));
             }
-            match std::fs::write(&output_path, &file_content) {
-                Ok(()) => {
-                    generated.push(serde_json::json!({
-                        "format": format,
-                        "path": output_path.display().to_string(),
-                        "lines": file_content.lines().count(),
-                    }));
-                }
-                Err(e) => {
-                    skipped.push(format!("Failed to write {}: {e}", output_path.display()));
-                }
+            Err(e) => {
+                skipped.push(format!("Failed to write {}: {e}", output_path.display()));
             }
         }
     }
-
-    let dep_names: Vec<&str> = {
-        let mut names: Vec<&str> = approved.iter().map(|r| r.source_name.as_str()).collect();
-        names.sort();
-        names.dedup();
-        names
-    };
 
     let next_command = if generated.is_empty() {
         "wh doctor"
@@ -139,19 +145,21 @@ pub fn generate_context(
         "generated": generated,
         "skipped": skipped,
         "rules_count": approved.len(),
-        "dependencies": dep_names,
+        "dependencies": deps,
         "formats": formats,
         "warnings": warnings,
         "next_command": next_command,
     }))
 }
 
-struct RulesContent {
-    use_rules: Vec<ContentRule>,
-    avoid_rules: Vec<ContentRule>,
+fn lookup_format(name: &str) -> Option<(&'static str, &'static str)> {
+    FORMAT_SPECS
+        .iter()
+        .find(|(n, _, _)| *n == name)
+        .map(|(_, tpl, file)| (*tpl, *file))
 }
 
-#[allow(dead_code)]
+#[derive(serde::Serialize)]
 struct ContentRule {
     id: String,
     description: String,
@@ -163,7 +171,7 @@ struct ContentRule {
     fail_examples: Vec<String>,
 }
 
-fn generate_rules_content(approved: &[ApprovedRule]) -> RulesContent {
+fn split_rules(approved: &[ApprovedRule]) -> (Vec<ContentRule>, Vec<ContentRule>) {
     let mut use_rules = Vec::new();
     let mut avoid_rules = Vec::new();
 
@@ -192,7 +200,6 @@ fn generate_rules_content(approved: &[ApprovedRule]) -> RulesContent {
             fail_examples,
         };
 
-        // "migration" and "breaking-change" are avoid-rules; others are use-rules
         if matches!(rule.category.as_str(), "migration" | "breaking-change") {
             avoid_rules.push(cr);
         } else {
@@ -200,140 +207,12 @@ fn generate_rules_content(approved: &[ApprovedRule]) -> RulesContent {
         }
     }
 
-    RulesContent {
-        use_rules,
-        avoid_rules,
-    }
+    (use_rules, avoid_rules)
 }
 
-fn generate_format(
-    format: &str,
-    content: &RulesContent,
-    approved: &[ApprovedRule],
-) -> (String, String) {
-    let header = format_header(format);
-    let body = format_rules_body(content);
-    let dep_names: Vec<&str> = {
-        let mut names: Vec<&str> = approved.iter().map(|r| r.source_name.as_str()).collect();
-        names.sort();
-        names.dedup();
-        names
-    };
-    let footer = format_footer(format, &dep_names);
-
-    let filename = match format {
-        "claude.md" => "CLAUDE.md",
-        "agents.md" => "AGENTS.md",
-        ".cursorrules" => ".cursorrules",
-        "copilot-instructions.md" => ".github/copilot-instructions.md",
-        ".windsurfrules" => ".windsurfrules",
-        "codex.md" => "codex.md",
-        _ => "rules.md",
-    };
-
-    let full_content = format!("{header}\n\n{body}\n\n{footer}\n");
-    (filename.to_string(), full_content)
-}
-
-fn format_header(format: &str) -> String {
-    let preamble = match format {
-        "claude.md" => "# Whetstone Rules\n\nThe following rules are derived from dependency documentation and should be followed.",
-        "agents.md" => "# Whetstone Rules\n\nThese rules are extracted from dependency documentation by Whetstone. Follow them when writing code.",
-        ".cursorrules" => "# Whetstone Rules\n\nFollow these dependency-specific rules when writing code:",
-        "copilot-instructions.md" => "# Whetstone Rules\n\nThese rules are derived from dependency documentation:",
-        ".windsurfrules" => "# Whetstone Rules\n\nFollow these dependency-specific rules:",
-        "codex.md" => "# Whetstone Rules\n\nThese rules come from dependency documentation and must be followed:",
-        _ => "# Whetstone Rules",
-    };
-    preamble.to_string()
-}
-
-fn format_rules_body(content: &RulesContent) -> String {
-    let mut lines = Vec::new();
-
-    if !content.use_rules.is_empty() {
-        lines.push("## Do".to_string());
-        lines.push(String::new());
-        for rule in &content.use_rules {
-            lines.push(format!("### {} ({})", rule.id, rule.severity));
-            lines.push(String::new());
-            lines.push(rule.description.clone());
-            lines.push(String::new());
-
-            if !rule.pass_examples.is_empty() {
-                lines.push("**Good:**".to_string());
-                for ex in &rule.pass_examples {
-                    lines.push("```".to_string());
-                    lines.push(ex.clone());
-                    lines.push("```".to_string());
-                }
-                lines.push(String::new());
-            }
-
-            if !rule.fail_examples.is_empty() {
-                lines.push("**Bad:**".to_string());
-                for ex in &rule.fail_examples {
-                    lines.push("```".to_string());
-                    lines.push(ex.clone());
-                    lines.push("```".to_string());
-                }
-                lines.push(String::new());
-            }
-
-            lines.push(format!("Source: {}", rule.source_url));
-            lines.push(String::new());
-        }
-    }
-
-    if !content.avoid_rules.is_empty() {
-        lines.push("## Don't".to_string());
-        lines.push(String::new());
-        for rule in &content.avoid_rules {
-            lines.push(format!("### {} ({})", rule.id, rule.severity));
-            lines.push(String::new());
-            lines.push(rule.description.clone());
-            lines.push(String::new());
-
-            if !rule.fail_examples.is_empty() {
-                lines.push("**Avoid:**".to_string());
-                for ex in &rule.fail_examples {
-                    lines.push("```".to_string());
-                    lines.push(ex.clone());
-                    lines.push("```".to_string());
-                }
-                lines.push(String::new());
-            }
-
-            if !rule.pass_examples.is_empty() {
-                lines.push("**Instead:**".to_string());
-                for ex in &rule.pass_examples {
-                    lines.push("```".to_string());
-                    lines.push(ex.clone());
-                    lines.push("```".to_string());
-                }
-                lines.push(String::new());
-            }
-
-            lines.push(format!("Source: {}", rule.source_url));
-            lines.push(String::new());
-        }
-    }
-
-    lines.join("\n")
-}
-
-fn format_footer(format: &str, dep_names: &[&str]) -> String {
-    let deps_str = dep_names.join(", ");
-    let timestamp = chrono::Utc::now().format("%Y-%m-%d").to_string();
-
-    match format {
-        "claude.md" | "agents.md" => {
-            format!(
-                "---\n\n*Generated by [Whetstone](https://github.com/angusbezzina/whetstone) on {timestamp} from: {deps_str}*"
-            )
-        }
-        _ => {
-            format!("<!-- Generated by Whetstone on {timestamp} from: {deps_str} -->")
-        }
-    }
+fn dedup_sorted_deps(approved: &[ApprovedRule]) -> Vec<String> {
+    let mut names: Vec<String> = approved.iter().map(|r| r.source_name.clone()).collect();
+    names.sort();
+    names.dedup();
+    names
 }

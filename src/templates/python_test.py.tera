@@ -1,0 +1,38 @@
+"""Whetstone evals for dependency: {{ source_name }}."""
+
+import re
+
+
+{% for rule in rules -%}
+# Rule: {{ rule.id }} — {{ rule.short_desc }}
+{% for sig in rule.signals -%}
+{%- if sig.strategy == "pattern" or sig.strategy == "ast" %}
+def test_{{ rule.safe_id }}_signal_{{ loop.index0 }}(python_source_files):
+    """Signal: {{ sig.description }} ({{ sig.strategy }})"""
+    violations = []
+    for filepath in python_source_files:
+        with open(filepath, encoding="utf-8") as f:
+            for lineno, line in enumerate(f, 1):
+{%- if sig.match_pattern %}
+                if re.search(r"""{{ sig.match_pattern | re_escape_py }}""", line):
+                    violations.append(f"{filepath}:{lineno}: {line.strip()}")
+{%- else %}
+                pass  # TODO: add `match:` regex to rule {{ rule.id }} signal {{ sig.id }} to enable this check.
+{%- endif %}
+{%- if sig.strategy == "ast" %}
+    # NOTE: ast signal regex fallback — replace with tree-sitter when available.
+{%- endif %}
+    assert not violations, f"{len(violations)} violation(s) for {{ rule.id }}: {violations[:5]}"
+
+{% elif sig.strategy == "lint_proxy" -%}
+# Signal {{ loop.index0 }}: {{ sig.description }} — deferred to ruff linter config
+
+{% elif sig.strategy == "ai" -%}
+# Signal {{ loop.index0 }}: {{ sig.description }} — deferred to `wh eval run`
+
+{% else -%}
+# Signal {{ loop.index0 }}: {{ sig.description }} — {{ sig.strategy }} (not auto-testable)
+
+{% endif -%}
+{% endfor -%}
+{% endfor -%}

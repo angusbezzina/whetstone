@@ -1,0 +1,6 @@
+scenario: mutable_default
+language: python
+description: |
+  Detect mutable default arguments against python.mutable-default-arguments.
+rules:
+  - python.mutable-default-arguments

@@ -1,0 +1,4 @@
+# Whetstone clippy overlay
+{% for lint in lints -%}
+warn = ["{{ lint }}"]
+{% endfor -%}

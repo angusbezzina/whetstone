@@ -1,0 +1,48 @@
+import { describe, it, expect } from 'vitest';
+import { findSourceFiles, readLines } from './setup';
+
+{% for rule in rules -%}
+describe('{{ rule.id | ts_escape_quote }}', () => {
+{% for sig in rule.signals -%}
+{%- if sig.strategy == "pattern" or sig.strategy == "ast" %}
+  it('signal {{ loop.index0 }}: {{ sig.description | ts_escape_quote }}', () => {
+    const files = findSourceFiles();
+    const violations: string[] = [];
+{%- if sig.match_pattern %}
+    const pattern = new RegExp(`{{ sig.match_pattern | re_escape_ts }}`);
+    for (const file of files) {
+      const lines = readLines(file);
+      lines.forEach((line, idx) => {
+        if (pattern.test(line)) {
+          violations.push(`${file}:${idx + 1}: ${line.trim()}`);
+        }
+      });
+    }
+{%- else %}
+    for (const file of files) {
+      const lines = readLines(file);
+      lines.forEach((line, idx) => {
+        // TODO: add `match:` regex to rule {{ rule.id }} signal {{ sig.id }} to enable this check.
+      });
+    }
+{%- endif %}
+{%- if sig.strategy == "ast" %}
+    // NOTE: ast signal regex fallback — upgrade to tree-sitter when available.
+{%- endif %}
+    expect(violations).toEqual([]);  // {{ rule.id }}
+  });
+
+{% elif sig.strategy == "lint_proxy" -%}
+  // signal {{ loop.index0 }}: {{ sig.description }} — deferred to biome config
+
+{% elif sig.strategy == "ai" -%}
+  // signal {{ loop.index0 }}: {{ sig.description }} — deferred to `wh eval run`
+
+{% else -%}
+  // signal {{ loop.index0 }}: {{ sig.description }} — {{ sig.strategy }} (not auto-testable)
+
+{% endif -%}
+{% endfor -%}
+});
+
+{% endfor -%}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://biomejs.dev/schemas/1.9.0/schema.json",
+  "linter": {
+    "rules": {
+{%- for category, rules in groups %}
+      "{{ category }}": {
+{%- for r in rules %}
+        "{{ r }}": "error"{% if not loop.last %},{% endif %}
+{%- endfor %}
+      }{% if not loop.last %},{% endif %}
+{%- endfor %}
+    }
+  }
+}

@@ -2,8 +2,8 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    ci_check, detect, detect_patterns, doctor, eval, generate_context, generate_tests, layers,
-    output, personal, resolve, rules, status, triggers, update,
+    bench, check, ci_check, detect, detect_patterns, doctor, eval, generate_context,
+    generate_tests, layers, output, personal, resolve, review, rules, status, triggers, update,
 };
 
 #[derive(Parser)]
@@ -19,6 +19,16 @@ struct Cli {
 
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Subcommand)]
+enum ReviewAction {
+    /// Show full context for a single rule
+    Show {
+        rule_id: String,
+    },
+    /// Build a review queue from extraction-handoff + refresh-diff artifacts
+    Queue,
 }
 
 #[derive(Subcommand)]
@@ -315,8 +325,30 @@ enum Commands {
         global_transcripts: bool,
     },
 
+    /// Scan source files for rule violations using tree-sitter and regex signals
+    Check {
+        /// Paths to scan (defaults to the project directory)
+        paths: Vec<PathBuf>,
+
+        /// Project root directory (used to locate whetstone/rules/)
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Filter by language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Only run the named rule (may be repeated; comma-separated accepted)
+        #[arg(long)]
+        rule: Option<String>,
+
+        /// Treat violations as exit-zero (for preview runs)
+        #[arg(long)]
+        no_fail: bool,
+    },
+
     /// Lightweight freshness check for CI/CD
-    #[command(name = "ci", visible_alias = "check", alias = "ci-check")]
+    #[command(name = "ci", alias = "ci-check")]
     Ci {
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -375,6 +407,97 @@ enum Commands {
         /// Preview without writing files
         #[arg(long)]
         dry_run: bool,
+    },
+
+    /// Review rules by lifecycle status (candidate / approved / denied / deprecated)
+    Review {
+        #[command(subcommand)]
+        action: Option<ReviewAction>,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Filter by status when no subcommand is supplied
+        #[arg(long)]
+        status: Option<String>,
+
+        /// Filter by language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
+    },
+
+    /// Apply a lifecycle transition to a rule (approve / deny / deprecate / supersede)
+    Apply {
+        /// Rule id to transition
+        rule_id: Option<String>,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Approve the rule (candidate → approved)
+        #[arg(long, conflicts_with_all = ["deny", "deprecate", "supersede", "batch"])]
+        approve: bool,
+
+        /// Deny the rule (candidate → denied). Requires --reason.
+        #[arg(long, conflicts_with_all = ["approve", "deprecate", "supersede", "batch"])]
+        deny: bool,
+
+        /// Deprecate the rule (approved → deprecated). Requires --reason.
+        #[arg(long, conflicts_with_all = ["approve", "deny", "supersede", "batch"])]
+        deprecate: bool,
+
+        /// Supersede: deprecate and record superseded_by. Requires --superseded-by.
+        #[arg(long, conflicts_with_all = ["approve", "deny", "deprecate", "batch"])]
+        supersede: bool,
+
+        /// Reason for denial or deprecation (required for --deny / --deprecate / --supersede)
+        #[arg(long)]
+        reason: Option<String>,
+
+        /// Replacement rule id (required for --supersede)
+        #[arg(long = "superseded-by")]
+        superseded_by: Option<String>,
+
+        /// Record this actor in the audit log
+        #[arg(long)]
+        actor: Option<String>,
+
+        /// Batch file (JSON array of {rule_id, action, reason?, superseded_by?})
+        #[arg(long)]
+        batch: Option<PathBuf>,
+
+        /// Preview the transition without writing files
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Run rule-quality benchmark corpus and report precision/recall/F1
+    Bench {
+        /// Action: run | snapshot
+        #[arg(default_value = "run")]
+        action: String,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Corpus directory (defaults to <project_dir>/benchmarks)
+        #[arg(long)]
+        corpus_dir: Option<PathBuf>,
+
+        /// Only run scenarios whose name contains this substring
+        #[arg(long)]
+        scenario: Option<String>,
+
+        /// Minimum F1 score per scenario before failing (0..=1)
+        #[arg(long, default_value_t = 1.0)]
+        min_f1: f64,
+
+        /// Exit non-zero if any scenario regresses below --min-f1
+        #[arg(long)]
+        check: bool,
     },
 
     /// Update whetstone to the latest release
@@ -874,6 +997,52 @@ pub fn run() -> i32 {
             }
         }
 
+        Commands::Check {
+            paths,
+            project_dir,
+            lang,
+            rule,
+            no_fail,
+        } => {
+            let scan_paths: Vec<PathBuf> = if paths.is_empty() {
+                vec![project_dir.clone()]
+            } else {
+                paths
+            };
+            let rule_filter: Option<Vec<String>> =
+                rule.map(|s| s.split(',').map(|r| r.trim().to_string()).collect());
+            match check::run(check::CheckOptions {
+                project_dir: &project_dir,
+                scan_paths: &scan_paths,
+                lang_filter: lang.as_deref(),
+                rule_filter: rule_filter.as_deref(),
+            }) {
+                Ok(result) => {
+                    let violations_count = result
+                        .get("violations_count")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    if json_mode {
+                        output::print_json(&result);
+                    } else {
+                        println!("{}", check::format_human_output(&result));
+                    }
+                    if violations_count > 0 && !no_fail {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "Check project directory and whetstone/rules/ contents",
+                    ));
+                    1
+                }
+            }
+        }
+
         Commands::Ci {
             project_dir,
             pr_comment,
@@ -1082,6 +1251,156 @@ pub fn run() -> i32 {
             });
             output::print_json(&result);
             0
+        }
+
+        Commands::Review {
+            action,
+            project_dir,
+            status,
+            lang,
+        } => {
+            let result = match action {
+                Some(ReviewAction::Show { rule_id }) => review::show(&project_dir, &rule_id),
+                Some(ReviewAction::Queue) => review::queue(&project_dir),
+                None => review::list(review::ReviewListOptions {
+                    project_dir: &project_dir,
+                    status_filter: status.as_deref(),
+                    lang_filter: lang.as_deref(),
+                }),
+            };
+            match result {
+                Ok(value) => {
+                    if json_mode {
+                        output::print_json(&value);
+                    } else {
+                        print!("{}", review::format_list(&value));
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(&e.to_string(), "wh review --help"));
+                    1
+                }
+            }
+        }
+
+        Commands::Apply {
+            rule_id,
+            project_dir,
+            approve,
+            deny,
+            deprecate,
+            supersede,
+            reason,
+            superseded_by,
+            actor,
+            batch,
+            dry_run,
+        } => {
+            if let Some(batch_path) = batch {
+                let result = review::apply_batch(&project_dir, &batch_path, dry_run);
+                return match result {
+                    Ok(v) => {
+                        output::print_json(&v);
+                        0
+                    }
+                    Err(e) => {
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "wh apply --batch <file.json>",
+                        ));
+                        1
+                    }
+                };
+            }
+
+            let rule_id = match rule_id {
+                Some(id) => id,
+                None => {
+                    output::print_json(&output::error_json(
+                        "rule_id required",
+                        "wh apply <rule-id> --approve|--deny|--deprecate|--supersede",
+                    ));
+                    return 1;
+                }
+            };
+
+            let transition = match (approve, deny, deprecate, supersede) {
+                (true, false, false, false) => review::Transition::Approve,
+                (false, true, false, false) => review::Transition::Deny,
+                (false, false, true, false) => review::Transition::Deprecate,
+                (false, false, false, true) => review::Transition::Supersede,
+                _ => {
+                    output::print_json(&output::error_json(
+                        "pick exactly one of --approve, --deny, --deprecate, --supersede",
+                        "wh apply <rule-id> --approve",
+                    ));
+                    return 1;
+                }
+            };
+
+            match review::apply(review::ApplyOptions {
+                project_dir: &project_dir,
+                rule_id: &rule_id,
+                transition,
+                reason: reason.as_deref(),
+                superseded_by: superseded_by.as_deref(),
+                actor: actor.as_deref(),
+                dry_run,
+            }) {
+                Ok(value) => {
+                    output::print_json(&value);
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(&e.to_string(), "wh apply --help"));
+                    1
+                }
+            }
+        }
+
+        Commands::Bench {
+            action,
+            project_dir,
+            corpus_dir,
+            scenario,
+            min_f1,
+            check: fail_on_regress,
+        } => {
+            let result = bench::run(bench::BenchOptions {
+                project_dir: &project_dir,
+                corpus_dir: corpus_dir.as_deref(),
+                scenario_filter: scenario.as_deref(),
+                min_f1,
+            });
+            match result {
+                Ok(value) => {
+                    if action == "snapshot" {
+                        if let Err(e) = bench::snapshot(&project_dir, &value) {
+                            eprintln!("Warning: failed to write bench snapshot: {e}");
+                        }
+                    }
+                    let failing = value
+                        .get("summary")
+                        .and_then(|s| s.get("failing"))
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    if json_mode {
+                        output::print_json(&value);
+                    } else {
+                        print!("{}", bench::format_human_output(&value));
+                    }
+                    if fail_on_regress && failing > 0 {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(&e.to_string(), "wh bench --help"));
+                    1
+                }
+            }
         }
 
         Commands::Update { check, force } => match update::check_and_update(force, check) {

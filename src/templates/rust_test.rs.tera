@@ -1,0 +1,69 @@
+//! Whetstone evals for dependency: {{ source_name }}
+
+use std::fs;
+use std::path::Path;
+
+fn find_rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                if !matches!(name.as_ref(), "target" | ".git" | "whetstone") {
+                    files.extend(find_rust_files(&path));
+                }
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+    }
+    files
+}
+
+{% for rule in rules -%}
+// Rule: {{ rule.id }} — {{ rule.short_desc }}
+{% for sig in rule.signals -%}
+{%- if sig.strategy == "pattern" or sig.strategy == "ast" %}
+#[test]
+fn test_{{ rule.safe_id }}_signal_{{ loop.index0 }}() {
+    // Signal: {{ sig.description }} ({{ sig.strategy }})
+    let files = find_rust_files(Path::new("src"));
+    let mut violations = Vec::new();
+{%- if sig.strategy == "ast" %}
+    // NOTE: ast signal regex fallback — upgrade to tree-sitter when available.
+{%- endif %}
+{%- if sig.match_pattern %}
+    let pattern = regex::Regex::new(r"{{ sig.match_pattern | re_escape_rust }}").unwrap();
+    for file in &files {
+        if let Ok(content) = fs::read_to_string(file) {
+            for (line_num, line) in content.lines().enumerate() {
+                if pattern.is_match(line) {
+                    violations.push(format!("{}:{}: {}", file.display(), line_num + 1, line.trim()));
+                }
+            }
+        }
+    }
+{%- else %}
+    for file in &files {
+        if let Ok(content) = fs::read_to_string(file) {
+            // TODO: add `match:` regex to rule {{ rule.id }} signal {{ sig.id }} to enable this check.
+            let _ = content;
+        }
+    }
+{%- endif %}
+    assert!(violations.is_empty(), "{} violations for {{ rule.id }}:\n{}", violations.len(), violations.join("\n"));
+}
+
+{% elif sig.strategy == "lint_proxy" -%}
+// Signal {{ loop.index0 }}: {{ sig.description }} — deferred to clippy config
+
+{% elif sig.strategy == "ai" -%}
+// Signal {{ loop.index0 }}: {{ sig.description }} — deferred to `wh eval run`
+
+{% else -%}
+// Signal {{ loop.index0 }}: {{ sig.description }} — {{ sig.strategy }} (not auto-testable)
+
+{% endif -%}
+{% endfor -%}
+{% endfor -%}

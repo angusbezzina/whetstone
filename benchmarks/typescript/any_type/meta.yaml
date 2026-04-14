@@ -1,0 +1,6 @@
+scenario: any_type
+language: typescript
+description: |
+  Typescript benchmark scenario — used to confirm the runner enumerates
+  typescript sources even when the shipped ruleset does not emit violations.
+rules: []

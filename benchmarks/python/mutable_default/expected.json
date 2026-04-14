@@ -1,0 +1,6 @@
+{
+  "violations": [
+    {"rule_id": "python.mutable-default-arguments", "file": "src/app.py", "line": 1},
+    {"rule_id": "python.mutable-default-arguments", "file": "src/app.py", "line": 6}
+  ]
+}
