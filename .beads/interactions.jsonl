@@ -223,3 +223,5 @@
 {"id":"int-b292fd31","kind":"field_change","created_at":"2026-04-14T18:32:50.179151Z","actor":"Angus Bezzina","issue_id":"whetstone-f76","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-b37ca237","kind":"field_change","created_at":"2026-04-14T18:52:38.053943Z","actor":"Angus Bezzina","issue_id":"whetstone-k34","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-375fdb55","kind":"field_change","created_at":"2026-04-14T19:05:25.415667Z","actor":"Angus Bezzina","issue_id":"whetstone-k34","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-19ddb118","kind":"field_change","created_at":"2026-04-15T16:19:18.387681Z","actor":"Angus Bezzina","issue_id":"whetstone-e8l","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-f5518a33","kind":"field_change","created_at":"2026-04-15T16:21:15.463459Z","actor":"Angus Bezzina","issue_id":"whetstone-e8l","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}

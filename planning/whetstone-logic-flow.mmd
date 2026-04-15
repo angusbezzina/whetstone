@@ -1,116 +1,113 @@
 %%{ init: { "theme": "base", "themeVariables": { "fontSize": "14px" } } }%%
 flowchart TD
     %% ═══════════════════════════════════════
-    %% WHETSTONE: CLI as Structured Oracle
+    %% WHETSTONE: CURRENT LOGIC FLOW
     %%
-    %% Green  = Binary (deterministic, --json)
-    %% Orange = Agent  (judgment, via SKILL.md)
-    %% Blue   = User   (approval decisions)
-    %% Grey   = Future (eval system)
+    %% Green  = Binary (shipped deterministic commands)
+    %% Orange = Agent  (judgment via SKILL.md)
+    %% Blue   = User   (approval / preference decisions)
+    %% Grey   = TBD    (future / not yet shipped)
     %% ═══════════════════════════════════════
 
-    START([User: "Run whetstone" / "Extract rules"])
+    START([User: "run whetstone" / "extract rules"]) --> DOCTOR["`**wh doctor --json**
+    Detect manifests
+    Resolve docs + changelogs
+    Cache + rank deps
+    Write extraction-handoff.json`"]
 
-    %% ─── STEP 1: DISCOVER ───
-    START --> DOCTOR["`**wh doctor --json**
-    Detect deps from manifests
-    Resolve docs from registries
-    Probe for llms.txt
-    Cache everything
-    Return: summary + readiness`"]
+    DOCTOR --> AGENT_EXTRACT["`**Agent reads extraction handoff**
+    Reviews docs sections
+    Applies extraction prompt
+    Proposes candidate rules
+    Writes candidate YAML`"]
 
-    DOCTOR --> AGENT_EXTRACT["`**Agent reads summary + content**
-    Doctor output includes fetched content
-    (llms.txt, README, or HTML-converted)
-    Identifies ready deps
-    Applies extraction prompt per dep:
-    High confidence or silence
-    Max 5 rules per dep
-    Every rule needs deterministic signal
-    Cite source URLs
-    Generate golden examples`"]
+    AGENT_EXTRACT --> REVIEW["`**wh review**
+    List candidate / approved / denied / deprecated
+    Show rule cards
+    Build refresh review queue`"]
+    REVIEW --> USER{User reviews
+candidate policy}
+    USER -->|Approve / Deny /
+Deprecate / Supersede| APPLY["`**wh apply**
+    Persist lifecycle transition
+    Append review-log.jsonl audit trail`"]
+    USER -->|Edit candidate| AGENT_EDIT[Agent edits YAML
+per feedback] --> REVIEW
 
-    %% ─── STEP 3: APPROVE ───
-    AGENT_EXTRACT --> AGENT_PRESENT["`**Agent presents candidates**
-    Rule card per candidate:
-    description, severity, confidence,
-    signals, examples, source link`"]
+    APPLY --> VALIDATE["`**wh validate --json**
+    Schema + fixture checks`"]
+    VALIDATE -->|Fix issues| AGENT_FIX[Agent fixes YAML
+or signals] --> VALIDATE
+    VALIDATE --> GENERATE["`**wh context + wh tests**
+    Generate agent context
+    Generate eval/test files
+    Generate lint overlays`"]
 
-    AGENT_PRESENT --> USER{User reviews\neach rule}
-    USER -->|Approve| WRITE[Agent writes rule YAML\nto whetstone/rules/]
-    USER -->|Edit| EDIT[Agent adjusts\nper feedback] --> WRITE
-    USER -->|Deny| SKIP[Skip — move on]
+    GENERATE --> CHECK["`**wh check**
+    Tree-sitter AST queries
+    AST-scoped regex checks
+    lint_proxy config verification`"]
+    CHECK --> EVAL["`**wh eval run / calibrate**
+    Deterministic + AI-assisted checks
+    eval-requests / verdicts handoff
+    Calibration against golden examples`"]
+    EVAL --> STATUS["`**wh status --json**
+    Health score
+    Freshness / drift / coverage
+    Metrics history`"]
+    STATUS --> DONE([Done — rules enforced,
+agents informed,
+policy tracked])
 
-    %% ─── STEP 4: VALIDATE ───
-    WRITE --> VALIDATE["`**wh validate --json**
-    Schema check all rules`"]
-    VALIDATE -->|Fail| FIX[Agent reads error\nfixes YAML] --> VALIDATE
-    VALIDATE -->|Pass| MORE{More deps?}
-    SKIP --> MORE
-    MORE -->|Yes| AGENT_EXTRACT
-    MORE -->|No| GENERATE
-
-    %% ─── STEP 5: GENERATE ───
-    GENERATE["`**wh context + wh tests**
-    Agent context: agents.md, claude.md,
-    .cursorrules, copilot, windsurf, codex
-    Tests: pytest, vitest, cargo test
-    Lint: ruff, biome, clippy overlays`"]
-
-    %% ─── STEP 6: CONFIRM ───
-    GENERATE --> STATUS["`**wh status --json**
-    Health score 0-100
-    Freshness, coverage, drift`"]
-
-    STATUS --> DONE([Done — rules enforced,\nagents informed])
-
-    %% ═══════════════════════════════════════
-    %% UPDATE FLOW (drift detected)
-    %% ═══════════════════════════════════════
-    STATUS -.->|Drift detected\nlater| UPDATE["`**wh update --json**
+    %% Refresh / update loop
+    STATUS -.->|Dependency drift| REFRESH["`**wh refresh --json**
     Re-resolve changed sources
-    Compare content hashes
-    Return: what changed`"]
-    UPDATE --> AGENT_PLAN
+    Write refresh-diff.json
+    --check gates CI`"]
+    REFRESH --> REVIEW
 
-    %% ═══════════════════════════════════════
-    %% CI PATH (no agent, binary only)
-    %% ═══════════════════════════════════════
-    CI_START([CI pipeline]) --> CI["`**wh ci --fail-on stale**
-    Compute status
-    Exit 0 or 1
-    Optional PR comment`"]
-    CI --> CI_RESULT{Pass / Fail}
+    %% Bench / trust path
+    DONE -.-> BENCH["`**wh bench run / snapshot**
+    Replay benchmark corpus
+    Precision / recall / F1
+    Persist bench-snapshot.json`"]
 
-    %% ═══════════════════════════════════════
-    %% PATTERN MINING (optional, parallel)
-    %% ═══════════════════════════════════════
+    %% Optional pattern mining
     PATTERNS([Optional]) --> PAT["`**wh patterns --json**
     Mine transcripts, git, PRs
-    Return: discovered style patterns`"]
+    Suggest recurring style signals`"]
     PAT -.-> AGENT_EXTRACT
 
-    %% ═══════════════════════════════════════
-    %% EVAL SYSTEM (future)
-    %% ═══════════════════════════════════════
-    DONE -.->|Future| EVAL["`**wh eval run --json**
-    tree-sitter pre-filter
-    Threshold gating
-    Agent judges ambiguous cases
-    **wh eval calibrate**
-    Validate against golden examples`"]
+    %% CI path
+    CI_START([CI pipeline]) --> CI["`**wh ci --fail-on stale**
+    Freshness gate
+    Optional PR comment`"]
+    CI --> CHECK
+    CI --> BENCH
 
-    %% ═══════════════════════════════════════
-    %% STYLING
-    %% ═══════════════════════════════════════
+    %% Personal / team policy path
+    START -.-> LAYERS["`**wh layers / wh promote**
+    personal > project > team > built-in
+    Team extends
+    Local-only personal policy`"]
+    LAYERS -.-> REVIEW
+
+    %% TBD / future platform work
+    DONE -.-> FUTURE["`TBD: platform + registry`
+    Shared registry
+    Publishing rulesets
+    Signal promotion / wh evolve
+    GitHub App / service layer"]
+
+    %% Styling
     classDef binary fill:#2d6a4f,color:#fff,stroke:#1b4332
     classDef agent fill:#e76f51,color:#fff,stroke:#c1440e
     classDef user fill:#264653,color:#fff,stroke:#f1faee
-    classDef future fill:#6c757d,color:#fff,stroke:#495057
+    classDef future fill:#7d8597,color:#fff,stroke:#5c677d
     classDef start fill:#f4a261,color:#000,stroke:#e76f51
 
-    class DOCTOR,VALIDATE,GENERATE,STATUS,UPDATE,CI,PAT binary
-    class AGENT_PLAN,AGENT_EXTRACT,AGENT_PRESENT,WRITE,EDIT,FIX agent
-    class USER,SKIP user
-    class EVAL future
+    class DOCTOR,REVIEW,APPLY,VALIDATE,GENERATE,CHECK,EVAL,STATUS,REFRESH,BENCH,CI,PAT,LAYERS binary
+    class AGENT_EXTRACT,AGENT_EDIT,AGENT_FIX agent
+    class USER user
+    class FUTURE future
     class START,CI_START,PATTERNS start

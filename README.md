@@ -529,7 +529,7 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - Shared rule registry with community-ranked rules (the `@user/config` `extends:` form is parsed but currently reports `not_implemented`)
 - `wh evolve` — signal promotion from AI verdicts to deterministic signals
 
-See [`planning/whetstone-roadmap-v2.md`](planning/whetstone-roadmap-v2.md) for the full plan and [`references/workflow-matrix.md`](references/workflow-matrix.md) for the command-to-lifecycle mapping.
+See [`planning/whetstone-overview.md`](planning/whetstone-overview.md) for the current overview and [`references/workflow-matrix.md`](references/workflow-matrix.md) for the command-to-lifecycle mapping.
 
 ## Troubleshooting
 

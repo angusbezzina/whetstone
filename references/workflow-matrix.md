@@ -183,4 +183,4 @@ users to them as working features:
   parser but currently reports `not_implemented`)
 - Single-file HTTP `extends:` (accepted by the parser; `not_implemented`)
 
-See [`planning/whetstone-roadmap-v2.md`](../planning/whetstone-roadmap-v2.md) for the epic-level plan.
+See [`planning/whetstone-overview.md`](../planning/whetstone-overview.md) for the current overview and epic-level plan.

@@ -1,6 +1,6 @@
-# Whetstone Roadmap v2
+# Whetstone Overview
 
-> Last updated: 2026-04-13 | Version: 0.2.0 | Previous planning docs archived in `planning/archive/`
+> Last updated: 2026-04-15 | Version: 0.2.0 | Previous planning docs archived in `planning/archive/`
 > See [`references/workflow-matrix.md`](../references/workflow-matrix.md) for the shipped command matrix.
 
 ---
@@ -38,6 +38,9 @@ Five CLI calls. The agent reasons between them. SKILL.md teaches it how. See `pl
 - Cache resolution results with TTL, content hashing, crash-safe checkpointing
 - Validate rule YAML against schema
 - Generate test files, lint configs, and agent context files from approved rules
+- Run deterministic enforcement via tree-sitter, regex, and lint-proxy validation (`wh check`)
+- Apply lifecycle transitions and persist audit logs (`wh review` / `wh apply`)
+- Run benchmark corpora and regression gates (`wh bench`)
 - Compute health scores, detect drift, gate CI pipelines
 - All commands support `--json` for agent consumption
 
@@ -47,7 +50,7 @@ Five CLI calls. The agent reasons between them. SKILL.md teaches it how. See `pl
 - Apply the extraction prompt (high confidence or silence)
 - Decompose rules into deterministic signals
 - Present candidates conversationally and handle approval
-- Write approved rule YAML directly to the repo
+- Propose candidate YAML and guide the user through review/apply decisions
 - Compose CLI calls into a coherent workflow
 
 ### What the Binary Does NOT Do
@@ -71,24 +74,27 @@ Five CLI calls. The agent reasons between them. SKILL.md teaches it how. See `pl
 | State management | Solid | 4 stores plus refresh-diff + extraction-handoff, atomic writes, lifecycle tracking |
 | Rule schema + validation | Complete | Full enum validation, golden example checks, lifecycle status transitions |
 | Agent context generation | Implemented | 6 formats (agents.md, claude.md, .cursorrules, copilot, windsurf, codex) |
-| Test + lint generation | Implemented | pytest, vitest, cargo test with real regex checks + ruff, biome, clippy overlays |
+| Test + lint generation | Implemented | Tera-backed templates, pytest/vitest/cargo test outputs, ruff/biome/clippy overlays |
+| Deterministic enforcement | Implemented | `wh check` with tree-sitter `ast_query`, `ast_scope`, regex, and lint-proxy verification |
+| Review / apply workflow | Implemented | `wh review`, `wh apply`, lifecycle transitions, batch apply, audit log |
+| Benchmark harness | Implemented | `wh bench run` / `snapshot`, corpus under `benchmarks/`, CI-friendly regression gating |
 | Status + CI gate | Implemented | Health scoring 0-100, configurable thresholds, PR comments |
 | Refresh flow | Implemented | `wh refresh` / `wh refresh --check`, reviewable diff under `whetstone/.state/refresh-diff.json` |
 | AI eval runner | Implemented | threshold gating, eval generate/run/calibrate, file-based agent handoff |
 | Built-in rules | Implemented | `whetstone:recommended` baseline for Rust, Python, and TypeScript |
 | Custom sources | Implemented | Arbitrary URLs declared in `whetstone.yaml` flow through the normal resolve pipeline |
+| Layers + triggers | Implemented | personal/project/team/built-in layering, promote, hooks, scheduled CI, global personal config |
 | Pattern mining | Implemented | Transcripts, git history, PR comments |
 | Binary distribution | Shipped | GitHub Releases, install.sh, `wh` alias, `wh update` self-update |
 
-### What's Missing
+### What's Still TBD
 
 | Gap | Severity | Notes |
 |-----|----------|-------|
 | Config depth | Medium | Only discovery + formats; no extraction settings, no timeouts |
-| Tera templates | Medium | Codegen uses string concatenation; works but doesn't scale |
-| tree-sitter AST signals | Medium | `ast` signals fall back to regex; real tree-sitter analysis is not yet wired up |
-| Shared registry | Deferred | `@user/config` is parseable in `extends:` but reports `not_implemented` — a community-ranked registry is still future work |
+| Shared registry / publishing | Deferred / TBD | `@user/config` is parseable in `extends:` but reports `not_implemented` — multi-user distribution is future work |
 | `wh evolve` | Deferred | Signal promotion from AI verdicts → deterministic signals is not yet implemented |
+| Service / GitHub App layer | Deferred / TBD | Could come later if Whetstone expands beyond primarily local / single-user use |
 
 ### Dogfooding Results (2026-04-05)
 
@@ -101,9 +107,7 @@ First real rules extracted for Whetstone's own Rust deps (6 rules across serde_y
 
 ---
 
-## The Plan
-
-Three epics, sequenced. Each builds on the last.
+## Delivered Epics
 
 ### Epic 1: Productise the Core Loop
 
@@ -118,10 +122,7 @@ The core loop is now productised and shippable:
 - Built-in rules exist for Rust, Python, and TypeScript
 - Dogfooding covered both Whetstone and an external mixed-language repo
 
-Remaining core-loop improvements are intentionally separated into later epics:
-
-- **Deferred to Epic 3B:** tree-sitter-backed structural checks and template-engine cleanup
-- **Deferred to Epic 4:** registry / evolution / service work
+- This epic is complete; the next shipped capabilities now live in Epics 3B and 3C below.
 
 ---
 
@@ -158,7 +159,33 @@ system. Every child below ships with integration-test coverage.
 
 ---
 
-### Epic 3: Platform (Future)
+### Epic 3B: Structural Enforcement + Maintainable Generation
+
+> **Tracked as:** `whetstone-52a` in beads | **Status:** Closed / shipped
+
+- **Tree-sitter integration** — Python, TypeScript, and Rust parsers are wired into `wh check`
+- **AST-backed enforcement** — `ast_query` and `ast_scope` signals now execute through tree-sitter instead of only falling back to regex
+- **`wh check` command** — deterministic enforcement runner for source scans and lint-proxy config verification
+- **Template-based codegen** — Tera templates now back generated context, tests, and lint overlay output
+- **Built-in rule upgrades** — shipped rules now use tree-sitter-capable signals where appropriate
+
+---
+
+### Epic 3C: Policy Review Workflow + Trust Benchmarks
+
+> **Tracked as:** `whetstone-gop` in beads | **Status:** Closed / shipped
+
+- **`wh review`** — list rules by lifecycle status, inspect per-rule context, build a refresh review queue
+- **`wh apply`** — approve / deny / deprecate / supersede rules without hand-editing YAML
+- **Audit trail** — every lifecycle transition appends to `whetstone/.state/review-log.jsonl`
+- **Refresh-driven review** — `extraction-handoff.json` + `refresh-diff.json` now support focused review queues for changed policy
+- **Benchmark harness** — `wh bench run` / `snapshot` replay corpora and report precision / recall / F1 across deterministic, layered, and eval scenarios
+
+---
+
+## Remaining TBD Work
+
+### Epic 4: Platform + Registry (TBD)
 
 - **Shared rule registry** — Pre-extracted, community-ranked rules for popular deps
 - **Publishing** — Users/teams publish rulesets (`extends: @user/fastapi-strict`)
@@ -166,7 +193,7 @@ system. Every child below ships with integration-test coverage.
 - **Rule evolution** — Violation tracking, prompt refinement (`wh evolve`)
 - **Whetstone as a Service** — GitHub App, pooled LLM access, Dependabot-model for coding conventions
 
-Not planned in detail. Depends on community adoption and Epic 1-2 validation.
+This work is intentionally **TBD** rather than required for the current local / single-user product. It matters more once Whetstone needs multi-user distribution, collaboration, and ecosystem/network effects.
 
 ---
 
@@ -197,13 +224,17 @@ Not planned in detail. Depends on community adoption and Epic 1-2 validation.
 | `wh validate` | `validate-rules` | Schema validation pass/fail |
 | `wh context` | `generate-context` | Generated agent context files |
 | `wh tests` | `generate-tests` | Generated test files + lint configs |
+| `wh check` | — | Deterministic rule scan with tree-sitter / regex / lint-proxy support |
 | `wh status` | — | Health score, freshness, coverage, drift |
 | `wh ci` | `check`, `ci-check` | Pass/fail with optional PR comment |
+| `wh review` | — | Rule lifecycle listing, per-rule inspection, refresh review queue |
+| `wh apply` | — | Lifecycle transitions (approve / deny / deprecate / supersede) |
+| `wh bench` | — | Benchmark corpus run / snapshot with regression gating |
 | `wh eval` | — | `generate`/`run`/`calibrate` — AI eval lifecycle with file-based agent handoff |
 | `wh patterns` | `detect-patterns` | Discovered style patterns from transcripts/git/PRs |
 | `wh update` | — | Self-update the `whetstone` binary from GitHub Releases (does NOT touch rules) |
 
-All commands support `--json` (auto-enabled when piped) and `--project-dir`. For the full matrix — including which lifecycle step each command serves and which artifacts it reads/writes — see [`references/workflow-matrix.md`](../references/workflow-matrix.md).
+All commands support `--json` (auto-enabled when piped), and project-scoped commands support `--project-dir`. For the full matrix — including which lifecycle step each command serves and which artifacts it reads/writes — see [`references/workflow-matrix.md`](../references/workflow-matrix.md).
 
 ---
 
@@ -219,12 +250,18 @@ All commands support `--json` (auto-enabled when piped) and `--project-dir`. For
 
 ## Beads State
 
-The first two epics are complete. Remaining work is intentionally deferred:
+Completed major epics:
 
-- `whetstone-52a` — Epic 3B: structural enforcement and maintainable generation
-- `whetstone-s2a` — Epic 4: platform + registry
+- `whetstone-nq8` — core-loop contract, handoffs, built-ins, dogfooding
+- `whetstone-vkh` — layers + triggers
+- `whetstone-52a` — structural enforcement + maintainable generation
+- `whetstone-gop` — review/apply workflow + trust benchmarks
 
-Run `bd ready` to see the next non-deferred follow-up when those epics are resumed.
+Still TBD:
+
+- `whetstone-s2a` — platform + registry
+
+Run `bd ready` to see any newly-opened follow-up work.
 
 ---
 
