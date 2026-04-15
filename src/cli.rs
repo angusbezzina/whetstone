@@ -752,12 +752,8 @@ pub fn run() -> i32 {
 
             // Precedence: explicit CLI flag > config > hardcoded default.
             let cfg = config::WhetstoneConfig::load(&project_dir);
-            let effective_timeout = timeout
-                .or(cfg.resolve.timeout_seconds)
-                .unwrap_or(15);
-            let effective_ttl = ttl
-                .or(cfg.resolve.cache_ttl_seconds)
-                .unwrap_or(604800);
+            let effective_timeout = timeout.or(cfg.resolve.timeout_seconds).unwrap_or(15);
+            let effective_ttl = ttl.or(cfg.resolve.cache_ttl_seconds).unwrap_or(604800);
             let effective_workers = workers.or(cfg.resolve.workers);
 
             match resolve::resolve_sources(resolve::ResolveOptions {
@@ -1117,11 +1113,7 @@ pub fn run() -> i32 {
                     } else {
                         println!("{}", check::format_human_output(&result));
                     }
-                    let fail_mode = cfg
-                        .check
-                        .fail_on
-                        .as_deref()
-                        .unwrap_or("both");
+                    let fail_mode = cfg.check.fail_on.as_deref().unwrap_or("both");
                     let should_fail = !no_fail
                         && match fail_mode {
                             "none" => false,
@@ -1392,11 +1384,8 @@ pub fn run() -> i32 {
                                 .and_then(|v| v.as_array())
                                 .cloned()
                                 .unwrap_or_default();
-                            let filtered = worklist::filter(
-                                &wl,
-                                wl_dep.as_deref(),
-                                wl_lang.as_deref(),
-                            );
+                            let filtered =
+                                worklist::filter(&wl, wl_dep.as_deref(), wl_lang.as_deref());
                             Ok(serde_json::json!({
                                 "status": "ok",
                                 "generated_at": handoff.get("generated_at"),
@@ -1537,9 +1526,16 @@ pub fn run() -> i32 {
             }
             let cfg = config::WhetstoneConfig::load(&project_dir);
             let effective_min_f1 = min_f1.or(cfg.bench.min_f1).unwrap_or(1.0);
-            let effective_corpus = corpus_dir
-                .clone()
-                .or_else(|| cfg.bench.corpus_dir.as_deref().map(PathBuf::from));
+            let effective_corpus = corpus_dir.clone().or_else(|| {
+                cfg.bench.corpus_dir.as_deref().map(|p| {
+                    let path = PathBuf::from(p);
+                    if path.is_absolute() {
+                        path
+                    } else {
+                        project_dir.join(path)
+                    }
+                })
+            });
             let result = bench::run(bench::BenchOptions {
                 project_dir: &project_dir,
                 corpus_dir: effective_corpus.as_deref(),

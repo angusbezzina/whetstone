@@ -249,10 +249,13 @@ pub fn import(opts: ImportOptions<'_>) -> Result<Value> {
         if let Ok(text) = fs::read_to_string(&target_file) {
             if let Ok(rf) = serde_yaml::from_str::<RuleFile>(&text) {
                 for rule in &rf.rules {
-                    let st = rule
-                        .status
-                        .clone()
-                        .unwrap_or_else(|| if rule.approved { "approved".into() } else { "candidate".into() });
+                    let st = rule.status.clone().unwrap_or_else(|| {
+                        if rule.approved {
+                            "approved".into()
+                        } else {
+                            "candidate".into()
+                        }
+                    });
                     existing_ids.insert(rule.id.clone(), st);
                 }
             }
@@ -318,7 +321,10 @@ pub fn import(opts: ImportOptions<'_>) -> Result<Value> {
     let mut target = if target_file.exists() {
         let text = fs::read_to_string(&target_file)?;
         serde_yaml::from_str::<RuleFile>(&text).with_context(|| {
-            format!("failed to parse existing rule file {}", target_file.display())
+            format!(
+                "failed to parse existing rule file {}",
+                target_file.display()
+            )
         })?
     } else {
         RuleFile {
@@ -352,17 +358,15 @@ pub fn import(opts: ImportOptions<'_>) -> Result<Value> {
 
     // Drop existing candidates with matching ids if we are overwriting them.
     if opts.overwrite_candidates && !will_replace_candidates.is_empty() {
-        target.rules.retain(|r| {
-            !(will_replace_candidates.contains(&r.id) && is_candidate(r))
-        });
+        target
+            .rules
+            .retain(|r| !(will_replace_candidates.contains(&r.id) && is_candidate(r)));
     }
 
     for p in &bundle.proposals {
-        target.rules.push(proposal_to_rule(
-            p,
-            &proposed_at,
-            &effective_proposer,
-        ));
+        target
+            .rules
+            .push(proposal_to_rule(p, &proposed_at, &effective_proposer));
     }
 
     let serialized = serialize_rule_file(&target)?;
@@ -509,15 +513,24 @@ fn validate_bundle(bundle: &ProposalBundle, cfg: &WhetstoneConfig) -> Result<()>
             bail!("{ctx}: duplicate id `{}` within bundle", p.id);
         }
         if !VALID_SEVERITIES.contains(&p.severity.as_str()) {
-            bail!("{ctx}: severity `{}` must be one of {VALID_SEVERITIES:?}", p.severity);
+            bail!(
+                "{ctx}: severity `{}` must be one of {VALID_SEVERITIES:?}",
+                p.severity
+            );
         }
         if !VALID_CONFIDENCES.contains(&p.confidence.as_str()) {
-            bail!("{ctx}: confidence `{}` must be one of {VALID_CONFIDENCES:?}", p.confidence);
+            bail!(
+                "{ctx}: confidence `{}` must be one of {VALID_CONFIDENCES:?}",
+                p.confidence
+            );
         }
         if let Some(min) = min_confidence {
             // min_confidence=high blocks medium; min_confidence=medium passes both.
             if min == "high" && p.confidence != "high" {
-                bail!("{ctx}: confidence `{}` below extraction.min_confidence=high", p.confidence);
+                bail!(
+                    "{ctx}: confidence `{}` below extraction.min_confidence=high",
+                    p.confidence
+                );
             }
         }
         if !allowed_categories.iter().any(|c| c == &p.category) {
@@ -541,9 +554,7 @@ fn validate_bundle(bundle: &ProposalBundle, cfg: &WhetstoneConfig) -> Result<()>
             .iter()
             .any(|s| matches!(s.strategy.as_str(), "ast" | "pattern"));
         if !has_det {
-            bail!(
-                "{ctx}: must have at least one ast or pattern signal (hard rule)"
-            );
+            bail!("{ctx}: must have at least one ast or pattern signal (hard rule)");
         }
         for s in &p.signals {
             if !VALID_STRATEGIES.contains(&s.strategy.as_str()) {
@@ -562,9 +573,7 @@ fn validate_bundle(bundle: &ProposalBundle, cfg: &WhetstoneConfig) -> Result<()>
         let has_pass = p.golden_examples.iter().any(|e| e.verdict == "pass");
         let has_fail = p.golden_examples.iter().any(|e| e.verdict == "fail");
         if !has_pass || !has_fail {
-            bail!(
-                "{ctx}: golden examples must include at least one `pass` and one `fail` verdict"
-            );
+            bail!("{ctx}: golden examples must include at least one `pass` and one `fail` verdict");
         }
     }
 
@@ -854,7 +863,11 @@ pub fn diff(project_dir: &Path, bundle_path: &Path) -> Result<Value> {
             BUNDLE_VERSION
         ));
     }
-    let existing = existing_rule_map(project_dir, &bundle.dependency.language, &bundle.dependency.name);
+    let existing = existing_rule_map(
+        project_dir,
+        &bundle.dependency.language,
+        &bundle.dependency.name,
+    );
 
     let mut added = Vec::new();
     let mut modified = Vec::new();
@@ -865,10 +878,13 @@ pub fn diff(project_dir: &Path, bundle_path: &Path) -> Result<Value> {
         match existing.get(&p.id) {
             None => added.push(summary_added(p)),
             Some(existing_rule) => {
-                let status = existing_rule
-                    .status
-                    .clone()
-                    .unwrap_or_else(|| if existing_rule.approved { "approved".into() } else { "candidate".into() });
+                let status = existing_rule.status.clone().unwrap_or_else(|| {
+                    if existing_rule.approved {
+                        "approved".into()
+                    } else {
+                        "candidate".into()
+                    }
+                });
                 if status == "candidate" {
                     replacing_candidate.push(summary_modified(p, existing_rule));
                 } else {
@@ -939,17 +955,15 @@ pub fn diff(project_dir: &Path, bundle_path: &Path) -> Result<Value> {
     }))
 }
 
-fn existing_rule_map(
-    project_dir: &Path,
-    language: &str,
-    dep_name: &str,
-) -> BTreeMap<String, Rule> {
+fn existing_rule_map(project_dir: &Path, language: &str, dep_name: &str) -> BTreeMap<String, Rule> {
     let rules_dir = project_dir.join("whetstone").join("rules");
     let (files, _w) = load_rule_files(&rules_dir);
     let mut out = BTreeMap::new();
     for lrf in files {
         let LoadedRuleFile {
-            rule_file, language: lang, ..
+            rule_file,
+            language: lang,
+            ..
         } = lrf;
         if lang.as_deref() != Some(language) {
             continue;
@@ -1005,7 +1019,11 @@ fn changed_fields(existing: &Rule, p: &ProposedRule) -> Vec<String> {
     if existing.source_url.as_deref() != Some(p.source_url.as_str()) {
         out.push("source_url".into());
     }
-    let existing_strategies: Vec<&str> = existing.signals.iter().map(|s| s.strategy.as_str()).collect();
+    let existing_strategies: Vec<&str> = existing
+        .signals
+        .iter()
+        .map(|s| s.strategy.as_str())
+        .collect();
     let proposed_strategies: Vec<&str> = p.signals.iter().map(|s| s.strategy.as_str()).collect();
     if existing_strategies != proposed_strategies {
         out.push("signals".into());
@@ -1188,9 +1206,7 @@ mod tests {
 
         assert_eq!(out["status"], "ok");
         assert_eq!(out["action"], "imported");
-        let target = td
-            .path()
-            .join("whetstone/rules/python/fastapi.yaml");
+        let target = td.path().join("whetstone/rules/python/fastapi.yaml");
         let text = fs::read_to_string(&target).unwrap();
         assert!(text.contains("fastapi.my-rule"));
         assert!(text.contains("status: candidate"));
@@ -1336,11 +1352,7 @@ rules:
         });
 
         let bundle_path = td.path().join("bundle.yaml");
-        fs::write(
-            &bundle_path,
-            serde_yaml::to_string(&bundle).unwrap(),
-        )
-        .unwrap();
+        fs::write(&bundle_path, serde_yaml::to_string(&bundle).unwrap()).unwrap();
 
         let out = diff(td.path(), &bundle_path).unwrap();
         assert_eq!(out["status"], "conflicts");

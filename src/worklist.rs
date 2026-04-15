@@ -203,22 +203,15 @@ pub fn build_from_doctor(
     }
 
     entries.sort_by(|a, b| {
-        let pa = a
-            .get("priority")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let pb = b
-            .get("priority")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let pa = a.get("priority").and_then(|v| v.as_str()).unwrap_or("");
+        let pb = b.get("priority").and_then(|v| v.as_str()).unwrap_or("");
         let ord_a = priority_from_str(pa).order_key();
         let ord_b = priority_from_str(pb).order_key();
         let sa = a.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let sb = b.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        ord_a.cmp(&ord_b).then_with(|| {
-            sb.partial_cmp(&sa)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
+        ord_a
+            .cmp(&ord_b)
+            .then_with(|| sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal))
     });
 
     entries
@@ -279,10 +272,7 @@ fn build_entry(
     config: &WhetstoneConfig,
     score: f64,
 ) -> Value {
-    let max_rules_per_dep = config
-        .extraction
-        .max_rules_per_dep
-        .unwrap_or(5);
+    let max_rules_per_dep = config.extraction.max_rules_per_dep.unwrap_or(5);
     let remaining_quota = max_rules_per_dep.saturating_sub(existing_rules as u32);
     let next_step = next_step_hint(priority, remaining_quota, source);
 
@@ -307,10 +297,7 @@ fn build_entry(
         if let Some(v) = src.get("source_type") {
             entry["source_type"] = v.clone();
         }
-        if let Some(v) = src
-            .get("docs_url")
-            .or_else(|| src.get("source_url"))
-        {
+        if let Some(v) = src.get("docs_url").or_else(|| src.get("source_url")) {
             entry["source_url"] = v.clone();
         }
         if let Some(v) = src.get("content_hash") {
@@ -325,15 +312,13 @@ fn build_entry(
     }
 
     if !config.extraction.allowed_categories.is_empty() {
-        entry["allowed_categories"] =
-            json!(config.extraction.allowed_categories.clone());
+        entry["allowed_categories"] = json!(config.extraction.allowed_categories.clone());
     }
     if let Some(ref mc) = config.extraction.min_confidence {
         entry["min_confidence"] = Value::String(mc.clone());
     }
     if !config.extraction.preferred_source_kinds.is_empty() {
-        entry["preferred_source_kinds"] =
-            json!(config.extraction.preferred_source_kinds.clone());
+        entry["preferred_source_kinds"] = json!(config.extraction.preferred_source_kinds.clone());
     }
 
     if let Some(r) = reason {
@@ -546,10 +531,9 @@ mod tests {
             let ord_b = priority_from_str(pb).order_key();
             let sa = a.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let sb = b.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            ord_a.cmp(&ord_b).then(
-                sb.partial_cmp(&sa)
-                    .unwrap_or(std::cmp::Ordering::Equal),
-            )
+            ord_a
+                .cmp(&ord_b)
+                .then(sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal))
         });
         let names: Vec<&str> = sorted
             .iter()

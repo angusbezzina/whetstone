@@ -333,22 +333,16 @@ pub fn apply_batch(project_dir: &Path, batch_file: &Path, dry_run: bool) -> Resu
 /// how many would be added, how many existing approved rules in the same
 /// dependency would be shadowed, and which existing approved rules are
 /// not represented in the candidate set (advisory deprecations).
-pub fn diff_candidates(
-    project_dir: &Path,
-    lang_filter: Option<&str>,
-) -> Result<Value> {
+pub fn diff_candidates(project_dir: &Path, lang_filter: Option<&str>) -> Result<Value> {
     let paths = LayerPaths::for_project(project_dir);
     let (project_files, warnings) = load_rule_files(&paths.project_rules_dir);
 
     // Group rules by (language, dep_name).
     let mut approved_by_dep: std::collections::BTreeMap<(String, String), Vec<String>> =
         std::collections::BTreeMap::new();
-    let mut candidates_by_dep: std::collections::BTreeMap<
-        (String, String),
-        Vec<Value>,
-    > = std::collections::BTreeMap::new();
-    let mut candidate_ids: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
+    let mut candidates_by_dep: std::collections::BTreeMap<(String, String), Vec<Value>> =
+        std::collections::BTreeMap::new();
+    let mut candidate_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for lrf in &project_files {
         if let Some(filter) = lang_filter {
@@ -361,10 +355,13 @@ pub fn diff_candidates(
             lrf.rule_file.source.name.clone(),
         );
         for r in &lrf.rule_file.rules {
-            let st = r
-                .status
-                .clone()
-                .unwrap_or_else(|| if r.approved { "approved".into() } else { "candidate".into() });
+            let st = r.status.clone().unwrap_or_else(|| {
+                if r.approved {
+                    "approved".into()
+                } else {
+                    "candidate".into()
+                }
+            });
             match st.as_str() {
                 "approved" => {
                     approved_by_dep
@@ -1058,15 +1055,23 @@ pub fn format_diff(result: &Value) -> String {
         "wh review diff: {total} candidate(s) across {deps} dep(s)\n"
     ));
     if shadow > 0 {
-        out.push_str(&format!("  {shadow} candidate(s) share an id with an existing approved rule\n"));
+        out.push_str(&format!(
+            "  {shadow} candidate(s) share an id with an existing approved rule\n"
+        ));
     }
     if dep_count > 0 {
         out.push_str(&format!("  {dep_count} approved rule(s) have no corresponding candidate (advisory deprecations)\n"));
     }
     if let Some(per_dep) = result.get("per_dep").and_then(|v| v.as_array()) {
         for entry in per_dep {
-            let dep = entry.get("dependency").and_then(|v| v.as_str()).unwrap_or("?");
-            let lang = entry.get("language").and_then(|v| v.as_str()).unwrap_or("?");
+            let dep = entry
+                .get("dependency")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let lang = entry
+                .get("language")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             let cands = entry
                 .get("candidates")
                 .and_then(|v| v.as_array())
@@ -1091,7 +1096,10 @@ pub fn format_worklist(result: &Value) -> String {
     if let Some(entries) = result.get("entries").and_then(|v| v.as_array()) {
         for entry in entries {
             let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-            let lang = entry.get("language").and_then(|v| v.as_str()).unwrap_or("?");
+            let lang = entry
+                .get("language")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             let priority = entry
                 .get("priority")
                 .and_then(|v| v.as_str())

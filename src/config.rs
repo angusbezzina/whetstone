@@ -54,6 +54,25 @@ const GLOBAL_ONLY_KEYS: &[&str] = &["default_languages", "default_formats"];
 /// Empty today — reserved for future personal-only fields.
 const PERSONAL_ONLY_KEYS: &[&str] = &[];
 
+const VALID_CATEGORIES: &[&str] = &[
+    "migration",
+    "default",
+    "convention",
+    "breaking-change",
+    "semantic",
+];
+const VALID_MIN_CONFIDENCE: &[&str] = &["high", "medium"];
+const VALID_FAIL_ON: &[&str] = &["violations", "config_issues", "both", "none"];
+const VALID_GENERATE_FORMATS: &[&str] = &[
+    "agents.md",
+    "claude.md",
+    ".cursorrules",
+    "copilot-instructions.md",
+    ".windsurfrules",
+    "codex.md",
+];
+const MAX_RULES_PER_DEP_HARD_LIMIT: u32 = 5;
+
 // ── Effective config ──
 
 /// Fully-merged configuration used by the rest of the binary.
@@ -274,7 +293,7 @@ impl GlobalConfig {
             &allowed_keys_for(ConfigLayer::Global),
             &mut diagnostics,
         );
-        let cfg = GlobalConfig {
+        let mut cfg = GlobalConfig {
             default_languages: parsed.default_languages,
             default_formats: parsed.default_formats,
             sources: parsed.sources,
@@ -284,6 +303,7 @@ impl GlobalConfig {
             check: parsed.check,
             bench: parsed.bench,
         };
+        validate_global_values(&mut cfg, &path, &mut diagnostics);
         (cfg, diagnostics)
     }
 }
@@ -343,7 +363,7 @@ impl PersonalConfig {
             &allowed_keys_for(ConfigLayer::Personal),
             &mut diagnostics,
         );
-        let cfg = PersonalConfig {
+        let mut cfg = PersonalConfig {
             deny: parsed.deny,
             generate: parsed.generate,
             discovery: parsed.discovery,
@@ -353,6 +373,7 @@ impl PersonalConfig {
             check: parsed.check,
             bench: parsed.bench,
         };
+        validate_personal_values(&mut cfg, path, &mut diagnostics);
         (cfg, diagnostics)
     }
 }
@@ -415,6 +436,222 @@ impl Diagnostic {
             path,
             message,
         }
+    }
+}
+
+fn validate_global_values(cfg: &mut GlobalConfig, path: &Path, diagnostics: &mut Vec<Diagnostic>) {
+    validate_format_list(
+        &mut cfg.default_formats,
+        ConfigLayer::Global,
+        path,
+        "default_formats",
+        diagnostics,
+    );
+    validate_section_values(
+        &mut cfg.extraction,
+        &mut cfg.resolve,
+        &mut cfg.check,
+        &mut cfg.bench,
+        ConfigLayer::Global,
+        path,
+        diagnostics,
+    );
+}
+
+fn validate_personal_values(
+    cfg: &mut PersonalConfig,
+    path: &Path,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    validate_format_list(
+        &mut cfg.generate.formats,
+        ConfigLayer::Personal,
+        path,
+        "generate.formats",
+        diagnostics,
+    );
+    validate_section_values(
+        &mut cfg.extraction,
+        &mut cfg.resolve,
+        &mut cfg.check,
+        &mut cfg.bench,
+        ConfigLayer::Personal,
+        path,
+        diagnostics,
+    );
+}
+
+fn validate_whetstone_values(
+    cfg: &mut WhetstoneConfig,
+    layer: ConfigLayer,
+    path: &Path,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    validate_format_list(
+        &mut cfg.generate.formats,
+        layer,
+        path,
+        "generate.formats",
+        diagnostics,
+    );
+    validate_section_values(
+        &mut cfg.extraction,
+        &mut cfg.resolve,
+        &mut cfg.check,
+        &mut cfg.bench,
+        layer,
+        path,
+        diagnostics,
+    );
+}
+
+fn validate_section_values(
+    extraction: &mut ExtractionConfig,
+    resolve: &mut ResolveConfig,
+    check: &mut CheckConfig,
+    bench: &mut BenchConfig,
+    layer: ConfigLayer,
+    path: &Path,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if let Some(v) = extraction.max_rules_per_dep {
+        if v == 0 || v > MAX_RULES_PER_DEP_HARD_LIMIT {
+            diagnostics.push(Diagnostic::error(
+                layer,
+                path.to_path_buf(),
+                format!(
+                    "`extraction.max_rules_per_dep` must be between 1 and {MAX_RULES_PER_DEP_HARD_LIMIT}; ignoring {v}"
+                ),
+            ));
+            extraction.max_rules_per_dep = None;
+        }
+    }
+
+    if let Some(v) = extraction.min_confidence.as_deref() {
+        if !VALID_MIN_CONFIDENCE.contains(&v) {
+            diagnostics.push(Diagnostic::error(
+                layer,
+                path.to_path_buf(),
+                format!(
+                    "`extraction.min_confidence` must be one of {VALID_MIN_CONFIDENCE:?}; ignoring `{v}`"
+                ),
+            ));
+            extraction.min_confidence = None;
+        }
+    }
+
+    if !extraction.allowed_categories.is_empty() {
+        let invalid: Vec<String> = extraction
+            .allowed_categories
+            .iter()
+            .filter(|c| !VALID_CATEGORIES.contains(&c.as_str()))
+            .cloned()
+            .collect();
+        if !invalid.is_empty() {
+            diagnostics.push(Diagnostic::error(
+                layer,
+                path.to_path_buf(),
+                format!(
+                    "`extraction.allowed_categories` contains invalid entries {invalid:?}; valid: {VALID_CATEGORIES:?}"
+                ),
+            ));
+            extraction
+                .allowed_categories
+                .retain(|c| VALID_CATEGORIES.contains(&c.as_str()));
+        }
+    }
+
+    if let Some(v) = resolve.cache_ttl_seconds {
+        if v == 0 {
+            diagnostics.push(Diagnostic::error(
+                layer,
+                path.to_path_buf(),
+                "`resolve.cache_ttl_seconds` must be > 0; ignoring 0".into(),
+            ));
+            resolve.cache_ttl_seconds = None;
+        }
+    }
+
+    if let Some(v) = resolve.timeout_seconds {
+        if v == 0 {
+            diagnostics.push(Diagnostic::error(
+                layer,
+                path.to_path_buf(),
+                "`resolve.timeout_seconds` must be > 0; ignoring 0".into(),
+            ));
+            resolve.timeout_seconds = None;
+        }
+    }
+
+    if let Some(v) = resolve.workers {
+        if v == 0 {
+            diagnostics.push(Diagnostic::error(
+                layer,
+                path.to_path_buf(),
+                "`resolve.workers` must be > 0; ignoring 0".into(),
+            ));
+            resolve.workers = None;
+        }
+    }
+
+    if let Some(v) = check.fail_on.as_deref() {
+        if !VALID_FAIL_ON.contains(&v) {
+            diagnostics.push(Diagnostic::error(
+                layer,
+                path.to_path_buf(),
+                format!("`check.fail_on` must be one of {VALID_FAIL_ON:?}; ignoring `{v}`"),
+            ));
+            check.fail_on = None;
+        }
+    }
+
+    if let Some(v) = bench.min_f1 {
+        if !(0.0..=1.0).contains(&v) {
+            diagnostics.push(Diagnostic::error(
+                layer,
+                path.to_path_buf(),
+                format!("`bench.min_f1` must be between 0.0 and 1.0; ignoring {v}"),
+            ));
+            bench.min_f1 = None;
+        }
+    }
+
+    if let Some(v) = bench.corpus_dir.as_deref() {
+        if v.trim().is_empty() {
+            diagnostics.push(Diagnostic::error(
+                layer,
+                path.to_path_buf(),
+                "`bench.corpus_dir` must not be empty; ignoring empty value".into(),
+            ));
+            bench.corpus_dir = None;
+        }
+    }
+}
+
+fn validate_format_list(
+    formats: &mut Vec<String>,
+    layer: ConfigLayer,
+    path: &Path,
+    key: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if formats.is_empty() {
+        return;
+    }
+    let invalid: Vec<String> = formats
+        .iter()
+        .filter(|f| !VALID_GENERATE_FORMATS.contains(&f.as_str()))
+        .cloned()
+        .collect();
+    if !invalid.is_empty() {
+        diagnostics.push(Diagnostic::error(
+            layer,
+            path.to_path_buf(),
+            format!(
+                "`{key}` contains invalid entries {invalid:?}; valid: {VALID_GENERATE_FORMATS:?}"
+            ),
+        ));
+        formats.retain(|f| VALID_GENERATE_FORMATS.contains(&f.as_str()));
     }
 }
 
@@ -736,8 +973,7 @@ impl ConfigSnapshot {
         }
         if !global_cfg.deny.is_empty() {
             snap.effective.deny.extend(global_cfg.deny.clone());
-            snap.sources
-                .insert("deny".into(), ProvenanceSource::Global);
+            snap.sources.insert("deny".into(), ProvenanceSource::Global);
         }
         apply_extraction(
             &mut snap.effective.extraction,
@@ -782,7 +1018,7 @@ impl ConfigSnapshot {
                 }
             };
             match serde_yaml::from_str::<WhetstoneConfig>(&text) {
-                Ok(cfg) => {
+                Ok(mut cfg) => {
                     snap.loaded_files.push(LoadedFile {
                         layer: ConfigLayer::Project,
                         path: path.clone(),
@@ -792,6 +1028,12 @@ impl ConfigSnapshot {
                         &path,
                         ConfigLayer::Project,
                         &allowed_keys_for(ConfigLayer::Project),
+                        &mut snap.diagnostics,
+                    );
+                    validate_whetstone_values(
+                        &mut cfg,
+                        ConfigLayer::Project,
+                        &path,
                         &mut snap.diagnostics,
                     );
                     project_cfg = Some(cfg);
@@ -1199,7 +1441,10 @@ mod tests {
         let snap = ConfigSnapshot::load(td.path(), false, true);
         assert_eq!(snap.effective.resolve.timeout_seconds, Some(90));
         assert_eq!(
-            snap.sources.get("resolve.timeout_seconds").copied().unwrap(),
+            snap.sources
+                .get("resolve.timeout_seconds")
+                .copied()
+                .unwrap(),
             ProvenanceSource::Personal
         );
     }
@@ -1215,7 +1460,11 @@ mod tests {
         )
         .unwrap();
         let snap = ConfigSnapshot::load(td.path(), false, false);
-        let msgs: Vec<&str> = snap.diagnostics.iter().map(|d| d.message.as_str()).collect();
+        let msgs: Vec<&str> = snap
+            .diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .collect();
         assert!(
             msgs.iter().any(|m| m.contains("extractoin")),
             "expected an unknown-key diagnostic: {msgs:?}"
@@ -1242,11 +1491,7 @@ mod tests {
         let td = tempdir();
         let wh = td.path().join("whetstone");
         fs::create_dir_all(&wh).unwrap();
-        fs::write(
-            wh.join("whetstone.yaml"),
-            "default_formats: [claude.md]\n",
-        )
-        .unwrap();
+        fs::write(wh.join("whetstone.yaml"), "default_formats: [claude.md]\n").unwrap();
         let snap = ConfigSnapshot::load(td.path(), false, false);
         assert!(
             snap.diagnostics
@@ -1255,5 +1500,50 @@ mod tests {
             "expected misplaced-key warning: {:?}",
             snap.diagnostics
         );
+    }
+
+    #[test]
+    fn invalid_values_emit_errors_and_fall_back_to_defaults() {
+        let td = tempdir();
+        let wh = td.path().join("whetstone");
+        fs::create_dir_all(&wh).unwrap();
+        fs::write(
+            wh.join("whetstone.yaml"),
+            r#"generate:
+  formats: [bogus.md, agents.md]
+extraction:
+  max_rules_per_dep: 0
+  allowed_categories: [default, made-up]
+  min_confidence: low
+resolve:
+  timeout_seconds: 0
+check:
+  fail_on: maybe
+bench:
+  min_f1: 1.5
+  corpus_dir: ""
+"#,
+        )
+        .unwrap();
+
+        let snap = ConfigSnapshot::load(td.path(), false, false);
+        assert!(
+            snap.diagnostics
+                .iter()
+                .any(|d| d.level == DiagnosticLevel::Error),
+            "expected value-validation errors: {:?}",
+            snap.diagnostics
+        );
+        assert_eq!(snap.effective.generate.formats, vec!["agents.md"]);
+        assert_eq!(snap.effective.extraction.max_rules_per_dep, None);
+        assert_eq!(
+            snap.effective.extraction.allowed_categories,
+            vec!["default"]
+        );
+        assert_eq!(snap.effective.extraction.min_confidence, None);
+        assert_eq!(snap.effective.resolve.timeout_seconds, None);
+        assert_eq!(snap.effective.check.fail_on, None);
+        assert_eq!(snap.effective.bench.min_f1, None);
+        assert_eq!(snap.effective.bench.corpus_dir, None);
     }
 }

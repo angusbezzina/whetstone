@@ -3614,7 +3614,7 @@ fn test_propose_diff_reports_added_rules() {
 }
 
 #[test]
-fn test_propose_import_respects_config_max_rules_per_dep() {
+fn test_propose_import_ignores_invalid_config_value_and_uses_defaults() {
     let tmp = std::env::temp_dir().join(format!("whetstone_quota_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
@@ -3636,15 +3636,13 @@ fn test_propose_import_respects_config_max_rules_per_dep() {
         ],
         &tmp,
     );
-    assert!(!ok, "import should fail when max_rules_per_dep is exceeded");
-    let result = parse_json(&stdout);
     assert!(
-        result["error"]
-            .as_str()
-            .unwrap()
-            .contains("max_rules_per_dep"),
-        "expected quota-enforcement error, got {result:?}"
+        ok,
+        "invalid config values should be caught by `wh config validate` and ignored at runtime: {stdout}"
     );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["action"], "imported");
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -3696,12 +3694,7 @@ fn test_config_show_surfaces_effective_and_provenance() {
     .unwrap();
 
     let (stdout, _stderr, ok) = run_whetstone_from_cwd(
-        &[
-            "config",
-            "show",
-            "--project-dir",
-            tmp.to_str().unwrap(),
-        ],
+        &["config", "show", "--project-dir", tmp.to_str().unwrap()],
         &tmp,
     );
     assert!(ok);
@@ -3739,8 +3732,7 @@ fn test_config_show_surfaces_effective_and_provenance() {
 
 #[test]
 fn test_config_validate_flags_unknown_key() {
-    let tmp =
-        std::env::temp_dir().join(format!("whetstone_cfg_validate_{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("whetstone_cfg_validate_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
     std::fs::write(
@@ -3750,12 +3742,7 @@ fn test_config_validate_flags_unknown_key() {
     .unwrap();
 
     let (stdout, _stderr, _ok) = run_whetstone_from_cwd(
-        &[
-            "config",
-            "validate",
-            "--project-dir",
-            tmp.to_str().unwrap(),
-        ],
+        &["config", "validate", "--project-dir", tmp.to_str().unwrap()],
         &tmp,
     );
     let result = parse_json(&stdout);
@@ -3766,6 +3753,56 @@ fn test_config_validate_flags_unknown_key() {
             .map(|m| m.contains("extractoin"))
             .unwrap_or(false)),
         "expected unknown-key warning, got {diags:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_config_validate_flags_invalid_values_and_sanitizes_effective_config() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_cfg_invalid_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "generate:\n  formats: [bogus.md]\nextraction:\n  min_confidence: low\n  max_rules_per_dep: 0\ncheck:\n  fail_on: maybe\nbench:\n  min_f1: 1.5\nresolve:\n  timeout_seconds: 0\n",
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &["config", "validate", "--project-dir", tmp.to_str().unwrap()],
+        &tmp,
+    );
+    assert!(!ok, "invalid config values should fail validation");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "error");
+    let diags = result["diagnostics"].as_array().unwrap();
+    assert!(
+        diags.iter().any(|d| d["message"]
+            .as_str()
+            .map(|m| m.contains("min_confidence"))
+            .unwrap_or(false)),
+        "expected min_confidence diagnostic, got {diags:?}"
+    );
+    assert_eq!(
+        result["effective"]["generate"]["formats"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        result["effective"]["extraction"]["min_confidence"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        result["effective"]["check"]["fail_on"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        result["effective"]["bench"]["min_f1"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        result["effective"]["resolve"]["timeout_seconds"],
+        serde_json::Value::Null
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
@@ -3788,12 +3825,7 @@ fn test_config_personal_overrides_project() {
     .unwrap();
 
     let (stdout, _stderr, ok) = run_whetstone_from_cwd(
-        &[
-            "config",
-            "show",
-            "--project-dir",
-            tmp.to_str().unwrap(),
-        ],
+        &["config", "show", "--project-dir", tmp.to_str().unwrap()],
         &tmp,
     );
     assert!(ok);
@@ -3823,12 +3855,7 @@ fn test_review_worklist_requires_handoff() {
     std::fs::create_dir_all(&tmp).unwrap();
 
     let (stdout, _stderr, _ok) = run_whetstone_from_cwd(
-        &[
-            "review",
-            "--project-dir",
-            tmp.to_str().unwrap(),
-            "worklist",
-        ],
+        &["review", "--project-dir", tmp.to_str().unwrap(), "worklist"],
         &tmp,
     );
     let result = parse_json(&stdout);
@@ -4008,12 +4035,7 @@ fn test_review_worklist_human_output() {
     // still pipes stdout but is_piped() auto-selects JSON; this test asserts
     // that JSON output is structured regardless.
     let (stdout, _stderr, ok) = run_whetstone_from_cwd(
-        &[
-            "review",
-            "--project-dir",
-            tmp.to_str().unwrap(),
-            "worklist",
-        ],
+        &["review", "--project-dir", tmp.to_str().unwrap(), "worklist"],
         &tmp,
     );
     assert!(ok);
@@ -4022,6 +4044,85 @@ fn test_review_worklist_human_output() {
     assert!(!stdout.contains("wh review: 0 rule(s)"));
     let result = parse_json(&stdout);
     assert_eq!(result["total"].as_u64().unwrap(), 1);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_bench_uses_configured_relative_corpus_dir_from_project_root() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_bench_cfg_{}", std::process::id()));
+    let outside =
+        std::env::temp_dir().join(format!("whetstone_bench_cfg_cwd_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&outside);
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::create_dir_all(tmp.join("custom-bench/python/case/src")).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "bench:\n  corpus_dir: custom-bench\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("custom-bench/python/case/meta.yaml"),
+        "scenario: case\nlanguage: python\nrules:\n  - python.no-shell-true\ncategory: deterministic\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("custom-bench/python/case/expected.json"),
+        r#"{"violations": []}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("custom-bench/python/case/src/ok.py"),
+        "print(\"ok\")\n",
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &[
+            "bench",
+            "run",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+            "--json",
+        ],
+        &outside,
+    );
+    assert!(
+        ok,
+        "bench should resolve config corpus_dir relative to project root: {stdout}"
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["summary"]["total"].as_u64().unwrap(), 1);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = std::fs::remove_dir_all(&outside);
+}
+
+#[test]
+fn test_config_template_matches_supported_schema() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_cfg_template_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        include_str!("../assets/whetstone.yaml.template"),
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &["config", "validate", "--project-dir", tmp.to_str().unwrap()],
+        &tmp,
+    );
+    assert!(ok, "template should validate cleanly: {stdout}");
+    let result = parse_json(&stdout);
+    let diags = result["diagnostics"].as_array().unwrap();
+    assert!(
+        diags.is_empty(),
+        "template drifted from supported config: {diags:?}"
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

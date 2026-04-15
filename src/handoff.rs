@@ -125,8 +125,7 @@ pub fn write_extraction_handoff(
         })
         .collect();
 
-    let worklist =
-        crate::worklist::build_from_doctor(project_dir, doctor_result, &existing_rules);
+    let worklist = crate::worklist::build_from_doctor(project_dir, doctor_result, &existing_rules);
 
     let handoff = json!({
         "version": 1,

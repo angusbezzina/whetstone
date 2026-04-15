@@ -254,6 +254,8 @@ Shipped commands (primary name first, aliases in parentheses):
 | `review` | — | Review rules by lifecycle status or build a refresh review queue | `show <rule-id>`, `queue`, `--status`, `--lang` |
 | `apply` | — | Apply lifecycle transitions without hand-editing YAML | `<rule-id>`, `--approve|--deny|--deprecate|--supersede`, `--reason`, `--batch`, `--dry-run` |
 | `bench` | — | Run the benchmark corpus or snapshot a baseline | `run|snapshot`, `--scenario`, `--min-f1`, `--check` |
+| `propose` | — | Inspect the proposal schema, diff a bundle, or import candidate proposals | `schema`, `diff <bundle>`, `import <bundle>` |
+| `config` | — | Show or validate the effective config stack with provenance | `show`, `validate`, `--project-dir` |
 | `patterns` | `detect-patterns` | Mine style patterns from transcripts/git/PRs | `--sources`, `--since`, `--quiet`, `--global-transcripts` |
 | `update` | — | Update the `whetstone` binary to the latest release | `--check`, `--force` |
 
@@ -501,6 +503,8 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - Custom source URLs in `whetstone.yaml` (blogs, team guides, any public URL)
 - Built-in rules (`whetstone:recommended`) that ship with the binary for Rust, Python, and TypeScript
 - Agent-mediated rule extraction with structured approval flow and explicit candidate handoff
+- Structured proposal bundles via `wh propose schema|diff|import`, replacing hand-authored candidate YAML
+- Effective config inspection/validation via `wh config show|validate`
 - Tree-sitter-backed `wh check` across Python, TypeScript, and Rust, including AST-query and AST-scoped regex enforcement
 - Rule lifecycle workflow via `wh review` / `wh apply`, with audit logging and refresh-driven review queues
 - Benchmark harness via `wh bench run` / `wh bench snapshot`, with CI-friendly regression gating
@@ -521,11 +525,10 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 **Opt-in:**
 - Pattern detection from agent transcripts, git history, and PR comments via `wh patterns`.
 
-**Planned:**
+**Planned / TBD:**
 - ast-grep pattern generation (structural enforcement via CodeRabbit-compatible rules)
 - MCP server for agent-native rule queries
 - Continue.dev check generation for CI status checks
-- Tree-sitter-backed AST signal analysis (today's `ast` signals fall back to regex)
 - Shared rule registry with community-ranked rules (the `@user/config` `extends:` form is parsed but currently reports `not_implemented`)
 - `wh evolve` — signal promotion from AI verdicts to deterministic signals
 

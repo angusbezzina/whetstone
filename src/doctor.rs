@@ -452,8 +452,7 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
     let config = crate::config::WhetstoneConfig::load(project_dir);
     if !config.sources.custom.is_empty() {
         let custom_timeout = config.resolve.timeout_seconds.unwrap_or(15);
-        let custom =
-            crate::resolve::resolve_custom_sources(&config.sources.custom, custom_timeout);
+        let custom = crate::resolve::resolve_custom_sources(&config.sources.custom, custom_timeout);
         if !custom.is_empty() {
             eprintln!("  Resolved {} custom source(s)", custom.len());
             extraction_sources.extend(custom);

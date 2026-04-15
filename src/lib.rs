@@ -19,7 +19,6 @@ mod proposals;
 mod resolve;
 mod review;
 mod rules;
-mod worklist;
 mod state;
 mod status;
 mod team;
@@ -27,6 +26,7 @@ mod templates;
 mod triggers;
 mod types;
 mod update;
+mod worklist;
 
 pub fn run() -> i32 {
     cli::run()
