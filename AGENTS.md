@@ -12,10 +12,15 @@ Whetstone is an Agent Skill (agentskills.io format) with a Rust CLI binary. The 
 |------|---------------|---------|
 | 1. Detect | Binary | `wh doctor` (or `wh init`) |
 | 2. Resolve | Binary | `wh doctor` (or `wh set-sources`) |
-| 3. Extract | Agent | Read docs, propose candidate rules |
-| 4. Approve | Agent + User | Present rules for review, persist decisions |
-| 5. Generate | Binary | `wh context` + `wh tests` |
-| 6. Monitor | Binary | `wh status` / `wh ci` |
+| 3. Worklist | Binary | `wh review worklist` — per-dep ranked packets with quotas |
+| 4. Extract | Agent | Read docs, emit a structured proposal bundle |
+| 5. Import | Binary | `wh propose import <bundle>` — turns bundle into candidate YAML |
+| 6. Diff | Binary | `wh propose diff <bundle>` or `wh review diff` |
+| 7. Approve | Agent + User | `wh apply <id> --approve` (or `--deny` / `--deprecate` / `--supersede`) |
+| 8. Generate | Binary | `wh context` + `wh tests` |
+| 9. Monitor | Binary | `wh status` / `wh ci` |
+
+Agents MUST NOT hand-author candidate rule YAML — `wh propose import` is the only supported path. This keeps `status`, `approved`, `proposed_at`, and `proposed_by` consistent across every run.
 
 ### Key Files
 
@@ -25,6 +30,8 @@ Whetstone is an Agent Skill (agentskills.io format) with a Rust CLI binary. The 
 | `src/` | Rust source for the `whetstone` binary |
 | `scripts/legacy/` | Archived Python reference implementations, parity-tested by `tests/test_script_contracts.py` |
 | `references/rule-schema.yaml` | Rule YAML format specification |
+| `references/proposal-schema.md` | Agent-emitted proposal bundle format (input to `wh propose import`) |
+| `references/handoff-schema.md` | Durable handoff artifacts under `whetstone/.state/` |
 | `tests/` | Integration tests and fixtures |
 
 ---

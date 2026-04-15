@@ -327,6 +327,138 @@ pub fn apply_batch(project_dir: &Path, batch_file: &Path, dry_run: bool) -> Resu
     }))
 }
 
+// ── Candidate diff (3D.1.3) ──
+
+/// Summarize what approving every currently-pending candidate would do:
+/// how many would be added, how many existing approved rules in the same
+/// dependency would be shadowed, and which existing approved rules are
+/// not represented in the candidate set (advisory deprecations).
+pub fn diff_candidates(
+    project_dir: &Path,
+    lang_filter: Option<&str>,
+) -> Result<Value> {
+    let paths = LayerPaths::for_project(project_dir);
+    let (project_files, warnings) = load_rule_files(&paths.project_rules_dir);
+
+    // Group rules by (language, dep_name).
+    let mut approved_by_dep: std::collections::BTreeMap<(String, String), Vec<String>> =
+        std::collections::BTreeMap::new();
+    let mut candidates_by_dep: std::collections::BTreeMap<
+        (String, String),
+        Vec<Value>,
+    > = std::collections::BTreeMap::new();
+    let mut candidate_ids: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+
+    for lrf in &project_files {
+        if let Some(filter) = lang_filter {
+            if lrf.language.as_deref() != Some(filter) {
+                continue;
+            }
+        }
+        let key = (
+            lrf.language.clone().unwrap_or_default(),
+            lrf.rule_file.source.name.clone(),
+        );
+        for r in &lrf.rule_file.rules {
+            let st = r
+                .status
+                .clone()
+                .unwrap_or_else(|| if r.approved { "approved".into() } else { "candidate".into() });
+            match st.as_str() {
+                "approved" => {
+                    approved_by_dep
+                        .entry(key.clone())
+                        .or_default()
+                        .push(r.id.clone());
+                }
+                "candidate" => {
+                    candidate_ids.insert(r.id.clone());
+                    candidates_by_dep
+                        .entry(key.clone())
+                        .or_default()
+                        .push(json!({
+                            "id": r.id,
+                            "severity": r.severity,
+                            "confidence": r.confidence,
+                            "category": r.category,
+                            "description": first_line(r.description.as_deref().unwrap_or("")),
+                            "source_url": r.source_url,
+                            "source_kind": r.source_kind,
+                            "proposed_by": r.proposed_by,
+                            "proposed_at": r.proposed_at,
+                        }));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Collect per-dep diff summaries.
+    let mut per_dep: Vec<Value> = Vec::new();
+    let all_keys: std::collections::BTreeSet<(String, String)> = approved_by_dep
+        .keys()
+        .chain(candidates_by_dep.keys())
+        .cloned()
+        .collect();
+    let mut totals = DiffTotals::default();
+
+    for key in all_keys {
+        let candidates = candidates_by_dep.remove(&key).unwrap_or_default();
+        let approved = approved_by_dep.remove(&key).unwrap_or_default();
+        if candidates.is_empty() && approved.is_empty() {
+            continue;
+        }
+
+        let would_add = candidates.len();
+        let would_shadow: Vec<String> = candidates
+            .iter()
+            .filter_map(|c| c.get("id").and_then(|v| v.as_str()))
+            .filter(|cid| approved.iter().any(|a| a == cid))
+            .map(String::from)
+            .collect();
+
+        let advisory_deprecations: Vec<String> = approved
+            .iter()
+            .filter(|aid| !candidates.iter().any(|c| c["id"].as_str() == Some(aid)))
+            .cloned()
+            .collect();
+
+        totals.added += would_add;
+        totals.shadowed += would_shadow.len();
+        totals.advisory_deprecations += advisory_deprecations.len();
+
+        per_dep.push(json!({
+            "language": key.0,
+            "dependency": key.1,
+            "candidates": candidates,
+            "approved_existing": approved.len(),
+            "would_shadow_existing_ids": would_shadow,
+            "advisory_deprecations": advisory_deprecations,
+        }));
+    }
+
+    Ok(json!({
+        "status": "ok",
+        "summary": {
+            "total_candidates": totals.added,
+            "candidate_deps": per_dep.len(),
+            "would_shadow": totals.shadowed,
+            "advisory_deprecations": totals.advisory_deprecations,
+        },
+        "per_dep": per_dep,
+        "warnings": warnings,
+        "next_command": "wh apply <rule-id> --approve | wh apply --batch <file.json>",
+    }))
+}
+
+#[derive(Default)]
+struct DiffTotals {
+    added: usize,
+    shadowed: usize,
+    advisory_deprecations: usize,
+}
+
 // ── Queue from handoff + refresh artifacts (3C.2) ──
 
 pub fn queue(project_dir: &Path) -> Result<Value> {
@@ -903,6 +1035,87 @@ fn first_line(text: &str) -> String {
 
 // ── Human output ──
 
+pub fn format_diff(result: &Value) -> String {
+    let mut out = String::new();
+    let summary = result.get("summary").cloned().unwrap_or(Value::Null);
+    let total = summary
+        .get("total_candidates")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let deps = summary
+        .get("candidate_deps")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let shadow = summary
+        .get("would_shadow")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let dep_count = summary
+        .get("advisory_deprecations")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    out.push_str(&format!(
+        "wh review diff: {total} candidate(s) across {deps} dep(s)\n"
+    ));
+    if shadow > 0 {
+        out.push_str(&format!("  {shadow} candidate(s) share an id with an existing approved rule\n"));
+    }
+    if dep_count > 0 {
+        out.push_str(&format!("  {dep_count} approved rule(s) have no corresponding candidate (advisory deprecations)\n"));
+    }
+    if let Some(per_dep) = result.get("per_dep").and_then(|v| v.as_array()) {
+        for entry in per_dep {
+            let dep = entry.get("dependency").and_then(|v| v.as_str()).unwrap_or("?");
+            let lang = entry.get("language").and_then(|v| v.as_str()).unwrap_or("?");
+            let cands = entry
+                .get("candidates")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let approved = entry
+                .get("approved_existing")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            out.push_str(&format!(
+                "  [{lang}] {dep} — {cands} candidate(s), {approved} approved\n"
+            ));
+        }
+    }
+    out
+}
+
+pub fn format_worklist(result: &Value) -> String {
+    let mut out = String::new();
+    let total = result.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
+    out.push_str(&format!("wh review worklist: {total} entry/entries\n"));
+    if let Some(entries) = result.get("entries").and_then(|v| v.as_array()) {
+        for entry in entries {
+            let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+            let lang = entry.get("language").and_then(|v| v.as_str()).unwrap_or("?");
+            let priority = entry
+                .get("priority")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let remaining = entry
+                .get("quota")
+                .and_then(|q| q.get("remaining"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(-1);
+            let next = entry
+                .get("next_step")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            out.push_str(&format!(
+                "  [{priority}] {name} ({lang}) — quota remaining: {remaining}\n    → {next}\n"
+            ));
+        }
+    }
+    if let Some(next) = result.get("next_command").and_then(|v| v.as_str()) {
+        out.push_str(&format!("\n{next}\n"));
+    }
+    out
+}
+
 pub fn format_list(result: &Value) -> String {
     let mut out = String::new();
     let total = result
@@ -1032,6 +1245,48 @@ rules:
             "denied_reason not inserted:\n{out}"
         );
         assert_eq!(out.matches("- id: demo.rule").count(), 1);
+    }
+
+    #[test]
+    fn format_diff_renders_summary_and_per_dep_lines() {
+        let v = json!({
+            "summary": {
+                "total_candidates": 2,
+                "candidate_deps": 1,
+                "would_shadow": 1,
+                "advisory_deprecations": 0,
+            },
+            "per_dep": [{
+                "dependency": "fastapi",
+                "language": "python",
+                "candidates": [{"id": "fastapi.a"}, {"id": "fastapi.b"}],
+                "approved_existing": 1,
+            }],
+        });
+        let s = format_diff(&v);
+        assert!(s.contains("2 candidate(s) across 1 dep(s)"), "{s}");
+        assert!(s.contains("fastapi"), "{s}");
+        assert!(s.contains("share an id"), "{s}");
+    }
+
+    #[test]
+    fn format_worklist_lists_entries_with_next_step() {
+        let v = json!({
+            "total": 1,
+            "entries": [{
+                "name": "fastapi",
+                "language": "python",
+                "priority": "ready_now",
+                "quota": {"remaining": 5},
+                "next_step": "Read the linked source",
+            }],
+            "next_command": "wh propose import <bundle>",
+        });
+        let s = format_worklist(&v);
+        assert!(s.contains("ready_now"), "{s}");
+        assert!(s.contains("fastapi"), "{s}");
+        assert!(s.contains("Read the linked source"), "{s}");
+        assert!(s.contains("wh propose import"), "{s}");
     }
 
     #[test]

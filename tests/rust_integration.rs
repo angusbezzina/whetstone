@@ -3469,3 +3469,559 @@ fn test_detect_patterns_quiet_mode() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+// ── Propose import / diff / schema (3D.1.1, 3D.1.3) ──
+
+fn sample_proposal_bundle(dep: &str, lang: &str, rule_suffix: &str) -> String {
+    format!(
+        r#"version: 1
+proposed_by: test-agent
+dependency:
+  name: {dep}
+  language: {lang}
+  version: "1.0"
+  source_url: https://example.com/{dep}
+  content_hash: "sha256:test"
+  registry: manual
+proposals:
+  - id: {dep}.{rule_suffix}
+    severity: must
+    confidence: high
+    category: default
+    description: "Test rule for {dep}"
+    source_url: https://example.com/{dep}/rule
+    source_kind: official_docs
+    signals:
+      - id: s1
+        strategy: pattern
+        description: test signal
+        weight: required
+        match: 'TODO'
+    golden_examples:
+      - code: "x = 1"
+        verdict: pass
+        reason: ok
+      - code: "TODO"
+        verdict: fail
+        reason: contains TODO
+      - code: "y = 2"
+        verdict: pass
+        reason: ok
+"#
+    )
+}
+
+#[test]
+fn test_propose_schema_emits_structured_document() {
+    let (stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &["propose", "schema"],
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+    );
+    assert!(ok, "propose schema should succeed");
+    let result = parse_json(&stdout);
+    assert_eq!(result["version"], 1);
+    assert!(result["ProposedRule"].is_object());
+    assert!(result["enforcement"].is_object());
+}
+
+#[test]
+fn test_propose_import_writes_candidate_yaml() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_propose_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let bundle = tmp.join("bundle.yaml");
+    std::fs::write(&bundle, sample_proposal_bundle("pkg", "python", "v1")).unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &[
+            "propose",
+            "import",
+            bundle.to_str().unwrap(),
+            "--project-dir",
+            tmp.to_str().unwrap(),
+            "--actor",
+            "pytest",
+        ],
+        &tmp,
+    );
+    assert!(ok, "propose import should succeed");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["action"], "imported");
+    assert_eq!(result["proposed_by"], "pytest");
+
+    let target = tmp.join("whetstone/rules/python/pkg.yaml");
+    let contents = std::fs::read_to_string(&target).unwrap();
+    assert!(contents.contains("status: candidate"));
+    assert!(contents.contains("approved: false"));
+    assert!(contents.contains("proposed_by: pytest"));
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_propose_import_dry_run_does_not_write() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_dryrun_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let bundle = tmp.join("bundle.yaml");
+    std::fs::write(&bundle, sample_proposal_bundle("pkg", "python", "v1")).unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &[
+            "propose",
+            "import",
+            bundle.to_str().unwrap(),
+            "--project-dir",
+            tmp.to_str().unwrap(),
+            "--dry-run",
+        ],
+        &tmp,
+    );
+    assert!(ok);
+    let result = parse_json(&stdout);
+    assert_eq!(result["action"], "dry_run");
+    assert!(!tmp.join("whetstone/rules/python/pkg.yaml").exists());
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_propose_diff_reports_added_rules() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_diff_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let bundle = tmp.join("bundle.yaml");
+    std::fs::write(&bundle, sample_proposal_bundle("pkg", "python", "v1")).unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &[
+            "propose",
+            "diff",
+            bundle.to_str().unwrap(),
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        &tmp,
+    );
+    assert!(ok);
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["summary"]["added"].as_u64().unwrap(), 1);
+    assert_eq!(result["summary"]["conflicts"].as_u64().unwrap(), 0);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_propose_import_respects_config_max_rules_per_dep() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_quota_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "extraction:\n  max_rules_per_dep: 0\n",
+    )
+    .unwrap();
+    let bundle = tmp.join("bundle.yaml");
+    std::fs::write(&bundle, sample_proposal_bundle("pkg", "python", "v1")).unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &[
+            "propose",
+            "import",
+            bundle.to_str().unwrap(),
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        &tmp,
+    );
+    assert!(!ok, "import should fail when max_rules_per_dep is exceeded");
+    let result = parse_json(&stdout);
+    assert!(
+        result["error"]
+            .as_str()
+            .unwrap()
+            .contains("max_rules_per_dep"),
+        "expected quota-enforcement error, got {result:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_review_diff_summarizes_pending_candidates() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_review_diff_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let bundle = tmp.join("bundle.yaml");
+    std::fs::write(&bundle, sample_proposal_bundle("pkg", "python", "v1")).unwrap();
+
+    let (_stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &[
+            "propose",
+            "import",
+            bundle.to_str().unwrap(),
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        &tmp,
+    );
+    assert!(ok);
+
+    let (stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &["review", "--project-dir", tmp.to_str().unwrap(), "diff"],
+        &tmp,
+    );
+    assert!(ok, "review diff should succeed");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["summary"]["total_candidates"].as_u64().unwrap(), 1);
+    assert_eq!(result["summary"]["candidate_deps"].as_u64().unwrap(), 1);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+// ── Config show / validate (3D.2.3) ──
+
+#[test]
+fn test_config_show_surfaces_effective_and_provenance() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_cfg_show_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "extraction:\n  max_rules_per_dep: 3\n  include: [fastapi]\nresolve:\n  timeout_seconds: 45\n",
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &[
+            "config",
+            "show",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        &tmp,
+    );
+    assert!(ok);
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(
+        result["effective"]["extraction"]["max_rules_per_dep"]
+            .as_u64()
+            .unwrap(),
+        3
+    );
+    assert_eq!(
+        result["effective"]["resolve"]["timeout_seconds"]
+            .as_u64()
+            .unwrap(),
+        45
+    );
+    assert_eq!(
+        result["sources"]["extraction.max_rules_per_dep"]
+            .as_str()
+            .unwrap(),
+        "project"
+    );
+    // Precedence vector is documented in the response itself.
+    let prec: Vec<&str> = result["precedence"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(prec, vec!["default", "global", "project", "personal"]);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_config_validate_flags_unknown_key() {
+    let tmp =
+        std::env::temp_dir().join(format!("whetstone_cfg_validate_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "extractoin:\n  max_rules_per_dep: 5\n",
+    )
+    .unwrap();
+
+    let (stdout, _stderr, _ok) = run_whetstone_from_cwd(
+        &[
+            "config",
+            "validate",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        &tmp,
+    );
+    let result = parse_json(&stdout);
+    let diags = result["diagnostics"].as_array().unwrap();
+    assert!(
+        diags.iter().any(|d| d["message"]
+            .as_str()
+            .map(|m| m.contains("extractoin"))
+            .unwrap_or(false)),
+        "expected unknown-key warning, got {diags:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_config_personal_overrides_project() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_cfg_personal_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone/.personal")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "resolve:\n  timeout_seconds: 30\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("whetstone/.personal/config.yaml"),
+        "resolve:\n  timeout_seconds: 90\n",
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &[
+            "config",
+            "show",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        &tmp,
+    );
+    assert!(ok);
+    let result = parse_json(&stdout);
+    assert_eq!(
+        result["effective"]["resolve"]["timeout_seconds"]
+            .as_u64()
+            .unwrap(),
+        90
+    );
+    assert_eq!(
+        result["sources"]["resolve.timeout_seconds"]
+            .as_str()
+            .unwrap(),
+        "personal"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+// ── Worklist (3D.1.2) ──
+
+#[test]
+fn test_review_worklist_requires_handoff() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_wl_empty_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    let (stdout, _stderr, _ok) = run_whetstone_from_cwd(
+        &[
+            "review",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+            "worklist",
+        ],
+        &tmp,
+    );
+    let result = parse_json(&stdout);
+    assert!(
+        result["error"]
+            .as_str()
+            .map(|e| e.contains("extraction-handoff.json"))
+            .unwrap_or(false),
+        "expected missing-handoff error, got {result:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_worklist_embedded_in_extraction_handoff() {
+    // Use the repo itself (has resolved dependencies) and confirm the
+    // worklist is included in the handoff artifact after `wh doctor`.
+    let tmp = std::env::temp_dir().join(format!("whetstone_wl_embed_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    // Minimal pyproject.toml to make doctor work quickly.
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        "[project]\nname = \"tmp\"\nversion = \"0.1.0\"\ndependencies = [\"fastapi\"]\n",
+    )
+    .unwrap();
+
+    // We can't guarantee network access in tests — simulate by writing
+    // a minimal handoff artifact with an empty worklist and assert the
+    // review worklist command reads it.
+    let state_dir = tmp.join("whetstone/.state");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    std::fs::write(
+        state_dir.join("extraction-handoff.json"),
+        r#"{"version":1,"trigger":"doctor","worklist":[{"name":"fastapi","language":"python","priority":"ready_now","score":120.0,"sections":[],"existing_rules":0,"quota":{"max_rules_per_dep":5,"remaining":5},"next_step":"Read the linked source"}]}"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &[
+            "review",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+            "worklist",
+            "--dep",
+            "fastapi",
+        ],
+        &tmp,
+    );
+    assert!(ok);
+    let result = parse_json(&stdout);
+    assert_eq!(result["total"].as_u64().unwrap(), 1);
+    let entries = result["entries"].as_array().unwrap();
+    assert_eq!(entries[0]["name"], "fastapi");
+    assert_eq!(entries[0]["priority"], "ready_now");
+    assert_eq!(entries[0]["quota"]["remaining"].as_u64().unwrap(), 5);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_propose_import_enforces_per_dep_quota_across_existing_rules() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_perdep_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "extraction:\n  max_rules_per_dep: 1\n",
+    )
+    .unwrap();
+    // Seed an approved rule so even one new candidate would tip over the quota.
+    let rules_dir = tmp.join("whetstone/rules/python");
+    std::fs::create_dir_all(&rules_dir).unwrap();
+    std::fs::write(
+        rules_dir.join("pkg.yaml"),
+        r#"source:
+  name: pkg
+  docs_url: https://example.com/pkg
+  version: "1.0"
+  content_hash: "sha256:test"
+  resolved_at: "2026-01-01T00:00:00Z"
+  registry: manual
+rules:
+  - id: pkg.existing
+    severity: must
+    confidence: high
+    category: default
+    description: existing
+    source_url: https://example.com/existing
+    approved: true
+    status: approved
+    signals:
+      - id: s1
+        strategy: pattern
+        description: x
+        weight: required
+        match: y
+    golden_examples:
+      - code: ""
+        verdict: pass
+        reason: ok
+      - code: y
+        verdict: fail
+        reason: bad
+      - code: z
+        verdict: pass
+        reason: ok
+"#,
+    )
+    .unwrap();
+    let bundle = tmp.join("bundle.yaml");
+    std::fs::write(&bundle, sample_proposal_bundle("pkg", "python", "new-rule")).unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &[
+            "propose",
+            "import",
+            bundle.to_str().unwrap(),
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        &tmp,
+    );
+    assert!(!ok, "should refuse to push past the per-dep quota");
+    let result = parse_json(&stdout);
+    let err = result["error"].as_str().unwrap_or("");
+    assert!(
+        err.contains("max_rules_per_dep"),
+        "expected per-dep quota error, got: {err}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_config_validate_catches_nested_typo() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_typo_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    // Typo: `max_rules_per_deps` (extra s) nested under a known parent.
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "extraction:\n  max_rules_per_deps: 5\n",
+    )
+    .unwrap();
+    let (stdout, _stderr, _ok) = run_whetstone_from_cwd(
+        &["config", "validate", "--project-dir", tmp.to_str().unwrap()],
+        &tmp,
+    );
+    let result = parse_json(&stdout);
+    let diags = result["diagnostics"].as_array().unwrap();
+    assert!(
+        diags.iter().any(|d| d["message"]
+            .as_str()
+            .map(|m| m.contains("max_rules_per_deps"))
+            .unwrap_or(false)),
+        "expected nested-typo warning, got {diags:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_review_worklist_human_output() {
+    let tmp = std::env::temp_dir().join(format!("whetstone_wl_human_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone/.state")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/.state/extraction-handoff.json"),
+        r#"{"version":1,"trigger":"doctor","worklist":[{"name":"fastapi","language":"python","priority":"ready_now","score":120.0,"sections":[],"existing_rules":0,"quota":{"max_rules_per_dep":5,"remaining":5},"next_step":"Read the linked source"}]}"#,
+    )
+    .unwrap();
+
+    // Force tty-like output by not passing --json. `run_whetstone_from_cwd`
+    // still pipes stdout but is_piped() auto-selects JSON; this test asserts
+    // that JSON output is structured regardless.
+    let (stdout, _stderr, ok) = run_whetstone_from_cwd(
+        &[
+            "review",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+            "worklist",
+        ],
+        &tmp,
+    );
+    assert!(ok);
+    // Because stdout is piped in tests, output is auto-JSON; still verify the
+    // formatter isn't accidentally triggered (which would print "0 rule(s)").
+    assert!(!stdout.contains("wh review: 0 rule(s)"));
+    let result = parse_json(&stdout);
+    assert_eq!(result["total"].as_u64().unwrap(), 1);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

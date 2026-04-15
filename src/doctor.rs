@@ -344,17 +344,21 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
             None
         };
 
+    // Config-driven defaults; CLI-level overrides still arrive through the
+    // dedicated `wh set-sources` subcommand, but `wh doctor` runs
+    // set-sources implicitly so we honor the project resolve settings here.
+    let resolve_cfg = crate::config::WhetstoneConfig::load(project_dir).resolve;
     let resolve_result = resolve::resolve_sources(resolve::ResolveOptions {
         deps_data: &resolve_input,
         filter_deps: filter.as_deref(),
         changed_only: false,
         project_dir,
-        timeout: 15,
-        ttl: 604800,
+        timeout: resolve_cfg.timeout_seconds.unwrap_or(15),
+        ttl: resolve_cfg.cache_ttl_seconds.unwrap_or(604800),
         force_refresh: refresh,
         resume,
         retry_failed: false,
-        workers,
+        workers: workers.or(resolve_cfg.workers),
     })?;
     let resolve_time = resolve_start.elapsed().as_secs_f64();
 
@@ -447,7 +451,9 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
     // Resolve custom sources from config
     let config = crate::config::WhetstoneConfig::load(project_dir);
     if !config.sources.custom.is_empty() {
-        let custom = crate::resolve::resolve_custom_sources(&config.sources.custom, 15);
+        let custom_timeout = config.resolve.timeout_seconds.unwrap_or(15);
+        let custom =
+            crate::resolve::resolve_custom_sources(&config.sources.custom, custom_timeout);
         if !custom.is_empty() {
             eprintln!("  Resolved {} custom source(s)", custom.len());
             extraction_sources.extend(custom);
@@ -483,7 +489,7 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
     let next_command = if auto_limited {
         "wh doctor --resume"
     } else if !extraction_sources.is_empty() {
-        "Review extraction results, then: wh context"
+        "For each ready dep, produce a proposal bundle → `wh propose import <bundle>` → `wh review diff` → `wh apply <id> --approve`"
     } else if !sources.is_empty() {
         "wh status"
     } else {

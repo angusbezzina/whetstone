@@ -2,8 +2,9 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    bench, check, ci_check, detect, detect_patterns, doctor, eval, generate_context,
-    generate_tests, layers, output, personal, resolve, review, rules, status, triggers, update,
+    bench, check, ci_check, config, detect, detect_patterns, doctor, eval, generate_context,
+    generate_tests, layers, output, personal, proposals, resolve, review, rules, status, triggers,
+    update, worklist,
 };
 
 #[derive(Parser)]
@@ -27,6 +28,64 @@ enum ReviewAction {
     Show { rule_id: String },
     /// Build a review queue from extraction-handoff + refresh-diff artifacts
     Queue,
+    /// Summarize what approving every pending candidate would do
+    Diff,
+    /// Show the dependency-scoped extraction worklist (optionally filtered)
+    Worklist {
+        /// Filter to a single dependency name
+        #[arg(long)]
+        dep: Option<String>,
+        /// Filter to a single language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProposeAction {
+    /// Validate and import a proposal bundle (JSON or YAML)
+    Import {
+        /// Path to the proposal bundle
+        bundle: PathBuf,
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+        /// Preview without writing files
+        #[arg(long)]
+        dry_run: bool,
+        /// Override the proposer recorded in provenance
+        #[arg(long)]
+        actor: Option<String>,
+        /// Replace existing candidate rules that share an id
+        #[arg(long)]
+        overwrite_candidates: bool,
+    },
+    /// Summarize what importing the bundle would do without writing
+    Diff {
+        /// Path to the proposal bundle
+        bundle: PathBuf,
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Emit the proposal bundle schema as JSON
+    Schema,
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Print the effective config with per-key provenance
+    Show {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Validate config files and surface unknown keys / misplacements
+    Validate {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -98,13 +157,13 @@ enum Commands {
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
 
-        /// HTTP request timeout in seconds
-        #[arg(long, default_value_t = 15)]
-        timeout: u64,
+        /// HTTP request timeout in seconds (overrides resolve.timeout_seconds)
+        #[arg(long)]
+        timeout: Option<u64>,
 
-        /// Cache TTL in seconds (default: 7 days)
-        #[arg(long, default_value_t = 604800)]
-        ttl: u64,
+        /// Cache TTL in seconds (overrides resolve.cache_ttl_seconds; default 7 days)
+        #[arg(long)]
+        ttl: Option<u64>,
 
         /// Ignore cache and re-resolve all
         #[arg(long)]
@@ -489,13 +548,25 @@ enum Commands {
         #[arg(long)]
         scenario: Option<String>,
 
-        /// Minimum F1 score per scenario before failing (0..=1)
-        #[arg(long, default_value_t = 1.0)]
-        min_f1: f64,
+        /// Minimum F1 score per scenario before failing (0..=1, overrides bench.min_f1)
+        #[arg(long)]
+        min_f1: Option<f64>,
 
         /// Exit non-zero if any scenario regresses below --min-f1
         #[arg(long)]
         check: bool,
+    },
+
+    /// Import or diff a candidate proposal bundle
+    Propose {
+        #[command(subcommand)]
+        action: ProposeAction,
+    },
+
+    /// Inspect or validate the effective whetstone configuration
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
     },
 
     /// Update whetstone to the latest release
@@ -679,17 +750,27 @@ pub fn run() -> i32 {
             let filter_deps: Option<Vec<String>> =
                 deps.map(|s| s.split(',').map(|d| d.trim().to_string()).collect());
 
+            // Precedence: explicit CLI flag > config > hardcoded default.
+            let cfg = config::WhetstoneConfig::load(&project_dir);
+            let effective_timeout = timeout
+                .or(cfg.resolve.timeout_seconds)
+                .unwrap_or(15);
+            let effective_ttl = ttl
+                .or(cfg.resolve.cache_ttl_seconds)
+                .unwrap_or(604800);
+            let effective_workers = workers.or(cfg.resolve.workers);
+
             match resolve::resolve_sources(resolve::ResolveOptions {
                 deps_data: &deps_data,
                 filter_deps: filter_deps.as_deref(),
                 changed_only,
                 project_dir: &project_dir,
-                timeout,
-                ttl,
+                timeout: effective_timeout,
+                ttl: effective_ttl,
                 force_refresh,
                 resume,
                 retry_failed,
-                workers,
+                workers: effective_workers,
             }) {
                 Ok(result) => {
                     if json_mode {
@@ -1002,10 +1083,17 @@ pub fn run() -> i32 {
             rule,
             no_fail,
         } => {
-            let scan_paths: Vec<PathBuf> = if paths.is_empty() {
-                vec![project_dir.clone()]
-            } else {
+            let cfg = config::WhetstoneConfig::load(&project_dir);
+            let scan_paths: Vec<PathBuf> = if !paths.is_empty() {
                 paths
+            } else if !cfg.check.paths.is_empty() {
+                cfg.check
+                    .paths
+                    .iter()
+                    .map(|p| project_dir.join(p))
+                    .collect()
+            } else {
+                vec![project_dir.clone()]
             };
             let rule_filter: Option<Vec<String>> =
                 rule.map(|s| s.split(',').map(|r| r.trim().to_string()).collect());
@@ -1029,7 +1117,19 @@ pub fn run() -> i32 {
                     } else {
                         println!("{}", check::format_human_output(&result));
                     }
-                    if (violations_count > 0 || config_issues_count > 0) && !no_fail {
+                    let fail_mode = cfg
+                        .check
+                        .fail_on
+                        .as_deref()
+                        .unwrap_or("both");
+                    let should_fail = !no_fail
+                        && match fail_mode {
+                            "none" => false,
+                            "violations" => violations_count > 0,
+                            "config_issues" => config_issues_count > 0,
+                            _ => violations_count > 0 || config_issues_count > 0,
+                        };
+                    if should_fail {
                         1
                     } else {
                         0
@@ -1261,21 +1361,80 @@ pub fn run() -> i32 {
             status,
             lang,
         } => {
-            let result = match action {
-                Some(ReviewAction::Show { rule_id }) => review::show(&project_dir, &rule_id),
-                Some(ReviewAction::Queue) => review::queue(&project_dir),
-                None => review::list(review::ReviewListOptions {
-                    project_dir: &project_dir,
-                    status_filter: status.as_deref(),
-                    lang_filter: lang.as_deref(),
-                }),
+            // Track which renderer to use in TTY mode so subcommands that
+            // don't return rule-list shaped JSON don't fall through to the
+            // rule-list formatter.
+            enum Render {
+                List,
+                Diff,
+                Worklist,
+                Show,
+                Queue,
+            }
+
+            let (result, render) = match action {
+                Some(ReviewAction::Show { rule_id }) => {
+                    (review::show(&project_dir, &rule_id), Render::Show)
+                }
+                Some(ReviewAction::Queue) => (review::queue(&project_dir), Render::Queue),
+                Some(ReviewAction::Diff) => (
+                    review::diff_candidates(&project_dir, lang.as_deref()),
+                    Render::Diff,
+                ),
+                Some(ReviewAction::Worklist {
+                    dep: wl_dep,
+                    lang: wl_lang,
+                }) => {
+                    let res = match worklist::load(&project_dir) {
+                        Ok(handoff) => {
+                            let wl = handoff
+                                .get("worklist")
+                                .and_then(|v| v.as_array())
+                                .cloned()
+                                .unwrap_or_default();
+                            let filtered = worklist::filter(
+                                &wl,
+                                wl_dep.as_deref(),
+                                wl_lang.as_deref(),
+                            );
+                            Ok(serde_json::json!({
+                                "status": "ok",
+                                "generated_at": handoff.get("generated_at"),
+                                "trigger": handoff.get("trigger"),
+                                "total": filtered.len(),
+                                "entries": filtered,
+                                "next_command": "Pick the first `ready_now` entry and produce a proposal bundle, then `wh propose import <bundle>`",
+                            }))
+                        }
+                        Err(e) => Err(e),
+                    };
+                    (res, Render::Worklist)
+                }
+                None => (
+                    review::list(review::ReviewListOptions {
+                        project_dir: &project_dir,
+                        status_filter: status.as_deref(),
+                        lang_filter: lang.as_deref(),
+                    }),
+                    Render::List,
+                ),
             };
             match result {
                 Ok(value) => {
                     if json_mode {
                         output::print_json(&value);
                     } else {
-                        print!("{}", review::format_list(&value));
+                        match render {
+                            Render::List | Render::Show | Render::Queue => {
+                                print!("{}", review::format_list(&value));
+                            }
+                            Render::Diff => {
+                                print!("{}", review::format_diff(&value));
+                            }
+                            Render::Worklist => {
+                                print!("{}", review::format_worklist(&value));
+                            }
+                        }
                     }
                     0
                 }
@@ -1376,11 +1535,16 @@ pub fn run() -> i32 {
                 ));
                 return 1;
             }
+            let cfg = config::WhetstoneConfig::load(&project_dir);
+            let effective_min_f1 = min_f1.or(cfg.bench.min_f1).unwrap_or(1.0);
+            let effective_corpus = corpus_dir
+                .clone()
+                .or_else(|| cfg.bench.corpus_dir.as_deref().map(PathBuf::from));
             let result = bench::run(bench::BenchOptions {
                 project_dir: &project_dir,
-                corpus_dir: corpus_dir.as_deref(),
+                corpus_dir: effective_corpus.as_deref(),
                 scenario_filter: scenario.as_deref(),
-                min_f1,
+                min_f1: effective_min_f1,
             });
             match result {
                 Ok(mut value) => {
@@ -1418,6 +1582,83 @@ pub fn run() -> i32 {
                 }
             }
         }
+
+        Commands::Propose { action } => match action {
+            ProposeAction::Import {
+                bundle,
+                project_dir,
+                dry_run,
+                actor,
+                overwrite_candidates,
+            } => {
+                match proposals::import(proposals::ImportOptions {
+                    project_dir: &project_dir,
+                    bundle_path: &bundle,
+                    dry_run,
+                    actor: actor.as_deref(),
+                    overwrite_candidates,
+                }) {
+                    Ok(value) => {
+                        output::print_json(&value);
+                        0
+                    }
+                    Err(e) => {
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "wh propose schema && wh propose import <file>",
+                        ));
+                        1
+                    }
+                }
+            }
+            ProposeAction::Diff {
+                bundle,
+                project_dir,
+            } => match proposals::diff(&project_dir, &bundle) {
+                Ok(value) => {
+                    let has_conflicts =
+                        value.get("status").and_then(|v| v.as_str()) == Some("conflicts");
+                    output::print_json(&value);
+                    if has_conflicts {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "wh propose diff <bundle>",
+                    ));
+                    1
+                }
+            },
+            ProposeAction::Schema => {
+                output::print_json(&proposals::schema_json());
+                0
+            }
+        },
+
+        Commands::Config { action } => match action {
+            ConfigAction::Show { project_dir } => {
+                let snap = config::WhetstoneConfig::load_full(&project_dir);
+                output::print_json(&snap.to_json());
+                0
+            }
+            ConfigAction::Validate { project_dir } => {
+                let snap = config::WhetstoneConfig::load_full(&project_dir);
+                let any_errors = snap
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.level == config::DiagnosticLevel::Error);
+                output::print_json(&snap.to_json());
+                if any_errors {
+                    1
+                } else {
+                    0
+                }
+            }
+        },
 
         Commands::Update { check, force } => match update::check_and_update(force, check) {
             Ok(result) => {

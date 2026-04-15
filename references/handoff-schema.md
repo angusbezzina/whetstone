@@ -63,6 +63,42 @@ dependencies that still need rule extraction.
 - The agent MUST re-read `extraction-handoff.json` on resume, not the doctor
   output (the doctor output is ephemeral but this file is durable).
 
+### `worklist` (since 3D.1.2)
+
+The same artifact also carries a `worklist` array — a richer, per-dependency
+view of the same work that `candidates` describes flat. Each entry bundles the
+dep's ranked sources, section summaries, quota (from `extraction.max_rules_per_dep`),
+and a concrete next-step hint. The worklist is sorted by priority bucket then
+by a configuration-aware score (`preferred_source_kinds`, `recency_window_days`).
+
+```json
+"worklist": [
+  {
+    "name": "fastapi",
+    "language": "python",
+    "priority": "ready_now",
+    "score": 132.0,
+    "version": "0.110",
+    "source_type": "llms_full_txt",
+    "source_url": "https://fastapi.tiangolo.com/llms-full.txt",
+    "content_hash": "sha256:...",
+    "freshness": { "confidence": "high" },
+    "sections": [
+      { "type": "readme", "url": "...", "bytes": 12345 }
+    ],
+    "existing_rules": 1,
+    "quota": { "max_rules_per_dep": 5, "remaining": 4 },
+    "next_step": "Read the linked source, propose up to 4 rule(s), then `wh propose import <bundle>`",
+    "allowed_categories": ["migration", "convention"],
+    "min_confidence": "high",
+    "preferred_source_kinds": ["changelog", "migration_guide"]
+  }
+]
+```
+
+Access via `wh review worklist [--dep=<name>] [--lang=<python|typescript|rust>]`.
+Older readers that don't know the key ignore it; the field is fully additive.
+
 ---
 
 ## Refresh diff

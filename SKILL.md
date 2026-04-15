@@ -82,8 +82,10 @@ The binary does all deterministic work. The agent does all judgment. The user ha
 | `wh tests` | Generate test files + lint configs (`--personal` for personal-only output) | `whetstone/evals/**` + `whetstone/lint/*` by default; `whetstone/.personal/evals/**` with `--personal` |
 | `wh layers` | Show the 4-layer merge summary + per-rule provenance | JSON |
 | `wh promote` | Move a rule between layers (`--to personal\|project\|team`) | JSON |
-| `wh review` | List rules by lifecycle status or build a refresh review queue | JSON |
+| `wh review` | List rules by status, show one rule, or inspect the review queue / worklist / candidate diff | JSON |
+| `wh propose` | `schema`, `diff`, or `import` a structured proposal bundle (replaces hand-authored candidate YAML) | JSON |
 | `wh apply` | Apply approve / deny / deprecate / supersede transitions | JSON |
+| `wh config` | `show` or `validate` the effective config stack with per-key provenance | JSON |
 | `wh bench` | Run the benchmark corpus or snapshot a baseline | JSON |
 | `wh eval generate` | Generate AI eval definitions | YAML files for rules with ai signals |
 | `wh patterns` | Mine style patterns | JSON: patterns from transcripts/git/PRs |
@@ -145,25 +147,54 @@ Progress goes to stderr; JSON result to stdout. Review the summary:
 - Sources resolved (how many have content, how many have changelogs)
 - Recommendations (what to extract next)
 
-**Step 2: Extract rules from content**
+**Step 2: Walk the dependency worklist**
 
-Read `extraction_context.sources` from the doctor output. For each dependency that has content:
+The doctor writes a per-dependency worklist to `whetstone/.state/extraction-handoff.json`. Inspect it with:
+
+```
+wh review worklist                     # every dep
+wh review worklist --dep fastapi       # one dep
+wh review worklist --lang python       # one language
+```
+
+Each entry carries ranked sources, section summaries, the remaining quota (`extraction.max_rules_per_dep`), and an explicit `next_step`. Work top-down: finish `ready_now` deps before touching `resolved_low`, `pending`, or `failed` ones.
+
+**Step 3: Extract rules and emit a proposal bundle**
+
+For each dep you work:
 
 1. Read the `sections` array — examine README and changelog separately
 2. Apply the **Extraction Prompt** (see below)
 3. For changelog content: focus on `migration` and `breaking-change` categories
 4. For README content: focus on `convention` and `default` categories
-5. Maximum 5 rules per dependency
+5. Respect the worklist's `quota.remaining` — never propose more rules than fit
 6. **Prioritize rules about recent changes (last 18 months)**
 
 Every proposed rule MUST include:
 - `source_kind` — what kind of source backs it (`official_docs`, `changelog`, `migration_guide`, `blog`, etc.)
 - At least one deterministic signal (`ast` or `pattern`)
 - A specific `source_url` pointing to the exact documentation
+- 3 to 5 `golden_examples`, mixing `pass` and `fail` verdicts
 
-**Step 3: Interactive approval**
+Emit a **proposal bundle** matching the schema in `references/proposal-schema.md` (or run `wh propose schema` for the machine-readable version). Save it anywhere — e.g., `whetstone/.state/proposal-{dep}.yaml`.
 
-Present proposed rules using the **Rule Card** format:
+**Step 4: Diff and import**
+
+```
+wh propose diff proposal-fastapi.yaml
+```
+
+The diff lists new rule ids, modified candidates, conflicts with approved/denied ids, and advisory deprecations. If it reports `status: conflicts`, **fix the bundle** (rename colliding ids, drop shadowed rules, propose supersession through `wh apply`) before importing.
+
+```
+wh propose import proposal-fastapi.yaml
+```
+
+The importer writes `whetstone/rules/{language}/{dep}.yaml` with `status: candidate`, `approved: false`, `proposed_at`, and `proposed_by` already populated. **Do not hand-author rule YAML** — the importer is the only supported path.
+
+**Step 5: Interactive approval**
+
+Run `wh review --status=candidate` to list freshly imported rules, then present each using the **Rule Card** format:
 
 ```
 [MUST] reqwest.set-timeout — high confidence — default
@@ -175,13 +206,13 @@ Present proposed rules using the **Rule Card** format:
   > Approve / Edit / Deny / Skip?
 ```
 
-**Batch option**: Offer "Approve all N high-confidence rules for {dep}?" before individual review.
+**Batch option**: Offer "Approve all N high-confidence rules for {dep}?" before individual review. Use `wh apply --batch <file.json>` with entries `{"rule_id": "...", "action": "approve" | "deny" | "deprecate" | "supersede", ...}`.
 
-For each rule, the user can:
-- **Approve** — write to `whetstone/rules/{language}/{dependency}.yaml` with `approved: true` and `status: approved`
-- **Edit** — modify severity, signals, or examples, then approve
-- **Deny** — persist with `approved: false`, `status: denied`, and `denied_reason: "…"` so the decision is auditable
-- **Skip** — leave the candidate as-is (`status: candidate`) to defer
+For each rule the user can:
+- **Approve** — `wh apply <rule-id> --approve`
+- **Edit** — fix the bundle YAML for this dep and re-import with `wh propose import <bundle> --overwrite-candidates`
+- **Deny** — `wh apply <rule-id> --deny --reason "…"` (reason is mandatory, preserved in the audit log)
+- **Skip** — leave as `status: candidate` for later
 
 ### Rule lifecycle
 

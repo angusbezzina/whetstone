@@ -3,7 +3,7 @@
 //! Replaces the regex-based rule parsing with serde_yaml deserialization
 //! and provides validation against the rule schema.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -42,7 +42,7 @@ pub struct RuleFile {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct RuleSource {
     #[serde(default)]
     pub name: String,
@@ -119,7 +119,7 @@ pub struct Rule {
     pub golden_examples: Vec<GoldenExample>,
 }
 
-#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AiEval {
     /// When to run AI eval: "ambiguous" or "always"
     #[serde(default)]

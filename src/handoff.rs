@@ -125,6 +125,9 @@ pub fn write_extraction_handoff(
         })
         .collect();
 
+    let worklist =
+        crate::worklist::build_from_doctor(project_dir, doctor_result, &existing_rules);
+
     let handoff = json!({
         "version": 1,
         "generated_at": now_iso(),
@@ -133,7 +136,8 @@ pub fn write_extraction_handoff(
         "languages": languages,
         "candidates": candidates,
         "skipped": skipped,
-        "next_action": "Apply extraction prompt to each candidate; approve or deny; then wh validate && wh context && wh tests",
+        "worklist": worklist,
+        "next_action": "Work the worklist top-down; for each ready_now dep, produce a proposal bundle and run `wh propose import`.",
     });
 
     atomic_write(&path, &handoff);
@@ -389,10 +393,30 @@ fn load_approved_index(project_dir: &Path) -> Vec<(String, String, String)> {
     out
 }
 
+/// Count *live* rules per dep — approved + candidate together. This is the
+/// number that counts against the per-dep quota from the agent's point of
+/// view, since any additional proposals need to fit within what's left.
 fn load_approved_counts(project_dir: &Path) -> BTreeMap<(String, String), usize> {
-    let mut counts = BTreeMap::new();
-    for (lang, dep, _rid) in load_approved_index(project_dir) {
-        *counts.entry((lang, dep)).or_insert(0) += 1;
+    let rules_dir = project_dir.join("whetstone").join("rules");
+    let (files, _) = crate::rules::load_rule_files(&rules_dir);
+    let mut counts: BTreeMap<(String, String), usize> = BTreeMap::new();
+    for lrf in &files {
+        let language = lrf.language.clone().unwrap_or_default();
+        let source_name = lrf.rule_file.source.name.clone();
+        for r in &lrf.rule_file.rules {
+            let status = r.status.as_deref().unwrap_or({
+                if r.approved {
+                    "approved"
+                } else {
+                    "candidate"
+                }
+            });
+            if matches!(status, "approved" | "candidate") {
+                *counts
+                    .entry((language.clone(), source_name.clone()))
+                    .or_insert(0) += 1;
+            }
+        }
     }
     counts
 }
