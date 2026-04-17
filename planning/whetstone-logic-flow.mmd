@@ -9,95 +9,50 @@ flowchart TD
     %% Grey   = TBD    (future / not yet shipped)
     %% ═══════════════════════════════════════
 
-    START([User: "run whetstone" / "extract rules"]) --> DOCTOR["`**wh doctor --json**
-    Detect manifests
-    Resolve docs + changelogs
-    Cache + rank deps
-    Write extraction-handoff.json`"]
+    START([User: run whetstone / extract rules]) --> DOCTOR["wh doctor --json<br/>Detect manifests<br/>Resolve docs + changelogs<br/>Cache + rank deps<br/>Write extraction-handoff.json"]
 
-    DOCTOR --> AGENT_EXTRACT["`**Agent reads extraction handoff**
-    Reviews docs sections
-    Applies extraction prompt
-    Proposes candidate rules
-    Writes candidate YAML`"]
+    DOCTOR --> AGENT_EXTRACT["Agent reads extraction handoff<br/>Reviews docs sections<br/>Applies extraction prompt<br/>Builds proposal bundle"]
 
-    AGENT_EXTRACT --> REVIEW["`**wh review**
-    List candidate / approved / denied / deprecated
-    Show rule cards
-    Build refresh review queue`"]
-    REVIEW --> USER{User reviews
-candidate policy}
-    USER -->|Approve / Deny /
-Deprecate / Supersede| APPLY["`**wh apply**
-    Persist lifecycle transition
-    Append review-log.jsonl audit trail`"]
-    USER -->|Edit candidate| AGENT_EDIT[Agent edits YAML
-per feedback] --> REVIEW
+    AGENT_EXTRACT --> PROPOSE["wh propose diff / import<br/>Preview proposal bundle<br/>Import candidate rules deterministically"]
 
-    APPLY --> VALIDATE["`**wh validate --json**
-    Schema + fixture checks`"]
-    VALIDATE -->|Fix issues| AGENT_FIX[Agent fixes YAML
-or signals] --> VALIDATE
-    VALIDATE --> GENERATE["`**wh context + wh tests**
-    Generate agent context
-    Generate eval/test files
-    Generate lint overlays`"]
+    PROPOSE --> REVIEW["wh review<br/>List candidate / approved / denied / deprecated<br/>Show rule cards<br/>Build refresh review queue"]
 
-    GENERATE --> CHECK["`**wh check**
-    Tree-sitter AST queries
-    AST-scoped regex checks
-    lint_proxy config verification`"]
-    CHECK --> EVAL["`**wh eval run / calibrate**
-    Deterministic + AI-assisted checks
-    eval-requests / verdicts handoff
-    Calibration against golden examples`"]
-    EVAL --> STATUS["`**wh status --json**
-    Health score
-    Freshness / drift / coverage
-    Metrics history`"]
-    STATUS --> DONE([Done — rules enforced,
-agents informed,
-policy tracked])
+    REVIEW --> USER{"User reviews<br/>candidate policy"}
+
+    USER -->|Approve / Deny / Deprecate / Supersede| APPLY["wh apply<br/>Persist lifecycle transition<br/>Append review-log.jsonl audit trail"]
+    USER -->|Edit proposal| AGENT_EDIT["Agent edits proposal bundle<br/>or candidate details"] --> PROPOSE
+
+    APPLY --> VALIDATE["wh validate --json<br/>Schema + fixture checks"]
+    VALIDATE -->|Fix issues| AGENT_FIX["Agent fixes proposal / YAML<br/>or signals"] --> VALIDATE
+    VALIDATE --> GENERATE["wh context + wh tests<br/>Generate agent context<br/>Generate eval / test files<br/>Generate lint overlays"]
+
+    GENERATE --> CHECK["wh check<br/>Tree-sitter AST queries<br/>AST-scoped regex checks<br/>lint_proxy config verification"]
+    CHECK --> EVAL["wh eval run / calibrate<br/>Deterministic + AI-assisted checks<br/>eval-requests / verdicts handoff<br/>Calibration against golden examples"]
+    EVAL --> STATUS["wh status --json<br/>Health score<br/>Freshness / drift / coverage<br/>Metrics history"]
+    STATUS --> DONE([Done: rules enforced, agents informed, policy tracked])
 
     %% Refresh / update loop
-    STATUS -.->|Dependency drift| REFRESH["`**wh refresh --json**
-    Re-resolve changed sources
-    Write refresh-diff.json
-    --check gates CI`"]
+    STATUS -.->|Dependency drift| REFRESH["wh refresh --json<br/>Re-resolve changed sources<br/>Write refresh-diff.json<br/>--check gates CI"]
     REFRESH --> REVIEW
 
     %% Bench / trust path
-    DONE -.-> BENCH["`**wh bench run / snapshot**
-    Replay benchmark corpus
-    Precision / recall / F1
-    Persist bench-snapshot.json`"]
+    DONE -.-> BENCH["wh bench run / snapshot<br/>Replay benchmark corpus<br/>Precision / recall / F1<br/>Persist bench-snapshot.json"]
 
     %% Optional pattern mining
-    PATTERNS([Optional]) --> PAT["`**wh patterns --json**
-    Mine transcripts, git, PRs
-    Suggest recurring style signals`"]
+    PATTERNS([Optional]) --> PAT["wh patterns --json<br/>Mine transcripts, git, PRs<br/>Suggest recurring style signals"]
     PAT -.-> AGENT_EXTRACT
 
     %% CI path
-    CI_START([CI pipeline]) --> CI["`**wh ci --fail-on stale**
-    Freshness gate
-    Optional PR comment`"]
+    CI_START([CI pipeline]) --> CI["wh ci --fail-on stale<br/>Freshness gate<br/>Optional PR comment"]
     CI --> CHECK
     CI --> BENCH
 
     %% Personal / team policy path
-    START -.-> LAYERS["`**wh layers / wh promote**
-    personal > project > team > built-in
-    Team extends
-    Local-only personal policy`"]
+    START -.-> LAYERS["wh layers / wh promote<br/>personal > project > team > built-in<br/>Team extends<br/>Local-only personal policy"]
     LAYERS -.-> REVIEW
 
     %% TBD / future platform work
-    DONE -.-> FUTURE["`TBD: platform + registry`
-    Shared registry
-    Publishing rulesets
-    Signal promotion / wh evolve
-    GitHub App / service layer"]
+    DONE -.-> FUTURE["TBD: platform + registry<br/>Shared registry<br/>Publishing rulesets<br/>Signal promotion / wh evolve<br/>GitHub App / service layer"]
 
     %% Styling
     classDef binary fill:#2d6a4f,color:#fff,stroke:#1b4332
@@ -106,7 +61,7 @@ policy tracked])
     classDef future fill:#7d8597,color:#fff,stroke:#5c677d
     classDef start fill:#f4a261,color:#000,stroke:#e76f51
 
-    class DOCTOR,REVIEW,APPLY,VALIDATE,GENERATE,CHECK,EVAL,STATUS,REFRESH,BENCH,CI,PAT,LAYERS binary
+    class DOCTOR,PROPOSE,REVIEW,APPLY,VALIDATE,GENERATE,CHECK,EVAL,STATUS,REFRESH,BENCH,CI,PAT,LAYERS binary
     class AGENT_EXTRACT,AGENT_EDIT,AGENT_FIX agent
     class USER user
     class FUTURE future
