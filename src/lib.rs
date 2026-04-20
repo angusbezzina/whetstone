@@ -1,3 +1,4 @@
+mod approve;
 mod ast;
 mod check;
 mod ci_check;

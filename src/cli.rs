@@ -2,8 +2,9 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    check, ci_check, config, detect, doctor, extract, gen, generate_context, generate_lint,
-    generate_tests, output, personal, resolve, review, rules, status, triggers, update, worklist,
+    approve, check, ci_check, config, detect, doctor, extract, gen, generate_context,
+    generate_lint, generate_tests, output, personal, resolve, review, rules, status, triggers,
+    update, worklist,
 };
 
 // TODO(whetstone-aww): reinstate patterns
@@ -299,6 +300,28 @@ enum Commands {
         /// Emit personal-layer lint configs into whetstone/.personal/lint/
         #[arg(long)]
         personal: bool,
+    },
+
+    /// Flip candidate rules to approved (single id or batch filters)
+    Approve {
+        /// Rule id to approve. Omit when using --all.
+        rule_id: Option<String>,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Approve every matching candidate rule.
+        #[arg(long, conflicts_with = "rule_id")]
+        all: bool,
+
+        /// Restrict --all to a single dependency
+        #[arg(long, requires = "all")]
+        dep: Option<String>,
+
+        /// Restrict --all to candidates with this confidence (`high`|`medium`)
+        #[arg(long, requires = "all")]
+        confidence: Option<String>,
     },
 
     /// Walk the extraction worklist or submit a candidate bundle
@@ -879,6 +902,48 @@ pub fn run() -> i32 {
                 1
             }
         },
+
+        Commands::Approve {
+            rule_id,
+            project_dir,
+            all,
+            dep,
+            confidence,
+        } => {
+            let result = match (rule_id, all) {
+                (Some(id), false) => approve::approve_by_id(&project_dir, &id),
+                (None, true) => {
+                    approve::approve_bulk(&project_dir, dep.as_deref(), confidence.as_deref())
+                }
+                (None, false) => {
+                    output::print_json(&output::error_json(
+                        "wh approve requires a <rule-id> or --all",
+                        "wh approve <rule-id> | wh approve --all [--dep <name>] [--confidence high]",
+                    ));
+                    return 1;
+                }
+                (Some(_), true) => unreachable!("clap conflicts_with guards this"),
+            };
+            match result {
+                Ok(value) => {
+                    if json_mode {
+                        output::print_json(&value);
+                    } else if let Some(count) = value.get("approved_count").and_then(|v| v.as_i64())
+                    {
+                        println!("wh approve: {count} candidate(s) approved");
+                    } else {
+                        let id = value.get("rule_id").and_then(|v| v.as_str()).unwrap_or("?");
+                        let action = value.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+                        println!("wh approve: {id} -> {action}");
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(&e.to_string(), "wh approve --help"));
+                    1
+                }
+            }
+        }
 
         Commands::Extract {
             action,
