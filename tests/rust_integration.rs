@@ -96,7 +96,7 @@ fn assert_json_has_keys(actual: &serde_json::Value, expected_keys: &[&str], cont
 #[test]
 fn test_detect_deps_fixtures() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, success) = run_whetstone(&["detect-deps"], dir.to_str().unwrap());
+    let (stdout, _stderr, success) = run_whetstone(&["init", "--detect-only"], dir.to_str().unwrap());
     assert!(success, "detect-deps should succeed");
 
     let result = parse_json(&stdout);
@@ -112,7 +112,7 @@ fn test_detect_deps_fixtures() {
 #[test]
 fn test_detect_deps_typescript_fixture() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, success) = run_whetstone(&["detect-deps"], dir.to_str().unwrap());
+    let (stdout, _stderr, success) = run_whetstone(&["init", "--detect-only"], dir.to_str().unwrap());
     assert!(success);
 
     let result = parse_json(&stdout);
@@ -132,7 +132,7 @@ fn test_detect_deps_typescript_fixture() {
 #[test]
 fn test_detect_deps_whetstone_repo() {
     let dir = env!("CARGO_MANIFEST_DIR");
-    let (stdout, _stderr, success) = run_whetstone(&["detect-deps"], dir);
+    let (stdout, _stderr, success) = run_whetstone(&["init", "--detect-only"], dir);
     assert!(success, "detect-deps should succeed on whetstone repo");
 
     let result = parse_json(&stdout);
@@ -504,7 +504,7 @@ fn test_unapproved_rules_not_counted() {
 #[test]
 fn test_detect_deps_contract() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, success) = run_whetstone(&["detect-deps"], dir.to_str().unwrap());
+    let (stdout, _stderr, success) = run_whetstone(&["init", "--detect-only"], dir.to_str().unwrap());
     assert!(success);
 
     let result = parse_json(&stdout);
@@ -546,7 +546,7 @@ fn test_status_contract() {
 #[test]
 fn test_self_host_regression_detect_deps() {
     let dir = env!("CARGO_MANIFEST_DIR");
-    let (stdout, _stderr, success) = run_whetstone(&["detect-deps"], dir);
+    let (stdout, _stderr, success) = run_whetstone(&["init", "--detect-only"], dir);
     assert!(success, "detect-deps should succeed on whetstone repo");
 
     let result = parse_json(&stdout);
@@ -642,7 +642,7 @@ dependencies = ["requests>=2.31.0", "click>=8.0"]
     )
     .unwrap();
 
-    let (stdout, _stderr, success) = run_whetstone(&["detect-deps", "--incremental"], project_dir);
+    let (stdout, _stderr, success) = run_whetstone(&["init", "--detect-only", "--incremental"], project_dir);
     assert!(success, "First run detect-deps should succeed");
     let first_run = parse_json(&stdout);
 
@@ -664,7 +664,7 @@ dependencies = ["requests>=2.31.0", "click>=8.0"]
 
     // Phase 2: Resume (no changes)
     let (stdout2, _stderr2, success2) =
-        run_whetstone(&["detect-deps", "--incremental"], project_dir);
+        run_whetstone(&["init", "--detect-only", "--incremental"], project_dir);
     assert!(success2, "Resume detect-deps should succeed");
     let resume_run = parse_json(&stdout2);
 
@@ -697,7 +697,7 @@ dependencies = ["requests>=2.32.0", "flask>=3.0"]
     .unwrap();
 
     let (stdout3, _stderr3, success3) =
-        run_whetstone(&["detect-deps", "--incremental"], project_dir);
+        run_whetstone(&["init", "--detect-only", "--incremental"], project_dir);
     assert!(success3, "Warm re-run detect-deps should succeed");
     let warm_run = parse_json(&stdout3);
 
@@ -771,7 +771,7 @@ fn test_removed_dependency_cleanup_not_reflected_in_status() {
     )
     .unwrap();
     let (_stdout1, _stderr1, success1) =
-        run_whetstone(&["detect-deps", "--incremental"], project_dir);
+        run_whetstone(&["init", "--detect-only", "--incremental"], project_dir);
     assert!(success1);
 
     std::fs::write(
@@ -780,7 +780,7 @@ fn test_removed_dependency_cleanup_not_reflected_in_status() {
     )
     .unwrap();
     let (_stdout2, _stderr2, success2) =
-        run_whetstone(&["detect-deps", "--incremental"], project_dir);
+        run_whetstone(&["init", "--detect-only", "--incremental"], project_dir);
     assert!(success2);
 
     let (status_stdout, _status_stderr, status_success) = run_whetstone(
@@ -807,7 +807,7 @@ fn test_removed_dependency_cleanup_not_reflected_in_status() {
 #[test]
 fn test_detect_deps_parity_snapshot() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, success) = run_whetstone(&["detect-deps"], dir.to_str().unwrap());
+    let (stdout, _stderr, success) = run_whetstone(&["init", "--detect-only"], dir.to_str().unwrap());
     assert!(success);
     let result = parse_json(&stdout);
 
@@ -1296,13 +1296,12 @@ fn test_refresh_emits_extraction_handoff_with_trigger_refresh() {
 }
 
 #[test]
-fn test_doctor_writes_extraction_handoff_with_trigger_doctor() {
+fn test_init_writes_extraction_handoff_with_trigger_init() {
     let dir = fixtures_dir();
-    // Run against fixtures (has fastapi + react rules); doctor completes fine
-    // even without network because no deps need resolving to emit a handoff.
+    // `wh init` (the canonical bootstrap; `doctor` remains as a visible alias).
     let (_stdout, _stderr, _success) = run_whetstone(
         &[
-            "doctor",
+            "init",
             "--json",
             "--max-deps",
             "0",
@@ -1317,11 +1316,36 @@ fn test_doctor_writes_extraction_handoff_with_trigger_doctor() {
         let handoff: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&handoff_path).unwrap()).unwrap();
         assert_eq!(handoff["version"], 1);
-        assert_eq!(handoff["trigger"], "doctor");
+        assert_eq!(handoff["trigger"], "init");
         for key in ["candidates", "skipped", "next_action", "generated_at"] {
             assert!(handoff.get(key).is_some(), "handoff missing key: {key}");
         }
     }
+}
+
+#[test]
+fn test_doctor_alias_still_routes_to_init() {
+    let dir = fixtures_dir();
+    let (stdout, _stderr, success) = run_whetstone(
+        &[
+            "doctor",
+            "--json",
+            "--max-deps",
+            "0",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        dir.to_str().unwrap(),
+    );
+    assert!(success, "`wh doctor` alias must still succeed");
+    // Alias goes through the Init handler, so the handoff trigger stays "init".
+    let handoff_path = dir.join("whetstone/.state/extraction-handoff.json");
+    if handoff_path.exists() {
+        let handoff: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&handoff_path).unwrap()).unwrap();
+        assert_eq!(handoff["trigger"], "init");
+    }
+    let _ = stdout;
 }
 
 // ── nq8.3.2: AI eval lifecycle coverage ──

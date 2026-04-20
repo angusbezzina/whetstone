@@ -90,30 +90,38 @@ enum ConfigAction {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Scan project and detect dependencies (or run --personal / --hooks / --ci setup)
-    #[command(name = "init", visible_alias = "deps", alias = "detect-deps")]
+    /// Bootstrap from zero: detect dependencies, resolve documentation, write extraction handoff
+    #[command(
+        name = "init",
+        visible_aliases = ["deps", "doctor"],
+        aliases = ["detect-deps", "start"],
+    )]
     Init {
         /// Root directory to search for manifest files
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
 
-        /// Compare current deps against stored versions in whetstone rules
+        /// Only scan manifests and print detected deps — skip source resolution
+        #[arg(long)]
+        detect_only: bool,
+
+        /// Compare current deps against stored versions in whetstone rules (detect-only mode)
         #[arg(long)]
         check_drift: bool,
 
-        /// Only output dependencies that have drifted
+        /// Scope: detect-only drifted deps, or bootstrap only changed/stale sources
         #[arg(long)]
         changed_only: bool,
 
-        /// Comma-separated directory patterns to exclude
+        /// Comma-separated directory patterns to exclude (detect-only mode)
         #[arg(long)]
         exclude: Option<String>,
 
-        /// Comma-separated directory patterns to include even if normally skipped
+        /// Comma-separated directory patterns to include even if normally skipped (detect-only mode)
         #[arg(long)]
         include: Option<String>,
 
-        /// Compare manifest fingerprints and persist dependency inventory
+        /// Compare manifest fingerprints and persist dependency inventory (detect-only mode)
         #[arg(long)]
         incremental: bool,
 
@@ -132,6 +140,42 @@ enum Commands {
         /// Schedule for the CI workflow (daily|weekly|biweekly|monthly or a 5-field cron)
         #[arg(long, default_value = "weekly")]
         schedule: String,
+
+        /// Include dev dependencies in the bootstrap (default: skip)
+        #[arg(long)]
+        include_dev: bool,
+
+        /// Comma-separated dependency names to target
+        #[arg(long)]
+        deps: Option<String>,
+
+        /// Show full source list in report
+        #[arg(long)]
+        verbose: bool,
+
+        /// Force re-resolve cached deps
+        #[arg(long)]
+        refresh: bool,
+
+        /// Resume from last checkpoint
+        #[arg(long)]
+        resume: bool,
+
+        /// Max deps to resolve this run
+        #[arg(long)]
+        max_deps: Option<usize>,
+
+        /// Only hand off extraction-ready deps
+        #[arg(long)]
+        ready_only: bool,
+
+        /// Parallel resolution workers
+        #[arg(long)]
+        workers: Option<usize>,
+
+        /// Disable fast-first limiting
+        #[arg(long)]
+        full_run: bool,
     },
 
     /// Resolve documentation URLs and fetch content for dependencies
@@ -180,62 +224,6 @@ enum Commands {
         /// Number of parallel workers
         #[arg(long)]
         workers: Option<usize>,
-    },
-
-    /// Bootstrap from zero to working rules
-    #[command(visible_alias = "start")]
-    Doctor {
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-
-        /// Skip pattern detection
-        #[arg(long)]
-        skip_patterns: bool,
-
-        /// Skip dev dependencies (default)
-        #[arg(long, default_value_t = true)]
-        skip_dev: bool,
-
-        /// Include dev dependencies
-        #[arg(long)]
-        include_dev: bool,
-
-        /// Comma-separated dependency names to target
-        #[arg(long)]
-        deps: Option<String>,
-
-        /// Show full source list in report
-        #[arg(long)]
-        verbose: bool,
-
-        /// Only resolve changed/stale deps
-        #[arg(long)]
-        changed_only: bool,
-
-        /// Force re-resolve cached deps
-        #[arg(long)]
-        refresh: bool,
-
-        /// Resume from last checkpoint
-        #[arg(long)]
-        resume: bool,
-
-        /// Max deps to resolve this run
-        #[arg(long)]
-        max_deps: Option<usize>,
-
-        /// Only hand off extraction-ready deps
-        #[arg(long)]
-        ready_only: bool,
-
-        /// Parallel resolution workers
-        #[arg(long)]
-        workers: Option<usize>,
-
-        /// Disable fast-first limiting
-        #[arg(long)]
-        full_run: bool,
     },
 
     /// Project health summary and drift detection
@@ -429,7 +417,7 @@ enum Commands {
     },
 
     /// Check for dependency drift and re-resolve changed sources
-    #[command(alias = "refresh-rules")]
+    #[command(visible_alias = "reinit", alias = "refresh-rules")]
     Refresh {
         /// Project directory
         #[arg(long, default_value = ".")]
@@ -588,6 +576,7 @@ pub fn run() -> i32 {
     match cli.command {
         Commands::Init {
             project_dir,
+            detect_only,
             check_drift,
             changed_only,
             exclude,
@@ -597,8 +586,17 @@ pub fn run() -> i32 {
             hooks,
             ci,
             schedule,
+            include_dev,
+            deps,
+            verbose,
+            refresh,
+            resume,
+            max_deps,
+            ready_only,
+            workers,
+            full_run,
         } => {
-            // Setup flags short-circuit detection. They can compose — e.g.
+            // Setup flags short-circuit everything else. They can compose — e.g.
             // `wh init --personal --hooks --ci --schedule=weekly`.
             if personal || hooks || ci {
                 let mut setup = serde_json::Map::new();
@@ -651,74 +649,123 @@ pub fn run() -> i32 {
                 return 0;
             }
 
-            let cli_excludes: Vec<String> = exclude
-                .map(|s| s.split(',').map(|e| e.trim().to_string()).collect())
-                .unwrap_or_default();
-            let cli_includes: Vec<String> = include
-                .map(|s| s.split(',').map(|i| i.trim().to_string()).collect())
-                .unwrap_or_default();
+            if detect_only {
+                let cli_excludes: Vec<String> = exclude
+                    .map(|s| s.split(',').map(|e| e.trim().to_string()).collect())
+                    .unwrap_or_default();
+                let cli_includes: Vec<String> = include
+                    .map(|s| s.split(',').map(|i| i.trim().to_string()).collect())
+                    .unwrap_or_default();
 
-            let do_drift = check_drift || changed_only;
-            match detect::detect_deps(
-                &project_dir,
-                do_drift,
-                &cli_excludes,
-                &cli_includes,
-                incremental,
-            ) {
-                Ok(mut result) => {
-                    if changed_only {
-                        if let Some(drift) = result.get("drift") {
-                            let changed: Vec<String> = drift
-                                .get("changed")
-                                .and_then(|c| c.as_array())
-                                .map(|arr| {
-                                    arr.iter()
-                                        .filter_map(|v| {
-                                            v.get("name").and_then(|n| n.as_str()).map(String::from)
-                                        })
-                                        .collect()
-                                })
-                                .unwrap_or_default();
-
-                            if !changed.is_empty() {
-                                if let Some(deps) = result.get_mut("dependencies") {
-                                    if let Some(arr) = deps.as_array() {
-                                        let filtered: Vec<_> = arr
-                                            .iter()
-                                            .filter(|d| {
-                                                d.get("name")
+                let do_drift = check_drift || changed_only;
+                return match detect::detect_deps(
+                    &project_dir,
+                    do_drift,
+                    &cli_excludes,
+                    &cli_includes,
+                    incremental,
+                ) {
+                    Ok(mut result) => {
+                        if changed_only {
+                            if let Some(drift) = result.get("drift") {
+                                let changed: Vec<String> = drift
+                                    .get("changed")
+                                    .and_then(|c| c.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| {
+                                                v.get("name")
                                                     .and_then(|n| n.as_str())
-                                                    .map(|n| changed.contains(&n.to_string()))
-                                                    .unwrap_or(false)
+                                                    .map(String::from)
                                             })
-                                            .cloned()
-                                            .collect();
-                                        *deps = serde_json::Value::Array(filtered);
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+
+                                if !changed.is_empty() {
+                                    if let Some(deps_value) = result.get_mut("dependencies") {
+                                        if let Some(arr) = deps_value.as_array() {
+                                            let filtered: Vec<_> = arr
+                                                .iter()
+                                                .filter(|d| {
+                                                    d.get("name")
+                                                        .and_then(|n| n.as_str())
+                                                        .map(|n| changed.contains(&n.to_string()))
+                                                        .unwrap_or(false)
+                                                })
+                                                .cloned()
+                                                .collect();
+                                            *deps_value = serde_json::Value::Array(filtered);
+                                        }
                                     }
+                                    result["next_command"] = serde_json::json!(
+                                        "Resolve changed sources: wh set-sources --changed-only"
+                                    );
+                                } else {
+                                    result["dependencies"] = serde_json::json!([]);
+                                    result["next_command"] = serde_json::json!(
+                                        "No changes detected. Rules are current."
+                                    );
                                 }
-                                result["next_command"] = serde_json::json!(
-                                    "Resolve changed sources: wh set-sources --changed-only"
-                                );
-                            } else {
-                                result["dependencies"] = serde_json::json!([]);
-                                result["next_command"] =
-                                    serde_json::json!("No changes detected. Rules are current.");
                             }
+                        }
+                        if json_mode {
+                            output::print_json(&result);
+                        } else {
+                            println!("{}", detect::format_human_output(&result));
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "Check project directory and manifest files",
+                        ));
+                        1
+                    }
+                };
+            }
+
+            // Default: full bootstrap (former `wh doctor`).
+            let skip_dev = !include_dev;
+            match doctor::doctor(doctor::DoctorOptions {
+                project_dir: &project_dir,
+                skip_dev,
+                json_mode,
+                deps_filter: deps.as_deref(),
+                verbose,
+                changed_only,
+                refresh,
+                resume,
+                max_deps,
+                ready_only,
+                workers,
+                full_run,
+                trigger: "init",
+            }) {
+                Ok(result) => {
+                    let mut out = result.clone();
+                    if let Some(obj) = out.as_object_mut() {
+                        let keys: Vec<String> =
+                            obj.keys().filter(|k| k.starts_with('_')).cloned().collect();
+                        for k in keys {
+                            obj.remove(&k);
                         }
                     }
                     if json_mode {
-                        output::print_json(&result);
-                    } else {
-                        println!("{}", detect::format_human_output(&result));
+                        output::print_json(&out);
                     }
-                    0
+                    if result.get("status").and_then(|s| s.as_str()) == Some("error") {
+                        1
+                    } else {
+                        0
+                    }
                 }
                 Err(e) => {
-                    output::print_json(&output::error_json(
-                        &e.to_string(),
-                        "Check project directory and manifest files",
-                    ));
+                    output::print_json(&serde_json::json!({
+                        "error": e.to_string(),
+                        "recommendations": [],
+                    }));
                     1
                 }
             }
@@ -781,70 +828,6 @@ pub fn run() -> i32 {
                         &e.to_string(),
                         "Check input JSON format and network connectivity",
                     ));
-                    1
-                }
-            }
-        }
-
-        Commands::Doctor {
-            project_dir,
-            skip_patterns,
-            skip_dev: _,
-            include_dev,
-            deps,
-            verbose,
-            changed_only,
-            refresh,
-            resume,
-            max_deps,
-            ready_only,
-            workers,
-            full_run,
-        } => {
-            let skip_dev = !include_dev;
-            let _ = skip_patterns;
-            match doctor::doctor(doctor::DoctorOptions {
-                project_dir: &project_dir,
-                skip_dev,
-                json_mode,
-                deps_filter: deps.as_deref(),
-                verbose,
-                changed_only,
-                refresh,
-                resume,
-                max_deps,
-                ready_only,
-                workers,
-                full_run,
-                trigger: "doctor",
-            }) {
-                Ok(result) => {
-                    // Remove private fields before output
-                    let mut out = result.clone();
-                    if let Some(obj) = out.as_object_mut() {
-                        let keys: Vec<String> =
-                            obj.keys().filter(|k| k.starts_with('_')).cloned().collect();
-                        for k in keys {
-                            obj.remove(&k);
-                        }
-                    }
-                    if json_mode {
-                        output::print_json(&out);
-                    }
-                    // Doctor prints its own human report internally via format_report
-                    if result.get("status").and_then(|s| s.as_str()) == Some("error") {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                Err(e) => {
-                    output::print_json(&serde_json::json!({
-                        "error": e.to_string(),
-                        "recommendations": [],
-                        "source_details": [],
-                        "next_command": "Check project directory and script dependencies",
-                    }));
                     1
                 }
             }
