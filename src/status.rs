@@ -402,10 +402,23 @@ pub fn compute_status(
         "wh context && wh tests"
     };
 
+    // Adherence score — "is my code in good shape?" (Epic 3E whetstone-90m).
+    // Best-effort: we swallow errors so wh status stays snappy and non-blocking
+    // when tree-sitter/check internals regress.
+    let adherence = crate::adherence::compute(project_dir, total_rules).ok().flatten();
+    let adherence_json = match &adherence {
+        Some(a) => crate::adherence::to_json(a),
+        None => serde_json::Value::Null,
+    };
+    let adherence_score: Option<i64> = adherence.as_ref().map(|a| a.score);
+
     Ok(serde_json::json!({
         "status": "ok",
         "label": label,
         "score": score,
+        "rule_system_score": score,
+        "adherence_score": adherence_score,
+        "adherence": adherence_json,
         "freshness_label": freshness_label,
         "last_extraction_date": last_extraction_date,
         "dimensions": {
@@ -785,14 +798,39 @@ pub fn format_human_output(result: &Value) -> String {
         .get("pending_updates")
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
+    let adherence_score = result.get("adherence_score").and_then(|v| v.as_i64());
+    let adherence_part = match adherence_score {
+        Some(a) => format!(" \u{00b7} Adherence: {}/100", a),
+        None => String::from(" \u{00b7} Adherence: n/a"),
+    };
+
     let mut status_line = format!(
-        "[{}] {} \u{00b7} Score: {}/100 \u{00b7} {} rules",
-        indicator, label, score, rules_count
+        "[{}] {} \u{00b7} Rule system: {}/100{} \u{00b7} {} rules",
+        indicator, label, score, adherence_part, rules_count
     );
     if drifted > 0 {
         status_line.push_str(&format!(" \u{00b7} {} deps drifted", drifted));
     }
     r.line(&status_line);
+
+    // Adherence detail (when we have it)
+    if let Some(ad) = result.get("adherence") {
+        if !ad.is_null() {
+            let clean = ad.get("clean_ratio").and_then(|v| v.as_i64()).unwrap_or(0);
+            let sev = ad
+                .get("severity_component")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let v = ad.get("violations");
+            let must = v.and_then(|o| o.get("must")).and_then(|x| x.as_i64()).unwrap_or(0);
+            let should = v.and_then(|o| o.get("should")).and_then(|x| x.as_i64()).unwrap_or(0);
+            let may = v.and_then(|o| o.get("may")).and_then(|x| x.as_i64()).unwrap_or(0);
+            r.line(&format!(
+                "                (clean {}% \u{00b7} severity-weighted {} \u{00b7} violations: {} must, {} should, {} may)",
+                clean, sev, must, should, may
+            ));
+        }
+    }
     r.empty_line();
 
     // Dimensions
@@ -879,9 +917,21 @@ pub fn snapshot_metrics(project_dir: &Path, result: &Value) {
         None => return,
     };
 
+    // Violation-trend snapshot (Epic 3E whetstone-m2q): carry the adherence
+    // score AND violation counts per-severity forward so `wh status --history`
+    // can compute deltas over time.
+    let adherence = result.get("adherence").cloned().unwrap_or(Value::Null);
+    let adherence_score = result.get("adherence_score").cloned().unwrap_or(Value::Null);
+    let violation_counts = adherence
+        .get("violations")
+        .cloned()
+        .unwrap_or(serde_json::json!({"must": 0, "should": 0, "may": 0, "total": 0}));
+
     let snapshot = serde_json::json!({
         "timestamp": chrono::Utc::now().to_rfc3339(),
         "score": result.get("score"),
+        "rule_system_score": result.get("rule_system_score"),
+        "adherence_score": adherence_score,
         "label": result.get("label"),
         "rules_approved": metrics.get("rules_approved"),
         "rules_proposed": metrics.get("rules_proposed"),
@@ -892,6 +942,7 @@ pub fn snapshot_metrics(project_dir: &Path, result: &Value) {
         "dependency_coverage": metrics.get("dependency_coverage"),
         "deterministic_coverage": metrics.get("deterministic_coverage"),
         "pending_drift": metrics.get("pending_drift"),
+        "violation_counts": violation_counts,
     });
 
     let metrics_file = project_dir.join("whetstone").join(".metrics.jsonl");

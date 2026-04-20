@@ -46,7 +46,7 @@ There are no command aliases as of 0.3.0 — each verb has exactly one name.
 | `wh rule edit <id> \| --all [--dep] [--category]` | author | approved rule files | same file, severity/confidence mutated | Bump severity (`should → must`) or confidence without hand-editing YAML. `--dry-run` to preview. Refuses candidates. |
 | `wh review [show <id> \| worklist]` | inspect | writable rules, handoff artifacts | — | Lists rules by lifecycle status, shows full per-rule context, or renders the extraction worklist. |
 | `wh validate` | — | `references/rule-schema.yaml` (or embedded fallback), all rule files | — | Schema + fixtures validator. CI-friendly. |
-| `wh status` | monitor | project rules, state files, metrics | `whetstone/.metrics.jsonl` (snapshot) | `--score`, `--history`, `--no-snapshot`, `--no-drift-check`. |
+| `wh status` | monitor | project rules, state files, metrics, source files for `wh check` | `whetstone/.metrics.jsonl` (snapshot w/ `adherence_score` + `violation_counts`) | Returns both `rule_system_score` (rule health) and `adherence_score` (code quality, hybrid formula). `--score`, `--history`, `--no-snapshot`, `--no-drift-check`. |
 | `wh ci` | monitor (CI) | same as status | — | `--fail-on stale` or `--fail-on needs_review` gates PRs. |
 | `wh update` | — | — | replaces the binary | Self-update from GitHub Releases. Never touches rules. |
 

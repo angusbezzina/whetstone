@@ -14,6 +14,8 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Per-language sidecars** — when rules span >1 language, `wh context` / `wh actions` additionally emit `whetstone/context/AGENTS.<lang>.md` (one per language). Tools with per-language hooks can point at the narrower file. Closes `whetstone-2gw`.
 - **`wh rule add <id>`** — personal-taste shortcut. Writes a rule directly to `whetstone/.personal/rules/<lang>/<dep>.yaml` as `status: approved`, bypassing the extract/submit/approve loop. Flags: `--description`, `--match` (regex signal), `--severity` / `--confidence` / `--category` / `--lang` / `--dep` / `--source-url`, `--project` to target the committed layer. Closes `whetstone-9uh`.
 - **`wh rule edit <id> | --all [--dep] [--category]`** — bump `severity` or `confidence` on approved rules without hand-editing YAML. Bulk selectors via `--all`. `--dry-run` previews. Refuses candidate-status rules. Closes `whetstone-5eb`.
+- **`wh status` now reports `adherence_score`** — 0–100 "is my code in good shape?" number derived from `wh check` violations, distinct from the existing `rule_system_score`. Hybrid formula: 60% clean-file ratio + 40% severity-weighted. See `planning/measurements/adherence-score-design.md`. Closes `whetstone-0m0`, `whetstone-90m`, `whetstone-m3k`.
+- **Violation-trend snapshots** — `.metrics.jsonl` now records `adherence_score` + `violation_counts` per snapshot so `wh status --history` can show deltas over time. Closes `whetstone-m2q`.
 - Baseline measurement harness at `scripts/measure-epic-3e.sh` and log at `planning/measurements/epic-3e-baseline.md` (closes `whetstone-piy`).
 
 ### Fixed

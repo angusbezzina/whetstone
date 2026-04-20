@@ -1,3 +1,4 @@
+mod adherence;
 mod approve;
 mod ast;
 mod check;

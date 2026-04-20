@@ -498,6 +498,106 @@ fn test_rules_query_full_includes_signals() {
 }
 
 #[test]
+fn test_status_returns_adherence_score_fields() {
+    let dir = fixtures_dir();
+    let (stdout, _, ok) = run_whetstone(
+        &[
+            "status",
+            "--json",
+            "--no-snapshot",
+            "--no-drift-check",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        dir.to_str().unwrap(),
+    );
+    assert!(ok);
+    let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    // Both the legacy rule-system score and the new adherence score must be
+    // present keys — adherence may be null when there are zero eligible files,
+    // but the keys must exist.
+    assert!(result.get("rule_system_score").is_some());
+    assert!(result.get("adherence_score").is_some());
+    assert!(result.get("adherence").is_some());
+    // Legacy `score` key preserved for backwards compatibility.
+    assert!(result.get("score").is_some());
+}
+
+#[test]
+fn test_metrics_snapshot_captures_adherence_and_violations() {
+    let tmp = std::env::temp_dir().join(format!("wh_trend_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    // Copy fixtures into a fresh tmp so the snapshot is deterministic.
+    let fx = fixtures_dir();
+    std::fs::create_dir_all(&tmp).unwrap();
+    // Minimal copy: just pyproject.toml + whetstone/rules.
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        std::fs::read(fx.join("pyproject.toml")).unwrap_or_default(),
+    )
+    .unwrap();
+    let src_rules = fx.join("whetstone/rules");
+    if src_rules.exists() {
+        let dst_rules = tmp.join("whetstone/rules");
+        std::fs::create_dir_all(&dst_rules).unwrap();
+        for entry in walkdir_clone(&src_rules) {
+            let rel = entry.strip_prefix(&src_rules).unwrap();
+            let dst = dst_rules.join(rel);
+            if let Some(parent) = dst.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if entry.is_file() {
+                std::fs::copy(&entry, &dst).unwrap();
+            }
+        }
+    }
+
+    // Run wh status WITH snapshot (default) so .metrics.jsonl gets written.
+    let (_, _, ok) = run_whetstone(
+        &[
+            "status",
+            "--json",
+            "--no-drift-check",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok);
+
+    let metrics = tmp.join("whetstone/.metrics.jsonl");
+    assert!(metrics.exists(), "metrics file should be written");
+    let text = std::fs::read_to_string(&metrics).unwrap();
+    let last_line = text.lines().last().expect("at least one snapshot");
+    let snap: serde_json::Value = serde_json::from_str(last_line).unwrap();
+    assert!(
+        snap.get("adherence_score").is_some(),
+        "snapshot must carry adherence_score"
+    );
+    assert!(
+        snap.get("violation_counts").is_some(),
+        "snapshot must carry violation_counts"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+fn walkdir_clone(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(p) = stack.pop() {
+        if p.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&p) {
+                for e in entries.flatten() {
+                    stack.push(e.path());
+                }
+            }
+        }
+        out.push(p);
+    }
+    out
+}
+
+#[test]
 fn test_rule_add_writes_personal_yaml() {
     let tmp = std::env::temp_dir().join(format!("wh_rule_add_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
