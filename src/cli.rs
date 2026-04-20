@@ -2,8 +2,8 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    check, ci_check, config, detect, doctor, generate_context, generate_tests, output, personal,
-    resolve, review, rules, status, triggers, update, worklist,
+    check, ci_check, config, detect, doctor, generate_context, generate_lint, generate_tests,
+    output, personal, resolve, review, rules, status, triggers, update, worklist,
 };
 
 // TODO(whetstone-aww): reinstate patterns
@@ -248,6 +248,26 @@ enum Commands {
         dry_run: bool,
 
         /// Emit personal-layer tests into whetstone/.personal/evals/
+        #[arg(long)]
+        personal: bool,
+    },
+
+    /// Generate linter configuration overlays from approved rules
+    #[command(name = "lint")]
+    Lint {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Filter by language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Show what would be generated without writing files
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Emit personal-layer lint configs into whetstone/.personal/lint/
         #[arg(long)]
         personal: bool,
     },
@@ -721,6 +741,34 @@ pub fn run() -> i32 {
                 }
             }
         }
+
+        Commands::Lint {
+            project_dir,
+            lang,
+            dry_run,
+            personal,
+        } => match generate_lint::generate_lint(&project_dir, lang.as_deref(), dry_run, personal) {
+            Ok(result) => {
+                if json_mode {
+                    output::print_json(&result);
+                } else if let Some(gen) = result.get("generated") {
+                    if let Some(lints) = gen.get("lint_configs").and_then(|v| v.as_array()) {
+                        for f in lints {
+                            let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                            println!("  + {path}");
+                        }
+                    }
+                }
+                0
+            }
+            Err(e) => {
+                output::print_json(&output::error_json(
+                    &e.to_string(),
+                    "Check whetstone/rules/ directory for approved rules with lint_proxy signals",
+                ));
+                1
+            }
+        },
 
         Commands::Tests {
             project_dir,

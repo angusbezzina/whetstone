@@ -8,6 +8,7 @@ mod detect;
 // mod detect_patterns;
 mod doctor;
 mod generate_context;
+mod generate_lint;
 mod generate_tests;
 mod handoff;
 mod layers;

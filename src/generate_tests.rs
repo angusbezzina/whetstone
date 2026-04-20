@@ -48,8 +48,8 @@ pub fn generate_tests(
         return Ok(serde_json::json!({
             "status": "ok",
             "generated": {"tests": [], "lint_configs": []},
-            "warnings": ["No approved rules found. Run 'wh doctor' to extract and approve rules."],
-            "next_command": "wh doctor",
+            "warnings": ["No approved rules found. Run 'wh init' to extract and approve rules."],
+            "next_command": "wh init",
         }));
     }
 
@@ -64,25 +64,18 @@ pub fn generate_tests(
     }
 
     let mut test_files: Vec<Value> = Vec::new();
-    let mut lint_configs: Vec<Value> = Vec::new();
     let mut all_warnings: Vec<String> = warnings;
 
     for (language, rules) in &by_language {
         match language.as_str() {
             "python" => {
-                let (tests, lints) = generate_python(&tera, rules, &output_base, dry_run);
-                test_files.extend(tests);
-                lint_configs.extend(lints);
+                test_files.extend(generate_python(&tera, rules, &output_base, dry_run));
             }
             "typescript" => {
-                let (tests, lints) = generate_typescript(&tera, rules, &output_base, dry_run);
-                test_files.extend(tests);
-                lint_configs.extend(lints);
+                test_files.extend(generate_typescript(&tera, rules, &output_base, dry_run));
             }
             "rust" => {
-                let (tests, lints) = generate_rust(&tera, rules, &output_base, dry_run);
-                test_files.extend(tests);
-                lint_configs.extend(lints);
+                test_files.extend(generate_rust(&tera, rules, &output_base, dry_run));
             }
             _ => {
                 all_warnings.push(format!("Skipping unsupported language: {language}"));
@@ -110,7 +103,6 @@ pub fn generate_tests(
         "status": "ok",
         "generated": {
             "tests": test_files,
-            "lint_configs": lint_configs,
         },
         "rules_count": approved.len(),
         "languages": by_language.keys().collect::<Vec<_>>(),
@@ -165,9 +157,8 @@ fn generate_python(
     rules: &[&ApprovedRule],
     output_base: &Path,
     dry_run: bool,
-) -> (Vec<Value>, Vec<Value>) {
+) -> Vec<Value> {
     let mut test_files = Vec::new();
-    let mut lint_configs = Vec::new();
     let evals_dir = output_base.join("evals").join("python");
 
     let conftest = render(tera, "python_conftest.py.tera", &Context::new());
@@ -204,22 +195,7 @@ fn generate_python(
         }
     }
 
-    let ruff_rules = extract_lint_proxy_codes(rules, "ruff");
-    if !ruff_rules.is_empty() {
-        let mut ctx = Context::new();
-        ctx.insert("codes", &ruff_rules);
-        let ruff_content = render(tera, "ruff_config.tera", &ctx);
-        let ruff_path = output_base.join("lint").join("ruff.whetstone.toml");
-        if write_generated(&ruff_path, &ruff_content, dry_run) {
-            lint_configs.push(serde_json::json!({
-                "path": ruff_path.display().to_string(),
-                "type": "ruff",
-                "rules": ruff_rules,
-            }));
-        }
-    }
-
-    (test_files, lint_configs)
+    test_files
 }
 
 // ── TypeScript ──
@@ -229,9 +205,8 @@ fn generate_typescript(
     rules: &[&ApprovedRule],
     output_base: &Path,
     dry_run: bool,
-) -> (Vec<Value>, Vec<Value>) {
+) -> Vec<Value> {
     let mut test_files = Vec::new();
-    let mut lint_configs = Vec::new();
     let evals_dir = output_base.join("evals").join("typescript");
 
     let setup = render(tera, "typescript_setup.ts.tera", &Context::new());
@@ -267,23 +242,7 @@ fn generate_typescript(
         }
     }
 
-    let biome_rules = extract_lint_proxy_codes(rules, "biome");
-    if !biome_rules.is_empty() {
-        let grouped = group_biome_rules(&biome_rules);
-        let mut ctx = Context::new();
-        ctx.insert("groups", &grouped);
-        let biome_content = render(tera, "biome_config.tera", &ctx);
-        let biome_path = output_base.join("lint").join("biome.whetstone.json");
-        if write_generated(&biome_path, &biome_content, dry_run) {
-            lint_configs.push(serde_json::json!({
-                "path": biome_path.display().to_string(),
-                "type": "biome",
-                "rules": biome_rules,
-            }));
-        }
-    }
-
-    (test_files, lint_configs)
+    test_files
 }
 
 // ── Rust ──
@@ -293,9 +252,8 @@ fn generate_rust(
     rules: &[&ApprovedRule],
     output_base: &Path,
     dry_run: bool,
-) -> (Vec<Value>, Vec<Value>) {
+) -> Vec<Value> {
     let mut test_files = Vec::new();
-    let mut lint_configs = Vec::new();
     let evals_dir = output_base.join("evals").join("rust");
 
     let by_dep = group_by_source(rules);
@@ -323,22 +281,7 @@ fn generate_rust(
         }
     }
 
-    let clippy_rules = extract_lint_proxy_codes(rules, "clippy");
-    if !clippy_rules.is_empty() {
-        let mut ctx = Context::new();
-        ctx.insert("lints", &clippy_rules);
-        let clippy_content = render(tera, "clippy_config.tera", &ctx);
-        let clippy_path = output_base.join("lint").join("clippy.whetstone.toml");
-        if write_generated(&clippy_path, &clippy_content, dry_run) {
-            lint_configs.push(serde_json::json!({
-                "path": clippy_path.display().to_string(),
-                "type": "clippy",
-                "rules": clippy_rules,
-            }));
-        }
-    }
-
-    (test_files, lint_configs)
+    test_files
 }
 
 // ── Helpers ──
@@ -352,49 +295,6 @@ fn group_by_source<'a>(rules: &[&'a ApprovedRule]) -> BTreeMap<String, Vec<&'a A
             .push(rule);
     }
     by_dep
-}
-
-/// Collect lint rule codes mentioned in `lint_proxy` signals for a specific linter.
-/// Descriptions like "ruff E501" or "biome suspicious/noExplicitAny" are mined
-/// by splitting on whitespace and picking the token after the linter name.
-fn extract_lint_proxy_codes(rules: &[&ApprovedRule], linter: &str) -> Vec<String> {
-    let mut codes = Vec::new();
-    for rule in rules {
-        for signal in &rule.signals {
-            if signal.strategy != "lint_proxy" {
-                continue;
-            }
-            let desc = signal.description.to_lowercase();
-            if !desc.contains(linter) {
-                continue;
-            }
-            let parts: Vec<&str> = signal.description.split_whitespace().collect();
-            for (i, part) in parts.iter().enumerate() {
-                if part.to_lowercase() == linter && i + 1 < parts.len() {
-                    codes.push(parts[i + 1].to_string());
-                }
-            }
-        }
-    }
-    codes.sort();
-    codes.dedup();
-    codes
-}
-
-fn group_biome_rules(rules: &[String]) -> BTreeMap<String, Vec<String>> {
-    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for rule in rules {
-        if let Some((category, name)) = rule.split_once('/') {
-            out.entry(category.to_string())
-                .or_default()
-                .push(name.to_string());
-        }
-    }
-    for v in out.values_mut() {
-        v.sort();
-        v.dedup();
-    }
-    out
 }
 
 /// Produce a filesystem-safe identifier from a dependency source name.
@@ -487,38 +387,6 @@ mod tests {
         ctx.insert("rules", &tmpl_rules);
         let out = render(&tera, "python_test.py.tera", &ctx);
         assert!(out.contains("# TODO: add `match:` regex to rule demo.bar signal s1"));
-    }
-
-    #[test]
-    fn ruff_config_template_renders_codes() {
-        let tera = build_tera();
-        let mut ctx = Context::new();
-        let codes = vec!["E501".to_string(), "F401".to_string()];
-        ctx.insert("codes", &codes);
-        let out = render(&tera, "ruff_config.tera", &ctx);
-        assert!(out.contains(r#"select = ["E501", "F401"]"#), "got: {out}");
-    }
-
-    #[test]
-    fn biome_config_template_groups_by_category() {
-        let tera = build_tera();
-        let rules = vec![
-            "suspicious/noExplicitAny".to_string(),
-            "suspicious/noDoubleEquals".to_string(),
-            "a11y/useAltText".to_string(),
-        ];
-        let groups = group_biome_rules(&rules);
-        let mut ctx = Context::new();
-        ctx.insert("groups", &groups);
-        let out = render(&tera, "biome_config.tera", &ctx);
-        let parsed: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|e| {
-            panic!("biome config was not valid JSON: {e}\n{out}");
-        });
-        assert_eq!(
-            parsed["linter"]["rules"]["suspicious"]["noExplicitAny"],
-            "error"
-        );
-        assert_eq!(parsed["linter"]["rules"]["a11y"]["useAltText"], "error");
     }
 
     #[test]
