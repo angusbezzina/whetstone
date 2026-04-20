@@ -30,7 +30,7 @@ There are no command aliases as of 0.3.0 — each verb has exactly one name.
 | Command | Stages | Reads (state) | Writes (state) | Notes |
 |---------|--------|---------------|----------------|-------|
 | `wh init` | detect + resolve + hand off | `manifests.json`, `inventory.json`, `source-cache.json` | `extraction-handoff.json`, cache, inventory, manifests | Default: full bootstrap. `--detect-only` scans manifests. `--personal` scaffolds `whetstone/.personal/`. `--hooks` installs git hooks. `--ci --schedule=<cadence>` writes the CI workflow. |
-| `wh reinit` | refresh | same as init | `refresh-diff.json`, cache, inventory | `wh reinit --check` exits non-zero on drift. Wire into CI. |
+| `wh reinit` | refresh | same as init | `refresh-diff.json` (with `re_extraction_candidates` + canned `extraction_prompt`), cache, inventory | `wh reinit --check` exits non-zero on drift. Flags both manifest-version drift AND content-hash drift (when stored rule hash differs from current doc hash). Wire into CI. |
 | `wh set-sources` | resolve | stdin or `--input` JSON, `source-cache.json` | `source-cache.json` | Lower-level slice of init. |
 | `wh extract` | extract | `extraction-handoff.json` | — | Default mode renders the dependency worklist (ranked sources, quota, next step). |
 | `wh extract submit <bundle.yaml>` | extract | bundle file | `whetstone/rules/<lang>/<dep>.yaml` with `status: candidate` | Refuses to overwrite an existing file or collide on any rule id. |

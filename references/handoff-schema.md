@@ -132,9 +132,23 @@ against the delta instead of re-reading every source.
       "source_urls": {
         "docs": "https://docs.pydantic.dev/latest/",
         "changelog": "https://raw.githubusercontent.com/pydantic/pydantic/main/HISTORY.md"
-      }
+      },
+      "drift_type": "content_hash"
     }
   ],
+  "re_extraction_candidates": [
+    {
+      "rule_id": "pydantic.schema-method",
+      "dep": "pydantic",
+      "language": "python",
+      "current_severity": "should",
+      "current_source_url": "https://docs.pydantic.dev/...",
+      "stored_content_hash": "sha256:aaa",
+      "latest_content_hash": "sha256:bbb",
+      "drift_types": ["version", "content_hash"]
+    }
+  ],
+  "extraction_prompt": "Drift detected on 1 rule(s): pydantic.schema-method. For each rule, re-read the current docs at its `current_source_url` …",
   "unchanged_with_stale_cache": [
     { "name": "fastapi", "language": "python", "reason": "cache TTL expired; content unchanged" }
   ],
@@ -144,7 +158,7 @@ against the delta instead of re-reading every source.
   "failed": [
     { "name": "obscurelib", "language": "python", "error": "HTTP 404" }
   ],
-  "next_action": "For each changed dep, re-read its new content and propose: new rules, modified rules, rules to deprecate (status: deprecated)."
+  "next_action": "Read re_extraction_candidates, then for each entry decide: keep / `wh rule edit` severity / delete rule YAML / `wh extract submit <bundle>` a re-authored version. Finish with `wh actions`."
 }
 ```
 
@@ -154,6 +168,16 @@ against the delta instead of re-reading every source.
   drift = exit 1).
 - `affected_rule_ids` lists approved rules that cite the changed dep's source;
   the agent should review each for possible deprecation.
+- `drift_type` (added 0.4.0) distinguishes manifest-version drift from
+  content-hash drift. A dep whose package version hasn't changed but whose
+  vendor doc page has been rewritten surfaces as `drift_type: content_hash`.
+- `re_extraction_candidates` (added 0.4.0) names every approved rule affected
+  by at least one drifted dep, with the rule's current severity + source URL.
+  Agents should iterate this list rather than re-deriving it from `changed`.
+- `extraction_prompt` (added 0.4.0) is a canned agent-facing instruction that
+  lists the affected rule ids and tells the agent the workflow:
+  `wh rule edit` for severity bumps, delete for deprecation, `wh extract submit`
+  for a fresh re-authoring. Use it as a drop-in prompt.
 - `previous_version` and `previous_content_hash` are **optional** — the
   shipped writer leaves them `null` because the cache is overwritten during
   refresh before the diff is assembled. A future enhancement can snapshot the

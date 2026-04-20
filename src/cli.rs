@@ -1309,6 +1309,46 @@ pub fn run() -> i32 {
                         println!("Next: wh status");
                     } else {
                         println!("{drift_count} dependencies re-resolved.");
+                        // Read the written refresh-diff and surface re-extraction candidates.
+                        let diff_path = project_path
+                            .join("whetstone")
+                            .join(".state")
+                            .join("refresh-diff.json");
+                        if let Ok(text) = std::fs::read_to_string(&diff_path) {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                                if let Some(cands) = v
+                                    .get("re_extraction_candidates")
+                                    .and_then(|c| c.as_array())
+                                {
+                                    if !cands.is_empty() {
+                                        println!(
+                                            "{} approved rule(s) may need attention:",
+                                            cands.len()
+                                        );
+                                        for c in cands.iter().take(10) {
+                                            let id = c
+                                                .get("rule_id")
+                                                .and_then(|s| s.as_str())
+                                                .unwrap_or("?");
+                                            let drift = c
+                                                .get("drift_types")
+                                                .and_then(|s| s.as_array())
+                                                .map(|a| {
+                                                    a.iter()
+                                                        .filter_map(|v| v.as_str())
+                                                        .collect::<Vec<_>>()
+                                                        .join(",")
+                                                })
+                                                .unwrap_or_default();
+                                            println!("  {id}  ({drift})");
+                                        }
+                                        if cands.len() > 10 {
+                                            println!("  … +{} more", cands.len() - 10);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         println!(
                             "Diff: whetstone/.state/refresh-diff.json (schema: references/handoff-schema.md)"
                         );

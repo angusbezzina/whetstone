@@ -246,7 +246,147 @@ pub fn write_refresh_diff(
         })
         .collect();
 
+    // Epic 3E · nuh: also flag deps whose manifest version didn't change but
+    // whose resolved doc content has. Because reinit invokes doctor with
+    // refresh=true, every dep's content_hash is re-fetched — the comparison
+    // is free. Each matched dep is added to `changed` with drift_type to
+    // disambiguate from manifest-version drift.
+    let rule_meta_for_content = load_approved_rule_meta(project_dir);
+    let existing_keys: BTreeSet<String> = changed_entries
+        .iter()
+        .filter_map(|e| {
+            let lang = e.get("language").and_then(|v| v.as_str())?;
+            let name = e.get("name").and_then(|v| v.as_str())?;
+            Some(format!("{lang}:{name}"))
+        })
+        .collect();
+
+    for source in &sources {
+        let name = source
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let language = source
+            .get("language")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| infer_language_from_sections(source));
+        let key = format!("{language}:{name}");
+        if existing_keys.contains(&key) {
+            continue;
+        }
+        let current_hash = source
+            .get("content_hash")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if current_hash.is_empty() {
+            continue;
+        }
+        // Any approved rule with a stored hash differing from current_hash?
+        let content_drifted = rule_meta_for_content.iter().any(|m| {
+            m.dep == name
+                && m.language == language
+                && m.stored_content_hash
+                    .as_deref()
+                    .map(|h| h != current_hash)
+                    .unwrap_or(false)
+        });
+        if !content_drifted {
+            continue;
+        }
+        let affected: Vec<String> = rule_meta_for_content
+            .iter()
+            .filter(|m| m.dep == name && m.language == language)
+            .map(|m| m.rule_id.clone())
+            .collect();
+        let mut urls = serde_json::Map::new();
+        if let Some(sections) = source.get("sections").and_then(|v| v.as_array()) {
+            for s in sections {
+                if let (Some(stype), Some(url)) = (
+                    s.get("type").and_then(|v| v.as_str()),
+                    s.get("url").and_then(|v| v.as_str()),
+                ) {
+                    urls.insert(stype.to_string(), Value::String(url.to_string()));
+                }
+            }
+        }
+        changed_entries.push(json!({
+            "name": name,
+            "language": language,
+            "previous_version": source.get("version").cloned().unwrap_or(Value::Null),
+            "current_version": source.get("version").cloned().unwrap_or(Value::Null),
+            "previous_content_hash": Value::Null,
+            "current_content_hash": source.get("content_hash").cloned().unwrap_or(Value::Null),
+            "changed_sections": section_types(source),
+            "affected_rule_ids": affected,
+            "source_urls": Value::Object(urls),
+            "drift_type": "content_hash",
+        }));
+    }
+
     let drift_count = changed_entries.len() as i64;
+
+    // Epic 3E · awj: emit per-rule re-extraction candidates for every approved
+    // rule citing a drifted dep. Agents read this to know which rules to
+    // re-judge rather than guessing from a flat dep list.
+    let rule_meta = load_approved_rule_meta(project_dir);
+    let mut re_extraction_candidates: Vec<Value> = Vec::new();
+    for entry in &changed_entries {
+        let entry_name = entry
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let entry_lang = entry
+            .get("language")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let current_hash = entry
+            .get("current_content_hash")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+
+        for meta in &rule_meta {
+            if meta.dep != entry_name || meta.language != entry_lang {
+                continue;
+            }
+            let mut drift_types: Vec<&str> = vec!["version"];
+            if let Some(stored) = &meta.stored_content_hash {
+                if !current_hash.is_empty() && stored != current_hash {
+                    drift_types.push("content_hash");
+                }
+            }
+            re_extraction_candidates.push(json!({
+                "rule_id": meta.rule_id,
+                "dep": meta.dep,
+                "language": meta.language,
+                "current_severity": meta.severity,
+                "current_source_url": meta.source_url,
+                "stored_content_hash": meta.stored_content_hash,
+                "latest_content_hash": entry.get("current_content_hash"),
+                "drift_types": drift_types,
+            }));
+        }
+    }
+
+    // Epic 3E · jrs: canned re-extraction prompt the agent can act on directly.
+    // Keep it terse — the agent knows the workflow; this just names the subset.
+    let extraction_prompt = if re_extraction_candidates.is_empty() {
+        None
+    } else {
+        let ids: Vec<String> = re_extraction_candidates
+            .iter()
+            .filter_map(|c| c.get("rule_id").and_then(|v| v.as_str()).map(String::from))
+            .collect();
+        Some(format!(
+            "Drift detected on {} rule(s): {}. \
+             For each rule, re-read the current docs at its `current_source_url` (see this file), \
+             decide whether to keep / edit severity via `wh rule edit` / delete / re-author via \
+             `wh extract submit <bundle>`. Then run `wh actions` to regenerate outputs.",
+            ids.len(),
+            ids.join(", ")
+        ))
+    };
 
     let diff = json!({
         "version": 1,
@@ -257,10 +397,12 @@ pub fn write_refresh_diff(
         "unchanged_with_stale_cache": Value::Array(Vec::new()),
         "removed": removed,
         "failed": failed,
+        "re_extraction_candidates": re_extraction_candidates,
+        "extraction_prompt": extraction_prompt,
         "next_action": if drift_count == 0 {
             "No drift detected. Rules are current.".to_string()
         } else {
-            "For each changed dep, re-read its new content and propose: new rules, modified rules, rules to deprecate (status: deprecated).".to_string()
+            "Read re_extraction_candidates, then for each entry decide: keep / `wh rule edit` severity / delete rule YAML / `wh extract submit <bundle>` a re-authored version. Finish with `wh actions`.".to_string()
         },
     });
 
@@ -386,6 +528,42 @@ fn load_approved_index(project_dir: &Path) -> Vec<(String, String, String)> {
         for r in &lrf.rule_file.rules {
             if r.approved {
                 out.push((language.clone(), source_name.clone(), r.id.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// Richer variant that carries enough per-rule metadata to emit
+/// `re_extraction_candidates` entries in refresh-diff.json (Epic 3E awj).
+#[derive(Debug, Clone)]
+struct ApprovedRuleMeta {
+    language: String,
+    dep: String,
+    rule_id: String,
+    severity: Option<String>,
+    source_url: Option<String>,
+    stored_content_hash: Option<String>,
+}
+
+fn load_approved_rule_meta(project_dir: &Path) -> Vec<ApprovedRuleMeta> {
+    let rules_dir = project_dir.join("whetstone").join("rules");
+    let (files, _) = crate::rules::load_rule_files(&rules_dir);
+    let mut out = Vec::new();
+    for lrf in &files {
+        let language = lrf.language.clone().unwrap_or_default();
+        let dep = lrf.rule_file.source.name.clone();
+        let stored_hash = lrf.rule_file.source.content_hash.clone();
+        for r in &lrf.rule_file.rules {
+            if r.approved {
+                out.push(ApprovedRuleMeta {
+                    language: language.clone(),
+                    dep: dep.clone(),
+                    rule_id: r.id.clone(),
+                    severity: r.severity.clone(),
+                    source_url: r.source_url.clone(),
+                    stored_content_hash: stored_hash.clone(),
+                });
             }
         }
     }
