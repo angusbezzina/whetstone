@@ -39,7 +39,7 @@ flowchart TD
     CI --> CHECK
 
     %% Deferred / future
-    DONE -.-> FUTURE["Deferred: wh bench / wh eval / wh patterns<br/>Team extends, built-in layer<br/>wh propose / wh apply / wh config<br/>MCP server, shared registry"]
+    DONE -.-> FUTURE["Deferred in 0.3.0 lean refactor:<br/>• wh bench / wh eval / wh patterns (benchmark, AI eval, pattern mining)<br/>• wh propose / wh apply (replaced by extract submit + approve)<br/>• wh promote / wh layers (merge collapsed to personal + project)<br/>• wh config show/validate (config still loads, inspector deferred)<br/>• Team extends, built-in rules layer<br/>• MCP server, shared rule registry"]
 
     %% Styling
     classDef binary fill:#2d6a4f,color:#fff,stroke:#1b4332
