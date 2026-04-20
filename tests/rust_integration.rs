@@ -390,6 +390,7 @@ fn test_help_output() {
     assert!(stdout.contains("approve"), "help should contain 'approve'");
     assert!(stdout.contains("check"), "help should contain 'check'");
     assert!(stdout.contains("ci"), "help should contain 'ci'");
+    assert!(stdout.contains("rules"), "help should contain 'rules'");
     assert!(
         stdout.contains("validate"),
         "help should contain 'validate'"
@@ -398,6 +399,113 @@ fn test_help_output() {
     assert!(!stdout.contains("doctor"), "'doctor' alias should be gone");
     assert!(!stdout.contains("generate-context"), "'generate-context' alias should be gone");
     assert!(!stdout.contains("generate-tests"), "'generate-tests' alias should be gone");
+}
+
+#[test]
+fn test_rules_query_by_file() {
+    let dir = fixtures_dir();
+    let (stdout, _stderr, success) = run_whetstone(
+        &[
+            "rules",
+            "query",
+            "--file",
+            "src/app.py",
+            "--json",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        dir.to_str().unwrap(),
+    );
+    assert!(success, "wh rules query --file must succeed");
+    let result: serde_json::Value =
+        serde_json::from_str(&stdout).expect("wh rules query --json must produce valid JSON");
+    assert_eq!(result["filters"]["file"], "src/app.py");
+    assert!(
+        result["total"].as_u64().unwrap() >= 1,
+        "fixtures have at least one Python rule"
+    );
+    let rules = result["rules"].as_array().unwrap();
+    for rule in rules {
+        assert_eq!(
+            rule["language"], "python",
+            "--file src/app.py should only return python rules"
+        );
+    }
+}
+
+#[test]
+fn test_rules_query_by_lang_and_severity() {
+    let dir = fixtures_dir();
+    let (stdout, _stderr, success) = run_whetstone(
+        &[
+            "rules",
+            "query",
+            "--lang",
+            "python",
+            "--severity",
+            "must",
+            "--json",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        dir.to_str().unwrap(),
+    );
+    assert!(success);
+    let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    for rule in result["rules"].as_array().unwrap() {
+        assert_eq!(rule["language"], "python");
+        assert_eq!(rule["severity"], "must");
+    }
+}
+
+#[test]
+fn test_rules_query_full_includes_signals() {
+    let dir = fixtures_dir();
+    let (stdout, _stderr, success) = run_whetstone(
+        &[
+            "rules",
+            "query",
+            "--lang",
+            "python",
+            "--full",
+            "--json",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        dir.to_str().unwrap(),
+    );
+    assert!(success);
+    let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    if let Some(first) = result["rules"].as_array().and_then(|a| a.first()) {
+        assert!(
+            first.get("signals").is_some(),
+            "--full must include signals key"
+        );
+        assert!(
+            first.get("golden_examples").is_some(),
+            "--full must include golden_examples key"
+        );
+    }
+}
+
+#[test]
+fn test_rules_query_unknown_lang_returns_empty() {
+    let dir = fixtures_dir();
+    let (stdout, _stderr, success) = run_whetstone(
+        &[
+            "rules",
+            "query",
+            "--lang",
+            "nonexistent-lang",
+            "--json",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        dir.to_str().unwrap(),
+    );
+    assert!(success, "empty result is still a successful query");
+    let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(result["total"].as_u64().unwrap(), 0);
 }
 
 #[test]

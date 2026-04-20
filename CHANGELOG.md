@@ -4,6 +4,13 @@ All notable changes to Whetstone are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`wh rules query`** — JIT rule lookup. Filters by `--file`, `--lang`, `--dep`, `--severity`, `--personal-only` / `--project-only`, with `--full` to include signals and golden examples. Agents should prefer this mid-turn over re-scanning `AGENTS.md`. First deliverable of Epic 3E (whetstone-n34), theme A.
+- Generated `AGENTS.md` now carries a per-file lookup pointer directing agents at `wh rules query --file <path>`.
+- `SKILL.md` documents the mid-turn lookup pattern.
+
 ## [0.3.0] - 2026-04-20
 
 Lean refactor. Seven-command happy path:

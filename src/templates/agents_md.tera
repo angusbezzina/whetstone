@@ -2,6 +2,10 @@
 
 These rules are extracted from dependency documentation by Whetstone. Follow them when writing code.
 
+> **Before editing a source file, prefer the per-file lookup:**
+> `wh rules query --file <path> --json`
+> This returns only the rules that apply to that file. Use it instead of re-scanning this file on every turn.
+
 {% include "_context_body.tera" -%}
 
 ---

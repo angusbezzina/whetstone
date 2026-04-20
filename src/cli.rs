@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     approve, check, ci_check, config, detect, doctor, extract, gen, generate_context,
-    generate_lint, generate_tests, output, personal, resolve, review, rules, status, triggers,
-    update, worklist,
+    generate_lint, generate_tests, output, personal, resolve, review, rules, rules_query, status,
+    triggers, update, worklist,
 };
 
 // TODO(whetstone-aww): reinstate patterns
@@ -46,6 +46,44 @@ enum ExtractAction {
     Submit {
         /// Path to the candidate bundle YAML
         bundle: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum RulesAction {
+    /// Query approved rules that match the given filters
+    Query {
+        /// Return rules for the language inferred from this file's extension
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Filter by language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Filter by dependency / source name
+        #[arg(long)]
+        dep: Option<String>,
+
+        /// Filter by severity (must, should, may)
+        #[arg(long)]
+        severity: Option<String>,
+
+        /// Layer filter: personal-only
+        #[arg(long, conflicts_with = "project_only")]
+        personal_only: bool,
+
+        /// Layer filter: project-only
+        #[arg(long, conflicts_with = "personal_only")]
+        project_only: bool,
+
+        /// Include full signal details and golden examples (default: summary only)
+        #[arg(long)]
+        full: bool,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
     },
 }
 
@@ -419,6 +457,13 @@ enum Commands {
         /// Filter by language (python, typescript, rust)
         #[arg(long)]
         lang: Option<String>,
+    },
+
+    /// Query rules that apply to a file / language / dep (JIT consumption)
+    #[command(name = "rules")]
+    Rules {
+        #[command(subcommand)]
+        action: RulesAction,
     },
 
     /// Update whetstone to the latest release
@@ -1240,6 +1285,57 @@ pub fn run() -> i32 {
                 }
             }
         }
+
+        Commands::Rules { action } => match action {
+            RulesAction::Query {
+                file,
+                lang,
+                dep,
+                severity,
+                personal_only,
+                project_only,
+                full,
+                project_dir,
+            } => {
+                let layer_filter = if personal_only {
+                    rules_query::LayerFilter::PersonalOnly
+                } else if project_only {
+                    rules_query::LayerFilter::ProjectOnly
+                } else {
+                    rules_query::LayerFilter::All
+                };
+                let detail = if full {
+                    rules_query::Detail::Full
+                } else {
+                    rules_query::Detail::Summary
+                };
+
+                let filters = rules_query::Filters {
+                    file: file.as_deref(),
+                    lang: lang.as_deref(),
+                    dep: dep.as_deref(),
+                    severity: severity.as_deref(),
+                    layer_filter,
+                };
+
+                let result = rules_query::query(&project_dir, &filters);
+                let echo = rules_query::filters_to_json(
+                    file.as_deref(),
+                    lang.as_deref(),
+                    dep.as_deref(),
+                    severity.as_deref(),
+                    layer_filter,
+                    detail,
+                );
+
+                if json_mode {
+                    output::print_json(&rules_query::to_json(&result, detail, echo));
+                } else {
+                    print!("{}", rules_query::to_human(&result, detail));
+                }
+                0
+            }
+        },
 
         Commands::Update { check, force } => match update::check_and_update(force, check) {
             Ok(result) => {

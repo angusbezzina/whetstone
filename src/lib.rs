@@ -20,6 +20,7 @@ mod personal;
 mod resolve;
 mod review;
 mod rules;
+mod rules_query;
 mod state;
 mod status;
 mod templates;

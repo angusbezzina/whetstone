@@ -41,6 +41,7 @@ There are no command aliases as of 0.3.0 — each verb has exactly one name.
 | `wh tests` | generate | approved rules | `whetstone/evals/**` or `whetstone/.personal/evals/**` | Signals with a `match` regex produce real checks; without, tests are TODO stubs. |
 | `wh lint` | generate | approved rules | `whetstone/lint/*` or `whetstone/.personal/lint/*` | Emits `ruff.whetstone.toml`, `biome.whetstone.json`, `clippy.whetstone.toml`. |
 | `wh check` | monitor / enforce | approved rules, source files | — | Deterministic enforcement: tree-sitter for `ast_query` / `ast_scope`, regex for `match:`, lint-config verification for `lint_proxy`. Non-zero exit on violations or config gaps unless `--no-fail`. |
+| `wh rules query` | inspect (JIT) | approved rules | — | JIT rule lookup for agents. Filters: `--file <path>` (infers language), `--lang`, `--dep`, `--severity`, `--personal-only`, `--project-only`, `--full`. Preferred over re-reading `AGENTS.md` mid-turn. |
 | `wh review [show <id> \| worklist]` | inspect | writable rules, handoff artifacts | — | Lists rules by lifecycle status, shows full per-rule context, or renders the extraction worklist. |
 | `wh validate` | — | `references/rule-schema.yaml` (or embedded fallback), all rule files | — | Schema + fixtures validator. CI-friendly. |
 | `wh status` | monitor | project rules, state files, metrics | `whetstone/.metrics.jsonl` (snapshot) | `--score`, `--history`, `--no-snapshot`, `--no-drift-check`. |

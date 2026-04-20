@@ -38,6 +38,34 @@ These seven verbs are the complete CLI surface. There are no aliases — if
 documentation or older scripts reference `wh doctor`, `wh refresh`, `wh gen`,
 or similar, update them to the canonical names above.
 
+## Mid-turn rule lookup (prefer over reloading AGENTS.md)
+
+When you are about to edit a source file during a turn, **call `wh rules query --file <path>` first** and follow the returned rules. This is cheaper per-turn than scanning the whole committed `AGENTS.md`.
+
+```bash
+# Before editing src/services/users.py
+wh rules query --file src/services/users.py --json
+
+# Filter to only what must be obeyed
+wh rules query --file src/services/users.py --severity must --json
+
+# Everything for one dependency
+wh rules query --dep fastapi --json
+```
+
+Flags:
+
+- `--file <path>` — infers language from the extension; returns rules for that language.
+- `--lang <python|typescript|rust>` — explicit language filter.
+- `--dep <name>` — filter to a single dependency.
+- `--severity <must|should|may>` — narrow by severity.
+- `--full` — include signals and golden examples (useful for debugging a rule; usually unneeded mid-turn).
+- `--personal-only` / `--project-only` — layer filter.
+
+The response is a JSON envelope: `{ total, filters, warnings, rules: [...] }`. Each rule carries `id`, `severity`, `description`, `source_url`, `match_patterns`, `layer`, and (with `--full`) signals + examples. Treat `severity: must` rules as non-negotiable; `should` as strong preference; `may` as documented option.
+
+`AGENTS.md` remains the bootstrap context that loads at session start; `wh rules query` is the per-turn lookup that avoids re-scanning it.
+
 ## Roles
 
 The binary does deterministic work. The agent does judgment. The user
