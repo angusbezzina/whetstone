@@ -498,6 +498,53 @@ fn test_rules_query_full_includes_signals() {
 }
 
 #[test]
+fn test_report_pr_comment_contains_marker_and_headers() {
+    let dir = fixtures_dir();
+    let (stdout, _, ok) = run_whetstone(
+        &[
+            "report",
+            "--pr-comment",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        dir.to_str().unwrap(),
+    );
+    assert!(ok, "wh report --pr-comment must succeed");
+    assert!(
+        stdout.starts_with("<!-- whetstone-report -->"),
+        "pr-comment flavor must lead with the marker"
+    );
+    assert!(stdout.contains("# Whetstone Report"));
+    assert!(stdout.contains("**Rule system:**"));
+    assert!(stdout.contains("**Adherence:**"));
+}
+
+#[test]
+fn test_report_json_includes_required_keys() {
+    let dir = fixtures_dir();
+    let (stdout, _, ok) = run_whetstone(
+        &[
+            "report",
+            "--json",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        dir.to_str().unwrap(),
+    );
+    assert!(ok);
+    let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    for key in [
+        "rule_system_score",
+        "adherence_score",
+        "adherence",
+        "violations",
+        "next_actions",
+    ] {
+        assert!(result.get(key).is_some(), "key `{key}` missing from wh report output");
+    }
+}
+
+#[test]
 fn test_status_returns_adherence_score_fields() {
     let dir = fixtures_dir();
     let (stdout, _, ok) = run_whetstone(

@@ -19,6 +19,7 @@ mod layers;
 mod output;
 mod personal;
 mod resolve;
+mod report;
 mod review;
 mod rule_authoring;
 mod rules;

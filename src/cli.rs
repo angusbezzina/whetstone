@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     approve, check, ci_check, config, detect, doctor, extract, gen, generate_context,
-    generate_lint, generate_tests, output, personal, resolve, review, rule_authoring, rules,
-    rules_query, status, triggers, update, worklist,
+    generate_lint, generate_tests, output, personal, report, resolve, review, rule_authoring,
+    rules, rules_query, status, triggers, update, worklist,
 };
 
 // TODO(whetstone-aww): reinstate patterns
@@ -565,6 +565,18 @@ enum Commands {
     Rule {
         #[command(subcommand)]
         action: RuleAction,
+    },
+
+    /// One-page report: adherence score, top violations, drift, next actions
+    #[command(name = "report")]
+    Report {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Emit the GitHub-flavored PR-comment markdown (adds a tracking marker)
+        #[arg(long)]
+        pr_comment: bool,
     },
 
     /// Update whetstone to the latest release
@@ -1542,6 +1554,37 @@ pub fn run() -> i32 {
                 0
             }
         },
+
+        Commands::Report {
+            project_dir,
+            pr_comment,
+        } => {
+            let opts = report::ReportOptions {
+                project_dir: &project_dir,
+                pr_comment,
+            };
+            match report::build(&opts) {
+                Ok(data) => {
+                    // --pr-comment always emits markdown (it's the whole point);
+                    // otherwise honor JSON auto-detect.
+                    if pr_comment {
+                        print!("{}", report::to_markdown(&data));
+                    } else if json_mode {
+                        output::print_json(&data);
+                    } else {
+                        print!("{}", report::to_markdown(&data));
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "wh report composes wh status + wh check; fix the underlying failure and retry",
+                    ));
+                    1
+                }
+            }
+        }
 
         Commands::Update { check, force } => match update::check_and_update(force, check) {
             Ok(result) => {

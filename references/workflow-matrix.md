@@ -47,6 +47,7 @@ There are no command aliases as of 0.3.0 — each verb has exactly one name.
 | `wh review [show <id> \| worklist]` | inspect | writable rules, handoff artifacts | — | Lists rules by lifecycle status, shows full per-rule context, or renders the extraction worklist. |
 | `wh validate` | — | `references/rule-schema.yaml` (or embedded fallback), all rule files | — | Schema + fixtures validator. CI-friendly. |
 | `wh status` | monitor | project rules, state files, metrics, source files for `wh check` | `whetstone/.metrics.jsonl` (snapshot w/ `adherence_score` + `violation_counts`) | Returns both `rule_system_score` (rule health) and `adherence_score` (code quality, hybrid formula). `--score`, `--history`, `--no-snapshot`, `--no-drift-check`. |
+| `wh report` | monitor | project rules, source files, `refresh-diff.json` | — | One-page markdown summary: rule-system + adherence scores, top 10 violations with file/line, drift, next actions. `--pr-comment` emits the PR-friendly flavor with a `<!-- whetstone-report -->` marker. `--json` for structured output. |
 | `wh ci` | monitor (CI) | same as status | — | `--fail-on stale` or `--fail-on needs_review` gates PRs. |
 | `wh update` | — | — | replaces the binary | Self-update from GitHub Releases. Never touches rules. |
 
