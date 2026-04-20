@@ -12,24 +12,13 @@ rules:
     severity: should
     confidence: high
     category: convention
-    source_kind: official_docs
     description: >
       SHOULD use .context() or .with_context() instead of .map_err(|e| anyhow!(...))
       to add context to errors. The context methods are more idiomatic, compose better
       with the ? operator, and preserve the original error chain.
     source_url: "https://docs.rs/anyhow/latest/anyhow/trait.Context.html"
-    risk: >
-      map_err(|e| anyhow!(...)) discards the original error's type info and
-      produces less useful backtraces.
-    linter_gap: >
-      Clippy does not lint for anyhow-specific idioms. This is a library
-      convention, not a language rule.
     approved: true
-    approved_at: "2026-04-05T00:00:00Z"
     status: approved
-    proposed_at: "2026-04-05T00:00:00Z"
-    proposed_by: whetstone-extraction
-
     signals:
       - id: map-err-anyhow-bang
         strategy: pattern
@@ -58,25 +47,13 @@ rules:
     severity: should
     confidence: high
     category: convention
-    source_kind: official_docs
     description: >
       SHOULD use .expect("reason") instead of .unwrap() in application code
       using anyhow. When an operation is expected to succeed, .expect() documents
       the invariant and produces actionable panic messages.
     source_url: "https://docs.rs/anyhow/latest/anyhow/"
-    risk: >
-      .unwrap() produces opaque "called unwrap on Err" panics with no context
-      about why the author believed the value would be present.
-    linter_gap: >
-      Clippy has unwrap_used but it is allow-by-default and flags all unwrap
-      usage indiscriminately. Whetstone targets application code using anyhow
-      specifically.
     approved: true
-    approved_at: "2026-04-05T00:00:00Z"
     status: approved
-    proposed_at: "2026-04-05T00:00:00Z"
-    proposed_by: whetstone-extraction
-
     signals:
       - id: unwrap-call
         strategy: pattern

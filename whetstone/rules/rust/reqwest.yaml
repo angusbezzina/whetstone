@@ -12,24 +12,12 @@ rules:
     severity: must
     confidence: high
     category: default
-    source_kind: official_docs
     description: >
       MUST set an explicit timeout on reqwest clients. The default is no timeout,
       which means requests can hang indefinitely on unresponsive servers.
     source_url: "https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html#method.timeout"
-    risk: >
-      Without a timeout, a single unresponsive upstream can hang the entire
-      process or exhaust thread pool workers. In production, this causes
-      cascading failures.
-    linter_gap: >
-      Clippy does not check library-specific configuration defaults.
-      This is a runtime safety issue, not a syntax issue.
     approved: true
-    approved_at: "2026-04-05T00:00:00Z"
     status: approved
-    proposed_at: "2026-04-05T00:00:00Z"
-    proposed_by: whetstone-extraction
-
     signals:
       - id: client-without-timeout
         strategy: pattern
@@ -66,24 +54,13 @@ rules:
     severity: should
     confidence: high
     category: convention
-    source_kind: official_docs
     description: >
       SHOULD call .error_for_status() or explicitly check status codes on
       reqwest responses. By default, reqwest treats 4xx/5xx as successful
       responses and returns the body without error.
     source_url: "https://docs.rs/reqwest/latest/reqwest/struct.Response.html#method.error_for_status"
-    risk: >
-      Silently accepting error responses leads to parsing HTML error pages
-      as JSON, treating empty 204 responses as data, or missing upstream failures.
-    linter_gap: >
-      No linter checks HTTP response handling patterns. This is a runtime
-      correctness issue specific to reqwest's API design.
     approved: true
-    approved_at: "2026-04-05T00:00:00Z"
     status: approved
-    proposed_at: "2026-04-05T00:00:00Z"
-    proposed_by: whetstone-extraction
-
     signals:
       - id: no-status-check
         strategy: pattern

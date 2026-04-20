@@ -37,12 +37,6 @@ rules:
                            # high   — directly stated in documentation
                            # medium — inferred from documentation patterns
 
-    source_kind: string    # Optional. What kind of source backs this rule.
-                           # Suggested values: official_docs | changelog | migration_guide |
-                           # blog | social | community | team_guide | conference | manual
-                           # Open-ended — users can use any value for custom filtering.
-                           # Set by the agent or user during extraction/approval.
-
     category: enum         # Required. One of: migration | default | convention | breaking-change | semantic
                            # migration       — deprecated APIs that still work but shouldn't be used
                            # default         — insecure/slow unless explicitly configured
@@ -59,33 +53,14 @@ rules:
     source_quote: string   # Optional. Verbatim excerpt from documentation supporting
                            # this rule. Shown during approval to build confidence.
 
-    risk: string           # Optional. What goes wrong if this rule is ignored.
-                           # Helps the user understand severity during approval.
-
-    linter_gap: string     # Optional. Why standard linters don't catch this.
-                           # Explains why Whetstone adds value for this specific rule.
-
     approved: boolean      # Required. Whether the user has approved this rule.
                            # Only approved rules are used for generation.
 
-    approved_at: string    # Optional. ISO 8601 timestamp of when the rule was approved.
-
     # --- Lifecycle state ---
 
-    status: enum           # Required. One of: candidate | approved | denied | deprecated
-                           #   candidate  — proposed but not yet reviewed
+    status: enum           # Required. One of: candidate | approved
+                           #   candidate  — proposed by `wh extract submit` but not yet approved
                            #   approved   — reviewed and accepted for enforcement
-                           #   denied     — reviewed and rejected (persisted for audit)
-                           #   deprecated — previously approved, now superseded or invalid
-
-    # --- Provenance ---
-
-    proposed_at: string    # Required. ISO 8601 timestamp of when rule was first proposed.
-    proposed_by: string    # Optional. Who/what proposed the rule
-                           #   (e.g., "whetstone-extraction", "manual")
-    denied_reason: string  # Optional. Why the rule was denied (for status: denied).
-    deprecated_reason: string  # Optional. Why the rule was deprecated.
-    superseded_by: string  # Optional. Rule ID that replaces this one.
 
     # --- Quality markers ---
 
@@ -97,11 +72,10 @@ rules:
 
     signals:               # Required. At least one signal must have strategy: ast or pattern.
       - id: string         # Required. Unique within this rule (e.g., "is-sync-function").
-        strategy: enum     # Required. One of: ast | pattern | lint_proxy | ai
+        strategy: enum     # Required. One of: ast | pattern | lint_proxy
                            #   ast        — verifiable via syntax tree analysis
                            #   pattern    — verifiable via text/regex matching
                            #   lint_proxy — maps to an existing linter rule
-                           #   ai         — requires LLM judgment (last resort)
         description: string # Required. What this signal checks.
         weight: enum       # Required. One of: required | strong | moderate
                            #   required — rule fails if this signal fires
@@ -127,15 +101,10 @@ rules:
         language: string   # Optional. Override language for polyglot examples
                            #   (defaults to the source language of the rule file).
 
-    # --- Optional fields for advanced eval ---
+    # --- Optional fields for deterministic eval thresholds ---
 
     deterministic_pass_threshold: integer
                            # Optional. Number of deterministic signals that auto-pass.
 
     deterministic_fail_threshold: integer
                            # Optional. Number of deterministic signals below which auto-fail.
-
-    ai_eval:               # Optional. AI evaluation configuration for ambiguous cases.
-      trigger: enum        # When to run AI eval: ambiguous | always
-      question: string     # Binary question for the AI judge
-      context_lines: integer # Lines of surrounding context to include

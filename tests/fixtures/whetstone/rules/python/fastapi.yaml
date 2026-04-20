@@ -16,15 +16,8 @@ rules:
     source_url: https://fastapi.tiangolo.com/async/
     source_quote: >
       Use async def for route operations that call async libraries.
-    risk: >
-      Blocks the event loop under concurrent load, causing request timeouts.
-    linter_gap: >
-      ruff has no rule for async vs sync route handlers.
     status: approved
     approved: true
-    approved_at: "2026-02-25T12:00:00Z"
-    proposed_at: "2026-02-25T11:30:00Z"
-    proposed_by: whetstone-extraction
     signals:
       - id: is-sync-function
         strategy: ast

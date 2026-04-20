@@ -12,24 +12,13 @@ rules:
     severity: should
     confidence: high
     category: convention
-    source_kind: official_docs
     description: >
       SHOULD use the derive API (#[derive(Parser)]) instead of the builder API
       (Command::new()) for new CLI definitions. The derive API is more concise,
       type-safe, and the recommended approach in clap 4.x docs.
     source_url: "https://docs.rs/clap/latest/clap/_derive/index.html"
-    risk: >
-      Builder API is verbose and error-prone — argument names are stringly-typed,
-      type mismatches are runtime errors, and refactoring is harder.
-    linter_gap: >
-      Clippy does not express preferences between valid API patterns.
-      This is a library convention, not a correctness issue.
     approved: true
-    approved_at: "2026-04-05T00:00:00Z"
     status: approved
-    proposed_at: "2026-04-05T00:00:00Z"
-    proposed_by: whetstone-extraction
-
     signals:
       - id: builder-api-usage
         strategy: pattern

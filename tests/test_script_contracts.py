@@ -239,16 +239,6 @@ class TestStatus:
         valid_labels = {"Fresh", "Current", "Aging", "Stale", "Unknown"}
         assert result["freshness_label"] in valid_labels
 
-    def test_has_last_extraction_date(self):
-        result = run_script(
-            "status.py",
-            ["--project-dir", str(FIXTURES_DIR), "--json", "--no-drift-check"],
-        )
-        assert "last_extraction_date" in result
-        # Should be an ISO 8601 string (fixture has approved_at)
-        assert result["last_extraction_date"] is not None
-        assert isinstance(result["last_extraction_date"], str)
-
     def test_has_score(self):
         result = run_script(
             "status.py",

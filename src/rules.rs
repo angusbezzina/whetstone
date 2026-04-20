@@ -18,7 +18,7 @@ const VALID_CATEGORIES: &[&str] = &[
 ];
 
 /// Valid signal strategies.
-const VALID_STRATEGIES: &[&str] = &["ast", "pattern", "lint_proxy", "ai"];
+const VALID_STRATEGIES: &[&str] = &["ast", "pattern", "lint_proxy"];
 
 /// Valid severity levels.
 const VALID_SEVERITIES: &[&str] = &["must", "should", "may"];
@@ -28,7 +28,7 @@ const VALID_CONFIDENCES: &[&str] = &["high", "medium"];
 
 /// Valid rule lifecycle statuses.
 /// See `references/handoff-schema.md` and `references/workflow-matrix.md`.
-const VALID_STATUSES: &[&str] = &["candidate", "approved", "denied", "deprecated"];
+const VALID_STATUSES: &[&str] = &["candidate", "approved"];
 
 // --- Serde deserialization types ---
 
@@ -81,55 +81,17 @@ pub struct Rule {
     #[serde(default)]
     pub source_quote: Option<String>,
     #[serde(default)]
-    pub risk: Option<String>,
-    #[serde(default)]
-    pub linter_gap: Option<String>,
-    #[serde(default)]
     pub approved: bool,
     #[serde(default)]
-    pub approved_at: Option<String>,
-    #[serde(default)]
     pub status: Option<String>,
-    #[serde(default)]
-    pub proposed_at: Option<String>,
-    #[serde(default)]
-    pub proposed_by: Option<String>,
-    /// Required when `status: denied`. Free-text reason, persisted for audit.
-    #[serde(default)]
-    pub denied_reason: Option<String>,
-    /// Required when `status: deprecated`. Free-text reason.
-    #[serde(default)]
-    pub deprecated_reason: Option<String>,
-    /// Optional rule ID that replaces this one when deprecated.
-    #[serde(default)]
-    pub superseded_by: Option<String>,
-    /// What kind of source backs this rule: official_docs, changelog, migration_guide,
-    /// blog, social, community, team_guide, conference, manual, or any custom string.
-    #[serde(default)]
-    pub source_kind: Option<String>,
     #[serde(default)]
     pub deterministic_pass_threshold: Option<u32>,
     #[serde(default)]
     pub deterministic_fail_threshold: Option<u32>,
     #[serde(default)]
-    pub ai_eval: Option<AiEval>,
-    #[serde(default)]
     pub signals: Vec<Signal>,
     #[serde(default)]
     pub golden_examples: Vec<GoldenExample>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct AiEval {
-    /// When to run AI eval: "ambiguous" or "always"
-    #[serde(default)]
-    pub trigger: String,
-    /// Binary question for the AI judge
-    #[serde(default)]
-    pub question: String,
-    /// Lines of surrounding context to include
-    #[serde(default)]
-    pub context_lines: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -302,39 +264,21 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
                     ),
                 });
             } else {
-                // Consistency: the `approved` boolean and the `status` enum must
-                // agree. `approved: true` must pair with status=approved (or the
-                // terminal deprecated variant — previously approved, now retired).
+                // Consistency: the `approved` boolean and the `status` enum must agree.
                 let status_s = status.as_str();
-                if rule.approved && !matches!(status_s, "approved" | "deprecated") {
+                if rule.approved && status_s != "approved" {
                     warnings.push(ValidationWarning {
                         file: file_path.to_string(),
                         message: format!(
-                            "{rule_ctx}: approved=true but status='{status}' (expected 'approved' or 'deprecated')"
+                            "{rule_ctx}: approved=true but status='{status}' (expected 'approved')"
                         ),
                     });
                 }
-                if !rule.approved && matches!(status_s, "approved") {
+                if !rule.approved && status_s == "approved" {
                     warnings.push(ValidationWarning {
                         file: file_path.to_string(),
                         message: format!(
-                            "{rule_ctx}: status='approved' but approved=false — set approved: true or change status to candidate/denied"
-                        ),
-                    });
-                }
-                if status_s == "deprecated" && rule.deprecated_reason.is_none() {
-                    warnings.push(ValidationWarning {
-                        file: file_path.to_string(),
-                        message: format!(
-                            "{rule_ctx}: status='deprecated' should include a deprecated_reason"
-                        ),
-                    });
-                }
-                if status_s == "denied" && rule.denied_reason.is_none() {
-                    warnings.push(ValidationWarning {
-                        file: file_path.to_string(),
-                        message: format!(
-                            "{rule_ctx}: status='denied' should include a denied_reason"
+                            "{rule_ctx}: status='approved' but approved=false — set approved: true or change status to candidate"
                         ),
                     });
                 }
@@ -626,7 +570,6 @@ pub fn rule_files_to_json(loaded: &[LoadedRuleFile]) -> Vec<Value> {
                         "description": r.description,
                         "source_url": r.source_url,
                         "approved": r.approved,
-                        "approved_at": r.approved_at,
                         "signals": signal_strategies,
                         "status": r.status,
                     })
@@ -705,11 +648,8 @@ pub fn load_approved_rules(
                         language: e.language.clone(),
                     })
                     .collect(),
-                risk: rule.risk.clone(),
-                linter_gap: rule.linter_gap.clone(),
                 deterministic_pass_threshold: rule.deterministic_pass_threshold,
                 deterministic_fail_threshold: rule.deterministic_fail_threshold,
-                ai_eval: rule.ai_eval.clone(),
             });
         }
     }
@@ -769,11 +709,8 @@ pub fn approved_from_loaded(
                         language: e.language.clone(),
                     })
                     .collect(),
-                risk: rule.risk.clone(),
-                linter_gap: rule.linter_gap.clone(),
                 deterministic_pass_threshold: rule.deterministic_pass_threshold,
                 deterministic_fail_threshold: rule.deterministic_fail_threshold,
-                ai_eval: rule.ai_eval.clone(),
             });
         }
     }
@@ -794,11 +731,8 @@ pub struct ApprovedRule {
     pub language: String,
     pub signals: Vec<ApprovedSignal>,
     pub golden_examples: Vec<ApprovedExample>,
-    pub risk: Option<String>,
-    pub linter_gap: Option<String>,
     pub deterministic_pass_threshold: Option<u32>,
     pub deterministic_fail_threshold: Option<u32>,
-    pub ai_eval: Option<AiEval>,
 }
 
 #[derive(Clone)]

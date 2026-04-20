@@ -456,11 +456,8 @@ mod tests {
                 ast_scope: None,
             }],
             golden_examples: Vec::new(),
-            risk: None,
-            linter_gap: None,
             deterministic_pass_threshold: None,
             deterministic_fail_threshold: None,
-            ai_eval: None,
         }
     }
 

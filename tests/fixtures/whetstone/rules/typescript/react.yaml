@@ -14,11 +14,7 @@ rules:
     description: >
       Components using hooks or browser APIs should include the 'use client' directive.
     source_url: https://react.dev/reference/rsc/use-client
-    risk: >
-      Server-rendering a component that uses client-only APIs causes hydration errors.
     approved: true
-    approved_at: "2026-03-01T11:00:00Z"
-    proposed_at: "2026-03-01T10:30:00Z"
     status: approved
     signals:
       - id: has-hooks-no-directive
@@ -62,7 +58,6 @@ rules:
       Do not use array index as key prop when rendering lists that may be reordered.
     source_url: https://react.dev/learn/rendering-lists#rules-of-keys
     approved: false
-    proposed_at: "2026-03-01T10:30:00Z"
     status: candidate
     signals:
       - id: index-as-key
