@@ -29,12 +29,28 @@ wh init  →  wh extract  →  wh extract submit  →  wh approve --all
   flip candidate rules to approved with batch selectors.
 - `wh lint` — emit ruff / biome / clippy overlays from `lint_proxy`
   signals. Split out of `wh tests`.
-- `wh gen` / `wh actions` — chain context + tests + lint in one command.
+- `wh actions` — chain context + tests + lint in one command.
 
 ### Changed
 - `wh tests` no longer writes lint configs; use `wh lint` instead.
   The `lint_configs` key is removed from its output.
+- `wh refresh` is now `wh reinit` (pairs with `wh init`).
 - Rule status lifecycle reduced to `candidate` and `approved`.
+
+### Removed — command aliases
+All historical command aliases have been dropped in favor of a single
+canonical name per verb. If your scripts use any of these, update them:
+
+| Removed | Use instead |
+|---------|-------------|
+| `wh doctor`, `wh start`, `wh deps`, `wh detect-deps` | `wh init` |
+| `wh refresh`, `wh refresh-rules` | `wh reinit` |
+| `wh gen` | `wh actions` |
+| `wh sources`, `wh resolve-sources` | `wh set-sources` |
+| `wh generate-context` | `wh context` |
+| `wh generate-tests` | `wh tests` |
+| `wh validate-rules` | `wh validate` |
+| `wh ci-check` | `wh ci` |
 - Layer merge collapsed to personal + project only.
 
 ### Removed

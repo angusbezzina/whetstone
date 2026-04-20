@@ -65,8 +65,8 @@ pub fn generate_context(
         return Ok(serde_json::json!({
             "status": "ok",
             "generated": [],
-            "warnings": ["No approved rules found. Run 'wh doctor' to extract and approve rules."],
-            "next_command": "wh doctor",
+            "warnings": ["No approved rules found. Run 'wh init' to extract and approve rules."],
+            "next_command": "wh init",
         }));
     }
 
@@ -135,7 +135,7 @@ pub fn generate_context(
     }
 
     let next_command = if generated.is_empty() {
-        "wh doctor"
+        "wh init"
     } else {
         "wh tests"
     };

@@ -45,8 +45,8 @@ pub fn compute_status(
         return Ok(serde_json::json!({
             "status": "not_initialized",
             "label": "Not Initialized",
-            "message": "No whetstone directory found. Run 'wh doctor' to get started.",
-            "next_command": "wh doctor",
+            "message": "No whetstone directory found. Run 'wh init' to get started.",
+            "next_command": "wh init",
         }));
     }
 
@@ -379,7 +379,7 @@ pub fn compute_status(
 
     // Next command
     let next_command = if drifted_count > 0 {
-        "wh doctor --changed-only"
+        "wh init --changed-only"
     } else if pipeline_state
         .get("failed")
         .and_then(|v| v.as_i64())
@@ -393,11 +393,11 @@ pub fn compute_status(
         .unwrap_or(0)
         > 0
     {
-        "wh doctor --ready-only"
+        "wh init --ready-only"
     } else if total_rules == 0 {
-        "wh doctor"
+        "wh init"
     } else if freshness_days.map(|d| d > 30.0).unwrap_or(false) {
-        "wh doctor --refresh"
+        "wh init --refresh"
     } else {
         "wh context && wh tests"
     };
@@ -575,7 +575,7 @@ fn build_recommendations(inputs: RecommendationInputs<'_>) -> Vec<Value> {
     let mut recs = Vec::new();
 
     if total_rules == 0 {
-        recs.push(serde_json::json!({"priority": "high", "action": "init", "message": "No rules found. Run 'wh doctor' to get started.", "command": "wh doctor"}));
+        recs.push(serde_json::json!({"priority": "high", "action": "init", "message": "No rules found. Run 'wh init' to get started.", "command": "wh init"}));
         return recs;
     }
 
@@ -598,7 +598,7 @@ fn build_recommendations(inputs: RecommendationInputs<'_>) -> Vec<Value> {
         recs.push(serde_json::json!({
             "priority": "high", "action": "refresh",
             "message": format!("{} deps have version drift: {}{suffix}. Re-run doctor to resolve updated sources.", drifted_count, dep_list.join(", ")),
-            "command": "wh doctor --changed-only",
+            "command": "wh init --changed-only",
         }));
     }
 
@@ -611,7 +611,7 @@ fn build_recommendations(inputs: RecommendationInputs<'_>) -> Vec<Value> {
                 "priority": if days > 60.0 { "high" } else { "medium" },
                 "action": "refresh",
                 "message": format!("Last extraction was {:.0} days ago{date_str}. Re-run doctor to check for documentation changes.", days),
-                "command": "wh doctor --refresh",
+                "command": "wh init --refresh",
             }));
         }
     }

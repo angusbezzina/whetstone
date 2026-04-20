@@ -1,6 +1,6 @@
 //! Dependency-scoped extraction worklists.
 //!
-//! `wh doctor` and `wh refresh` already produce an extraction handoff;
+//! `wh init` and `wh reinit` already produce an extraction handoff;
 //! the worklist adds a per-dependency view on top: each entry bundles
 //! ranked sources, section summaries, quotas derived from config, and
 //! a concrete next-step hint for the agent. The goal is "work one dep
@@ -167,7 +167,7 @@ pub fn build_from_doctor(
             "",
             Priority::Pending,
             Some(if reason.is_empty() {
-                "source not resolved yet; run `wh doctor --resume` or `wh refresh`"
+                "source not resolved yet; run `wh init --resume` or `wh reinit`"
             } else {
                 reason.as_str()
             }),
@@ -227,7 +227,7 @@ pub fn load(project_dir: &Path) -> Result<Value> {
         .join("extraction-handoff.json");
     if !path.exists() {
         return Err(anyhow!(
-            "extraction-handoff.json not found. Run `wh doctor` or `wh refresh` first."
+            "extraction-handoff.json not found. Run `wh init` or `wh reinit` first."
         ));
     }
     let text = std::fs::read_to_string(&path)?;
@@ -438,7 +438,7 @@ fn next_step_hint(priority: Priority, remaining_quota: u32, source: Option<&Valu
             )
         }
         Priority::Pending => {
-            "Resolve with `wh set-sources --deps=<name>` or `wh doctor --resume`".into()
+            "Resolve with `wh set-sources --deps=<name>` or `wh init --resume`".into()
         }
         Priority::Failed => {
             "Add a manual entry under `sources.custom` in whetstone.yaml and re-run".into()

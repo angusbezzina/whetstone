@@ -98,7 +98,7 @@ pub fn write_extraction_handoff(
         candidates.push(json!({
             "name": name,
             "priority": "pending",
-            "reason": "Source not yet resolved; run wh doctor --resume or wh refresh.",
+            "reason": "Source not yet resolved; run wh init --resume or wh reinit.",
         }));
     }
     for (name, reason) in &failed_subset {

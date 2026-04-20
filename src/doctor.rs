@@ -174,7 +174,7 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
             "extraction_subsets": {"ready_now": [], "resolved_not_ready": [], "pending": [], "failed": []},
             "resolution_buckets": {"ready_now": [], "resolved_low": [], "failed": [], "cached": []},
             "scan": {"cache_stats": {}, "ranked_queue": []},
-            "next_command": "Add dependencies to your project, then run wh doctor again",
+            "next_command": "Add dependencies to your project, then run wh init again",
         });
         // Still emit a handoff artifact so the agent knows the run produced
         // nothing to extract — prevents stale handoffs from lingering across runs.
@@ -345,7 +345,7 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
         };
 
     // Config-driven defaults; CLI-level overrides still arrive through the
-    // dedicated `wh set-sources` subcommand, but `wh doctor` runs
+    // dedicated `wh set-sources` subcommand, but `wh init` runs
     // set-sources implicitly so we honor the project resolve settings here.
     let resolve_cfg = crate::config::WhetstoneConfig::load(project_dir).resolve;
     let resolve_result = resolve::resolve_sources(resolve::ResolveOptions {
@@ -486,13 +486,13 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
     );
 
     let next_command = if auto_limited {
-        "wh doctor --resume"
+        "wh init --resume"
     } else if !extraction_sources.is_empty() {
         "For each ready dep, produce a proposal bundle → `wh propose import <bundle>` → `wh review diff` → `wh apply <id> --approve`"
     } else if !sources.is_empty() {
         "wh status"
     } else {
-        "wh doctor --refresh"
+        "wh init --refresh"
     };
 
     let result = serde_json::json!({
@@ -745,7 +745,7 @@ fn build_recommendations(
             "priority": "high",
             "action": "continue",
             "message": format!("Fast-first mode resolved the top {} dependencies; resume to continue with {} remaining", sources.len(), remaining_count),
-            "command": "wh doctor --resume",
+            "command": "wh init --resume",
         }));
     }
 

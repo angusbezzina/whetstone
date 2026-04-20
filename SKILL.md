@@ -34,8 +34,9 @@ wh check src/       # Verify source code against approved rules
 wh reinit           # Refresh when dependencies change
 ```
 
-`wh init` replaces the old `wh doctor`; `wh reinit` is the refresh workflow.
-`wh actions` is an alias for `wh gen`.
+These seven verbs are the complete CLI surface. There are no aliases — if
+documentation or older scripts reference `wh doctor`, `wh refresh`, `wh gen`,
+or similar, update them to the canonical names above.
 
 ## Roles
 
@@ -109,7 +110,7 @@ colliding file or rename the new candidate, then resubmit.
 
 ## Generation
 
-`wh actions` (or `wh gen`) chains three commands:
+`wh actions` chains three commands:
 
 - `wh context` — writes `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.
 - `wh tests` — writes pytest / vitest / cargo test scaffolds under `whetstone/evals/`
@@ -137,7 +138,7 @@ and built-in) is gone.
 
 ## Refresh
 
-`wh reinit` (aka `wh refresh`) re-resolves only changed deps and writes
+`wh reinit` re-resolves only changed deps and writes
 `whetstone/.state/refresh-diff.json`. Review the diff, then re-extract any
 stale rules with `wh extract submit`.
 

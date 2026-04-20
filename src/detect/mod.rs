@@ -227,7 +227,7 @@ pub fn detect_deps(
         }
         result["drift"] = drift;
     } else {
-        result["next_command"] = serde_json::json!("Resolve docs: wh doctor");
+        result["next_command"] = serde_json::json!("Resolve docs: wh init");
     }
 
     Ok(result)

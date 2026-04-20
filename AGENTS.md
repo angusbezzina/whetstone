@@ -10,17 +10,16 @@ Whetstone is an Agent Skill (agentskills.io format) with a Rust CLI binary. The 
 
 | Step | Responsibility | Command |
 |------|---------------|---------|
-| 1. Detect | Binary | `wh doctor` (or `wh init`) |
-| 2. Resolve | Binary | `wh doctor` (or `wh set-sources`) |
-| 3. Worklist | Binary | `wh review worklist` — per-dep ranked packets with quotas |
-| 4. Extract | Agent | Read docs, emit a structured proposal bundle |
-| 5. Import | Binary | `wh propose import <bundle>` — turns bundle into candidate YAML |
-| 6. Diff | Binary | `wh propose diff <bundle>` or `wh review diff` |
-| 7. Approve | Agent + User | `wh apply <id> --approve` (or `--deny` / `--deprecate` / `--supersede`) |
-| 8. Generate | Binary | `wh context` + `wh tests` |
-| 9. Monitor | Binary | `wh status` / `wh ci` |
+| 1. Bootstrap | Binary | `wh init` — detect deps, resolve docs, write extraction handoff |
+| 2. Extract | Agent | `wh extract` → read docs → `wh extract submit <bundle.yaml>` |
+| 3. Approve | Agent + User | `wh approve <rule-id>` or `wh approve --all [--dep] [--confidence]` |
+| 4. Generate | Binary | `wh actions` (chains context + tests + lint) or the three individually |
+| 5. Verify | Binary | `wh check <path>` — deterministic scan, agent's "am I done?" gate |
+| 6. Maintain | Binary | `wh reinit` when deps change; `wh status` for health |
 
-Agents MUST NOT hand-author candidate rule YAML — `wh propose import` is the only supported path. This keeps `status`, `approved`, `proposed_at`, and `proposed_by` consistent across every run.
+There are no command aliases. Use the canonical names above — if older scripts or memories reference `wh doctor`, `wh refresh`, `wh gen`, `wh propose`, `wh apply`, `wh promote`, `wh bench`, `wh patterns`, or `wh eval`, those are gone as of 0.3.0. Rules have exactly two statuses: `candidate` and `approved`. Denial = delete the rule from YAML.
+
+Agents MAY hand-author rule YAML only through `wh extract submit <bundle>`, which refuses id collisions. Do NOT edit `whetstone/rules/**/*.yaml` directly.
 
 ### Key Files
 

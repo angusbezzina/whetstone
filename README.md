@@ -509,7 +509,7 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - Rule listing and per-rule context via `wh review` / `wh review show`
 - Test generation with real regex checks (via `match` field on signals) for Python, TypeScript, and Rust
 - Lint overlay generation (ruff, biome, clippy) via `wh lint`
-- One-shot generation chain via `wh actions` / `wh gen` (context + tests + lint)
+- One-shot generation chain via `wh actions` (context + tests + lint)
 - Agent context generation under `whetstone/context/` (AGENTS.md, CLAUDE.md, .cursorrules, copilot, windsurf, codex)
 - Health monitoring with drift detection, freshness scoring, and metric history
 - CI integration via GitHub Action with PR comments

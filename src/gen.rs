@@ -1,4 +1,4 @@
-//! `wh actions` / `wh gen` — run context, tests, and lint generation in sequence.
+//! `wh actions` — run context, tests, and lint generation in sequence.
 //!
 //! Introduced by bead whetstone-beh. The command is a thin orchestrator over
 //! the three underlying generators; it fails fast on the first error so the

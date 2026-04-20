@@ -317,7 +317,7 @@ if [ -z "$drift_json" ]; then
 fi
 
 if printf '%s' "$drift_json" | grep -q '"manifests_changed":[[:space:]]*true'; then
-    printf 'Whetstone: dependency drift detected after merge. Run `wh refresh` to update rules.\n' >&2
+    printf 'Whetstone: dependency drift detected after merge. Run `wh reinit` to update rules.\n' >&2
 fi
 exit 0
 "#;

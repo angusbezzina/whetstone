@@ -222,7 +222,7 @@ fn test_status_not_initialized() {
 fn test_generate_context_dry_run() {
     let dir = fixtures_dir();
     let (stdout, _stderr, success) = run_whetstone(
-        &["generate-context", "--dry-run", "--json"],
+        &["context", "--dry-run", "--json"],
         dir.to_str().unwrap(),
     );
     assert!(success);
@@ -247,7 +247,7 @@ fn test_generate_context_dry_run() {
 fn test_generate_tests_dry_run() {
     let dir = fixtures_dir();
     let (stdout, _stderr, success) = run_whetstone(
-        &["generate-tests", "--dry-run", "--json"],
+        &["tests", "--dry-run", "--json"],
         dir.to_str().unwrap(),
     );
     assert!(success);
@@ -268,7 +268,7 @@ fn test_generate_context_parity_snapshot() {
     }
     let dir = fixtures_dir();
     let (rust_stdout, _rust_stderr, rust_success) = run_whetstone(
-        &["generate-context", "--dry-run", "--json"],
+        &["context", "--dry-run", "--json"],
         dir.to_str().unwrap(),
     );
     assert!(rust_success);
@@ -295,7 +295,7 @@ fn test_generate_tests_parity_snapshot() {
     }
     let dir = fixtures_dir();
     let (rust_stdout, _rust_stderr, rust_success) = run_whetstone(
-        &["generate-tests", "--dry-run", "--json"],
+        &["tests", "--dry-run", "--json"],
         dir.to_str().unwrap(),
     );
     assert!(rust_success);
@@ -327,7 +327,7 @@ fn test_generate_tests_parity_snapshot() {
 #[test]
 fn test_ci_check_json() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, success) = run_whetstone(&["ci-check", "--json"], dir.to_str().unwrap());
+    let (stdout, _stderr, success) = run_whetstone(&["ci", "--json"], dir.to_str().unwrap());
     assert!(success);
 
     let result = parse_json(&stdout);
@@ -340,7 +340,7 @@ fn test_ci_check_json() {
 fn test_ci_check_parity_snapshot() {
     let dir = fixtures_dir();
     let (rust_stdout, _rust_stderr, rust_success) = run_whetstone(
-        &["ci-check", "--json", "--no-drift-check"],
+        &["ci", "--json", "--no-drift-check"],
         dir.to_str().unwrap(),
     );
     assert!(rust_success);
@@ -380,15 +380,24 @@ fn test_help_output() {
         stdout.contains("set-sources"),
         "help should contain 'set-sources'"
     );
-    assert!(stdout.contains("doctor"), "help should contain 'doctor'");
+    assert!(stdout.contains("reinit"), "help should contain 'reinit'");
     assert!(stdout.contains("status"), "help should contain 'status'");
     assert!(stdout.contains("context"), "help should contain 'context'");
     assert!(stdout.contains("tests"), "help should contain 'tests'");
+    assert!(stdout.contains("lint"), "help should contain 'lint'");
+    assert!(stdout.contains("actions"), "help should contain 'actions'");
+    assert!(stdout.contains("extract"), "help should contain 'extract'");
+    assert!(stdout.contains("approve"), "help should contain 'approve'");
+    assert!(stdout.contains("check"), "help should contain 'check'");
     assert!(stdout.contains("ci"), "help should contain 'ci'");
     assert!(
         stdout.contains("validate"),
         "help should contain 'validate'"
     );
+    // Aliases were removed in 0.3.0 — these legacy spellings must NOT appear.
+    assert!(!stdout.contains("doctor"), "'doctor' alias should be gone");
+    assert!(!stdout.contains("generate-context"), "'generate-context' alias should be gone");
+    assert!(!stdout.contains("generate-tests"), "'generate-tests' alias should be gone");
 }
 
 #[test]
@@ -929,7 +938,7 @@ fn test_installed_binary_style_usage_from_outside_repo() {
 fn test_validate_rules_passes_on_repo() {
     let repo_root = env!("CARGO_MANIFEST_DIR");
     let (stdout, _stderr, success) =
-        run_whetstone(&["validate-rules", "--project-dir", repo_root], repo_root);
+        run_whetstone(&["validate", "--project-dir", repo_root], repo_root);
     assert!(
         success,
         "validate-rules should succeed on repo fixtures; output:\n{stdout}"
@@ -974,7 +983,7 @@ rules:
     .unwrap();
 
     let (stdout, _stderr, success) = run_whetstone(
-        &["validate-rules", "--project-dir", tmp.to_str().unwrap()],
+        &["validate", "--project-dir", tmp.to_str().unwrap()],
         tmp.to_str().unwrap(),
     );
     assert!(!success, "validate-rules must fail when fixture is invalid");
@@ -1054,7 +1063,7 @@ fn test_refresh_on_empty_project_no_drift() {
     let tmp = empty_whetstone_project("whetstone_refresh_empty");
     let project = tmp.to_str().unwrap();
 
-    let (stdout, _stderr, success) = run_whetstone(&["refresh", "--json"], project);
+    let (stdout, _stderr, success) = run_whetstone(&["reinit", "--json"], project);
     assert!(
         success,
         "refresh on an empty project must succeed:\n{stdout}"
@@ -1085,7 +1094,7 @@ fn test_refresh_check_exits_zero_when_no_drift() {
     let tmp = empty_whetstone_project("whetstone_refresh_check_ok");
     let project = tmp.to_str().unwrap();
 
-    let (stdout, _stderr, success) = run_whetstone(&["refresh", "--check", "--json"], project);
+    let (stdout, _stderr, success) = run_whetstone(&["reinit", "--check", "--json"], project);
     // No deps → no drift → --check MUST exit 0.
     assert!(
         success,
@@ -1102,7 +1111,7 @@ fn test_refresh_emits_extraction_handoff_with_trigger_refresh() {
     let tmp = empty_whetstone_project("whetstone_refresh_handoff");
     let project = tmp.to_str().unwrap();
 
-    let (_stdout, _stderr, success) = run_whetstone(&["refresh", "--json"], project);
+    let (_stdout, _stderr, success) = run_whetstone(&["reinit", "--json"], project);
     assert!(success);
 
     let handoff_path = tmp.join("whetstone/.state/extraction-handoff.json");
@@ -1111,8 +1120,8 @@ fn test_refresh_emits_extraction_handoff_with_trigger_refresh() {
         serde_json::from_str(&std::fs::read_to_string(&handoff_path).unwrap()).unwrap();
     assert_eq!(handoff["version"], 1);
     assert_eq!(
-        handoff["trigger"], "refresh",
-        "refresh-triggered handoff must be labeled 'refresh'"
+        handoff["trigger"], "reinit",
+        "reinit-triggered handoff must be labeled 'reinit'"
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
@@ -1144,31 +1153,6 @@ fn test_init_writes_extraction_handoff_with_trigger_init() {
             assert!(handoff.get(key).is_some(), "handoff missing key: {key}");
         }
     }
-}
-
-#[test]
-fn test_doctor_alias_still_routes_to_init() {
-    let dir = fixtures_dir();
-    let (stdout, _stderr, success) = run_whetstone(
-        &[
-            "doctor",
-            "--json",
-            "--max-deps",
-            "0",
-            "--project-dir",
-            dir.to_str().unwrap(),
-        ],
-        dir.to_str().unwrap(),
-    );
-    assert!(success, "`wh doctor` alias must still succeed");
-    // Alias goes through the Init handler, so the handoff trigger stays "init".
-    let handoff_path = dir.join("whetstone/.state/extraction-handoff.json");
-    if handoff_path.exists() {
-        let handoff: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&handoff_path).unwrap()).unwrap();
-        assert_eq!(handoff["trigger"], "init");
-    }
-    let _ = stdout;
 }
 
 // ── nq8.3.2: AI eval lifecycle coverage ──
@@ -2070,7 +2054,7 @@ fn test_review_worklist_requires_handoff() {
 #[test]
 fn test_worklist_embedded_in_extraction_handoff() {
     // Use the repo itself (has resolved dependencies) and confirm the
-    // worklist is included in the handoff artifact after `wh doctor`.
+    // worklist is included in the handoff artifact after `wh init`.
     let tmp = std::env::temp_dir().join(format!("whetstone_wl_embed_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
@@ -2089,7 +2073,7 @@ fn test_worklist_embedded_in_extraction_handoff() {
     std::fs::create_dir_all(&state_dir).unwrap();
     std::fs::write(
         state_dir.join("extraction-handoff.json"),
-        r#"{"version":1,"trigger":"doctor","worklist":[{"name":"fastapi","language":"python","priority":"ready_now","score":120.0,"sections":[],"existing_rules":0,"quota":{"max_rules_per_dep":5,"remaining":5},"next_step":"Read the linked source"}]}"#,
+        r#"{"version":1,"trigger":"init","worklist":[{"name":"fastapi","language":"python","priority":"ready_now","score":120.0,"sections":[],"existing_rules":0,"quota":{"max_rules_per_dep":5,"remaining":5},"next_step":"Read the linked source"}]}"#,
     )
     .unwrap();
 
@@ -2121,7 +2105,7 @@ fn test_review_worklist_human_output() {
     std::fs::create_dir_all(tmp.join("whetstone/.state")).unwrap();
     std::fs::write(
         tmp.join("whetstone/.state/extraction-handoff.json"),
-        r#"{"version":1,"trigger":"doctor","worklist":[{"name":"fastapi","language":"python","priority":"ready_now","score":120.0,"sections":[],"existing_rules":0,"quota":{"max_rules_per_dep":5,"remaining":5},"next_step":"Read the linked source"}]}"#,
+        r#"{"version":1,"trigger":"init","worklist":[{"name":"fastapi","language":"python","priority":"ready_now","score":120.0,"sections":[],"existing_rules":0,"quota":{"max_rules_per_dep":5,"remaining":5},"next_step":"Read the linked source"}]}"#,
     )
     .unwrap();
 

@@ -52,11 +52,7 @@ enum ExtractAction {
 #[derive(Subcommand)]
 enum Commands {
     /// Bootstrap from zero: detect dependencies, resolve documentation, write extraction handoff
-    #[command(
-        name = "init",
-        visible_aliases = ["deps", "doctor"],
-        aliases = ["detect-deps", "start"],
-    )]
+    #[command(name = "init")]
     Init {
         /// Root directory to search for manifest files
         #[arg(long, default_value = ".")]
@@ -140,11 +136,7 @@ enum Commands {
     },
 
     /// Resolve documentation URLs and fetch content for dependencies
-    #[command(
-        name = "set-sources",
-        visible_alias = "sources",
-        alias = "resolve-sources"
-    )]
+    #[command(name = "set-sources")]
     SetSources {
         /// JSON input file from detect-deps (default: stdin)
         #[arg(long)]
@@ -219,7 +211,7 @@ enum Commands {
     },
 
     /// Generate agent context files from approved rules
-    #[command(name = "context", alias = "generate-context")]
+    #[command(name = "context")]
     Context {
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -243,7 +235,7 @@ enum Commands {
     },
 
     /// Generate test files from approved rules
-    #[command(name = "tests", alias = "generate-tests")]
+    #[command(name = "tests")]
     Tests {
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -263,8 +255,8 @@ enum Commands {
     },
 
     /// Generate context, tests, and lint configs in one chain
-    #[command(name = "gen", visible_alias = "actions")]
-    Gen {
+    #[command(name = "actions")]
+    Actions {
         /// Project root directory
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
@@ -343,7 +335,7 @@ enum Commands {
     },
 
     /// Validate the rule schema and all rule fixtures
-    #[command(name = "validate", alias = "validate-rules")]
+    #[command(name = "validate")]
     Validate {
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -376,7 +368,7 @@ enum Commands {
     },
 
     /// Lightweight freshness check for CI/CD
-    #[command(name = "ci", alias = "ci-check")]
+    #[command(name = "ci")]
     Ci {
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -400,8 +392,8 @@ enum Commands {
     },
 
     /// Check for dependency drift and re-resolve changed sources
-    #[command(visible_alias = "reinit", alias = "refresh-rules")]
-    Refresh {
+    #[command(name = "reinit")]
+    Reinit {
         /// Project directory
         #[arg(long, default_value = ".")]
         project_dir: String,
@@ -598,7 +590,7 @@ pub fn run() -> i32 {
                 };
             }
 
-            // Default: full bootstrap (former `wh doctor`).
+            // Default: full bootstrap.
             let skip_dev = !include_dev;
             match doctor::doctor(doctor::DoctorOptions {
                 project_dir: &project_dir,
@@ -812,7 +804,7 @@ pub fn run() -> i32 {
             }
         }
 
-        Commands::Gen {
+        Commands::Actions {
             project_dir,
             lang,
             dry_run,
@@ -822,7 +814,7 @@ pub fn run() -> i32 {
                 if json_mode {
                     output::print_json(&result);
                 } else {
-                    println!("wh gen: context + tests + lint generated");
+                    println!("wh actions: context + tests + lint generated");
                     if let Some(next) = result.get("next_command").and_then(|v| v.as_str()) {
                         println!("Next: {next}");
                     }
@@ -832,7 +824,7 @@ pub fn run() -> i32 {
             Err(e) => {
                 output::print_json(&output::error_json(
                     &e.to_string(),
-                    "wh gen runs context + tests + lint; fix the first failing generator and retry",
+                    "wh actions runs context + tests + lint; fix the first failing generator and retry",
                 ));
                 1
             }
@@ -1104,7 +1096,7 @@ pub fn run() -> i32 {
             }
         },
 
-        Commands::Refresh { project_dir, check } => {
+        Commands::Reinit { project_dir, check } => {
             let project_path = Path::new(&project_dir);
 
             // Run doctor with changed-only + refresh to detect drift and re-resolve
@@ -1121,7 +1113,7 @@ pub fn run() -> i32 {
                 ready_only: false,
                 workers: None,
                 full_run: false,
-                trigger: "refresh",
+                trigger: "reinit",
             });
 
             match result {
@@ -1169,7 +1161,7 @@ pub fn run() -> i32 {
                     }
                 }
                 Err(e) => {
-                    output::print_json(&output::error_json(&e.to_string(), "wh doctor"));
+                    output::print_json(&output::error_json(&e.to_string(), "wh init"));
                     1
                 }
             }

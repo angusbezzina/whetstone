@@ -25,25 +25,27 @@ stages:
 
 ## Command matrix
 
-| Command | Aliases | Stages | Reads (state) | Writes (state) | Notes |
-|---------|---------|--------|---------------|----------------|-------|
-| `wh init` | `doctor`, `deps`, `detect-deps`, `start` | detect + resolve + hand off | `manifests.json`, `inventory.json`, `source-cache.json` | `extraction-handoff.json`, cache, inventory, manifests | Default: full bootstrap. `--detect-only` scans manifests. `--personal` scaffolds `whetstone/.personal/`. `--hooks` installs git hooks. `--ci --schedule=<cadence>` writes the CI workflow. |
-| `wh reinit` | `refresh`, `refresh-rules` | refresh | same as init | `refresh-diff.json`, cache, inventory | `wh reinit --check` exits non-zero on drift. Wire into CI. |
-| `wh set-sources` | `sources`, `resolve-sources` | resolve | stdin or `--input` JSON, `source-cache.json` | `source-cache.json` | Lower-level slice of init. |
-| `wh extract` | — | extract | `extraction-handoff.json` | — | Default mode renders the dependency worklist (ranked sources, quota, next step). |
-| `wh extract submit <bundle.yaml>` | — | extract | bundle file | `whetstone/rules/<lang>/<dep>.yaml` with `status: candidate` | Refuses to overwrite an existing file or collide on any rule id. |
-| `wh approve <rule-id>` | — | approve | `whetstone/rules/**`, `whetstone/.personal/rules/**` | same file, mutated in place | Flips status to `approved` and `approved: true`. |
-| `wh approve --all [--dep <name>] [--confidence <level>]` | — | approve | project rules | same files | Batch flip every matching candidate. |
-| `wh actions` / `wh gen` | — | generate | approved rules | everything under `whetstone/context/`, `whetstone/evals/`, `whetstone/lint/` | Chains context + tests + lint. |
-| `wh context` | `generate-context` | generate | approved rules | `whetstone/context/*` or `whetstone/.personal/context/*` | |
-| `wh tests` | `generate-tests` | generate | approved rules | `whetstone/evals/**` or `whetstone/.personal/evals/**` | Signals with a `match` regex produce real checks; without, tests are TODO stubs. |
-| `wh lint` | — | generate | approved rules | `whetstone/lint/*` or `whetstone/.personal/lint/*` | Emits `ruff.whetstone.toml`, `biome.whetstone.json`, `clippy.whetstone.toml`. |
-| `wh check` | — | monitor / enforce | approved rules, source files | — | Deterministic enforcement: tree-sitter for `ast_query` / `ast_scope`, regex for `match:`, lint-config verification for `lint_proxy`. Non-zero exit on violations or config gaps unless `--no-fail`. |
-| `wh review [show <id> | worklist]` | — | inspect | writable rules, handoff artifacts | — | Lists rules by lifecycle status, shows full per-rule context, or renders the extraction worklist. |
-| `wh validate` | `validate-rules` | — | `references/rule-schema.yaml` (or embedded fallback), all rule files | — | Schema + fixtures validator. CI-friendly. |
-| `wh status` | — | monitor | project rules, state files, metrics | `whetstone/.metrics.jsonl` (snapshot) | `--score`, `--history`, `--no-snapshot`, `--no-drift-check`. |
-| `wh ci` | `ci-check` | monitor (CI) | same as status | — | `--fail-on stale` or `--fail-on needs_review` gates PRs. |
-| `wh update` | — | — | — | replaces the binary | Self-update from GitHub Releases. Never touches rules. |
+There are no command aliases as of 0.3.0 — each verb has exactly one name.
+
+| Command | Stages | Reads (state) | Writes (state) | Notes |
+|---------|--------|---------------|----------------|-------|
+| `wh init` | detect + resolve + hand off | `manifests.json`, `inventory.json`, `source-cache.json` | `extraction-handoff.json`, cache, inventory, manifests | Default: full bootstrap. `--detect-only` scans manifests. `--personal` scaffolds `whetstone/.personal/`. `--hooks` installs git hooks. `--ci --schedule=<cadence>` writes the CI workflow. |
+| `wh reinit` | refresh | same as init | `refresh-diff.json`, cache, inventory | `wh reinit --check` exits non-zero on drift. Wire into CI. |
+| `wh set-sources` | resolve | stdin or `--input` JSON, `source-cache.json` | `source-cache.json` | Lower-level slice of init. |
+| `wh extract` | extract | `extraction-handoff.json` | — | Default mode renders the dependency worklist (ranked sources, quota, next step). |
+| `wh extract submit <bundle.yaml>` | extract | bundle file | `whetstone/rules/<lang>/<dep>.yaml` with `status: candidate` | Refuses to overwrite an existing file or collide on any rule id. |
+| `wh approve <rule-id>` | approve | `whetstone/rules/**`, `whetstone/.personal/rules/**` | same file, mutated in place | Flips status to `approved` and `approved: true`. |
+| `wh approve --all [--dep <name>] [--confidence <level>]` | approve | project rules | same files | Batch flip every matching candidate. |
+| `wh actions` | generate | approved rules | everything under `whetstone/context/`, `whetstone/evals/`, `whetstone/lint/` | Chains context + tests + lint. |
+| `wh context` | generate | approved rules | `whetstone/context/*` or `whetstone/.personal/context/*` | |
+| `wh tests` | generate | approved rules | `whetstone/evals/**` or `whetstone/.personal/evals/**` | Signals with a `match` regex produce real checks; without, tests are TODO stubs. |
+| `wh lint` | generate | approved rules | `whetstone/lint/*` or `whetstone/.personal/lint/*` | Emits `ruff.whetstone.toml`, `biome.whetstone.json`, `clippy.whetstone.toml`. |
+| `wh check` | monitor / enforce | approved rules, source files | — | Deterministic enforcement: tree-sitter for `ast_query` / `ast_scope`, regex for `match:`, lint-config verification for `lint_proxy`. Non-zero exit on violations or config gaps unless `--no-fail`. |
+| `wh review [show <id> \| worklist]` | inspect | writable rules, handoff artifacts | — | Lists rules by lifecycle status, shows full per-rule context, or renders the extraction worklist. |
+| `wh validate` | — | `references/rule-schema.yaml` (or embedded fallback), all rule files | — | Schema + fixtures validator. CI-friendly. |
+| `wh status` | monitor | project rules, state files, metrics | `whetstone/.metrics.jsonl` (snapshot) | `--score`, `--history`, `--no-snapshot`, `--no-drift-check`. |
+| `wh ci` | monitor (CI) | same as status | — | `--fail-on stale` or `--fail-on needs_review` gates PRs. |
+| `wh update` | — | — | replaces the binary | Self-update from GitHub Releases. Never touches rules. |
 
 > All commands accept `--json` (auto-enabled when piped). Project-scoped
 > commands accept `--project-dir` (default: `.`). Human-readable progress goes

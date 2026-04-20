@@ -14,7 +14,7 @@ than re-doing the work.
 ## Extraction handoff
 
 **File:** `whetstone/.state/extraction-handoff.json`
-**Writer:** `wh doctor`, `wh refresh` (always rewrite on run)
+**Writer:** `wh init`, `wh reinit` (always rewrite on run)
 **Reader:** agent (extraction), user (review)
 
 Produced whenever a doctor or refresh run finishes resolving sources and has
@@ -104,10 +104,10 @@ Older readers that don't know the key ignore it; the field is fully additive.
 ## Refresh diff
 
 **File:** `whetstone/.state/refresh-diff.json`
-**Writer:** `wh refresh` (only; always rewrites)
+**Writer:** `wh reinit` (only; always rewrites)
 **Reader:** agent (focused re-extraction), user (review)
 
-Produced every time `wh refresh` runs. Captures **what changed** between the
+Produced every time `wh reinit` runs. Captures **what changed** between the
 previous cache and the current resolution, so the agent can re-extract only
 against the delta instead of re-reading every source.
 
@@ -150,7 +150,7 @@ against the delta instead of re-reading every source.
 
 ### Lifecycle notes
 
-- `drift_count` is authoritative for `wh refresh --check` gating (non-zero
+- `drift_count` is authoritative for `wh reinit --check` gating (non-zero
   drift = exit 1).
 - `affected_rule_ids` lists approved rules that cite the changed dep's source;
   the agent should review each for possible deprecation.

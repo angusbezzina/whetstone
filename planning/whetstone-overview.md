@@ -35,12 +35,12 @@ Whetstone follows the 2026 consensus pattern for agentic developer tools: **the 
 ```
 Binary (deterministic)          Agent (judgment via SKILL.md)        User
 ──────────────────────          ────────────────────────────         ────
-wh doctor --json           →    reads summary + content         →   confirms scope
+wh init --json             →    reads summary + content         →   confirms scope
                                 applies extraction prompt
-                                presents candidate rules        →   approve / deny / edit
-                                writes YAML to rules/
+                                wh extract submit <bundle>      →   wh approve
 wh validate --json         →    fixes errors if any
-wh context + wh tests      →    reports what was generated
+wh actions                 →    reports what was generated
+wh check src/              →    self-verifies
 wh status --json           →    reports health
 ```
 
@@ -94,7 +94,7 @@ Five CLI calls. The agent reasons between them. SKILL.md teaches it how. See `pl
 | Review / apply workflow | Implemented | `wh review`, `wh apply`, lifecycle transitions, batch apply, audit log |
 | Benchmark harness | Implemented | `wh bench run` / `snapshot`, corpus under `benchmarks/`, CI-friendly regression gating |
 | Status + CI gate | Implemented | Health scoring 0-100, configurable thresholds, PR comments |
-| Refresh flow | Implemented | `wh refresh` / `wh refresh --check`, reviewable diff under `whetstone/.state/refresh-diff.json` |
+| Refresh flow | Implemented | `wh reinit` / `wh reinit --check`, reviewable diff under `whetstone/.state/refresh-diff.json` |
 | AI eval runner | Implemented | threshold gating, eval generate/run/calibrate, file-based agent handoff |
 | Built-in rules | Implemented | `whetstone:recommended` baseline for Rust, Python, and TypeScript |
 | Custom sources | Implemented | Arbitrary URLs declared in `whetstone.yaml` flow through the normal resolve pipeline |
@@ -130,8 +130,8 @@ First real rules extracted for Whetstone's own Rust deps (6 rules across serde_y
 
 The core loop is now productised and shippable:
 
-- `wh doctor` writes a durable extraction handoff under `whetstone/.state/extraction-handoff.json`
-- `wh refresh` / `wh refresh --check` re-resolve changed sources and write `whetstone/.state/refresh-diff.json`
+- `wh init` writes a durable extraction handoff under `whetstone/.state/extraction-handoff.json`
+- `wh reinit` / `wh reinit --check` re-resolve changed sources and write `whetstone/.state/refresh-diff.json`
 - `wh eval generate|run|calibrate` provide explicit file-based handoffs for AI judgment and calibration
 - README, SKILL, CLI help, and the workflow matrix now describe one coherent contract
 - Built-in rules exist for Rust, Python, and TypeScript
@@ -230,18 +230,25 @@ This work is intentionally **TBD** rather than required for the current local / 
 
 ## CLI Command Reference
 
-| Command | Aliases | What It Returns |
-|---------|---------|----------------|
-| `wh doctor` | `start` | Summary: deps found, sources resolved, readiness, recommendations, extraction-handoff artifact |
-| `wh refresh` | `refresh-rules` | Drift summary; rewrites `whetstone/.state/refresh-diff.json`; `--check` gates CI |
-| `wh init` | `deps`, `detect-deps` | Detected dependencies with counts and drift |
-| `wh set-sources` | `sources`, `resolve-sources` | Resolution results with cache stats |
-| `wh validate` | `validate-rules` | Schema validation pass/fail |
-| `wh context` | `generate-context` | Generated agent context files |
-| `wh tests` | `generate-tests` | Generated test files + lint configs |
-| `wh check` | — | Deterministic rule scan with tree-sitter / regex / lint-proxy support |
-| `wh status` | — | Health score, freshness, coverage, drift |
-| `wh ci` | `check`, `ci-check` | Pass/fail with optional PR comment |
+The complete canonical surface (no aliases as of 0.3.0):
+
+| Command | What It Returns |
+|---------|----------------|
+| `wh init` | Bootstrap: deps detected, sources resolved, extraction-handoff written. `--detect-only` for dep scan alone |
+| `wh reinit` | Drift summary; rewrites `whetstone/.state/refresh-diff.json`; `--check` gates CI |
+| `wh set-sources` | Resolution results with cache stats (advanced; normally invoked via `wh init`) |
+| `wh extract` | Top worklist dep + ranked sources; `wh extract submit <bundle>` writes candidates |
+| `wh approve` | Flip candidate rules to approved (single or batch via `--all --dep --confidence`) |
+| `wh context` | Agent context files under `whetstone/context/` |
+| `wh tests` | Test scaffolds under `whetstone/evals/` |
+| `wh lint` | Linter overlays under `whetstone/lint/` (ruff / biome / clippy) |
+| `wh actions` | Chains context + tests + lint |
+| `wh check` | Deterministic rule scan (tree-sitter + regex + lint-proxy) |
+| `wh validate` | Schema validation pass/fail |
+| `wh status` | Health score, freshness, coverage, drift |
+| `wh ci` | Pass/fail freshness check with optional PR comment |
+| `wh review` | List rules by status; `wh review show <id>`, `wh review worklist` |
+| `wh update` | Self-update the binary |
 | `wh review` | — | Rule lifecycle listing, per-rule inspection, refresh review queue |
 | `wh apply` | — | Lifecycle transitions (approve / deny / deprecate / supersede) |
 | `wh bench` | — | Benchmark corpus run / snapshot with regression gating |
