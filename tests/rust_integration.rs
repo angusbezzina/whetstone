@@ -645,6 +645,97 @@ fn walkdir_clone(root: &std::path::Path) -> Vec<std::path::PathBuf> {
 }
 
 #[test]
+fn test_context_emits_all_six_formats_with_required_markers() {
+    let dir = fixtures_dir();
+    let (stdout, _, ok) = run_whetstone(
+        &[
+            "context",
+            "--formats",
+            "agents.md,claude.md,.cursorrules,copilot-instructions.md,.windsurfrules,codex.md",
+            "--project-dir",
+            dir.to_str().unwrap(),
+            "--json",
+        ],
+        dir.to_str().unwrap(),
+    );
+    assert!(ok, "wh context with all formats must succeed: {stdout}");
+    let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let generated = result["generated"].as_array().expect("generated array");
+    let path_of = |suffix: &str| -> Option<String> {
+        generated
+            .iter()
+            .find_map(|g| {
+                g.get("path")
+                    .and_then(|p| p.as_str())
+                    .filter(|p| p.ends_with(suffix))
+                    .map(String::from)
+            })
+    };
+
+    // Per-tool required markers. These encode the minimum surface each target
+    // consumer expects — changing them means a consuming tool might stop
+    // recognizing our output. Lock them in.
+    let expectations: &[(&str, &[&str])] = &[
+        ("AGENTS.md", &["# Whetstone Rules", "wh rules query"]),
+        ("CLAUDE.md", &["# Whetstone Rules"]),
+        (".cursorrules", &["Whetstone Rules"]),
+        (".github/copilot-instructions.md", &["Whetstone Rules"]),
+        (".windsurfrules", &["Whetstone Rules"]),
+        ("codex.md", &["Whetstone Rules"]),
+    ];
+
+    for (suffix, markers) in expectations {
+        let path = path_of(suffix).unwrap_or_else(|| panic!("missing generated file: {suffix}"));
+        let body = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed reading {path}: {e}"));
+        for marker in *markers {
+            assert!(
+                body.contains(marker),
+                "{suffix} missing required marker `{marker}` (consuming tool may not recognize this output)"
+            );
+        }
+        // Trivially ensure non-empty generated content
+        assert!(
+            body.trim().len() > 100,
+            "{suffix} appears empty or truncated ({} bytes)",
+            body.len()
+        );
+    }
+}
+
+#[test]
+fn test_context_terse_still_carries_rule_ids_across_formats() {
+    // Terse mode must still include rule ids in every format; otherwise
+    // agents loading AGENTS.md can't know the id to pass to
+    // `wh rules query --full` for details.
+    let dir = fixtures_dir();
+    let (_, _, ok) = run_whetstone(
+        &[
+            "context",
+            "--terse",
+            "--formats",
+            "agents.md,.cursorrules,codex.md",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        dir.to_str().unwrap(),
+    );
+    assert!(ok);
+
+    for fname in [
+        "whetstone/context/AGENTS.md",
+        "whetstone/context/.cursorrules",
+        "whetstone/context/codex.md",
+    ] {
+        let body = std::fs::read_to_string(dir.join(fname)).expect(fname);
+        assert!(
+            body.contains("fastapi.async-routes") || body.contains("react.use-client-directive"),
+            "{fname} terse rendering must preserve rule ids"
+        );
+    }
+}
+
+#[test]
 fn test_rule_add_writes_personal_yaml() {
     let tmp = std::env::temp_dir().join(format!("wh_rule_add_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
