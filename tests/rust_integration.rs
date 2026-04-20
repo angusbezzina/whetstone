@@ -498,6 +498,160 @@ fn test_rules_query_full_includes_signals() {
 }
 
 #[test]
+fn test_rule_add_writes_personal_yaml() {
+    let tmp = std::env::temp_dir().join(format!("wh_rule_add_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        b"[project]\nname=\"t\"\nversion=\"0.1.0\"\ndependencies=[]\n",
+    )
+    .unwrap();
+    let (stdout, _stderr, ok) = run_whetstone(
+        &[
+            "rule",
+            "add",
+            "acme.snake-case",
+            "--description",
+            "Use snake_case",
+            "--match",
+            "def [A-Z]",
+            "--lang",
+            "python",
+            "--dep",
+            "acme",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok, "wh rule add must succeed: {stdout}");
+    let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["layer"], "personal");
+    let target = tmp.join("whetstone/.personal/rules/python/acme.yaml");
+    assert!(target.exists(), "target file must exist at {}", target.display());
+    let text = std::fs::read_to_string(&target).unwrap();
+    assert!(text.contains("acme.snake-case"));
+    assert!(text.contains("status: approved"));
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_rule_edit_bumps_severity_in_place() {
+    let tmp = std::env::temp_dir().join(format!("wh_rule_edit_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        b"[project]\nname=\"t\"\nversion=\"0.1.0\"\ndependencies=[]\n",
+    )
+    .unwrap();
+    // Seed with rule add.
+    let (_add_stdout, _, add_ok) = run_whetstone(
+        &[
+            "rule",
+            "add",
+            "acme.prefer-X",
+            "--description",
+            "Prefer X",
+            "--match",
+            "prefer_X",
+            "--lang",
+            "python",
+            "--dep",
+            "acme",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(add_ok);
+
+    // Edit severity.
+    let (edit_stdout, _, edit_ok) = run_whetstone(
+        &[
+            "rule",
+            "edit",
+            "acme.prefer-X",
+            "--severity",
+            "must",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(edit_ok, "wh rule edit must succeed: {edit_stdout}");
+    let result: serde_json::Value = serde_json::from_str(&edit_stdout).unwrap();
+    assert_eq!(result["count"], 1);
+    assert_eq!(result["changed"][0]["severity"]["before"], "should");
+    assert_eq!(result["changed"][0]["severity"]["after"], "must");
+
+    let text =
+        std::fs::read_to_string(tmp.join("whetstone/.personal/rules/python/acme.yaml")).unwrap();
+    assert!(text.contains("severity: must"));
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_rule_edit_dry_run_does_not_write() {
+    let tmp = std::env::temp_dir().join(format!("wh_rule_dry_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        b"[project]\nname=\"t\"\nversion=\"0.1.0\"\ndependencies=[]\n",
+    )
+    .unwrap();
+    let (_, _, ok) = run_whetstone(
+        &[
+            "rule",
+            "add",
+            "acme.x",
+            "--description",
+            "x",
+            "--match",
+            "x",
+            "--lang",
+            "python",
+            "--dep",
+            "acme",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok);
+
+    let (stdout, _, edit_ok) = run_whetstone(
+        &[
+            "rule",
+            "edit",
+            "acme.x",
+            "--severity",
+            "must",
+            "--dry-run",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(edit_ok);
+    let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(result["dry_run"], true);
+    let text =
+        std::fs::read_to_string(tmp.join("whetstone/.personal/rules/python/acme.yaml")).unwrap();
+    // File must still have the original severity.
+    assert!(text.contains("severity: should"));
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
 fn test_context_terse_shrinks_output() {
     let dir = fixtures_dir();
 

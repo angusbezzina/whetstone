@@ -1,25 +1,4 @@
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "whetstone"
+name = "demo"
 version = "0.1.0"
-description = "Rule-intelligence layer that derives dependency-backed coding rules and generates tests, lint configs, and agent context."
-readme = "README.md"
-requires-python = ">=3.10"
-license = { text = "MIT" }
-authors = [{ name = "whetstone" }]
-dependencies = [
-  "pyyaml>=6.0",
-  "tomli>=2.0.1; python_version < '3.11'",
-]
-
-[project.optional-dependencies]
-dev = [
-  "pytest>=8.0",
-  "ruff>=0.6",
-]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+dependencies = []

@@ -19,6 +19,7 @@ mod output;
 mod personal;
 mod resolve;
 mod review;
+mod rule_authoring;
 mod rules;
 mod rules_query;
 mod state;

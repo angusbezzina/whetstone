@@ -72,6 +72,28 @@ The response is a JSON envelope: `{ total, filters, warnings, rules: [...] }`. E
 
 When a project has approved rules in more than one language, `wh context` / `wh actions` also emit `AGENTS.<lang>.md` sidecars (one per language) alongside the main `AGENTS.md`. Tools with per-language hooks can point at the narrower file.
 
+## Personal-taste shortcuts
+
+Skip the extract/submit/approve dance for quick personal preferences:
+
+```bash
+# Add a personal rule in one command (writes to whetstone/.personal/rules/<lang>/<dep>.yaml as status: approved)
+wh rule add acme.snake-case \
+  --description "Always use snake_case for Python function names" \
+  --match 'def [A-Z]' \
+  --lang python \
+  --dep acme
+
+# Bump severity as taste matures
+wh rule edit acme.snake-case --severity must
+
+# Bulk: promote every "should" convention rule for a dep to "must"
+wh rule edit --all --dep fastapi --category convention --severity must --dry-run
+# Remove --dry-run to apply.
+```
+
+`--project` routes to the committed layer instead of personal. `wh rule edit` refuses candidate rules — approve first (`wh approve <id>`). Delete is `rm whetstone/(.personal/)?rules/<lang>/<dep>.yaml` (no separate command).
+
 ## Roles
 
 The binary does deterministic work. The agent does judgment. The user

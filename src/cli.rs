@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     approve, check, ci_check, config, detect, doctor, extract, gen, generate_context,
-    generate_lint, generate_tests, output, personal, resolve, review, rules, rules_query, status,
-    triggers, update, worklist,
+    generate_lint, generate_tests, output, personal, resolve, review, rule_authoring, rules,
+    rules_query, status, triggers, update, worklist,
 };
 
 // TODO(whetstone-aww): reinstate patterns
@@ -46,6 +46,92 @@ enum ExtractAction {
     Submit {
         /// Path to the candidate bundle YAML
         bundle: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum RuleAction {
+    /// Add a new rule directly (personal taste shortcut; defaults to the personal layer)
+    Add {
+        /// Rule id (format: `<dep>.<rule-name>`, or pass --dep with bare rule name)
+        rule_id: String,
+
+        /// Plain-English description of the rule
+        #[arg(long)]
+        description: String,
+
+        /// Regex pattern that signals a violation (produces a `pattern` signal)
+        #[arg(long = "match")]
+        match_regex: Option<String>,
+
+        /// Severity [must | should | may]
+        #[arg(long, default_value = "should")]
+        severity: String,
+
+        /// Confidence [high | medium]
+        #[arg(long, default_value = "high")]
+        confidence: String,
+
+        /// Category [migration | default | convention | breaking-change | semantic]
+        #[arg(long, default_value = "convention")]
+        category: String,
+
+        /// Language [python | typescript | rust]
+        #[arg(long)]
+        lang: String,
+
+        /// Documentation URL backing the rule (default: personal:// placeholder)
+        #[arg(long)]
+        source_url: Option<String>,
+
+        /// Dependency name (overrides the prefix in --rule-id)
+        #[arg(long)]
+        dep: Option<String>,
+
+        /// Route to the committed project layer instead of the gitignored personal layer
+        #[arg(long, conflicts_with = "personal")]
+        project: bool,
+
+        /// Route to the personal layer (default)
+        #[arg(long, conflicts_with = "project")]
+        personal: bool,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Edit severity / confidence on one approved rule, or bulk via --all with selectors
+    Edit {
+        /// Rule id to edit (omit when using --all)
+        rule_id: Option<String>,
+
+        /// Bulk edit every matching approved rule
+        #[arg(long)]
+        all: bool,
+
+        /// Filter: only rules whose id starts with `<dep>.` (--all only)
+        #[arg(long)]
+        dep: Option<String>,
+
+        /// Filter: only rules in this category (--all only)
+        #[arg(long)]
+        category: Option<String>,
+
+        /// New severity [must | should | may]
+        #[arg(long)]
+        severity: Option<String>,
+
+        /// New confidence [high | medium]
+        #[arg(long)]
+        confidence: Option<String>,
+
+        /// Preview the changes without writing
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
     },
 }
 
@@ -472,6 +558,13 @@ enum Commands {
     Rules {
         #[command(subcommand)]
         action: RulesAction,
+    },
+
+    /// Add or edit an approved rule directly (authoring shortcut)
+    #[command(name = "rule")]
+    Rule {
+        #[command(subcommand)]
+        action: RuleAction,
     },
 
     /// Update whetstone to the latest release
@@ -1296,6 +1389,108 @@ pub fn run() -> i32 {
                 }
             }
         }
+
+        Commands::Rule { action } => match action {
+            RuleAction::Add {
+                rule_id,
+                description,
+                match_regex,
+                severity,
+                confidence,
+                category,
+                lang,
+                source_url,
+                dep,
+                project,
+                personal: _personal,
+                project_dir,
+            } => {
+                // Default is personal unless --project is explicit.
+                let personal = !project;
+                let opts = rule_authoring::AddOptions {
+                    rule_id: &rule_id,
+                    description: &description,
+                    match_regex: match_regex.as_deref(),
+                    severity: &severity,
+                    confidence: &confidence,
+                    category: &category,
+                    language: &lang,
+                    source_url: source_url.as_deref(),
+                    dep: dep.as_deref(),
+                    personal,
+                };
+                match rule_authoring::add(&project_dir, opts) {
+                    Ok(v) => {
+                        if json_mode {
+                            output::print_json(&v);
+                        } else {
+                            let wrote = v.get("wrote").and_then(|s| s.as_str()).unwrap_or("?");
+                            let rule = v.get("rule_id").and_then(|s| s.as_str()).unwrap_or("?");
+                            println!("Added {rule} → {wrote}");
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "Check inputs: rule id format, severity/confidence/category/lang values",
+                        ));
+                        1
+                    }
+                }
+            }
+            RuleAction::Edit {
+                rule_id,
+                all,
+                dep,
+                category,
+                severity,
+                confidence,
+                dry_run,
+                project_dir,
+            } => {
+                let selector = rule_authoring::EditSelector {
+                    rule_id: rule_id.as_deref(),
+                    all,
+                    dep: dep.as_deref(),
+                    category: category.as_deref(),
+                };
+                let mutation = rule_authoring::EditMutation {
+                    severity: severity.as_deref(),
+                    confidence: confidence.as_deref(),
+                };
+                match rule_authoring::edit(&project_dir, selector, mutation, dry_run) {
+                    Ok(v) => {
+                        if json_mode {
+                            output::print_json(&v);
+                        } else {
+                            let count = v.get("count").and_then(|n| n.as_u64()).unwrap_or(0);
+                            let word = if dry_run { "would change" } else { "changed" };
+                            println!("{word} {count} rule(s)");
+                            if let Some(items) = v.get("changed").and_then(|a| a.as_array()) {
+                                for item in items {
+                                    let id = item
+                                        .get("rule_id")
+                                        .and_then(|s| s.as_str())
+                                        .unwrap_or("?");
+                                    let file =
+                                        item.get("file").and_then(|s| s.as_str()).unwrap_or("?");
+                                    println!("  {id}  ({file})");
+                                }
+                            }
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "Use `wh review` to find rule ids; `wh rule edit --help` for flags",
+                        ));
+                        1
+                    }
+                }
+            }
+        },
 
         Commands::Rules { action } => match action {
             RulesAction::Query {

@@ -51,3 +51,9 @@ Cargo.lock
 # Whetstone pipeline state cache (machine-local, not checked in)
 whetstone/.state/
 tests/fixtures/whetstone/.state/
+
+# Whetstone personal layer (do not commit)
+whetstone/.personal/
+whetstone/.cache/
+whetstone/.metrics.jsonl
+whetstone/.last-run
