@@ -110,11 +110,36 @@ The mermaid version — including the CI path and the agent's in-context work be
 
 ### Near-term
 
+#### Epic 3E: Active Whetstone
+
+> **Tracked as:** `whetstone-n34` | **Status:** Open · 10 children
+
+The goal-review on 2026-04-20 identified four gaps that keep Whetstone from answering "is my code in good shape?" as well as it answers "are my rules in good shape?". Epic 3E closes those gaps across four themes:
+
+| Theme | Why | Representative children |
+|-------|-----|--------------------------|
+| **A. Token efficiency** | AGENTS.md is loaded every session regardless of what file is being edited; the ~236-line preamble is pure waste on repeat loads. | `whetstone-2gw` (per-language sidecars), `whetstone-ydw` (`--terse` + preamble trim) |
+| **B. Real project scoring** | `wh status` measures rule-system health, not code quality. A repo with 1000 violations can still score 100. | `whetstone-0m0` (fold `wh check` in), `whetstone-90m` (top-line `adherence_score`), `whetstone-m2q` (violation trend in `.metrics.jsonl`) |
+| **C. Less passive / query surface** | Agents can't ask "what rules apply to this file?"; personal preferences require hand-written YAML. | `whetstone-80x` (`wh rules query`), `whetstone-9uh` (`wh rule add` shortcut) |
+| **D. Taste management** | `wh reinit` detects doc drift but doesn't suggest rule changes; bumping `should → must` means hand-editing YAML. | `whetstone-jrs` (auto-extract on reinit), `whetstone-5eb` (`wh rule edit` bulk mutations), `whetstone-awj` (changelog-driven severity suggestions) |
+
+Epic closes when all ten children close — `bd show whetstone-n34` for the live dependency graph.
+
+#### Other near-term items
+
 | Item | Status | Tracking |
 |------|--------|----------|
 | **`wh patterns` reinstatement** | Source commented-out at `src/detect_patterns.rs`; mod decl and CLI variant commented with `TODO(whetstone-aww)` markers. Reinstate when there's a clear use case. | `whetstone-e2r` |
+| **Format-validation tests** | `wh context` emits 6 formats (agents.md, .cursorrules, copilot, windsurf, codex) but zero tests verify they parse in the target tools. Silent divergence risk. | `whetstone-2r9` |
 | **Config depth** | Only discovery + formats knobs are surfaced today. Extract timeouts, extraction settings, and resolve tuning live in code but aren't user-configurable. | TBD |
 | **Deferred overview content cleanup** | Archived planning docs (epic retros, dogfood logs) still carry pre-0.3 command names in narrative form. Not harmful; will be pruned when touched. | TBD |
+
+### Future concerns (not scoped to the lean core)
+
+Explicitly out of scope for the near-term solo/local product. Revisit when teams start using Whetstone for reporting or compliance, or when the core loop proves stable enough to add breadth.
+
+- **Technical-debt quantification** — aggregating violations into a time/effort estimate, showing debt trend over time, generating a one-page debt report for PRs. Valuable for team visibility and management reporting; not required for the solo workflow. The Epic 3E `adherence_score` + violation trend give most of the "is my code in good shape?" signal without needing hour estimates.
+- **Local MCP server** exposing `wh rules query` / `wh check` as MCP tools for dynamic agent consumption during a turn. Dependent on `whetstone-80x` landing first.
 
 ### Longer-term (Epic 4: Platform + Registry)
 
