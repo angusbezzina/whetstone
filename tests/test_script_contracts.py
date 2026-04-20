@@ -140,7 +140,7 @@ class TestStatus:
         )
         rust = run_rust(
             [
-                "generate-context",
+                "context",
                 "--project-dir",
                 str(FIXTURES_DIR),
                 "--dry-run",
@@ -157,7 +157,7 @@ class TestStatus:
         )
         rust = run_rust(
             [
-                "generate-tests",
+                "tests",
                 "--project-dir",
                 str(FIXTURES_DIR),
                 "--dry-run",
@@ -178,7 +178,7 @@ class TestStatus:
         )
         rust = run_rust(
             [
-                "ci-check",
+                "ci",
                 "--project-dir",
                 str(FIXTURES_DIR),
                 "--json",
