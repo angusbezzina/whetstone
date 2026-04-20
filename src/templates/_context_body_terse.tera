@@ -1,0 +1,15 @@
+{%- if use_rules | length > 0 -%}
+## Do
+
+{% for r in use_rules -%}
+- **[{{ r.severity }}] {{ r.id }}** — {{ r.short_desc }} ([source]({{ r.source_url }}))
+{% endfor %}
+{%- endif -%}
+{%- if avoid_rules | length > 0 -%}
+
+## Don't
+
+{% for r in avoid_rules -%}
+- **[{{ r.severity }}] {{ r.id }}** — {{ r.short_desc }} ([source]({{ r.source_url }}))
+{% endfor %}
+{%- endif -%}

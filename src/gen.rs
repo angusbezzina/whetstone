@@ -18,8 +18,10 @@ pub fn run(
     lang: Option<&str>,
     dry_run: bool,
     personal: bool,
+    terse: bool,
 ) -> Result<Value> {
-    let context = crate::generate_context::generate_context(project_dir, None, lang, dry_run, personal)?;
+    let context =
+        crate::generate_context::generate_context(project_dir, None, lang, dry_run, personal, terse)?;
     let tests = crate::generate_tests::generate_tests(project_dir, lang, dry_run, personal)?;
     let lint = crate::generate_lint::generate_lint(project_dir, lang, dry_run, personal)?;
 

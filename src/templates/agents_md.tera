@@ -1,11 +1,20 @@
-# Whetstone Rules
+{%- set sc_lang = sidecar_language | default(value="") -%}
+{%- set siblings = sidecar_siblings | default(value=[]) -%}
+{%- set langs = sidecar_languages | default(value=[]) -%}
+# Whetstone Rules{% if sc_lang %} — {{ sc_lang }}{% endif %}
 
+{% if sc_lang -%}
+Scoped to {{ sc_lang }}.{% if siblings | length > 0 %} Sibling sidecars: {% for l in siblings %}`AGENTS.{{ l }}.md`{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}
+{%- else -%}
 These rules are extracted from dependency documentation by Whetstone. Follow them when writing code.
+{%- endif %}
 
 > **Before editing a source file, prefer the per-file lookup:**
 > `wh rules query --file <path> --json`
 > This returns only the rules that apply to that file. Use it instead of re-scanning this file on every turn.
-
+{% if not sc_lang and langs | length > 1 %}
+> Per-language sidecars also exist: {% for l in langs %}`AGENTS.{{ l }}.md`{% if not loop.last %}, {% endif %}{% endfor %}.
+{% endif %}
 {% include "_context_body.tera" -%}
 
 ---

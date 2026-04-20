@@ -1,56 +1,8 @@
-{%- if use_rules | length > 0 -%}
-## Do
+{%- set is_terse = terse | default(value=false) -%}
+{%- if is_terse -%}
+{% include "_context_body_terse.tera" %}
+For full rule details (signals, examples), run `wh rules query --file <path> --full`.
 
-{% for r in use_rules -%}
-### {{ r.id }} ({{ r.severity }})
-
-{{ r.description }}
-
-{% if r.pass_examples | length > 0 -%}
-**Good:**
-{% for ex in r.pass_examples -%}
-```
-{{ ex }}
-```
-{% endfor %}
-{% endif -%}
-{% if r.fail_examples | length > 0 -%}
-**Bad:**
-{% for ex in r.fail_examples -%}
-```
-{{ ex }}
-```
-{% endfor %}
-{% endif -%}
-Source: {{ r.source_url }}
-
-{% endfor -%}
-{%- endif -%}
-{%- if avoid_rules | length > 0 -%}
-## Don't
-
-{% for r in avoid_rules -%}
-### {{ r.id }} ({{ r.severity }})
-
-{{ r.description }}
-
-{% if r.fail_examples | length > 0 -%}
-**Avoid:**
-{% for ex in r.fail_examples -%}
-```
-{{ ex }}
-```
-{% endfor %}
-{% endif -%}
-{% if r.pass_examples | length > 0 -%}
-**Instead:**
-{% for ex in r.pass_examples -%}
-```
-{{ ex }}
-```
-{% endfor %}
-{% endif -%}
-Source: {{ r.source_url }}
-
-{% endfor -%}
+{% else -%}
+{% include "_context_body_full.tera" -%}
 {%- endif -%}

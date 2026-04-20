@@ -1,0 +1,56 @@
+{%- if use_rules | length > 0 -%}
+## Do
+
+{% for r in use_rules -%}
+### {{ r.id }} ({{ r.severity }})
+
+{{ r.description }}
+
+{% if r.pass_examples | length > 0 -%}
+**Good:**
+{% for ex in r.pass_examples -%}
+```
+{{ ex }}
+```
+{% endfor %}
+{% endif -%}
+{% if r.fail_examples | length > 0 -%}
+**Bad:**
+{% for ex in r.fail_examples -%}
+```
+{{ ex }}
+```
+{% endfor %}
+{% endif -%}
+Source: {{ r.source_url }}
+
+{% endfor -%}
+{%- endif -%}
+{%- if avoid_rules | length > 0 -%}
+## Don't
+
+{% for r in avoid_rules -%}
+### {{ r.id }} ({{ r.severity }})
+
+{{ r.description }}
+
+{% if r.fail_examples | length > 0 -%}
+**Avoid:**
+{% for ex in r.fail_examples -%}
+```
+{{ ex }}
+```
+{% endfor %}
+{% endif -%}
+{% if r.pass_examples | length > 0 -%}
+**Instead:**
+{% for ex in r.pass_examples -%}
+```
+{{ ex }}
+```
+{% endfor %}
+{% endif -%}
+Source: {{ r.source_url }}
+
+{% endfor -%}
+{%- endif -%}

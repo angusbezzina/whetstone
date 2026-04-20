@@ -64,6 +64,10 @@ Formal revision of these targets is acceptable with rationale recorded here; aba
 |------|-------|---------|-----------------|---------|-----------|----------------|-------|
 | 2026-04-20 | (baseline) | tests/fixtures | 1434 | 358 | 11.4ms | 7.0ms | pre-epic |
 | 2026-04-20 | (baseline) | . | 4058 | 1014 | 11.3ms | 7.3ms | pre-epic |
+| 2026-04-20 | post-ydw+2gw (non-terse) | tests/fixtures | 1515 | 378 | 9.2ms | 5.6ms | includes sidecar-hint overhead |
+| 2026-04-20 | post-ydw+2gw (non-terse) | . | 4058 | 1014 | 8.2ms | 5.6ms | unchanged; terse is opt-in |
+| 2026-04-20 | post-ydw+2gw (`--terse`) | tests/fixtures | 926 | 231 | — | — | **−35%** vs baseline |
+| 2026-04-20 | post-ydw+2gw (`--terse`) | . | 1967 | 491 | — | — | **−51.5%** vs baseline ✓ meets ≥40% target |
 
 ### How to append a row
 

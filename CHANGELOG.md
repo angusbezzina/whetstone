@@ -10,6 +10,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`wh rules query`** — JIT rule lookup. Filters by `--file`, `--lang`, `--dep`, `--severity`, `--personal-only` / `--project-only`, with `--full` to include signals and golden examples. Agents should prefer this mid-turn over re-scanning `AGENTS.md`. First deliverable of Epic 3E (whetstone-n34), theme A.
 - Generated `AGENTS.md` now carries a per-file lookup pointer directing agents at `wh rules query --file <path>`.
 - `SKILL.md` documents the mid-turn lookup pattern.
+- **`wh context --terse` / `wh actions --terse`** — one-line-per-rule bootstrap (~50% byte reduction on whetstone-self). Agents fall back to `wh rules query --full` for details. Closes `whetstone-ydw`.
+- **Per-language sidecars** — when rules span >1 language, `wh context` / `wh actions` additionally emit `whetstone/context/AGENTS.<lang>.md` (one per language). Tools with per-language hooks can point at the narrower file. Closes `whetstone-2gw`.
+- Baseline measurement harness at `scripts/measure-epic-3e.sh` and log at `planning/measurements/epic-3e-baseline.md` (closes `whetstone-piy`).
+
+### Fixed
+- Generated Python eval scaffolds no longer emit unused `import re` (emitted only when a rule signal has a `match:` pattern) or unused `import glob` in conftest.
 
 ## [0.3.0] - 2026-04-20
 

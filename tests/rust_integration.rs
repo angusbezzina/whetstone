@@ -283,7 +283,16 @@ fn test_generate_context_parity_snapshot() {
     let py_result = parse_json(&py_stdout);
 
     assert_eq!(rust_result["rules_count"], py_result["rules_count"]);
-    assert_eq!(rust_result["generated"].as_array().unwrap().len(), 1);
+    // Rust now emits AGENTS.md plus per-language sidecars when >1 language is
+    // present; legacy only ever emits AGENTS.md. Assert the main file is
+    // present in both outputs; sidecars are Rust-side additions.
+    let rust_files = rust_result["generated"].as_array().unwrap();
+    assert!(rust_files.iter().any(|f| {
+        f.get("path")
+            .and_then(|p| p.as_str())
+            .map(|p| p.ends_with("AGENTS.md"))
+            .unwrap_or(false)
+    }));
     assert_eq!(py_result["generated"].as_array().unwrap().len(), 1);
 }
 
@@ -486,6 +495,87 @@ fn test_rules_query_full_includes_signals() {
             "--full must include golden_examples key"
         );
     }
+}
+
+#[test]
+fn test_context_terse_shrinks_output() {
+    let dir = fixtures_dir();
+
+    let (full_stdout, _, ok) = run_whetstone(
+        &[
+            "context",
+            "--dry-run",
+            "--json",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        dir.to_str().unwrap(),
+    );
+    assert!(ok);
+    let full: serde_json::Value = serde_json::from_str(&full_stdout).unwrap();
+
+    let (terse_stdout, _, ok2) = run_whetstone(
+        &[
+            "context",
+            "--terse",
+            "--dry-run",
+            "--json",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        dir.to_str().unwrap(),
+    );
+    assert!(ok2);
+    let terse: serde_json::Value = serde_json::from_str(&terse_stdout).unwrap();
+
+    // Both modes must generate the main AGENTS.md.
+    let main = |v: &serde_json::Value| -> Option<i64> {
+        v["generated"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| {
+                g.get("path")
+                    .and_then(|p| p.as_str())
+                    .map(|p| p.ends_with("AGENTS.md"))
+                    .unwrap_or(false)
+            })
+            .and_then(|g| g.get("lines").and_then(|v| v.as_i64()))
+    };
+    let full_lines = main(&full).expect("full AGENTS.md entry missing");
+    let terse_lines = main(&terse).expect("terse AGENTS.md entry missing");
+    assert!(
+        terse_lines < full_lines,
+        "terse AGENTS.md must be shorter (terse={terse_lines}, full={full_lines})"
+    );
+}
+
+#[test]
+fn test_context_emits_per_language_sidecars() {
+    let dir = fixtures_dir();
+    let (stdout, _, ok) = run_whetstone(
+        &[
+            "context",
+            "--dry-run",
+            "--json",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        dir.to_str().unwrap(),
+    );
+    assert!(ok);
+    let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let paths: Vec<String> = result["generated"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|g| g.get("path").and_then(|p| p.as_str()).map(str::to_string))
+        .collect();
+    // Fixtures carry python + typescript rules → expect both sidecars.
+    assert!(paths.iter().any(|p| p.ends_with("AGENTS.python.md")));
+    assert!(paths.iter().any(|p| p.ends_with("AGENTS.typescript.md")));
+    // Main AGENTS.md is still there.
+    assert!(paths.iter().any(|p| p.ends_with("/AGENTS.md")));
 }
 
 #[test]

@@ -66,6 +66,12 @@ The response is a JSON envelope: `{ total, filters, warnings, rules: [...] }`. E
 
 `AGENTS.md` remains the bootstrap context that loads at session start; `wh rules query` is the per-turn lookup that avoids re-scanning it.
 
+### Cheaper bootstrap: `--terse` and per-language sidecars
+
+`wh actions --terse` (or `wh context --terse`) emits a one-line-per-rule `AGENTS.md` (~50% smaller) that agents can load at session start without consuming much context. Use it when you prefer to rely on `wh rules query` for the details.
+
+When a project has approved rules in more than one language, `wh context` / `wh actions` also emit `AGENTS.<lang>.md` sidecars (one per language) alongside the main `AGENTS.md`. Tools with per-language hooks can point at the narrower file.
+
 ## Roles
 
 The binary does deterministic work. The agent does judgment. The user

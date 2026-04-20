@@ -26,6 +26,16 @@ pub fn build_tera() -> Tera {
     );
     register(
         &mut tera,
+        "_context_body_full.tera",
+        include_str!("templates/_context_body_full.tera"),
+    );
+    register(
+        &mut tera,
+        "_context_body_terse.tera",
+        include_str!("templates/_context_body_terse.tera"),
+    );
+    register(
+        &mut tera,
         "claude_md.tera",
         include_str!("templates/claude_md.tera"),
     );
@@ -107,8 +117,15 @@ pub fn build_tera() -> Tera {
 /// template fails to render. Failures here indicate a programmer error in the
 /// template or the data passed in; they should never depend on user input.
 pub fn render(tera: &Tera, name: &str, ctx: &Context) -> String {
-    tera.render(name, ctx)
-        .unwrap_or_else(|e| panic!("template {name} render failed: {e}"))
+    tera.render(name, ctx).unwrap_or_else(|e| {
+        let mut chain = format!("template {name} render failed: {e}");
+        let mut source = std::error::Error::source(&e);
+        while let Some(cause) = source {
+            chain.push_str(&format!("\n  caused by: {cause}"));
+            source = cause.source();
+        }
+        panic!("{chain}")
+    })
 }
 
 // ── Custom filters ──

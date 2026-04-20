@@ -270,6 +270,10 @@ enum Commands {
         /// Render personal-layer-only context into whetstone/.personal/context/
         #[arg(long)]
         personal: bool,
+
+        /// Emit a one-line-per-rule bootstrap; agents use `wh rules query --file <path>` for details
+        #[arg(long)]
+        terse: bool,
     },
 
     /// Generate test files from approved rules
@@ -310,6 +314,10 @@ enum Commands {
         /// Emit everything under whetstone/.personal/ instead of whetstone/
         #[arg(long)]
         personal: bool,
+
+        /// Emit terse context (one-line-per-rule bootstrap)
+        #[arg(long)]
+        terse: bool,
     },
 
     /// Generate linter configuration overlays from approved rules
@@ -807,6 +815,7 @@ pub fn run() -> i32 {
             lang,
             dry_run,
             personal,
+            terse,
         } => {
             match generate_context::generate_context(
                 &project_dir,
@@ -814,6 +823,7 @@ pub fn run() -> i32 {
                 lang.as_deref(),
                 dry_run,
                 personal,
+                terse,
             ) {
                 Ok(result) => {
                     if json_mode {
@@ -854,7 +864,8 @@ pub fn run() -> i32 {
             lang,
             dry_run,
             personal,
-        } => match gen::run(&project_dir, lang.as_deref(), dry_run, personal) {
+            terse,
+        } => match gen::run(&project_dir, lang.as_deref(), dry_run, personal, terse) {
             Ok(result) => {
                 if json_mode {
                     output::print_json(&result);

@@ -37,7 +37,7 @@ There are no command aliases as of 0.3.0 — each verb has exactly one name.
 | `wh approve <rule-id>` | approve | `whetstone/rules/**`, `whetstone/.personal/rules/**` | same file, mutated in place | Flips status to `approved` and `approved: true`. |
 | `wh approve --all [--dep <name>] [--confidence <level>]` | approve | project rules | same files | Batch flip every matching candidate. |
 | `wh actions` | generate | approved rules | everything under `whetstone/context/`, `whetstone/evals/`, `whetstone/lint/` | Chains context + tests + lint. |
-| `wh context` | generate | approved rules | `whetstone/context/*` or `whetstone/.personal/context/*` | |
+| `wh context` | generate | approved rules | `whetstone/context/*` or `whetstone/.personal/context/*` | `--terse` emits a one-line-per-rule bootstrap. Per-language `AGENTS.<lang>.md` sidecars are emitted automatically when rules span >1 language. |
 | `wh tests` | generate | approved rules | `whetstone/evals/**` or `whetstone/.personal/evals/**` | Signals with a `match` regex produce real checks; without, tests are TODO stubs. |
 | `wh lint` | generate | approved rules | `whetstone/lint/*` or `whetstone/.personal/lint/*` | Emits `ruff.whetstone.toml`, `biome.whetstone.json`, `clippy.whetstone.toml`. |
 | `wh check` | monitor / enforce | approved rules, source files | — | Deterministic enforcement: tree-sitter for `ast_query` / `ast_scope`, regex for `match:`, lint-config verification for `lint_proxy`. Non-zero exit on violations or config gaps unless `--no-fail`. |
