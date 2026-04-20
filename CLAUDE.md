@@ -142,16 +142,29 @@ When ending a work session, complete ALL steps. Work is NOT complete until `git 
 
 **NEVER** stop before pushing. **NEVER** say "ready to push when you are". YOU push.
 
-## Git Hooks
+## Gates Must Pass Locally Before Every Push
 
-This repo uses a repo-managed pre-push hook in `.githooks/pre-push` to run the Ruff gate locally before pushes.
-
-One-time setup:
+**Non-negotiable.** CI mirrors these gates exactly. Pushing failing code costs the whole team — fix locally first. When ending a session, run the full suite and only push when every gate is green.
 
 ```bash
-git config core.hooksPath .githooks
-chmod +x .githooks/pre-push
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
+cargo run --quiet --release -- validate
+python3 -m pytest -q
 ```
+
+This repo ships a pre-push hook at `.githooks/pre-push` that runs all five gates and aborts the push on any failure. **Before your first push in any session, verify the hook is wired up** — `core.hooksPath` must be `.githooks`, and the hook must be executable.
+
+### Preflight (run at the start of any coding session)
+
+```bash
+# If either line is needed, the hook wasn't active — likely why failing code shipped before.
+test "$(git config core.hooksPath)" = ".githooks" || git config core.hooksPath .githooks
+test -x .githooks/pre-push || chmod +x .githooks/pre-push
+```
+
+Never bypass with `--no-verify`. If a gate fails, fix the underlying issue — do not skip the hook, comment out the check, or delete tests to make gates pass.
 
 ---
 

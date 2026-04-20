@@ -169,20 +169,33 @@ rules:
 
 ---
 
+## Gates Must Pass Locally Before Every Push
+
+**Non-negotiable.** CI mirrors these five gates exactly. If any fails locally, CI will fail too — fix before pushing, do not push hoping to fix on CI. This has happened before; it wastes team time.
+
+```bash
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
+cargo run --quiet --release -- validate
+python3 -m pytest -q
+```
+
+The repo ships a pre-push hook at `.githooks/pre-push` that runs all five and aborts the push on any failure. **At the start of any session that may push**, verify the hook is active:
+
+```bash
+test "$(git config core.hooksPath)" = ".githooks" || git config core.hooksPath .githooks
+test -x .githooks/pre-push || chmod +x .githooks/pre-push
+```
+
+Never use `--no-verify` to bypass the hook. If a gate fails, fix the underlying issue — do not comment out checks, delete tests, or skip the hook.
+
 ## Session Completion Protocol
 
 When ending a work session, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
 
 1. **File issues for remaining work** -- create beads for anything that needs follow-up
-2. **Run quality gates** (if code changed) -- tests, linters, type checks
-   ```bash
-   cargo clippy --all-targets --all-features -- -D warnings
-   cargo test
-   python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
-   cargo run --quiet --release -- validate
-   python3 -m pytest -q
-   ```
-   Never push if the Ruff command fails. It mirrors the CI lint gate and has been a frequent source of avoidable failures.
+2. **Run quality gates** (if code changed) — the same five listed above. Never push if any fails.
 3. **Update issue status** -- close finished beads, update in-progress items
 4. **PUSH TO REMOTE**:
    ```bash
