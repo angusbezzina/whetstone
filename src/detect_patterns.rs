@@ -1,3 +1,5 @@
+// TODO(whetstone-aww): reinstate patterns — body temporarily wrapped in a block comment so the module is empty.
+/*
 //! Pattern mining from agent transcripts, git history, and GitHub PR comments.
 //!
 //! This is the native Rust port of the legacy `scripts/detect-patterns.py`
@@ -924,3 +926,4 @@ mod tests {
         assert!(filtered.is_empty());
     }
 }
+*/

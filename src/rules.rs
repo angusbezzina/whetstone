@@ -414,9 +414,8 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
     }
 
     // Collect YAML files from every layer that can carry rules: test
-    // fixtures, project rules, the personal layer (local-only overrides),
-    // local team staging (`wh promote --to team`), and the binary-embedded
-    // built-in directory — so `wh validate` catches schema drift everywhere.
+    // fixtures, project rules, and the personal layer (local-only
+    // overrides) — so `wh validate` catches schema drift everywhere.
     let scan_roots = [
         project_root.join("tests").join("fixtures"),
         project_root.join("whetstone").join("rules"),
@@ -424,8 +423,6 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
             .join("whetstone")
             .join(".personal")
             .join("rules"),
-        project_root.join("whetstone").join(".team").join("rules"),
-        project_root.join("src").join("builtin"),
     ];
     let mut fixtures: Vec<std::path::PathBuf> = Vec::new();
     for root in &scan_roots {
@@ -720,7 +717,9 @@ pub fn load_approved_rules(
     (approved, warnings)
 }
 
-/// Convert already-loaded rule files to approved rules (for built-in rules).
+/// Convert already-loaded rule files to approved rules (retained for
+/// potential reuse; originally used by the built-in layer which was removed).
+#[allow(dead_code)]
 pub fn approved_from_loaded(
     loaded: &[LoadedRuleFile],
     lang_filter: Option<&str>,

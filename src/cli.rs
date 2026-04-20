@@ -2,10 +2,12 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    bench, check, ci_check, config, detect, detect_patterns, doctor, eval, generate_context,
-    generate_tests, layers, output, personal, proposals, resolve, review, rules, status, triggers,
-    update, worklist,
+    check, ci_check, config, detect, doctor, generate_context, generate_tests, output, personal,
+    resolve, review, rules, status, triggers, update, worklist,
 };
+
+// TODO(whetstone-aww): reinstate patterns
+// use crate::detect_patterns;
 
 #[derive(Parser)]
 #[command(
@@ -26,10 +28,6 @@ struct Cli {
 enum ReviewAction {
     /// Show full context for a single rule
     Show { rule_id: String },
-    /// Build a review queue from extraction-handoff + refresh-diff artifacts
-    Queue,
-    /// Summarize what approving every pending candidate would do
-    Diff,
     /// Show the dependency-scoped extraction worklist (optionally filtered)
     Worklist {
         /// Filter to a single dependency name
@@ -38,53 +36,6 @@ enum ReviewAction {
         /// Filter to a single language (python, typescript, rust)
         #[arg(long)]
         lang: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-enum ProposeAction {
-    /// Validate and import a proposal bundle (JSON or YAML)
-    Import {
-        /// Path to the proposal bundle
-        bundle: PathBuf,
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-        /// Preview without writing files
-        #[arg(long)]
-        dry_run: bool,
-        /// Override the proposer recorded in provenance
-        #[arg(long)]
-        actor: Option<String>,
-        /// Replace existing candidate rules that share an id
-        #[arg(long)]
-        overwrite_candidates: bool,
-    },
-    /// Summarize what importing the bundle would do without writing
-    Diff {
-        /// Path to the proposal bundle
-        bundle: PathBuf,
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-    },
-    /// Emit the proposal bundle schema as JSON
-    Schema,
-}
-
-#[derive(Subcommand)]
-enum ConfigAction {
-    /// Print the effective config with per-key provenance
-    Show {
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-    },
-    /// Validate config files and surface unknown keys / misplacements
-    Validate {
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
     },
 }
 
@@ -281,7 +232,7 @@ enum Commands {
         personal: bool,
     },
 
-    /// Generate test files and linter configs from approved rules
+    /// Generate test files from approved rules
     #[command(name = "tests", alias = "generate-tests")]
     Tests {
         /// Project root directory
@@ -301,35 +252,6 @@ enum Commands {
         personal: bool,
     },
 
-    /// Move a rule between layers (personal → project → team)
-    Promote {
-        /// Rule id (e.g., "reqwest.set-timeout") to move
-        rule_id: String,
-
-        /// Target layer (personal|project|team)
-        #[arg(long = "to", default_value = "project")]
-        to: String,
-
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-
-        /// Keep the source rule in place (copy instead of move)
-        #[arg(long)]
-        keep_source: bool,
-    },
-
-    /// Show the 4-layer rule merge summary (personal + project + team + built-in)
-    Layers {
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-
-        /// Filter by language (python, typescript, rust)
-        #[arg(long)]
-        lang: Option<String>,
-    },
-
     /// Validate the rule schema and all rule fixtures
     #[command(name = "validate", alias = "validate-rules")]
     Validate {
@@ -338,38 +260,9 @@ enum Commands {
         project_dir: PathBuf,
     },
 
-    /// Mine style patterns from transcripts, git history, and PR comments
-    #[command(name = "patterns", alias = "detect-patterns")]
-    Patterns {
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-
-        /// Only analyze data since last execution
-        #[arg(long)]
-        since_last_run: bool,
-
-        /// Time-bounded analysis (ISO date or relative e.g. "7 days ago")
-        #[arg(long)]
-        since: Option<String>,
-
-        /// Only output when new patterns are found
-        #[arg(long)]
-        quiet: bool,
-
-        /// Comma-separated sources (transcript,git,pr)
-        #[arg(long, default_value = "transcript,git,pr")]
-        sources: String,
-
-        /// Minimum occurrences required to report a pattern
-        #[arg(long, default_value_t = 2)]
-        min_occurrences: usize,
-
-        /// Scan all agent transcripts, not just project-scoped matches
-        #[arg(long)]
-        global_transcripts: bool,
-    },
-
+    // TODO(whetstone-aww): reinstate patterns
+    // /// Mine style patterns from transcripts, git history, and PR comments
+    // Patterns { ... }
     /// Scan source files for rule violations using tree-sitter and regex signals
     Check {
         /// Paths to scan (defaults to the project directory)
@@ -428,33 +321,7 @@ enum Commands {
         check: bool,
     },
 
-    /// AI evaluation: threshold gating, eval requests, calibration
-    Eval {
-        /// Action: generate, run, or calibrate
-        action: String,
-
-        /// Project directory
-        #[arg(long, default_value = ".")]
-        project_dir: String,
-
-        /// Collect verdicts from agent (for run --collect and calibrate --collect)
-        #[arg(long)]
-        collect: bool,
-
-        /// Only run deterministic checks, skip AI requests
-        #[arg(long)]
-        deterministic_only: bool,
-
-        /// Filter by language
-        #[arg(long)]
-        lang: Option<String>,
-
-        /// Preview without writing files
-        #[arg(long)]
-        dry_run: bool,
-    },
-
-    /// Review rules by lifecycle status (candidate / approved / denied / deprecated)
+    /// Review rules by lifecycle status (candidate / approved)
     Review {
         #[command(subcommand)]
         action: Option<ReviewAction>,
@@ -470,91 +337,6 @@ enum Commands {
         /// Filter by language (python, typescript, rust)
         #[arg(long)]
         lang: Option<String>,
-    },
-
-    /// Apply a lifecycle transition to a rule (approve / deny / deprecate / supersede)
-    Apply {
-        /// Rule id to transition
-        rule_id: Option<String>,
-
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-
-        /// Approve the rule (candidate → approved)
-        #[arg(long, conflicts_with_all = ["deny", "deprecate", "supersede", "batch"])]
-        approve: bool,
-
-        /// Deny the rule (candidate → denied). Requires --reason.
-        #[arg(long, conflicts_with_all = ["approve", "deprecate", "supersede", "batch"])]
-        deny: bool,
-
-        /// Deprecate the rule (approved → deprecated). Requires --reason.
-        #[arg(long, conflicts_with_all = ["approve", "deny", "supersede", "batch"])]
-        deprecate: bool,
-
-        /// Supersede: deprecate and record superseded_by. Requires --superseded-by.
-        #[arg(long, conflicts_with_all = ["approve", "deny", "deprecate", "batch"])]
-        supersede: bool,
-
-        /// Reason for denial or deprecation (required for --deny / --deprecate / --supersede)
-        #[arg(long)]
-        reason: Option<String>,
-
-        /// Replacement rule id (required for --supersede)
-        #[arg(long = "superseded-by")]
-        superseded_by: Option<String>,
-
-        /// Record this actor in the audit log
-        #[arg(long)]
-        actor: Option<String>,
-
-        /// Batch file (JSON array of {rule_id, action, reason?, superseded_by?})
-        #[arg(long)]
-        batch: Option<PathBuf>,
-
-        /// Preview the transition without writing files
-        #[arg(long)]
-        dry_run: bool,
-    },
-
-    /// Run rule-quality benchmark corpus and report precision/recall/F1
-    Bench {
-        /// Action: run | snapshot
-        #[arg(default_value = "run")]
-        action: String,
-
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-
-        /// Corpus directory (defaults to <project_dir>/benchmarks)
-        #[arg(long)]
-        corpus_dir: Option<PathBuf>,
-
-        /// Only run scenarios whose name contains this substring
-        #[arg(long)]
-        scenario: Option<String>,
-
-        /// Minimum F1 score per scenario before failing (0..=1, overrides bench.min_f1)
-        #[arg(long)]
-        min_f1: Option<f64>,
-
-        /// Exit non-zero if any scenario regresses below --min-f1
-        #[arg(long)]
-        check: bool,
-    },
-
-    /// Import or diff a candidate proposal bundle
-    Propose {
-        #[command(subcommand)]
-        action: ProposeAction,
-    },
-
-    /// Inspect or validate the effective whetstone configuration
-    Config {
-        #[command(subcommand)]
-        action: ConfigAction,
     },
 
     /// Update whetstone to the latest release
@@ -987,74 +769,6 @@ pub fn run() -> i32 {
             }
         }
 
-        Commands::Patterns {
-            project_dir,
-            since_last_run,
-            since,
-            quiet,
-            sources,
-            min_occurrences,
-            global_transcripts,
-        } => {
-            let source_set = detect_patterns::parse_sources(&sources);
-            if source_set.is_empty() {
-                output::print_json(&output::error_json(
-                    "No valid sources specified. Use: transcript, git, pr",
-                    "Pass --sources with at least one of transcript, git, pr",
-                ));
-                return 1;
-            }
-            match detect_patterns::detect_patterns(detect_patterns::DetectPatternsOptions {
-                project_dir: &project_dir,
-                sources: source_set,
-                since,
-                since_last_run,
-                quiet,
-                min_occurrences,
-                global_transcripts,
-            }) {
-                Ok(result) => {
-                    if json_mode {
-                        output::print_json(&result);
-                    } else {
-                        let count = result
-                            .get("patterns")
-                            .and_then(|v| v.as_array())
-                            .map(|a| a.len())
-                            .unwrap_or(0);
-                        if count == 0 {
-                            println!("No patterns found.");
-                        } else {
-                            println!("Found {count} pattern(s):");
-                            if let Some(patterns) =
-                                result.get("patterns").and_then(|v| v.as_array())
-                            {
-                                for p in patterns {
-                                    let desc = p
-                                        .get("description")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("?");
-                                    let src =
-                                        p.get("source").and_then(|v| v.as_str()).unwrap_or("?");
-                                    let occ =
-                                        p.get("occurrences").and_then(|v| v.as_u64()).unwrap_or(0);
-                                    println!("  [{src}] {desc} ({occ} occurrences)");
-                                }
-                            }
-                        }
-                    }
-                    0
-                }
-                Err(e) => {
-                    output::print_json(&output::error_json(
-                        &e.to_string(),
-                        "Check project directory and source availability",
-                    ));
-                    1
-                }
-            }
-        }
-
         Commands::Check {
             paths,
             project_dir,
@@ -1169,39 +883,6 @@ pub fn run() -> i32 {
             }
         },
 
-        Commands::Eval {
-            action,
-            project_dir,
-            collect,
-            deterministic_only,
-            lang,
-            dry_run,
-        } => {
-            let project_path = Path::new(&project_dir);
-            let lang_filter = lang.as_deref();
-
-            let result = match action.as_str() {
-                "generate" => eval::generate_eval_definitions(project_path, lang_filter, dry_run),
-                "run" => eval::run_evals(project_path, lang_filter, collect, deterministic_only),
-                "calibrate" => eval::calibrate(project_path, lang_filter, collect),
-                _ => {
-                    eprintln!("Unknown eval action: {action}. Use: generate, run, or calibrate");
-                    return 1;
-                }
-            };
-
-            match result {
-                Ok(result) => {
-                    output::print_json(&result);
-                    0
-                }
-                Err(e) => {
-                    output::print_json(&output::error_json(&e.to_string(), "wh eval --help"));
-                    1
-                }
-            }
-        }
-
         Commands::Refresh { project_dir, check } => {
             let project_path = Path::new(&project_dir);
 
@@ -1273,89 +954,22 @@ pub fn run() -> i32 {
             }
         }
 
-        Commands::Promote {
-            rule_id,
-            to,
-            project_dir,
-            keep_source,
-        } => match personal::promote_rule(&project_dir, &rule_id, &to, keep_source) {
-            Ok(result) => {
-                output::print_json(&result);
-                0
-            }
-            Err(e) => {
-                output::print_json(&output::error_json(
-                    &e.to_string(),
-                    "wh promote <rule-id> --to personal|project|team",
-                ));
-                1
-            }
-        },
-
-        Commands::Layers { project_dir, lang } => {
-            let whetstone_config_exists = project_dir
-                .join("whetstone")
-                .join("whetstone.yaml")
-                .exists()
-                || project_dir.join("whetstone.yaml").exists();
-            let resolved = layers::resolve_merged(
-                &project_dir,
-                lang.as_deref(),
-                whetstone_config_exists,
-                true,
-                false,
-            );
-            let merged = resolved.merged;
-            let rules_list: Vec<serde_json::Value> = merged
-                .iter()
-                .map(|lr| {
-                    serde_json::json!({
-                        "id": lr.rule.id,
-                        "layer": lr.layer.as_str(),
-                        "language": lr.rule.language,
-                        "severity": lr.rule.severity,
-                        "source_name": lr.rule.source_name,
-                    })
-                })
-                .collect();
-            let result = serde_json::json!({
-                "status": "ok",
-                "summary": layers::summary_from(&merged),
-                "rules": rules_list,
-                "warnings": resolved.warnings,
-                "team_resolution": resolved.team_statuses,
-                "next_command": "wh validate && wh context && wh tests",
-            });
-            output::print_json(&result);
-            0
-        }
-
         Commands::Review {
             action,
             project_dir,
             status,
             lang,
         } => {
-            // Track which renderer to use in TTY mode so subcommands that
-            // don't return rule-list shaped JSON don't fall through to the
-            // rule-list formatter.
             enum Render {
                 List,
-                Diff,
                 Worklist,
                 Show,
-                Queue,
             }
 
             let (result, render) = match action {
                 Some(ReviewAction::Show { rule_id }) => {
                     (review::show(&project_dir, &rule_id), Render::Show)
                 }
-                Some(ReviewAction::Queue) => (review::queue(&project_dir), Render::Queue),
-                Some(ReviewAction::Diff) => (
-                    review::diff_candidates(&project_dir, lang.as_deref()),
-                    Render::Diff,
-                ),
                 Some(ReviewAction::Worklist {
                     dep: wl_dep,
                     lang: wl_lang,
@@ -1375,7 +989,7 @@ pub fn run() -> i32 {
                                 "trigger": handoff.get("trigger"),
                                 "total": filtered.len(),
                                 "entries": filtered,
-                                "next_command": "Pick the first `ready_now` entry and produce a proposal bundle, then `wh propose import <bundle>`",
+                                "next_command": "Pick the first `ready_now` entry, extract rules, and `wh extract submit <bundle>`",
                             }))
                         }
                         Err(e) => Err(e),
@@ -1397,11 +1011,8 @@ pub fn run() -> i32 {
                         output::print_json(&value);
                     } else {
                         match render {
-                            Render::List | Render::Show | Render::Queue => {
+                            Render::List | Render::Show => {
                                 print!("{}", review::format_list(&value));
-                            }
-                            Render::Diff => {
-                                print!("{}", review::format_diff(&value));
                             }
                             Render::Worklist => {
                                 print!("{}", review::format_worklist(&value));
@@ -1416,228 +1027,6 @@ pub fn run() -> i32 {
                 }
             }
         }
-
-        Commands::Apply {
-            rule_id,
-            project_dir,
-            approve,
-            deny,
-            deprecate,
-            supersede,
-            reason,
-            superseded_by,
-            actor,
-            batch,
-            dry_run,
-        } => {
-            if let Some(batch_path) = batch {
-                let result = review::apply_batch(&project_dir, &batch_path, dry_run);
-                return match result {
-                    Ok(v) => {
-                        output::print_json(&v);
-                        0
-                    }
-                    Err(e) => {
-                        output::print_json(&output::error_json(
-                            &e.to_string(),
-                            "wh apply --batch <file.json>",
-                        ));
-                        1
-                    }
-                };
-            }
-
-            let rule_id = match rule_id {
-                Some(id) => id,
-                None => {
-                    output::print_json(&output::error_json(
-                        "rule_id required",
-                        "wh apply <rule-id> --approve|--deny|--deprecate|--supersede",
-                    ));
-                    return 1;
-                }
-            };
-
-            let transition = match (approve, deny, deprecate, supersede) {
-                (true, false, false, false) => review::Transition::Approve,
-                (false, true, false, false) => review::Transition::Deny,
-                (false, false, true, false) => review::Transition::Deprecate,
-                (false, false, false, true) => review::Transition::Supersede,
-                _ => {
-                    output::print_json(&output::error_json(
-                        "pick exactly one of --approve, --deny, --deprecate, --supersede",
-                        "wh apply <rule-id> --approve",
-                    ));
-                    return 1;
-                }
-            };
-
-            match review::apply(review::ApplyOptions {
-                project_dir: &project_dir,
-                rule_id: &rule_id,
-                transition,
-                reason: reason.as_deref(),
-                superseded_by: superseded_by.as_deref(),
-                actor: actor.as_deref(),
-                dry_run,
-            }) {
-                Ok(value) => {
-                    output::print_json(&value);
-                    0
-                }
-                Err(e) => {
-                    output::print_json(&output::error_json(&e.to_string(), "wh apply --help"));
-                    1
-                }
-            }
-        }
-
-        Commands::Bench {
-            action,
-            project_dir,
-            corpus_dir,
-            scenario,
-            min_f1,
-            check: fail_on_regress,
-        } => {
-            if action != "run" && action != "snapshot" {
-                output::print_json(&output::error_json(
-                    &format!("unknown bench action: {action}"),
-                    "wh bench run|snapshot [--check]",
-                ));
-                return 1;
-            }
-            let cfg = config::WhetstoneConfig::load(&project_dir);
-            let effective_min_f1 = min_f1.or(cfg.bench.min_f1).unwrap_or(1.0);
-            let effective_corpus = corpus_dir.clone().or_else(|| {
-                cfg.bench.corpus_dir.as_deref().map(|p| {
-                    let path = PathBuf::from(p);
-                    if path.is_absolute() {
-                        path
-                    } else {
-                        project_dir.join(path)
-                    }
-                })
-            });
-            let result = bench::run(bench::BenchOptions {
-                project_dir: &project_dir,
-                corpus_dir: effective_corpus.as_deref(),
-                scenario_filter: scenario.as_deref(),
-                min_f1: effective_min_f1,
-            });
-            match result {
-                Ok(mut value) => {
-                    if action == "snapshot" {
-                        match bench::snapshot(&project_dir, &value) {
-                            Ok(path) => {
-                                value["snapshot"] = serde_json::json!({
-                                    "path": path.display().to_string(),
-                                });
-                            }
-                            Err(e) => {
-                                eprintln!("Warning: failed to write bench snapshot: {e}");
-                            }
-                        }
-                    }
-                    let failing = value
-                        .get("summary")
-                        .and_then(|s| s.get("failing"))
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0);
-                    if json_mode {
-                        output::print_json(&value);
-                    } else {
-                        print!("{}", bench::format_human_output(&value));
-                    }
-                    if fail_on_regress && failing > 0 {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                Err(e) => {
-                    output::print_json(&output::error_json(&e.to_string(), "wh bench --help"));
-                    1
-                }
-            }
-        }
-
-        Commands::Propose { action } => match action {
-            ProposeAction::Import {
-                bundle,
-                project_dir,
-                dry_run,
-                actor,
-                overwrite_candidates,
-            } => {
-                match proposals::import(proposals::ImportOptions {
-                    project_dir: &project_dir,
-                    bundle_path: &bundle,
-                    dry_run,
-                    actor: actor.as_deref(),
-                    overwrite_candidates,
-                }) {
-                    Ok(value) => {
-                        output::print_json(&value);
-                        0
-                    }
-                    Err(e) => {
-                        output::print_json(&output::error_json(
-                            &e.to_string(),
-                            "wh propose schema && wh propose import <file>",
-                        ));
-                        1
-                    }
-                }
-            }
-            ProposeAction::Diff {
-                bundle,
-                project_dir,
-            } => match proposals::diff(&project_dir, &bundle) {
-                Ok(value) => {
-                    let has_conflicts =
-                        value.get("status").and_then(|v| v.as_str()) == Some("conflicts");
-                    output::print_json(&value);
-                    if has_conflicts {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                Err(e) => {
-                    output::print_json(&output::error_json(
-                        &e.to_string(),
-                        "wh propose diff <bundle>",
-                    ));
-                    1
-                }
-            },
-            ProposeAction::Schema => {
-                output::print_json(&proposals::schema_json());
-                0
-            }
-        },
-
-        Commands::Config { action } => match action {
-            ConfigAction::Show { project_dir } => {
-                let snap = config::WhetstoneConfig::load_full(&project_dir);
-                output::print_json(&snap.to_json());
-                0
-            }
-            ConfigAction::Validate { project_dir } => {
-                let snap = config::WhetstoneConfig::load_full(&project_dir);
-                let any_errors = snap
-                    .diagnostics
-                    .iter()
-                    .any(|d| d.level == config::DiagnosticLevel::Error);
-                output::print_json(&snap.to_json());
-                if any_errors {
-                    1
-                } else {
-                    0
-                }
-            }
-        },
 
         Commands::Update { check, force } => match update::check_and_update(force, check) {
             Ok(result) => {

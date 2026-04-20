@@ -41,12 +41,6 @@
 # deny:
 #   - rust.expect-over-unwrap
 
-# Team / built-in rulesets
-# extends:
-#   - whetstone:recommended
-#   # - github.com/owner/repo
-#   # - @user/config              # parsed today; registry resolution is still TBD
-
 # Extraction controls
 # extraction:
 #   include: []                    # dep allowlist (empty = no filter)
@@ -76,11 +70,6 @@
 #   paths:
 #     - src/
 #   fail_on: both                  # violations | config_issues | both | none
-
-# `wh bench` defaults
-# bench:
-#   min_f1: 0.9                    # 0.0 .. 1.0
-#   corpus_dir: benchmarks         # relative to project root unless absolute
 
 # Global-only keys (only valid in ~/.whetstone/config.yaml)
 # default_formats:

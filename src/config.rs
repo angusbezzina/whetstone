@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Whetstone configuration: global, project, personal.
 //!
 //! Precedence (later wins): built-in defaults < global (~/.whetstone/config.yaml)
@@ -26,7 +27,6 @@ const SUPPORTED_KEYS: &[&str] = &[
     "generate.formats",
     "sources.custom",
     "deny",
-    "extends",
     "extraction.include",
     "extraction.exclude",
     "extraction.max_rules_per_dep",
@@ -39,8 +39,6 @@ const SUPPORTED_KEYS: &[&str] = &[
     "resolve.workers",
     "check.paths",
     "check.fail_on",
-    "bench.min_f1",
-    "bench.corpus_dir",
     // Global-only keys:
     "default_languages",
     "default_formats",
@@ -94,15 +92,11 @@ pub struct WhetstoneConfig {
     #[serde(default)]
     pub deny: Vec<String>,
     #[serde(default)]
-    pub extends: Vec<String>,
-    #[serde(default)]
     pub extraction: ExtractionConfig,
     #[serde(default)]
     pub resolve: ResolveConfig,
     #[serde(default)]
     pub check: CheckConfig,
-    #[serde(default)]
-    pub bench: BenchConfig,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -199,18 +193,6 @@ pub struct CheckConfig {
     pub fail_on: Option<String>,
 }
 
-/// `wh bench` defaults (3D.2.2).
-#[allow(dead_code)]
-#[derive(Debug, Default, Clone, Deserialize)]
-pub struct BenchConfig {
-    /// Minimum F1 for `--check` gating. `None` = 1.0 (strict).
-    #[serde(default)]
-    pub min_f1: Option<f64>,
-    /// Corpus directory relative to the project root. `None` = benchmarks/.
-    #[serde(default)]
-    pub corpus_dir: Option<String>,
-}
-
 // ── Raw (serde) shapes for each layer ──
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -229,8 +211,6 @@ struct RawGlobalConfig {
     resolve: ResolveConfig,
     #[serde(default)]
     check: CheckConfig,
-    #[serde(default)]
-    bench: BenchConfig,
 }
 
 /// Global per-user config read from `~/.whetstone/config.yaml`.
@@ -246,7 +226,6 @@ pub struct GlobalConfig {
     pub extraction: ExtractionConfig,
     pub resolve: ResolveConfig,
     pub check: CheckConfig,
-    pub bench: BenchConfig,
 }
 
 impl GlobalConfig {
@@ -301,7 +280,6 @@ impl GlobalConfig {
             extraction: parsed.extraction,
             resolve: parsed.resolve,
             check: parsed.check,
-            bench: parsed.bench,
         };
         validate_global_values(&mut cfg, &path, &mut diagnostics);
         (cfg, diagnostics)
@@ -320,7 +298,6 @@ pub struct PersonalConfig {
     pub extraction: ExtractionConfig,
     pub resolve: ResolveConfig,
     pub check: CheckConfig,
-    pub bench: BenchConfig,
 }
 
 impl PersonalConfig {
@@ -371,7 +348,6 @@ impl PersonalConfig {
             extraction: parsed.extraction,
             resolve: parsed.resolve,
             check: parsed.check,
-            bench: parsed.bench,
         };
         validate_personal_values(&mut cfg, path, &mut diagnostics);
         (cfg, diagnostics)
@@ -451,7 +427,6 @@ fn validate_global_values(cfg: &mut GlobalConfig, path: &Path, diagnostics: &mut
         &mut cfg.extraction,
         &mut cfg.resolve,
         &mut cfg.check,
-        &mut cfg.bench,
         ConfigLayer::Global,
         path,
         diagnostics,
@@ -474,7 +449,6 @@ fn validate_personal_values(
         &mut cfg.extraction,
         &mut cfg.resolve,
         &mut cfg.check,
-        &mut cfg.bench,
         ConfigLayer::Personal,
         path,
         diagnostics,
@@ -498,7 +472,6 @@ fn validate_whetstone_values(
         &mut cfg.extraction,
         &mut cfg.resolve,
         &mut cfg.check,
-        &mut cfg.bench,
         layer,
         path,
         diagnostics,
@@ -509,7 +482,6 @@ fn validate_section_values(
     extraction: &mut ExtractionConfig,
     resolve: &mut ResolveConfig,
     check: &mut CheckConfig,
-    bench: &mut BenchConfig,
     layer: ConfigLayer,
     path: &Path,
     diagnostics: &mut Vec<Diagnostic>,
@@ -605,27 +577,6 @@ fn validate_section_values(
         }
     }
 
-    if let Some(v) = bench.min_f1 {
-        if !(0.0..=1.0).contains(&v) {
-            diagnostics.push(Diagnostic::error(
-                layer,
-                path.to_path_buf(),
-                format!("`bench.min_f1` must be between 0.0 and 1.0; ignoring {v}"),
-            ));
-            bench.min_f1 = None;
-        }
-    }
-
-    if let Some(v) = bench.corpus_dir.as_deref() {
-        if v.trim().is_empty() {
-            diagnostics.push(Diagnostic::error(
-                layer,
-                path.to_path_buf(),
-                "`bench.corpus_dir` must not be empty; ignoring empty value".into(),
-            ));
-            bench.corpus_dir = None;
-        }
-    }
 }
 
 fn validate_format_list(
@@ -993,12 +944,6 @@ impl ConfigSnapshot {
             ProvenanceSource::Global,
             &mut snap.sources,
         );
-        apply_bench(
-            &mut snap.effective.bench,
-            &global_cfg.bench,
-            ProvenanceSource::Global,
-            &mut snap.sources,
-        );
 
         // --- Project layer ---
         let mut project_cfg: Option<WhetstoneConfig> = None;
@@ -1072,11 +1017,6 @@ impl ConfigSnapshot {
                 snap.sources
                     .insert("deny".into(), ProvenanceSource::Project);
             }
-            if !cfg.extends.is_empty() {
-                snap.effective.extends = cfg.extends;
-                snap.sources
-                    .insert("extends".into(), ProvenanceSource::Project);
-            }
             if !cfg.sources.custom.is_empty() {
                 snap.effective.sources.custom.extend(cfg.sources.custom);
                 snap.sources
@@ -1097,12 +1037,6 @@ impl ConfigSnapshot {
             apply_check(
                 &mut snap.effective.check,
                 &cfg.check,
-                ProvenanceSource::Project,
-                &mut snap.sources,
-            );
-            apply_bench(
-                &mut snap.effective.bench,
-                &cfg.bench,
                 ProvenanceSource::Project,
                 &mut snap.sources,
             );
@@ -1164,12 +1098,6 @@ impl ConfigSnapshot {
             apply_check(
                 &mut snap.effective.check,
                 &personal_cfg.check,
-                ProvenanceSource::Personal,
-                &mut snap.sources,
-            );
-            apply_bench(
-                &mut snap.effective.bench,
-                &personal_cfg.bench,
                 ProvenanceSource::Personal,
                 &mut snap.sources,
             );
@@ -1242,7 +1170,6 @@ fn effective_to_json(cfg: &WhetstoneConfig) -> serde_json::Value {
             }).collect::<Vec<_>>(),
         },
         "deny": cfg.deny,
-        "extends": cfg.extends,
         "extraction": {
             "include": cfg.extraction.include,
             "exclude": cfg.extraction.exclude,
@@ -1260,10 +1187,6 @@ fn effective_to_json(cfg: &WhetstoneConfig) -> serde_json::Value {
         "check": {
             "paths": cfg.check.paths,
             "fail_on": cfg.check.fail_on,
-        },
-        "bench": {
-            "min_f1": cfg.bench.min_f1,
-            "corpus_dir": cfg.bench.corpus_dir,
         },
     })
 }
@@ -1337,22 +1260,6 @@ fn apply_check(
     if let Some(ref v) = from.fail_on {
         into.fail_on = Some(v.clone());
         sources.insert("check.fail_on".into(), layer);
-    }
-}
-
-fn apply_bench(
-    into: &mut BenchConfig,
-    from: &BenchConfig,
-    layer: ProvenanceSource,
-    sources: &mut BTreeMap<String, ProvenanceSource>,
-) {
-    if let Some(v) = from.min_f1 {
-        into.min_f1 = Some(v);
-        sources.insert("bench.min_f1".into(), layer);
-    }
-    if let Some(ref v) = from.corpus_dir {
-        into.corpus_dir = Some(v.clone());
-        sources.insert("bench.corpus_dir".into(), layer);
     }
 }
 
@@ -1519,9 +1426,6 @@ resolve:
   timeout_seconds: 0
 check:
   fail_on: maybe
-bench:
-  min_f1: 1.5
-  corpus_dir: ""
 "#,
         )
         .unwrap();
@@ -1543,7 +1447,5 @@ bench:
         assert_eq!(snap.effective.extraction.min_confidence, None);
         assert_eq!(snap.effective.resolve.timeout_seconds, None);
         assert_eq!(snap.effective.check.fail_on, None);
-        assert_eq!(snap.effective.bench.min_f1, None);
-        assert_eq!(snap.effective.bench.corpus_dir, None);
     }
 }
