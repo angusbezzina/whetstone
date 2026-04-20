@@ -2,8 +2,8 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    check, ci_check, config, detect, doctor, gen, generate_context, generate_lint, generate_tests,
-    output, personal, resolve, review, rules, status, triggers, update, worklist,
+    check, ci_check, config, detect, doctor, extract, gen, generate_context, generate_lint,
+    generate_tests, output, personal, resolve, review, rules, status, triggers, update, worklist,
 };
 
 // TODO(whetstone-aww): reinstate patterns
@@ -36,6 +36,15 @@ enum ReviewAction {
         /// Filter to a single language (python, typescript, rust)
         #[arg(long)]
         lang: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ExtractAction {
+    /// Submit a bundle of candidate rules to whetstone/rules/<lang>/<dep>.yaml
+    Submit {
+        /// Path to the candidate bundle YAML
+        bundle: PathBuf,
     },
 }
 
@@ -290,6 +299,24 @@ enum Commands {
         /// Emit personal-layer lint configs into whetstone/.personal/lint/
         #[arg(long)]
         personal: bool,
+    },
+
+    /// Walk the extraction worklist or submit a candidate bundle
+    Extract {
+        #[command(subcommand)]
+        action: Option<ExtractAction>,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Filter the worklist to a single dependency name
+        #[arg(long)]
+        dep: Option<String>,
+
+        /// Filter the worklist to a single language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
     },
 
     /// Validate the rule schema and all rule fixtures
@@ -852,6 +879,41 @@ pub fn run() -> i32 {
                 1
             }
         },
+
+        Commands::Extract {
+            action,
+            project_dir,
+            dep,
+            lang,
+        } => {
+            let result = match action {
+                Some(ExtractAction::Submit { bundle }) => extract::submit(&project_dir, &bundle),
+                None => extract::show_worklist(&project_dir, dep.as_deref(), lang.as_deref()),
+            };
+            match result {
+                Ok(value) => {
+                    if json_mode {
+                        output::print_json(&value);
+                    } else if value.get("wrote").is_some() {
+                        let wrote = value
+                            .get("wrote")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?");
+                        println!("wh extract submit: wrote {wrote}");
+                        if let Some(next) = value.get("next_command").and_then(|v| v.as_str()) {
+                            println!("Next: {next}");
+                        }
+                    } else {
+                        print!("{}", review::format_worklist(&value));
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(&e.to_string(), "wh extract --help"));
+                    1
+                }
+            }
+        }
 
         Commands::Validate { project_dir } => {
             let (report, ok) = rules::validate_schema_and_fixtures(&project_dir);
