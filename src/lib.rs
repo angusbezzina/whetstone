@@ -7,6 +7,7 @@ mod detect;
 // Temporarily disabled — see whetstone-aww
 // mod detect_patterns;
 mod doctor;
+mod gen;
 mod generate_context;
 mod generate_lint;
 mod generate_tests;

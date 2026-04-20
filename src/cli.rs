@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    check, ci_check, config, detect, doctor, generate_context, generate_lint, generate_tests,
+    check, ci_check, config, detect, doctor, gen, generate_context, generate_lint, generate_tests,
     output, personal, resolve, review, rules, status, triggers, update, worklist,
 };
 
@@ -248,6 +248,26 @@ enum Commands {
         dry_run: bool,
 
         /// Emit personal-layer tests into whetstone/.personal/evals/
+        #[arg(long)]
+        personal: bool,
+    },
+
+    /// Generate context, tests, and lint configs in one chain
+    #[command(name = "gen", visible_alias = "actions")]
+    Gen {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Filter by language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Show what would be generated without writing files
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Emit everything under whetstone/.personal/ instead of whetstone/
         #[arg(long)]
         personal: bool,
     },
@@ -741,6 +761,32 @@ pub fn run() -> i32 {
                 }
             }
         }
+
+        Commands::Gen {
+            project_dir,
+            lang,
+            dry_run,
+            personal,
+        } => match gen::run(&project_dir, lang.as_deref(), dry_run, personal) {
+            Ok(result) => {
+                if json_mode {
+                    output::print_json(&result);
+                } else {
+                    println!("wh gen: context + tests + lint generated");
+                    if let Some(next) = result.get("next_command").and_then(|v| v.as_str()) {
+                        println!("Next: {next}");
+                    }
+                }
+                0
+            }
+            Err(e) => {
+                output::print_json(&output::error_json(
+                    &e.to_string(),
+                    "wh gen runs context + tests + lint; fix the first failing generator and retry",
+                ));
+                1
+            }
+        },
 
         Commands::Lint {
             project_dir,
