@@ -1,5 +1,4 @@
-//! Whetstone eval: serde_yaml.crate-deprecated
-//! serde_yaml 0.9 is officially deprecated and unmaintained. MUST migrate to an actively maintained alternative such as serde_yml, yaml-rust2, or marked_yaml.
+//! Whetstone evals for dependency: serde_yaml
 
 use std::fs;
 use std::path::Path;
@@ -22,6 +21,8 @@ fn find_rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
     files
 }
 
+// Rule: serde_yaml.crate-deprecated — serde_yaml 0.9 is officially deprecated and unmaintained. MUST migrate to an actively maintained alternative such as serde_yml, yaml-rust2, or marked_yaml.
+
 #[test]
 fn test_serde_yaml_crate_deprecated_signal_0() {
     // Signal: Cargo.toml or source files reference serde_yaml (pattern)
@@ -39,3 +40,4 @@ fn test_serde_yaml_crate_deprecated_signal_0() {
     }
     assert!(violations.is_empty(), "{} violations for serde_yaml.crate-deprecated:\n{}", violations.len(), violations.join("\n"));
 }
+

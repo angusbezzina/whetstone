@@ -180,6 +180,10 @@ fn generate_python(
         let mut ctx = Context::new();
         ctx.insert("source_name", source_name);
         let tmpl_rules: Vec<TemplateRule> = dep_rules.iter().map(|r| to_template_rule(r)).collect();
+        let needs_re = tmpl_rules
+            .iter()
+            .any(|r| r.signals.iter().any(|s| s.match_pattern.is_some()));
+        ctx.insert("needs_re", &needs_re);
         ctx.insert("rules", &tmpl_rules);
 
         let content = render(tera, "python_test.py.tera", &ctx);

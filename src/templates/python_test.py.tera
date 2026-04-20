@@ -1,7 +1,8 @@
 """Whetstone evals for dependency: {{ source_name }}."""
-
+{% if needs_re %}
 import re
 
+{% endif %}
 
 {% for rule in rules -%}
 # Rule: {{ rule.id }} — {{ rule.short_desc }}

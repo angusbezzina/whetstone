@@ -1,5 +1,4 @@
-//! Whetstone eval: clap.derive-over-builder
-//! SHOULD use the derive API (#[derive(Parser)]) instead of the builder API (Command::new()) for new CLI definitions. The derive API is more concise, type-safe, and the recommended approach in clap 4.x docs.
+//! Whetstone evals for dependency: clap
 
 use std::fs;
 use std::path::Path;
@@ -22,6 +21,8 @@ fn find_rust_files(dir: &Path) -> Vec<std::path::PathBuf> {
     files
 }
 
+// Rule: clap.derive-over-builder — SHOULD use the derive API (#[derive(Parser)]) instead of the builder API (Command::new()) for new CLI definitions. The derive API is more concise, type-safe, and the recommended approach in clap 4.x docs.
+
 #[test]
 fn test_clap_derive_over_builder_signal_0() {
     // Signal: Detects Command::new() or App::new() (legacy) in clap argument definitions (pattern)
@@ -39,3 +40,4 @@ fn test_clap_derive_over_builder_signal_0() {
     }
     assert!(violations.is_empty(), "{} violations for clap.derive-over-builder:\n{}", violations.len(), violations.join("\n"));
 }
+
