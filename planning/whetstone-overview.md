@@ -112,18 +112,25 @@ The mermaid version — including the CI path and the agent's in-context work be
 
 #### Epic 3E: Active Whetstone
 
-> **Tracked as:** `whetstone-n34` | **Status:** Open · 10 children
+> **Tracked as:** `whetstone-n34` | **Status:** Open · 14 children + measurement gate
 
-The goal-review on 2026-04-20 identified four gaps that keep Whetstone from answering "is my code in good shape?" as well as it answers "are my rules in good shape?". Epic 3E closes those gaps across four themes:
+The goal-review on 2026-04-20 identified four architectural gaps that keep Whetstone from answering "is my code in good shape?" as well as it answers "are my rules in good shape?". Epic 3E closes those gaps with measured outcomes — the epic does not close until token-cost, taste-cycle-time, and repo-scoring deltas hit their targets.
 
-| Theme | Why | Representative children |
-|-------|-----|--------------------------|
-| **A. Token efficiency** | AGENTS.md is loaded every session regardless of what file is being edited; the ~236-line preamble is pure waste on repeat loads. | `whetstone-2gw` (per-language sidecars), `whetstone-ydw` (`--terse` + preamble trim) |
-| **B. Real project scoring** | `wh status` measures rule-system health, not code quality. A repo with 1000 violations can still score 100. | `whetstone-0m0` (fold `wh check` in), `whetstone-90m` (top-line `adherence_score`), `whetstone-m2q` (violation trend in `.metrics.jsonl`) |
-| **C. Less passive / query surface** | Agents can't ask "what rules apply to this file?"; personal preferences require hand-written YAML. | `whetstone-80x` (`wh rules query`), `whetstone-9uh` (`wh rule add` shortcut) |
-| **D. Taste management** | `wh reinit` detects doc drift but doesn't suggest rule changes; bumping `should → must` means hand-editing YAML. | `whetstone-jrs` (auto-extract on reinit), `whetstone-5eb` (`wh rule edit` bulk mutations), `whetstone-awj` (changelog-driven severity suggestions) |
+| Theme | Question it answers | Children |
+|-------|---------------------|----------|
+| **A. Architecture — JIT consumption** | Why is the agent loading every rule every session? | `whetstone-80x` (`wh rules query` + SKILL integration — the lever), `whetstone-2gw` (per-language sidecars), `whetstone-ydw` (`--terse` + preamble trim) |
+| **B. Observability — project scoring** | Is my code in good shape? | `whetstone-m3k` (scoring-formula design pass), `whetstone-0m0` (wire `wh check` into `wh status`), `whetstone-90m` (top-line `adherence_score`), `whetstone-m2q` (violation-trend snapshots), `whetstone-hpq` (`wh report` — the narrative) |
+| **C. Authoring — taste shortcuts** | How do I add a personal preference without writing YAML? | `whetstone-9uh` (`wh rule add --personal`), `whetstone-5eb` (`wh rule edit` bulk mutations) |
+| **D. Maintenance — drift + hand-off** | How do I keep rules current as docs evolve? | `whetstone-jrs` (auto-extract on reinit), `whetstone-awj` (redesigned — reinit emits re_extraction_candidates, no grep heuristic), `whetstone-nuh` (content-hash drift — `wh reinit --deep-drift`) |
+| **Cross-cutting — measurement** | Did the epic actually move the needle? | `whetstone-piy` (baseline + delta targets; epic acceptance gate) |
 
-Epic closes when all ten children close — `bd show whetstone-n34` for the live dependency graph.
+**Acceptance gate (epic closes when all are true):**
+
+1. All 14 child beads closed.
+2. Measurement deltas from `whetstone-piy` hit: session token cost down ≥40%, time-to-add-preference down ≥60%, repo-health in a single command with a code-quality number.
+3. Epic 3E landed successfully against Whetstone itself + 1 external repo (dogfood gate).
+
+Run `bd show whetstone-n34` for the live dependency graph.
 
 #### Other near-term items
 
