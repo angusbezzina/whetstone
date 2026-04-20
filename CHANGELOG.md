@@ -4,6 +4,57 @@ All notable changes to Whetstone are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-20
+
+Lean refactor. Seven-command happy path:
+
+```
+wh init  →  wh extract  →  wh extract submit  →  wh approve --all
+                                                        │
+                                                        ▼
+                                                   wh actions
+                                                        │
+                                                        ▼
+                                                  wh check src/
+                                                        │
+                                                        ▼
+                                                   wh reinit
+```
+
+### Added
+- `wh extract` — walk the extraction worklist interactively.
+- `wh extract submit <bundle.yaml>` — write candidate rules to
+  `whetstone/rules/<lang>/<dep>.yaml`, failing on any id collision.
+- `wh approve <rule-id>` and `wh approve --all [--dep] [--confidence]` —
+  flip candidate rules to approved with batch selectors.
+- `wh lint` — emit ruff / biome / clippy overlays from `lint_proxy`
+  signals. Split out of `wh tests`.
+- `wh gen` / `wh actions` — chain context + tests + lint in one command.
+
+### Changed
+- `wh tests` no longer writes lint configs; use `wh lint` instead.
+  The `lint_configs` key is removed from its output.
+- Rule status lifecycle reduced to `candidate` and `approved`.
+- Layer merge collapsed to personal + project only.
+
+### Removed
+- Commands: `wh propose`, `wh apply`, `wh bench`, `wh eval`,
+  `wh promote`, `wh layers`, `wh config`, `wh patterns` (the patterns
+  module is commented out in source; the rest were deleted).
+- Rule review subcommands: `wh review queue`, `wh review diff`.
+- Rule schema fields: `risk`, `linter_gap`, `source_kind`, `proposed_at`,
+  `proposed_by`, `approved_at`, `denied_reason`, `deprecated_reason`,
+  `superseded_by`, `ai_eval`.
+- Signal strategy `ai`; every rule must have `ast`, `pattern`, or
+  `lint_proxy` signals.
+- Built-in rules (the `src/builtin/` directory and the built-in layer in
+  the merge).
+- Team layer + `extends:` config key.
+- `bench` and `extends` config keys.
+- `whetstone/.state/eval-requests.json`, `eval-verdicts.json`,
+  `calibration-requests.json`, `calibration-verdicts.json` writers.
+- `references/proposal-schema.md`.
+
 ## [Unreleased]
 
 ### Added
@@ -158,6 +209,7 @@ no Python runtime dependency.
 - **Release workflow** building Linux and macOS binaries for x86_64 and
   aarch64 with cross-compilation support.
 
+[0.3.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.3.0
 [0.1.2]: https://github.com/angusbezzina/whetstone/releases/tag/v0.1.2
 [0.1.1]: https://github.com/angusbezzina/whetstone/releases/tag/v0.1.1
 [0.1.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.1.0

@@ -87,44 +87,45 @@ issues, repair/hydrate the local Beads Dolt database with:
 ### Usage
 
 ```bash
-# 1. Run the doctor — one command from zero to working rules
-wh doctor
+# 1. Bootstrap — one command from zero to working extraction handoff
+wh init
 # → detects dependencies from pyproject.toml / package.json / Cargo.toml
 # → resolves documentation URLs from registries, probes for llms.txt
-# → outputs extraction context for the agent
+# → writes whetstone/.state/extraction-handoff.json
 
-# 2. The agent reads the doctor output, proposes rules, you approve each one
+# 2. Walk the worklist and draft candidate rules
+wh extract
+# The agent picks the top `ready_now` dep and authors a bundle.
 
-# 3. Generate tests and agent context from approved rules
-wh context
-wh tests
-# → pytest/vitest/cargo test files in whetstone/evals/
-# → lint overlays in whetstone/lint/
-# → agent context files in whetstone/context/
+# 3. Submit the candidate bundle
+wh extract submit path/to/bundle.yaml
+# → writes whetstone/rules/<lang>/<dep>.yaml with status: candidate
 
-# 4. Check project health anytime
-wh status
+# 4. Approve candidates (single or batch)
+wh approve --all --confidence high
 
-# 5. When dependencies drift, re-resolve only what changed
-wh refresh              # writes whetstone/.state/refresh-diff.json
-wh refresh --check      # same, but exits non-zero when drift is detected (CI-friendly)
+# 5. Generate context, tests, and lint configs
+wh actions     # chains wh context, wh tests, wh lint
+# → whetstone/context/*, whetstone/evals/**, whetstone/lint/*
 
-# 6. Optional: judge ambiguous rules with AI eval
-wh eval generate        # produce eval definitions for ai-signal rules
-wh eval run             # deterministic + AI requests; --deterministic-only for CI
-wh eval calibrate       # agreement check between judge and golden examples
+# 6. Verify source code against approved rules
+wh check src/
+
+# 7. When dependencies drift, re-resolve only what changed
+wh reinit              # writes whetstone/.state/refresh-diff.json
+wh reinit --check      # same, but exits non-zero when drift is detected (CI-friendly)
 ```
 
-> **Agent skill mode:** When using Whetstone as an agent skill, say "wh doctor" or "extract rules" and the agent runs the full workflow. The binary handles deterministic work; your existing LLM does the extraction.
+> **Agent skill mode:** When using Whetstone as an agent skill, say "wh init" or "extract rules" and the agent runs the full workflow. The binary handles deterministic work; your existing LLM does the extraction.
 
 ### Worked Example: Extracting Rules for a Rust Project
 
 Here's what a real run looks like on Whetstone's own codebase (Rust, 10 dependencies):
 
 ```bash
-$ wh doctor
+$ wh init
 ────────────────────────────────────────
-  Whetstone Doctor — 2026-04-09
+  Whetstone Init — 2026-04-20
 ────────────────────────────────────────
   Dependencies: 16 runtime (+2 dev) across python, rust
   Sources:      10 resolved with content (README + changelog)
@@ -171,18 +172,19 @@ Run `cargo test` and the test catches any `Client::new()` calls without explicit
 
 ## Canonical Workflow
 
-Whetstone follows a six-step lifecycle. The doctor command handles steps 1-2 automatically.
+Whetstone follows a seven-step lifecycle. `wh init` handles steps 1 + 2 in one go.
 
 | Step | Command | What happens |
 |------|---------|-------------|
-| **1. Detect** | `wh doctor` (or `wh init`) | Scan manifests for dependencies |
-| **2. Resolve** | `wh doctor` (or `wh set-sources`) | Resolve docs URLs from registries, probe for llms.txt |
-| **3. Extract** | Agent-mediated | LLM reads docs, proposes candidate rules |
-| **4. Approve** | Agent-mediated | User reviews each rule (approve/edit/deny/skip) |
-| **5. Generate** | `wh tests` + `wh context` | Produce tests, lint configs, agent context |
-| **6. Monitor** | `wh status` / `wh ci` | Track freshness, drift, and health |
+| **1. Detect** | `wh init` | Scan manifests for dependencies |
+| **2. Resolve** | `wh init` (or `wh set-sources`) | Resolve docs URLs from registries, probe for llms.txt |
+| **3. Extract** | `wh extract` + agent | Agent reads docs, drafts a candidate bundle |
+| **4. Submit** | `wh extract submit <bundle>` | Writes the bundle as `status: candidate` |
+| **5. Approve** | `wh approve <id>` or `wh approve --all` | Flip candidates to approved |
+| **6. Generate** | `wh actions` | Run `wh context`, `wh tests`, `wh lint` |
+| **7. Monitor** | `wh status` / `wh ci` / `wh check` | Track freshness, drift, enforce rules |
 
-When dependencies update, run `wh refresh` to re-resolve changed sources, then re-extract rules for what changed. `wh refresh --check` exits non-zero if drift was detected (useful in CI).
+When dependencies update, run `wh reinit` to re-resolve changed sources, then re-extract rules for what changed. `wh reinit --check` exits non-zero if drift was detected (useful in CI).
 
 See [`references/workflow-matrix.md`](references/workflow-matrix.md) for the full command matrix, including every alias and which lifecycle step each command serves.
 
@@ -404,7 +406,7 @@ Action outputs: `freshness_status`, `changed_sources_count`, `recommended_rules_
 
 ## Privacy
 
-Pattern mining from agent transcripts is an **opt-in** workflow exposed by `wh patterns`. Transcript scanning is scoped to the current project by default: only JSONL files whose path contains the current project directory name are read.
+Pattern mining from agent transcripts was available via `wh patterns` in prior releases. That workflow is deferred in 0.3.0 and will return alongside a reworked signal-promotion pipeline.
 
 This means Whetstone will NOT read conversations from unrelated projects unless you explicitly opt in with `--global-transcripts`.
 
@@ -471,7 +473,7 @@ Custom sources appear in the doctor output for extraction. Each rule you extract
 Nothing breaks. The generated tests, lint configs, and agent context files are standard files in your repo. They run with your existing CI, and the generated agent context lives under `whetstone/context/` (or `whetstone/.personal/context/` for personal-only output).
 
 **How do I update rules when dependencies change?**
-Run `wh status` or `wh ci` to see which dependencies have drifted. Then run `wh refresh` (or `wh doctor --changed-only`) to re-resolve only what changed, and re-extract rules against the new content. Use `wh refresh --check` in CI to fail a build when drift is detected.
+Run `wh status` or `wh ci` to see which dependencies have drifted. Then run `wh reinit` (or `wh init --changed-only`) to re-resolve only what changed, and re-extract rules against the new content. Use `wh reinit --check` in CI to fail a build when drift is detected.
 
 **What's the `next_command` field in every output?**
 Every script suggests what to do next. Agent clients can use this to chain commands automatically without reading documentation.
@@ -482,7 +484,7 @@ Whetstone can be used on itself. The `tests/fixtures/` directory contains sample
 
 ```bash
 # Run doctor against the test fixtures
-wh doctor --project-dir tests/fixtures --json
+wh init --project-dir tests/fixtures --json
 
 # Check status of existing rules
 wh status --project-dir tests/fixtures
@@ -496,41 +498,37 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 
 ## Current Capabilities vs Roadmap
 
-**Shipped today:**
+**Shipped today (0.3.0):**
 - Dependency detection across Python, TypeScript, and Rust (including monorepos)
 - 4-tier content resolution: llms.txt → registry README → HTML docs → GitHub changelog
 - Changelog fetching with 18-month recency filtering
 - Custom source URLs in `whetstone.yaml` (blogs, team guides, any public URL)
-- Built-in rules (`whetstone:recommended`) that ship with the binary for Rust, Python, and TypeScript
-- Agent-mediated rule extraction with structured approval flow and explicit candidate handoff
-- Structured proposal bundles via `wh propose schema|diff|import`, replacing hand-authored candidate YAML
-- Effective config inspection/validation via `wh config show|validate`
+- Agent-mediated rule extraction via `wh extract` + bundle submission (`wh extract submit`)
+- Bulk approval via `wh approve --all [--dep] [--confidence]`
 - Tree-sitter-backed `wh check` across Python, TypeScript, and Rust, including AST-query and AST-scoped regex enforcement
-- Rule lifecycle workflow via `wh review` / `wh apply`, with audit logging and refresh-driven review queues
-- Benchmark harness via `wh bench run` / `wh bench snapshot`, with CI-friendly regression gating
+- Rule listing and per-rule context via `wh review` / `wh review show`
 - Test generation with real regex checks (via `match` field on signals) for Python, TypeScript, and Rust
-- Lint overlay generation (ruff, biome, clippy)
+- Lint overlay generation (ruff, biome, clippy) via `wh lint`
+- One-shot generation chain via `wh actions` / `wh gen` (context + tests + lint)
 - Agent context generation under `whetstone/context/` (AGENTS.md, CLAUDE.md, .cursorrules, copilot, windsurf, codex)
-- Source attribution: `content_origin` (how fetched) + `source_kind` (what kind of source)
 - Health monitoring with drift detection, freshness scoring, and metric history
 - CI integration via GitHub Action with PR comments
-- Drift-based refresh command (`wh refresh` / `wh refresh --check`) with reviewable diff artifact
-- AI eval runner with threshold gating and calibration (`wh eval generate|run|calibrate`)
-- **4-layer rule resolution** — `personal > project > team > built-in` with per-layer deny lists, auto-gitignored personal overrides, `wh promote` between layers, and `wh layers` for merge introspection
-- **Team extends** — `extends:` references in `whetstone.yaml` pull team rulesets from `github.com/...` via git clone, cached under `whetstone/.cache/teams/`
-- **Global personal config** — `~/.whetstone/config.yaml` supplies user-wide deny lists, default formats, and custom sources that merge into every project
+- Drift-based refresh command (`wh reinit` / `wh reinit --check`) with reviewable diff artifact
+- Personal + project layer rule merge with auto-gitignored personal overrides
 - **Advisory automation hooks** — `wh init --hooks` installs a post-merge git hook + Claude Code `SessionStart` advisory; `wh init --ci --schedule=<cadence>` generates a scheduled GitHub Actions freshness check
 - Binary self-update via `wh update`
 
-**Opt-in:**
-- Pattern detection from agent transcripts, git history, and PR comments via `wh patterns`.
+**Deferred (0.3.0 lean refactor):**
+- `wh promote` / `wh layers` — team and built-in layers were removed.
+- `wh propose` / `wh apply` / `wh review queue|diff` — replaced by extract + approve.
+- `wh bench` / `wh eval` / `wh patterns` — benchmark corpus, AI eval, and pattern mining are parked.
+- `wh config show|validate` — config still loads; the inspector UI is deferred.
+- Built-in rules and team `extends:`.
 
-**Planned / TBD:**
+**Planned:**
 - ast-grep pattern generation (structural enforcement via CodeRabbit-compatible rules)
 - MCP server for agent-native rule queries
-- Continue.dev check generation for CI status checks
-- Shared rule registry with community-ranked rules (the `@user/config` `extends:` form is parsed but currently reports `not_implemented`)
-- `wh evolve` — signal promotion from AI verdicts to deterministic signals
+- Shared rule registry with community-ranked rules
 
 See [`planning/whetstone-overview.md`](planning/whetstone-overview.md) for the current overview and [`references/workflow-matrix.md`](references/workflow-matrix.md) for the command-to-lifecycle mapping.
 
@@ -539,7 +537,7 @@ See [`planning/whetstone-overview.md`](planning/whetstone-overview.md) for the c
 | Problem | Fix |
 |---------|-----|
 | `No manifests found` | Ensure `pyproject.toml`, `package.json`, or `Cargo.toml` exists in your project directory |
-| `status: not_initialized` | Run `wh doctor` first to detect deps and create the `whetstone/` directory |
+| `status: not_initialized` | Run `wh init` first to detect deps and create the `whetstone/` directory |
 | Drift check is slow | Use `--no-drift-check` for faster status, or `--changed-only` to limit scope |
 | Rules from stale docs | Check `source_url` in your rule YAML — Whetstone flags when source content changes via `content_hash` |
 

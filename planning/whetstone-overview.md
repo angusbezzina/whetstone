@@ -1,7 +1,22 @@
 # Whetstone Overview
 
-> Last updated: 2026-04-15 | Version: 0.2.0 | Previous planning docs archived in `planning/archive/`
+> Last updated: 2026-04-20 | Version: 0.3.0 | Previous planning docs archived in `planning/archive/`
 > See [`references/workflow-matrix.md`](../references/workflow-matrix.md) for the shipped command matrix.
+
+---
+
+## Deferred (0.3.0 lean refactor)
+
+The 0.3.0 release collapses the surface to the seven-command happy path
+(`wh init`, `wh extract`, `wh extract submit`, `wh approve`, `wh actions`,
+`wh check`, `wh reinit`). The following features were removed and are
+deferred until the core loop stabilizes: `wh promote` / `wh layers` (merge
+collapsed to personal + project); `wh propose` / `wh apply` /
+`wh review queue` / `wh review diff` (replaced by extract submit +
+approve); `wh bench` / `wh eval` / `wh patterns` (benchmark corpus, AI
+eval, pattern mining parked); `wh config show/validate` (config still
+loads, inspector deferred); built-in rules and team `extends:` (only
+project + personal layers remain).
 
 ---
 

@@ -1,58 +1,45 @@
 %%{ init: { "theme": "base", "themeVariables": { "fontSize": "14px" } } }%%
 flowchart TD
     %% ═══════════════════════════════════════
-    %% WHETSTONE: CURRENT LOGIC FLOW
+    %% WHETSTONE 0.3.0 — LEAN LOGIC FLOW
     %%
     %% Green  = Binary (shipped deterministic commands)
     %% Orange = Agent  (judgment via SKILL.md)
     %% Blue   = User   (approval / preference decisions)
-    %% Grey   = TBD    (future / not yet shipped)
+    %% Grey   = Deferred / future
     %% ═══════════════════════════════════════
 
-    START([User: run whetstone / extract rules]) --> DOCTOR["wh doctor --json<br/>Detect manifests<br/>Resolve docs + changelogs<br/>Cache + rank deps<br/>Write extraction-handoff.json"]
+    START([User: run whetstone / extract rules]) --> INIT["wh init --json<br/>Detect manifests<br/>Resolve docs + changelogs<br/>Write extraction-handoff.json"]
 
-    DOCTOR --> AGENT_EXTRACT["Agent reads extraction handoff<br/>Reviews docs sections<br/>Applies extraction prompt<br/>Builds proposal bundle"]
+    INIT --> EXTRACT["wh extract --json<br/>Walk worklist<br/>Ranked sources + quota<br/>Next dep to extract"]
 
-    AGENT_EXTRACT --> PROPOSE["wh propose diff / import<br/>Preview proposal bundle<br/>Import candidate rules deterministically"]
+    EXTRACT --> AGENT_EXTRACT["Agent reads extraction handoff<br/>Reads the top dep's docs<br/>Drafts a bundle YAML"]
 
-    PROPOSE --> REVIEW["wh review<br/>List candidate / approved / denied / deprecated<br/>Show rule cards<br/>Build refresh review queue"]
+    AGENT_EXTRACT --> SUBMIT["wh extract submit <bundle.yaml><br/>Validate ids, write status: candidate<br/>whetstone/rules/&lt;lang&gt;/&lt;dep&gt;.yaml"]
 
-    REVIEW --> USER{"User reviews<br/>candidate policy"}
+    SUBMIT --> USER{"User reviews<br/>candidate set"}
 
-    USER -->|Approve / Deny / Deprecate / Supersede| APPLY["wh apply<br/>Persist lifecycle transition<br/>Append review-log.jsonl audit trail"]
-    USER -->|Edit proposal| AGENT_EDIT["Agent edits proposal bundle<br/>or candidate details"] --> PROPOSE
+    USER -->|wh approve --all| APPROVE["wh approve<br/>Flip candidate → approved<br/>Single id or batch filters"]
+    USER -->|Edit bundle| AGENT_EDIT["Agent edits bundle"] --> SUBMIT
 
-    APPLY --> VALIDATE["wh validate --json<br/>Schema + fixture checks"]
-    VALIDATE -->|Fix issues| AGENT_FIX["Agent fixes proposal / YAML<br/>or signals"] --> VALIDATE
-    VALIDATE --> GENERATE["wh context + wh tests<br/>Generate agent context<br/>Generate eval / test files<br/>Generate lint overlays"]
+    APPROVE --> VALIDATE["wh validate --json<br/>Schema + fixture checks"]
+    VALIDATE -->|Fix issues| AGENT_FIX["Agent fixes YAML"] --> VALIDATE
+    VALIDATE --> ACTIONS["wh actions<br/>wh context + wh tests + wh lint"]
 
-    GENERATE --> CHECK["wh check<br/>Tree-sitter AST queries<br/>AST-scoped regex checks<br/>lint_proxy config verification"]
-    CHECK --> EVAL["wh eval run / calibrate<br/>Deterministic + AI-assisted checks<br/>eval-requests / verdicts handoff<br/>Calibration against golden examples"]
-    EVAL --> STATUS["wh status --json<br/>Health score<br/>Freshness / drift / coverage<br/>Metrics history"]
-    STATUS --> DONE([Done: rules enforced, agents informed, policy tracked])
+    ACTIONS --> CHECK["wh check src/<br/>Tree-sitter AST queries<br/>AST-scoped regex checks<br/>lint_proxy config verification"]
+    CHECK --> STATUS["wh status --json<br/>Health score / drift / metrics"]
+    STATUS --> DONE([Done: rules enforced, agents informed])
 
-    %% Refresh / update loop
-    STATUS -.->|Dependency drift| REFRESH["wh refresh --json<br/>Re-resolve changed sources<br/>Write refresh-diff.json<br/>--check gates CI"]
-    REFRESH --> REVIEW
-
-    %% Bench / trust path
-    DONE -.-> BENCH["wh bench run / snapshot<br/>Replay benchmark corpus<br/>Precision / recall / F1<br/>Persist bench-snapshot.json"]
-
-    %% Optional pattern mining
-    PATTERNS([Optional]) --> PAT["wh patterns --json<br/>Mine transcripts, git, PRs<br/>Suggest recurring style signals"]
-    PAT -.-> AGENT_EXTRACT
+    %% Refresh loop
+    STATUS -.->|Dependency drift| REINIT["wh reinit --json<br/>Re-resolve changed sources<br/>Write refresh-diff.json<br/>--check gates CI"]
+    REINIT --> EXTRACT
 
     %% CI path
     CI_START([CI pipeline]) --> CI["wh ci --fail-on stale<br/>Freshness gate<br/>Optional PR comment"]
     CI --> CHECK
-    CI --> BENCH
 
-    %% Personal / team policy path
-    START -.-> LAYERS["wh layers / wh promote<br/>personal > project > team > built-in<br/>Team extends<br/>Local-only personal policy"]
-    LAYERS -.-> REVIEW
-
-    %% TBD / future platform work
-    DONE -.-> FUTURE["TBD: platform + registry<br/>Shared registry<br/>Publishing rulesets<br/>Signal promotion / wh evolve<br/>GitHub App / service layer"]
+    %% Deferred / future
+    DONE -.-> FUTURE["Deferred: wh bench / wh eval / wh patterns<br/>Team extends, built-in layer<br/>wh propose / wh apply / wh config<br/>MCP server, shared registry"]
 
     %% Styling
     classDef binary fill:#2d6a4f,color:#fff,stroke:#1b4332
@@ -61,8 +48,8 @@ flowchart TD
     classDef future fill:#7d8597,color:#fff,stroke:#5c677d
     classDef start fill:#f4a261,color:#000,stroke:#e76f51
 
-    class DOCTOR,PROPOSE,REVIEW,APPLY,VALIDATE,GENERATE,CHECK,EVAL,STATUS,REFRESH,BENCH,CI,PAT,LAYERS binary
+    class INIT,EXTRACT,SUBMIT,APPROVE,VALIDATE,ACTIONS,CHECK,STATUS,REINIT,CI binary
     class AGENT_EXTRACT,AGENT_EDIT,AGENT_FIX agent
     class USER user
     class FUTURE future
-    class START,CI_START,PATTERNS start
+    class START,CI_START start
