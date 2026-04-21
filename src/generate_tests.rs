@@ -329,7 +329,19 @@ fn write_generated(path: &Path, content: &str, dry_run: bool) -> bool {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    std::fs::write(path, content).is_ok()
+    // Tera's per-rule loop trailing whitespace sometimes leaves an extra
+    // blank line at EOF; strip it so `ruff format --check` stays green on
+    // regenerated fixtures without anyone running `ruff format` by hand.
+    let normalized = normalize_trailing_newline(content);
+    std::fs::write(path, normalized).is_ok()
+}
+
+fn normalize_trailing_newline(content: &str) -> String {
+    let trimmed = content.trim_end_matches(|c: char| c == '\n' || c == '\r');
+    let mut out = String::with_capacity(trimmed.len() + 1);
+    out.push_str(trimmed);
+    out.push('\n');
+    out
 }
 
 #[cfg(test)]

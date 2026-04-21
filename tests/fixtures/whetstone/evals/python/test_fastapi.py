@@ -15,4 +15,3 @@ def test_fastapi_async_routes_signal_0(python_source_files):
     assert not violations, (
         f"{len(violations)} violation(s) for fastapi.async-routes: {violations[:5]}"
     )
-
