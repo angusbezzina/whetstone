@@ -424,7 +424,7 @@ fn next_step_hint(priority: Priority, remaining_quota: u32, source: Option<&Valu
                 "Quota reached — review existing rules or raise extraction.max_rules_per_dep".into()
             } else {
                 format!(
-                    "Read the linked source, propose up to {remaining_quota} rule(s), then `wh propose import <bundle>`"
+                    "Read the linked source, draft up to {remaining_quota} rule(s), then `wh extract submit <bundle.yaml>`"
                 )
             }
         }

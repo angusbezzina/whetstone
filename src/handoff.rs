@@ -136,7 +136,7 @@ pub fn write_extraction_handoff(
         "candidates": candidates,
         "skipped": skipped,
         "worklist": worklist,
-        "next_action": "Work the worklist top-down; for each ready_now dep, produce a proposal bundle and run `wh propose import`.",
+        "next_action": "Work the worklist top-down; for each ready_now dep, draft a bundle YAML and run `wh extract submit <bundle>`, then `wh approve`.",
     });
 
     atomic_write(&path, &handoff);

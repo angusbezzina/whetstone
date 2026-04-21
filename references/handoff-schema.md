@@ -88,7 +88,7 @@ by a configuration-aware score (`preferred_source_kinds`, `recency_window_days`)
     ],
     "existing_rules": 1,
     "quota": { "max_rules_per_dep": 5, "remaining": 4 },
-    "next_step": "Read the linked source, propose up to 4 rule(s), then `wh propose import <bundle>`",
+    "next_step": "Read the linked source, draft up to 4 rule(s), then `wh extract submit <bundle.yaml>`",
     "allowed_categories": ["migration", "convention"],
     "min_confidence": "high",
     "preferred_source_kinds": ["changelog", "migration_guide"]

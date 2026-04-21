@@ -488,7 +488,7 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
     let next_command = if auto_limited {
         "wh init --resume"
     } else if !extraction_sources.is_empty() {
-        "For each ready dep, produce a proposal bundle → `wh propose import <bundle>` → `wh review diff` → `wh apply <id> --approve`"
+        "For each ready dep, draft a bundle YAML → `wh extract submit <bundle>` → `wh approve --all --confidence high`"
     } else if !sources.is_empty() {
         "wh status"
     } else {
