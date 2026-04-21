@@ -44,11 +44,12 @@ pub struct ViolationCounts {
 /// score. Returns `None` when there are no approved rules or no eligible
 /// files — `wh status` renders that as `adherence_score: null` to distinguish
 /// "unmeasured" from "perfect."
-pub fn compute(project_dir: &Path, approved_rule_count: usize) -> Result<Option<Adherence>> {
-    if approved_rule_count == 0 {
-        return Ok(None);
-    }
-
+///
+/// `rule_count_hint` is the caller's rule count (from `wh status`'s project-
+/// layer scan); this function cross-checks against the merged personal +
+/// project count via `wh check`'s `rules_applied` so personal-only projects
+/// still score instead of silently returning None.
+pub fn compute(project_dir: &Path, rule_count_hint: usize) -> Result<Option<Adherence>> {
     let scan_root = candidate_scan_root(project_dir);
     let paths = vec![scan_root];
 
@@ -58,6 +59,15 @@ pub fn compute(project_dir: &Path, approved_rule_count: usize) -> Result<Option<
         lang_filter: None,
         rule_filter: None,
     })?;
+
+    let rules_applied = result
+        .get("rules_applied")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let approved_rule_count = rules_applied.max(rule_count_hint);
+    if approved_rule_count == 0 {
+        return Ok(None);
+    }
 
     let files_eligible = result
         .get("files_scanned")

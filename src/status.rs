@@ -36,12 +36,14 @@ pub fn compute_status(
     changed_only: bool,
 ) -> Result<Value> {
     let rules_dir = project_dir.join("whetstone").join("rules");
-    let config_path = project_dir.join("whetstone").join("whetstone.yaml");
     let state_dir = project_dir.join("whetstone").join(".state");
 
     let check_dep_drift = check_dep_drift || changed_only;
 
-    if !rules_dir.exists() && !config_path.exists() && !state_dir.exists() {
+    // Use the shared gate so personal-only projects (`wh rule add --personal`
+    // without explicit init) aren't treated as "not_initialized".
+    let initialized = crate::layers::project_is_initialized(project_dir) || state_dir.exists();
+    if !initialized {
         return Ok(serde_json::json!({
             "status": "not_initialized",
             "label": "Not Initialized",

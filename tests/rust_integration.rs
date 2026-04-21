@@ -498,6 +498,76 @@ fn test_rules_query_full_includes_signals() {
 }
 
 #[test]
+fn test_personal_only_project_still_gets_adherence_score() {
+    // Regression: earlier, `wh rule add --personal` without an explicit init
+    // would leave wh status returning adherence_score=null because the
+    // "is the project initialized?" gate only looked for whetstone.yaml.
+    let tmp = std::env::temp_dir().join(format!("wh_personal_only_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        b"[project]\nname=\"t\"\nversion=\"0.1.0\"\ndependencies=[]\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::write(tmp.join("src/app.py"), b"print(\"hi\")\n").unwrap();
+
+    // Personal rule: never use print()
+    let (_, _, add_ok) = run_whetstone(
+        &[
+            "rule",
+            "add",
+            "demo.no-print",
+            "--description",
+            "Never use print",
+            "--match",
+            "print\\s*\\(",
+            "--lang",
+            "python",
+            "--dep",
+            "demo",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(add_ok);
+
+    // wh status must return a non-null adherence_score AND reflect the violation.
+    let (stdout, _, ok) = run_whetstone(
+        &[
+            "status",
+            "--json",
+            "--no-snapshot",
+            "--no-drift-check",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok);
+    let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let adherence = result.get("adherence").and_then(|v| v.as_object());
+    assert!(
+        adherence.is_some(),
+        "personal-only project must produce adherence object, got: {result}"
+    );
+    let viols = adherence
+        .unwrap()
+        .get("violations")
+        .and_then(|v| v.as_object())
+        .unwrap();
+    assert!(
+        viols.get("total").and_then(|t| t.as_u64()).unwrap_or(0) >= 1,
+        "violation must be detected from personal rule"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
 fn test_report_pr_comment_contains_marker_and_headers() {
     let dir = fixtures_dir();
     let (stdout, _, ok) = run_whetstone(

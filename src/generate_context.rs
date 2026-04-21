@@ -38,18 +38,14 @@ pub fn generate_context(
     personal_output: bool,
     terse: bool,
 ) -> Result<Value> {
-    let whetstone_config_exists = project_dir
-        .join("whetstone")
-        .join("whetstone.yaml")
-        .exists()
-        || project_dir.join("whetstone.yaml").exists();
+    let project_initialized = crate::layers::project_is_initialized(project_dir);
     let config = WhetstoneConfig::load(project_dir);
     let paths = crate::layers::LayerPaths::for_project(project_dir);
 
     let (approved, output_dir, warnings): (Vec<ApprovedRule>, _, Vec<String>) = if personal_output {
         let (rules, warns) = crate::layers::load_personal_only(project_dir, lang_filter);
         (rules, paths.personal_context(), warns)
-    } else if whetstone_config_exists {
+    } else if project_initialized {
         let merged = crate::layers::resolve_merged(project_dir, lang_filter, true, false, false);
         let approved = merged.merged.into_iter().map(|lr| lr.rule).collect();
         (
@@ -63,11 +59,27 @@ pub fn generate_context(
     };
 
     if approved.is_empty() {
+        // Check whether any personal rules exist — if so, tell the user how
+        // to include them rather than silently emitting nothing.
+        let (personal_rules, _) = crate::layers::load_personal_only(project_dir, lang_filter);
+        let hint = if !personal_rules.is_empty() && !personal_output {
+            format!(
+                "No project rules found, but {} personal rule(s) exist. Run `wh context --personal` to render them into `whetstone/.personal/context/` (gitignored).",
+                personal_rules.len()
+            )
+        } else {
+            "No approved rules found. Run 'wh init' to extract and approve rules.".to_string()
+        };
+        let next = if !personal_rules.is_empty() && !personal_output {
+            "wh context --personal"
+        } else {
+            "wh init"
+        };
         return Ok(serde_json::json!({
             "status": "ok",
             "generated": [],
-            "warnings": ["No approved rules found. Run 'wh init' to extract and approve rules."],
-            "next_command": "wh init",
+            "warnings": [hint],
+            "next_command": next,
         }));
     }
 

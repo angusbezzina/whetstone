@@ -37,10 +37,9 @@ pub struct CheckOptions<'a> {
 
 pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
     let project_dir = opts.project_dir;
-    let whetstone_cfg = project_dir.join("whetstone").join("whetstone.yaml");
-    let have_cfg = whetstone_cfg.exists() || project_dir.join("whetstone.yaml").exists();
+    let project_initialized = layers::project_is_initialized(project_dir);
 
-    let rules: Vec<ApprovedRule> = if have_cfg {
+    let rules: Vec<ApprovedRule> = if project_initialized {
         let merged = layers::resolve_merged(project_dir, opts.lang_filter, true, true, false);
         merged.merged.into_iter().map(|lr| lr.rule).collect()
     } else {

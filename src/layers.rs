@@ -216,6 +216,21 @@ pub fn load_personal_only(
     crate::rules::load_approved_rules(&paths.personal_rules_dir, lang_filter)
 }
 
+/// Has the project been initialized as a whetstone project? True if ANY of
+/// these exists: whetstone/whetstone.yaml, whetstone.yaml, whetstone/rules/,
+/// or whetstone/.personal/rules/. Callers use this to decide whether to
+/// call `resolve_merged` (which walks both layers) or fall back to a
+/// direct load. Previously callers only checked for whetstone.yaml, which
+/// meant personal-only projects (`wh rule add --personal` without explicit
+/// init) silently dropped their rules from every generator. Epic 3E follow-up.
+pub fn project_is_initialized(project_dir: &Path) -> bool {
+    let paths = LayerPaths::for_project(project_dir);
+    paths.whetstone_dir.join("whetstone.yaml").exists()
+        || project_dir.join("whetstone.yaml").exists()
+        || paths.project_rules_dir.exists()
+        || paths.personal_rules_dir.exists()
+}
+
 /// Shared helper: locate the YAML file a given rule id lives in. Used by
 /// anything that needs to rewrite rule files without re-parsing every layer.
 #[allow(dead_code)]
