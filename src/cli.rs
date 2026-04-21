@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::{
     approve, check, ci_check, config, detect, doctor, extract, gen, generate_context,
     generate_lint, generate_tests, output, personal, report, resolve, review, rule_authoring,
-    rules, rules_query, status, triggers, update, worklist,
+    rules, rules_query, source_mgmt, status, triggers, update, worklist,
 };
 
 // TODO(whetstone-aww): reinstate patterns
@@ -128,6 +128,71 @@ enum RuleAction {
         /// Preview the changes without writing
         #[arg(long)]
         dry_run: bool,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum SourceAction {
+    /// Subscribe to a custom rule source (blog / wiki / llms.txt / internal doc)
+    Add {
+        /// URL of the source (http:// or https://)
+        url: String,
+
+        /// Short name for the source (defaults to the URL)
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Language scope (python | typescript | rust | any)
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Source kind (blog | official_docs | team_guide | community | custom)
+        #[arg(long)]
+        kind: Option<String>,
+
+        /// Route to the committed project layer instead of the gitignored personal layer
+        #[arg(long, conflicts_with = "personal")]
+        project: bool,
+
+        /// Route to the personal layer (default)
+        #[arg(long, conflicts_with = "project")]
+        personal: bool,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Show all subscribed custom sources across both layers
+    List {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Remove a subscription (matches by URL or name). Flags citing rules.
+    Remove {
+        /// URL or name of the source to remove
+        target: String,
+
+        /// Route to the committed project layer instead of personal
+        #[arg(long, conflicts_with = "personal")]
+        project: bool,
+
+        /// Route to the personal layer (default)
+        #[arg(long, conflicts_with = "project")]
+        personal: bool,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Force re-fetch a single subscribed source (without a full wh reinit)
+    Fetch {
+        /// URL or name of the source to fetch
+        target: String,
 
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -565,6 +630,13 @@ enum Commands {
     Rule {
         #[command(subcommand)]
         action: RuleAction,
+    },
+
+    /// Subscribe to custom rule sources (blogs, wikis, llms.txt, internal docs)
+    #[command(name = "source")]
+    Source {
+        #[command(subcommand)]
+        action: SourceAction,
     },
 
     /// One-page report: adherence score, top violations, drift, next actions
@@ -1542,6 +1614,150 @@ pub fn run() -> i32 {
                     }
                 }
             }
+        },
+
+        Commands::Source { action } => match action {
+            SourceAction::Add {
+                url,
+                name,
+                lang,
+                kind,
+                project,
+                personal: _personal,
+                project_dir,
+            } => {
+                let personal = !project;
+                let opts = source_mgmt::AddOptions {
+                    url: &url,
+                    name: name.as_deref(),
+                    language: lang.as_deref(),
+                    source_kind: kind.as_deref(),
+                    personal,
+                };
+                match source_mgmt::add(&project_dir, opts) {
+                    Ok(v) => {
+                        if json_mode {
+                            output::print_json(&v);
+                        } else {
+                            let wrote = v.get("wrote").and_then(|s| s.as_str()).unwrap_or("?");
+                            let url_out = v.get("url").and_then(|s| s.as_str()).unwrap_or("?");
+                            println!("Subscribed {url_out} → {wrote}");
+                            println!("Next: wh source fetch {url_out}  (verify the URL resolves)");
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "Check URL format (http:// or https://) and whether it's already subscribed",
+                        ));
+                        1
+                    }
+                }
+            }
+            SourceAction::List { project_dir } => match source_mgmt::list(&project_dir) {
+                Ok(v) => {
+                    if json_mode {
+                        output::print_json(&v);
+                    } else {
+                        print!("{}", source_mgmt::format_list_human(&v));
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(&e.to_string(), "wh source list"));
+                    1
+                }
+            },
+            SourceAction::Remove {
+                target,
+                project,
+                personal: _personal,
+                project_dir,
+            } => {
+                let personal = !project;
+                let opts = source_mgmt::RemoveOptions {
+                    target: &target,
+                    personal,
+                };
+                match source_mgmt::remove(&project_dir, opts) {
+                    Ok(v) => {
+                        if json_mode {
+                            output::print_json(&v);
+                        } else {
+                            let url = v
+                                .get("removed_url")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or(&target);
+                            let wrote = v.get("wrote").and_then(|s| s.as_str()).unwrap_or("?");
+                            println!("Unsubscribed {url} ← {wrote}");
+                            if let Some(citers) =
+                                v.get("citing_rule_ids").and_then(|a| a.as_array())
+                            {
+                                if !citers.is_empty() {
+                                    println!(
+                                        "{} approved rule(s) cite this source:",
+                                        citers.len()
+                                    );
+                                    for c in citers.iter().take(10) {
+                                        let id = c
+                                            .get("rule_id")
+                                            .and_then(|s| s.as_str())
+                                            .unwrap_or("?");
+                                        println!("  {id}");
+                                    }
+                                    println!(
+                                        "Next: `wh rule edit <id>` or delete the rule file if the source is gone for good"
+                                    );
+                                }
+                            }
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "Use `wh source list` to find the right target",
+                        ));
+                        1
+                    }
+                }
+            }
+            SourceAction::Fetch {
+                target,
+                project_dir,
+            } => match source_mgmt::fetch(&project_dir, &target) {
+                Ok(v) => {
+                    if json_mode {
+                        output::print_json(&v);
+                    } else {
+                        let fetched = v.get("fetched").and_then(|n| n.as_u64()).unwrap_or(0);
+                        println!("Fetched {fetched} source(s)");
+                        if let Some(arr) = v.get("sources").and_then(|a| a.as_array()) {
+                            for s in arr {
+                                let name = s
+                                    .get("name")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("?");
+                                let bytes = s
+                                    .get("content")
+                                    .and_then(|x| x.as_str())
+                                    .map(|c| c.len())
+                                    .unwrap_or(0);
+                                println!("  {name}  ({bytes} bytes)");
+                            }
+                        }
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "Check the URL resolves and `wh source list` shows it as subscribed",
+                    ));
+                    1
+                }
+            },
         },
 
         Commands::Rules { action } => match action {

@@ -24,6 +24,7 @@ mod review;
 mod rule_authoring;
 mod rules;
 mod rules_query;
+mod source_mgmt;
 mod state;
 mod status;
 mod templates;

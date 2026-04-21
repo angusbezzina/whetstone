@@ -12,7 +12,14 @@ flowchart TD
 
     START([User: run whetstone / extract rules]) --> INIT["wh init --json<br/>Detect manifests<br/>Resolve docs + changelogs<br/>Write extraction-handoff.json"]
 
-    INIT --> EXTRACT["wh extract --json<br/>Walk worklist<br/>Ranked sources + quota<br/>Next dep to extract"]
+    %% Custom source subscriptions (post-3E, whetstone-gpe) — blogs, wikis,
+    %% llms.txt, internal docs. They appear in the extraction worklist
+    %% alongside detected deps.
+    SOURCE_ADD["wh source add &lt;url&gt;<br/>--name / --lang / --kind<br/>--personal (default) or --project<br/>wh source list / remove / fetch"]
+    START -.->|subscribe| SOURCE_ADD
+    SOURCE_ADD --> INIT
+
+    INIT --> EXTRACT["wh extract --json<br/>Walk worklist<br/>Ranked sources + quota<br/>Next dep or custom source"]
 
     EXTRACT --> AGENT_EXTRACT["Agent reads extraction handoff<br/>Reads the top dep's docs<br/>Drafts a bundle YAML"]
 
@@ -67,6 +74,6 @@ flowchart TD
     class INIT,EXTRACT,SUBMIT,APPROVE,VALIDATE,ACTIONS,CHECK,STATUS,REPORT,REINIT,CI binary
     class AGENT_EXTRACT,AGENT_EDIT,AGENT_FIX agent
     class USER user
-    class RULES_QUERY,AUTHOR_SHORT,RULE_EDIT jit
+    class RULES_QUERY,AUTHOR_SHORT,RULE_EDIT,SOURCE_ADD jit
     class FUTURE future
     class START,CI_START start

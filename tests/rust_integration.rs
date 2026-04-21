@@ -498,6 +498,138 @@ fn test_rules_query_full_includes_signals() {
 }
 
 #[test]
+fn test_source_add_list_remove_round_trip() {
+    let tmp = std::env::temp_dir().join(format!("wh_source_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        b"[project]\nname=\"t\"\nversion=\"0.1.0\"\ndependencies=[]\n",
+    )
+    .unwrap();
+
+    // Add a personal source.
+    let (_, _, ok) = run_whetstone(
+        &[
+            "source",
+            "add",
+            "https://blog.example.com/py",
+            "--name",
+            "py-blog",
+            "--lang",
+            "python",
+            "--kind",
+            "blog",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok, "wh source add (personal) must succeed");
+    assert!(tmp.join("whetstone/.personal/config.yaml").exists());
+
+    // Add a project source.
+    let (_, _, ok2) = run_whetstone(
+        &[
+            "source",
+            "add",
+            "https://team.internal/conv",
+            "--project",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok2);
+    assert!(tmp.join("whetstone/whetstone.yaml").exists());
+
+    // List.
+    let (list_out, _, ok3) = run_whetstone(
+        &[
+            "source",
+            "list",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok3);
+    let listed: serde_json::Value = serde_json::from_str(&list_out).unwrap();
+    assert_eq!(listed["total"], 2);
+    assert_eq!(listed["personal"][0]["name"], "py-blog");
+    assert_eq!(listed["project"][0]["url"], "https://team.internal/conv");
+
+    // Duplicate add must refuse.
+    let (_, _, ok_dup) = run_whetstone(
+        &[
+            "source",
+            "add",
+            "https://blog.example.com/py",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(!ok_dup, "duplicate subscription must be refused");
+
+    // Remove by name.
+    let (rm_out, _, ok4) = run_whetstone(
+        &[
+            "source",
+            "remove",
+            "py-blog",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok4);
+    let removed: serde_json::Value = serde_json::from_str(&rm_out).unwrap();
+    assert_eq!(removed["removed_url"], "https://blog.example.com/py");
+
+    // List again: personal empty, project kept.
+    let (list_out2, _, _) = run_whetstone(
+        &[
+            "source",
+            "list",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    let listed2: serde_json::Value = serde_json::from_str(&list_out2).unwrap();
+    assert_eq!(listed2["total"], 1);
+    assert!(listed2["personal"].as_array().unwrap().is_empty());
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_source_add_rejects_bad_url() {
+    let tmp = std::env::temp_dir().join(format!("wh_source_badurl_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let (_, _, ok) = run_whetstone(
+        &[
+            "source",
+            "add",
+            "not-a-url",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(!ok);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
 fn test_personal_only_project_still_gets_adherence_score() {
     // Regression: earlier, `wh rule add --personal` without an explicit init
     // would leave wh status returning adherence_score=null because the

@@ -94,6 +94,29 @@ wh rule edit --all --dep fastapi --category convention --severity must --dry-run
 
 `--project` routes to the committed layer instead of personal. `wh rule edit` refuses candidate rules — approve first (`wh approve <id>`). Delete is `rm whetstone/(.personal/)?rules/<lang>/<dep>.yaml` (no separate command).
 
+## Subscribe to custom sources (blogs, wikis, llms.txt, internal docs)
+
+`wh extract` normally walks dependencies detected from manifests. To extract rules from a blog post, a wiki page, an internal style guide, or a custom `llms.txt` endpoint, subscribe it as a **custom source** — it appears in the extraction worklist alongside detected deps.
+
+```bash
+# Personal subscriptions (gitignored — don't leak to teammates)
+wh source add https://blog.example.com/python-tips --name py-tips --lang python --kind blog
+
+# Team subscriptions (committed)
+wh source add https://internal.wiki/style.md --project --name team-style --kind team_guide
+
+# See what's subscribed (both layers)
+wh source list
+
+# Force re-fetch one source (skip a full wh reinit)
+wh source fetch py-tips
+
+# Unsubscribe (reports any approved rules that cite the source_url)
+wh source remove py-tips
+```
+
+`--kind` is free-form but conventionally one of `blog`, `official_docs`, `team_guide`, `community`, `custom`. `--lang any` (or omitting `--lang`) scopes the source to all languages. After adding, run `wh init` (or `wh source fetch <name>`) to pull the content, then follow the normal `wh extract` → `wh approve` flow. `wh reinit` re-fetches subscribed sources and flags content-hash drift just like it does for detected deps.
+
 ## Roles
 
 The binary does deterministic work. The agent does judgment. The user

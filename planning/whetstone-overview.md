@@ -121,6 +121,7 @@ Everything marked `0.3.0` shipped in the lean refactor. Everything marked `3E` i
 | **JIT rule lookup** | 3E | `wh rules query --file <path>` returns the rules that apply to a file as JSON. Agents call it mid-turn instead of re-scanning AGENTS.md. |
 | **Terse bootstrap + per-language sidecars** | 3E | `wh context --terse` / `wh actions --terse` shrinks AGENTS.md by ~51% on whetstone-self. Per-language `AGENTS.<lang>.md` sidecars (cross-linked) emit automatically when rules span >1 language. |
 | **Personal-taste shortcuts** | 3E | `wh rule add <id> --description ... --match 'regex'` writes directly to `.personal/rules/` as approved. `wh rule edit` bumps severity/confidence (single or bulk via `--all --dep --category`). |
+| **Custom source subscriptions** | post-3E | `wh source add/list/remove/fetch` for blogs, wikis, `llms.txt`, internal docs. Personal (gitignored) by default; `--project` for committed team subscriptions. Subscribed sources flow into the extraction worklist alongside detected deps. Underlying `sources.custom[]` config was 0.3.0; the CLI surface ships in `[Unreleased]`. |
 | **Code-quality scoring** | 3E | `wh status` now returns BOTH `rule_system_score` (rule health) AND `adherence_score` (code quality, hybrid 60% clean-file + 40% severity-weighted). `.metrics.jsonl` captures violation counts per snapshot for trend. |
 | **`wh report`** | 3E | One-page markdown: adherence + top 10 violations + drift + next actions. `--pr-comment` emits PR-friendly markdown with a `<!-- whetstone-report -->` tracking marker. |
 | **Smarter reinit** | 3E | `refresh-diff.json` now carries `re_extraction_candidates` (per-rule, with current severity + source URL) and a canned `extraction_prompt`. Flags both version drift AND content-hash drift (docs rewritten without version bump). |
@@ -223,6 +224,7 @@ The complete canonical surface (no aliases):
 | `wh approve` | Flip candidates to approved. `<rule-id>` or `--all [--dep] [--confidence]`. |
 | `wh rule add <id>` | Personal-taste shortcut. Writes a rule directly (default: `.personal/rules/`). `--match <regex>`, `--severity`, `--category`, `--lang`, `--dep`, `--project`. |
 | `wh rule edit <id> \| --all` | Bumps `--severity` / `--confidence` in place; `--dry-run` to preview. Refuses candidate rules. |
+| `wh source add/list/remove/fetch` | Subscribe to custom rule sources (blogs, wikis, `llms.txt`, internal docs). Default layer: personal (gitignored). `--project` for committed team subscriptions. Subscribed sources appear in the extraction worklist alongside detected deps. |
 | `wh rules query` | JIT rule lookup. Filters: `--file <path>` (infers language), `--lang`, `--dep`, `--severity`, `--personal-only`, `--project-only`, `--full`. Preferred over re-scanning `AGENTS.md` mid-turn. |
 | `wh context` | Agent context files under `whetstone/context/`. `--terse` for one-line-per-rule bootstrap; per-language `AGENTS.<lang>.md` sidecars emit automatically when rules span >1 language. |
 | `wh tests` | Test scaffolds under `whetstone/evals/`. |
