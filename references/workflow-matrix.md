@@ -54,6 +54,7 @@ There are no command aliases as of 0.3.0 — each verb has exactly one name.
 | `wh report` | monitor | project rules, source files, `refresh-diff.json` | — | One-page markdown summary: rule-system + adherence scores, top 10 violations with file/line, drift, next actions. `--pr-comment` emits the PR-friendly flavor with a `<!-- whetstone-report -->` marker. `--json` for structured output. |
 | `wh ci` | monitor (CI) | same as status | — | `--fail-on stale` or `--fail-on needs_review` gates PRs. |
 | `wh update` | — | — | replaces the binary | Self-update from GitHub Releases. Never touches rules. |
+| `wh tui` (or bare `wh` on TTY) | inspect / navigate | project rules, `.state/*`, `.metrics.jsonl` | — | Interactive dashboard (Epic 4A). `1`–`7` switch screens, `R` refresh, `?` help, `Q` quit. Current shipped screens: Dashboard + Help; Rules / Sources / Extract / Check / Report / Drift are stubbed. |
 
 > All commands accept `--json` (auto-enabled when piped). Project-scoped
 > commands accept `--project-dir` (default: `.`). Human-readable progress goes

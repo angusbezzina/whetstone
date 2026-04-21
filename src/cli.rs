@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::{
     approve, check, ci_check, config, detect, doctor, extract, gen, generate_context,
     generate_lint, generate_tests, output, personal, report, resolve, review, rule_authoring,
-    rules, rules_query, source_mgmt, status, triggers, update, worklist,
+    rules, rules_query, source_mgmt, status, triggers, tui, update, worklist,
 };
 
 // TODO(whetstone-aww): reinstate patterns
@@ -21,8 +21,12 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Project root directory (only used when no subcommand is given — launches TUI)
+    #[arg(long, default_value = ".")]
+    project_dir: PathBuf,
+
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -639,6 +643,14 @@ enum Commands {
         action: SourceAction,
     },
 
+    /// Launch the interactive TUI dashboard (Epic 4A)
+    #[command(name = "tui")]
+    Tui {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+
     /// One-page report: adherence score, top violations, drift, next actions
     #[command(name = "report")]
     Report {
@@ -667,7 +679,29 @@ pub fn run() -> i32 {
     let cli = Cli::parse();
     let json_mode = cli.json || output::is_piped();
 
-    match cli.command {
+    // Bare `wh` on a TTY → launch the interactive TUI dashboard.
+    // Bare `wh` piped or redirected → print help (so scripts don't hang).
+    let command = match cli.command {
+        Some(c) => c,
+        None => {
+            if tui::stdout_is_tty() && !json_mode {
+                return match tui::run(&cli.project_dir) {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("whetstone: tui exited with error: {e}");
+                        1
+                    }
+                };
+            } else {
+                use clap::CommandFactory;
+                let _ = Cli::command().print_help();
+                println!();
+                return 0;
+            }
+        }
+    };
+
+    match command {
         Commands::Init {
             project_dir,
             detect_only,
@@ -1841,6 +1875,14 @@ pub fn run() -> i32 {
                 }
             }
         }
+
+        Commands::Tui { project_dir } => match tui::run(&project_dir) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("whetstone: tui exited with error: {e}");
+                1
+            }
+        },
 
         Commands::Update { check, force } => match update::check_and_update(force, check) {
             Ok(result) => {
