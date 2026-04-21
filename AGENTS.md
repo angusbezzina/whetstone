@@ -170,12 +170,13 @@ rules:
 
 ## Gates Must Pass Locally Before Every Push
 
-**Non-negotiable.** CI mirrors these five gates exactly. If any fails locally, CI will fail too — fix before pushing, do not push hoping to fix on CI. This has happened before; it wastes team time.
+**Non-negotiable.** CI mirrors these six gates exactly. If any fails locally, CI will fail too — fix before pushing, do not push hoping to fix on CI. This has happened before; it wastes team time.
 
 ```bash
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
+python3 -m ruff format --check scripts/ tests/
 cargo run --quiet --release -- validate
 python3 -m pytest -q
 ```

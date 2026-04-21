@@ -150,11 +150,12 @@ When ending a work session, complete ALL steps. Work is NOT complete until `git 
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
+python3 -m ruff format --check scripts/ tests/
 cargo run --quiet --release -- validate
 python3 -m pytest -q
 ```
 
-This repo ships a pre-push hook at `.githooks/pre-push` that runs all five gates and aborts the push on any failure. **Before your first push in any session, verify the hook is wired up** — `core.hooksPath` must be `.githooks`, and the hook must be executable.
+This repo ships a pre-push hook at `.githooks/pre-push` that runs all six gates and aborts the push on any failure. **Before your first push in any session, verify the hook is wired up** — `core.hooksPath` must be `.githooks`, and the hook must be executable.
 
 ### Preflight (run at the start of any coding session)
 
