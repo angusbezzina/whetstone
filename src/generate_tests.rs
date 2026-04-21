@@ -337,7 +337,7 @@ fn write_generated(path: &Path, content: &str, dry_run: bool) -> bool {
 }
 
 fn normalize_trailing_newline(content: &str) -> String {
-    let trimmed = content.trim_end_matches(|c: char| c == '\n' || c == '\r');
+    let trimmed = content.trim_end_matches(['\n', '\r']);
     let mut out = String::with_capacity(trimmed.len() + 1);
     out.push_str(trimmed);
     out.push('\n');
