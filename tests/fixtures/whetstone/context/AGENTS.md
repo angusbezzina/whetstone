@@ -10,10 +10,65 @@ These rules are extracted from dependency documentation by Whetstone. Follow the
 
 ## Do
 
-- **[must] fastapi.async-routes** — Route handlers MUST use async def. ([source](https://fastapi.tiangolo.com/async/))
-- **[should] react.use-client-directive** — Components using hooks or browser APIs should include the 'use client' directive. ([source](https://react.dev/reference/rsc/use-client))
+### fastapi.async-routes (must)
 
-For full rule details (signals, examples), run `wh rules query --file <path> --full`.
+Route handlers MUST use async def.
+
+
+**Good:**
+```
+@app.get("/users")
+async def get_users(): ...
+
+```
+```
+@app.post("/items")
+async def create_item(item: Item): ...
+
+```
+
+**Bad:**
+```
+@app.get("/users")
+def get_users(): ...
+
+```
+
+Source: https://fastapi.tiangolo.com/async/
+
+### react.use-client-directive (should)
+
+Components using hooks or browser APIs should include the 'use client' directive.
+
+
+**Good:**
+```
+'use client';
+import { useState } from 'react';
+export function Counter() {
+  const [count, setCount] = useState(0);
+  return <button onClick={() => setCount(c => c + 1)}>{count}</button>;
+}
+
+```
+```
+export function ServerComponent({ data }) {
+  return <div>{data.title}</div>;
+}
+
+```
+
+**Bad:**
+```
+import { useState } from 'react';
+export function Counter() {
+  const [count, setCount] = useState(0);
+  return <button onClick={() => setCount(c => c + 1)}>{count}</button>;
+}
+
+```
+
+Source: https://react.dev/reference/rsc/use-client
 
 ---
 

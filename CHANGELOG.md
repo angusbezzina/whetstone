@@ -4,7 +4,11 @@ All notable changes to Whetstone are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-04-21
+
+Epic 3E — Active Whetstone. The goal-review on 2026-04-20 identified four architectural gaps that kept Whetstone from answering "is my code in good shape?" as well as it answered "are my rules in good shape?". This release closes those gaps: agents can query rules on demand (no more pre-loading), `wh status` returns a true code-quality score, adding a personal preference takes one command, subscribing to a blog / wiki / internal doc takes one command, and `wh reinit` surfaces per-rule re-extraction candidates instead of a flat dep list.
+
+**Acceptance deltas from Epic 3E measurement gate (all met):** session token cost −51.5%; time-to-add-personal-preference ~10 s (from 3–5 min); single-command code-quality answer via `wh status.adherence_score`; `wh status` runtime 15.7 ms on whetstone-self.
 
 ### Added
 - **`wh rules query`** — JIT rule lookup. Filters by `--file`, `--lang`, `--dep`, `--severity`, `--personal-only` / `--project-only`, with `--full` to include signals and golden examples. Agents should prefer this mid-turn over re-scanning `AGENTS.md`. First deliverable of Epic 3E (whetstone-n34), theme A.
@@ -22,9 +26,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Content-hash drift detection in `wh reinit`** — deps whose manifest version hasn't bumped but whose documentation content has now appear in `refresh-diff.json` with `drift_type: content_hash`. Enabled by default; no flag needed since `wh reinit` already re-fetches all deps. Closes `whetstone-nuh`.
 - **`wh source add / list / remove / fetch`** — CLI surface for custom rule sources. Previously the underlying `sources.custom[]` field existed in `whetstone.yaml` and `whetstone/.personal/config.yaml` but had no UX — users had to hand-author YAML. Now: `wh source add https://blog.example.com/py --name py-tips --lang python --kind blog` subscribes (personal by default, `--project` for committed). `wh source remove` reports any approved rules citing the removed URL. `wh source fetch <name>` force re-fetches a single source. `wh source list` shows both layers. Closes `whetstone-gpe`.
 - Baseline measurement harness at `scripts/measure-epic-3e.sh` and log at `planning/measurements/epic-3e-baseline.md` (closes `whetstone-piy`).
+- **6-gate pre-push hook** — `.githooks/pre-push` now also runs `ruff format --check` (step 4 of 6), matching CI exactly. Previously the hook ran only `ruff check` which missed formatting drift. Install via `git config core.hooksPath .githooks && chmod +x .githooks/pre-push`.
+- **Format-validation tests** (`whetstone-2r9`) — snapshot tests lock the minimum required markers in all 6 context formats (agents.md, claude.md, .cursorrules, copilot-instructions.md, .windsurfrules, codex.md) so a silent tool-parser divergence is caught pre-push.
 
 ### Fixed
-- Generated Python eval scaffolds no longer emit unused `import re` (emitted only when a rule signal has a `match:` pattern) or unused `import glob` in conftest.
+- Personal-only projects (created via `wh rule add --personal` without explicit `wh init`) now score and scan correctly. Previously the "is the project initialized?" gate in `wh status` / `wh check` / `wh context` only looked for `whetstone.yaml` and missed the `.personal/rules/` directory. New shared `crate::layers::project_is_initialized` helper handles both.
+- Generated Python eval scaffolds no longer emit unused `import re` (emitted only when a rule signal has a `match:` pattern) or unused `import glob` in conftest. Tera's trailing-blank-line artifacts are stripped before writing so `ruff format --check` stays green on regenerated fixtures.
 
 ## [0.3.0] - 2026-04-20
 
@@ -247,6 +254,7 @@ no Python runtime dependency.
 - **Release workflow** building Linux and macOS binaries for x86_64 and
   aarch64 with cross-compilation support.
 
+[0.4.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.4.0
 [0.3.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.3.0
 [0.1.2]: https://github.com/angusbezzina/whetstone/releases/tag/v0.1.2
 [0.1.1]: https://github.com/angusbezzina/whetstone/releases/tag/v0.1.1
