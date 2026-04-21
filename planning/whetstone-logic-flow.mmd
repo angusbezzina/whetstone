@@ -1,69 +1,75 @@
 %%{ init: { "theme": "base", "themeVariables": { "fontSize": "14px" } } }%%
 flowchart TD
-    %% ═══════════════════════════════════════
-    %% WHETSTONE — LOGIC FLOW (post Epic 3E, [Unreleased] → 0.4.0)
+    %% ═══════════════════════════════════════════════════════════════════
+    %% WHETSTONE — logic flow
+    %% Last updated: 2026-04-21  (state of `main` with [Unreleased] → 0.4.0)
     %%
-    %% Green  = Binary (shipped deterministic commands)
-    %% Orange = Agent  (judgment via SKILL.md)
-    %% Blue   = User   (approval / preference decisions)
-    %% Purple = JIT side-channel + authoring shortcuts (Epic 3E)
-    %% Grey   = Deferred / future
-    %% ═══════════════════════════════════════
+    %% Legend:
+    %%   Amber  = entry point
+    %%   Green  = Binary  (shipped deterministic commands)
+    %%   Orange = Agent   (judgment via SKILL.md)
+    %%   Blue   = User    (approval / preference decisions)
+    %%   Purple = Authoring shortcut / source subscription / JIT lookup
+    %%   Grey   = Deferred / future
+    %% ═══════════════════════════════════════════════════════════════════
 
-    START([User: run whetstone / extract rules]) --> INIT["wh init --json<br/>Detect manifests<br/>Resolve docs + changelogs<br/>Write extraction-handoff.json"]
+    START([User: run whetstone])
 
-    %% Custom source subscriptions (post-3E, whetstone-gpe) — blogs, wikis,
-    %% llms.txt, internal docs. They appear in the extraction worklist
-    %% alongside detected deps.
-    SOURCE_ADD["wh source add &lt;url&gt;<br/>--name / --lang / --kind<br/>--personal (default) or --project<br/>wh source list / remove / fetch"]
-    START -.->|subscribe| SOURCE_ADD
+    %% ─── Source subscriptions (optional, before bootstrap) ──────────────
+    SOURCE_ADD["wh source add &lt;url&gt;<br/>--name / --lang / --kind<br/>--personal (default) | --project"]
+    SOURCE_OPS["wh source list<br/>wh source fetch &lt;name&gt;<br/>wh source remove &lt;target&gt;"]
+    START -.->|subscribe a blog / wiki /<br/>llms.txt / internal doc| SOURCE_ADD
     SOURCE_ADD --> INIT
+    SOURCE_OPS -.-> INIT
 
-    INIT --> EXTRACT["wh extract --json<br/>Walk worklist<br/>Ranked sources + quota<br/>Next dep or custom source"]
-
-    EXTRACT --> AGENT_EXTRACT["Agent reads extraction handoff<br/>Reads the top dep's docs<br/>Drafts a bundle YAML"]
-
-    AGENT_EXTRACT --> SUBMIT["wh extract submit &lt;bundle.yaml&gt;<br/>Validate ids, write status: candidate<br/>whetstone/rules/&lt;lang&gt;/&lt;dep&gt;.yaml"]
-
-    %% Authoring shortcut (Epic 3E) — skips extract/submit for personal prefs
+    %% ─── Personal-taste authoring shortcut (bypasses extract/submit/approve) ──
     AUTHOR_SHORT["wh rule add &lt;id&gt;<br/>--description / --match / --lang<br/>Writes .personal/rules/ as APPROVED"]
-    START -.->|personal taste| AUTHOR_SHORT
+    START -.->|I already know the rule| AUTHOR_SHORT
     AUTHOR_SHORT --> ACTIONS
 
-    SUBMIT --> USER{"User reviews<br/>candidate set"}
+    %% ─── Primary loop: bootstrap → extract → approve → generate → verify → monitor → maintain ──
+    START --> INIT["wh init<br/>Detect manifests<br/>Resolve dep docs + changelogs<br/>Fetch subscribed sources<br/>Write extraction-handoff.json"]
 
-    USER -->|wh approve --all| APPROVE["wh approve<br/>Flip candidate → approved<br/>Single id or batch filters"]
-    USER -->|Edit bundle| AGENT_EDIT["Agent edits bundle"] --> SUBMIT
-    USER -.->|mature taste: bump severity| RULE_EDIT["wh rule edit &lt;id&gt; --severity must<br/>or --all --dep X --severity must<br/>(--dry-run supported)"]
+    INIT --> EXTRACT["wh extract<br/>Walk worklist<br/>Next dep or custom source<br/>Ranked sections + quota"]
+    EXTRACT --> AGENT_EXTRACT["Agent reads the handoff<br/>Reads the dep's docs<br/>Drafts a candidate bundle YAML"]
+    AGENT_EXTRACT --> SUBMIT["wh extract submit &lt;bundle.yaml&gt;<br/>Validate ids, write status: candidate<br/>whetstone/rules/&lt;lang&gt;/&lt;dep&gt;.yaml"]
+
+    SUBMIT --> USER{"User reviews<br/>candidate set"}
+    USER -->|wh approve --all<br/>or wh approve &lt;id&gt;| APPROVE["wh approve<br/>candidate → approved<br/>Single id or batch filter"]
+    USER -->|edit and resubmit| AGENT_EDIT["Agent edits bundle"]
+    AGENT_EDIT --> SUBMIT
+    USER -.->|already approved —<br/>bump severity| RULE_EDIT["wh rule edit &lt;id&gt; --severity must<br/>or --all --dep X --category Y<br/>--dry-run supported"]
     RULE_EDIT --> APPROVE
 
-    APPROVE --> VALIDATE["wh validate --json<br/>Schema + fixture checks"]
-    VALIDATE -->|Fix issues| AGENT_FIX["Agent fixes YAML"] --> VALIDATE
-    VALIDATE --> ACTIONS["wh actions [--terse]<br/>wh context → AGENTS.md + AGENTS.&lt;lang&gt;.md sidecars<br/>wh tests → evals/<br/>wh lint → lint/"]
+    APPROVE --> VALIDATE["wh validate<br/>Schema + fixture checks"]
+    VALIDATE -->|fix issues| AGENT_FIX["Agent fixes YAML"]
+    AGENT_FIX --> VALIDATE
+    VALIDATE --> ACTIONS["wh actions [--terse]<br/>wh context → AGENTS.md + AGENTS.&lt;lang&gt;.md sidecars<br/>wh tests   → pytest / vitest / cargo test<br/>wh lint    → ruff / biome / clippy overlays"]
 
-    ACTIONS --> CHECK["wh check src/<br/>Tree-sitter AST queries<br/>AST-scoped regex checks<br/>lint_proxy config verification"]
-    CHECK --> STATUS["wh status --json<br/>rule_system_score + adherence_score<br/>violation trend in .metrics.jsonl"]
-    STATUS --> REPORT["wh report [--pr-comment]<br/>One-page markdown narrative<br/>Adherence + top 10 violations + next actions"]
+    ACTIONS --> CHECK["wh check src/<br/>Tree-sitter AST queries<br/>AST-scoped regex<br/>lint_proxy verification"]
+    CHECK --> STATUS["wh status<br/>rule_system_score + adherence_score<br/>Violation trend in .metrics.jsonl"]
+    STATUS --> REPORT["wh report [--pr-comment] [--json]<br/>One-page markdown narrative<br/>Top 10 violations + next actions"]
     REPORT --> DONE([Done: rules enforced, agents informed, repo scored])
 
-    %% JIT side-channel (Epic 3E) — agents prefer this over re-scanning AGENTS.md
+    %% ─── JIT side-channel (any time — especially during AGENT_EXTRACT) ──
     RULES_QUERY["wh rules query --file &lt;path&gt;<br/>Filters: --lang / --dep / --severity / --full<br/>JSON envelope: { total, filters, rules[] }"]
-    AGENT_EXTRACT -.-> RULES_QUERY
-    RULES_QUERY -.-> AGENT_EXTRACT
+    AGENT_EXTRACT -.->|what rules apply here?| RULES_QUERY
+    RULES_QUERY -.->|filtered rule set| AGENT_EXTRACT
 
-    %% Refresh loop — now carries per-rule candidates + canned prompt
-    STATUS -.->|Dependency drift| REINIT["wh reinit --json<br/>Re-resolve changed sources<br/>Detect VERSION + CONTENT-HASH drift<br/>Write refresh-diff.json with<br/>re_extraction_candidates + extraction_prompt"]
+    %% ─── Maintenance loop ──────────────────────────────────────────────
+    STATUS -.->|version or content-hash drift| REINIT["wh reinit<br/>Re-resolve changed deps<br/>Detect VERSION + CONTENT-HASH drift<br/>Write refresh-diff.json with<br/>re_extraction_candidates + extraction_prompt"]
     REINIT --> EXTRACT
 
-    %% CI path
-    CI_START([CI pipeline]) --> CI["wh ci --fail-on stale<br/>Freshness gate<br/>Optional PR comment"]
+    %% ─── CI path ───────────────────────────────────────────────────────
+    CI_START([CI pipeline])
+    CI_START --> CI["wh ci --fail-on stale<br/>Freshness gate<br/>Optional PR comment"]
     CI --> CHECK
     CI_START -.->|per-PR summary| REPORT
 
-    %% Deferred / future
-    DONE -.-> FUTURE["Deferred in 0.3.0 lean refactor:<br/>• wh bench / wh eval / wh patterns<br/>• wh propose / wh apply (replaced by extract submit + approve)<br/>• wh promote / wh layers (merge collapsed to personal + project)<br/>• wh config show/validate<br/>• Team extends, built-in rules layer<br/>• MCP server, shared rule registry (Epic 4)"]
+    %% ─── Deferred / future ─────────────────────────────────────────────
+    DONE -.-> FUTURE["Deferred in 0.3.0 lean refactor:<br/>• wh bench / wh eval / wh patterns<br/>• wh propose / wh apply (→ extract submit + approve)<br/>• wh promote / wh layers (2-layer merge instead)<br/>• wh config show / validate (inspector deferred)<br/>• Team extends:, built-in rules layer<br/>• MCP server, shared rule registry (Epic 4)"]
 
-    %% Styling
+    %% ─── Styling ───────────────────────────────────────────────────────
     classDef binary fill:#2d6a4f,color:#fff,stroke:#1b4332
     classDef agent fill:#e76f51,color:#fff,stroke:#c1440e
     classDef user fill:#264653,color:#fff,stroke:#f1faee
@@ -74,6 +80,6 @@ flowchart TD
     class INIT,EXTRACT,SUBMIT,APPROVE,VALIDATE,ACTIONS,CHECK,STATUS,REPORT,REINIT,CI binary
     class AGENT_EXTRACT,AGENT_EDIT,AGENT_FIX agent
     class USER user
-    class RULES_QUERY,AUTHOR_SHORT,RULE_EDIT,SOURCE_ADD jit
+    class SOURCE_ADD,SOURCE_OPS,AUTHOR_SHORT,RULE_EDIT,RULES_QUERY jit
     class FUTURE future
-    class START,CI_START start
+    class START,CI_START,DONE start
