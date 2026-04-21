@@ -1,6 +1,6 @@
 # Whetstone Overview
 
-> Last updated: 2026-04-20 | Version: 0.3.0
+> Last updated: 2026-04-21 | Version: 0.3.0 + `[Unreleased]` (Epic 3E — queued for 0.4.0)
 > Related reading: [`SKILL.md`](../SKILL.md) · [`references/workflow-matrix.md`](../references/workflow-matrix.md) · [`planning/whetstone-logic-flow.mmd`](./whetstone-logic-flow.mmd)
 
 ---
@@ -36,12 +36,17 @@ The **agent is the LLM.** There is no API key and no LLM client in the binary. W
 │      ... agent reads docs, drafts a candidate bundle YAML ...        │
 │      wh extract submit <bundle.yaml>                                 │
 │      → rules/<lang>/<dep>.yaml  (status: candidate)                  │
+│                                                                      │
+│      Shortcut (personal preferences):                                │
+│        wh rule add <id> --description ... --match 'regex'            │
+│        → writes directly to .personal/rules/, status: approved       │
 └────────────────────────┬────────────────────────────────────────────┘
                          ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  3.  APPROVE                                      [Agent + User]     │
 │      wh approve <rule-id>                                            │
 │      wh approve --all [--dep X] [--confidence high]                  │
+│      wh rule edit <id> --severity must      (bump as taste matures)  │
 │      → status: candidate → approved                                  │
 │      (Denial = delete the rule file. No separate deny command.)      │
 └────────────────────────┬────────────────────────────────────────────┘
@@ -49,7 +54,8 @@ The **agent is the LLM.** There is no API key and no LLM client in the binary. W
 ┌─────────────────────────────────────────────────────────────────────┐
 │  4.  GENERATE                                     [Binary]           │
 │      wh actions        (chains: wh context + wh tests + wh lint)     │
-│      → whetstone/context/   AGENTS.md, CLAUDE.md, .cursorrules, …    │
+│        --terse         (one-line-per-rule bootstrap, −50% tokens)    │
+│      → whetstone/context/   AGENTS.md + AGENTS.<lang>.md sidecars    │
 │      → whetstone/evals/     pytest / vitest / cargo test scaffolds   │
 │      → whetstone/lint/      ruff / biome / clippy overlays           │
 └────────────────────────┬────────────────────────────────────────────┘
@@ -64,82 +70,100 @@ The **agent is the LLM.** There is no API key and no LLM client in the binary. W
                          ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  6.  MONITOR                                      [Binary]           │
-│      wh status        (health score 0–100, freshness, drift)         │
-│      wh ci            (CI freshness gate with optional PR comment)   │
+│      wh status   → rule_system_score + adherence_score + trend       │
+│      wh report   → one-page markdown (PR-comment-friendly)           │
+│      wh ci       → CI freshness gate                                 │
 └────────────────────────┬────────────────────────────────────────────┘
                          ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  7.  MAINTAIN                                     [Binary]           │
-│      wh reinit        (re-resolve only changed deps)                 │
-│      → .state/refresh-diff.json                                      │
+│      wh reinit        (re-resolve changed deps — version + content)  │
+│      → .state/refresh-diff.json  (re_extraction_candidates + prompt) │
 │      Loop back to step 2 when drift is detected.                     │
 └─────────────────────────────────────────────────────────────────────┘
+
+╔═══════════════════════════════════════════════════════════════════╗
+║  JIT side-channel (any step):                                      ║
+║    wh rules query --file <path> [--severity must] [--json]         ║
+║  Agents should prefer this over re-reading AGENTS.md mid-turn.     ║
+╚═══════════════════════════════════════════════════════════════════╝
 ```
 
 The mermaid version — including the CI path and the agent's in-context work between calls — lives at [`planning/whetstone-logic-flow.mmd`](./whetstone-logic-flow.mmd).
 
 ---
 
-## What ships today (0.3.0)
+## What ships today (0.3.0 + `[Unreleased]`)
 
-| Module | Status | Notes |
-|--------|--------|-------|
-| Dependency detection | Production-quality | 3 languages · 4 manifest formats · monorepo-aware · incremental. `wh init --detect-only` for scan-only mode. |
-| Source resolution | Production-quality | Parallel (rayon) · cached (7-day TTL) · resumable · crash-safe. |
-| `wh init` bootstrap | Production-quality | Fast-first strategy · dependency ranking · readiness buckets · explicit handoff artifact. |
-| State management | Solid | `extraction-handoff.json`, `refresh-diff.json`, `manifests.json`, `inventory.json`, `source-cache.json`, `metrics.jsonl`. Atomic writes. |
-| Rule schema + validation | Complete | Two statuses (`candidate`, `approved`); mandatory deterministic signal; golden-example checks. |
-| Extract + approve | Implemented | `wh extract` prints the next worklist dep; `wh extract submit <bundle>` writes candidates (refuses id collisions); `wh approve` flips single or batch. |
-| Agent context generation | Implemented | 6 formats via `wh context` — agents.md, claude.md, .cursorrules, copilot, windsurf, codex. |
-| Test generation | Implemented | Tera templates → pytest / vitest / cargo test. `match` regex signals produce real checks; absent `match` becomes TODO stubs. |
-| Lint overlay generation | Implemented | `wh lint` emits `ruff.whetstone.toml`, `biome.whetstone.json`, `clippy.whetstone.toml`. |
-| `wh actions` chain | Implemented | Runs context + tests + lint sequentially, fails fast on first error. |
-| Deterministic enforcement | Implemented | `wh check` — tree-sitter `ast_query` / `ast_scope` + regex + lint-proxy verification. |
-| Rule review (read-only) | Implemented | `wh review [--status]`, `wh review show <id>`, `wh review worklist`. |
-| Status + CI gate | Implemented | `wh status` score 0–100 with drift detection; `wh ci --fail-on stale` for CI. |
-| Refresh flow | Implemented | `wh reinit` / `wh reinit --check`; diff at `.state/refresh-diff.json`. |
-| Two-layer merge | Implemented | Personal (gitignored) + project (committed). `wh init --personal` scaffolds the personal tree. |
-| Custom sources | Implemented | Arbitrary URLs declared in `whetstone.yaml`. |
-| Triggers | Implemented | `wh init --hooks` installs session + post-merge hooks; `wh init --ci --schedule=<cadence>` writes the CI workflow. |
-| Binary distribution | Shipped | GitHub Releases · `install.sh` · `wh` alias · `wh update` self-update. |
-| Pre-push hook | Shipped | `.githooks/pre-push` runs all 5 gates (clippy · cargo test · ruff · validate · pytest) before any push. |
+Everything marked `0.3.0` shipped in the lean refactor. Everything marked `3E` is merged to `main` in `[Unreleased]` and queued for 0.4.0.
+
+| Module | Ship | Notes |
+|--------|------|-------|
+| Dependency detection | 0.3.0 | 3 languages · 4 manifest formats · monorepo-aware · incremental. `wh init --detect-only` for scan-only mode. |
+| Source resolution | 0.3.0 | Parallel (rayon) · cached (7-day TTL) · resumable · crash-safe. |
+| `wh init` bootstrap | 0.3.0 | Fast-first strategy · dependency ranking · readiness buckets · explicit handoff artifact. |
+| State management | 0.3.0 | `extraction-handoff.json`, `refresh-diff.json`, `manifests.json`, `inventory.json`, `source-cache.json`, `metrics.jsonl`. Atomic writes. |
+| Rule schema + validation | 0.3.0 | Two statuses (`candidate`, `approved`); mandatory deterministic signal; golden-example checks. |
+| Extract + approve | 0.3.0 | `wh extract` prints the next worklist dep; `wh extract submit <bundle>` writes candidates (refuses id collisions); `wh approve` flips single or batch. |
+| Agent context generation | 0.3.0 | 6 formats via `wh context` — agents.md, claude.md, .cursorrules, copilot, windsurf, codex. |
+| Test generation | 0.3.0 | Tera templates → pytest / vitest / cargo test. `match` regex signals produce real checks; absent `match` becomes TODO stubs. |
+| Lint overlay generation | 0.3.0 | `wh lint` emits `ruff.whetstone.toml`, `biome.whetstone.json`, `clippy.whetstone.toml`. |
+| `wh actions` chain | 0.3.0 | Runs context + tests + lint sequentially, fails fast on first error. |
+| Deterministic enforcement | 0.3.0 | `wh check` — tree-sitter `ast_query` / `ast_scope` + regex + lint-proxy verification. |
+| Rule review (read-only) | 0.3.0 | `wh review [--status]`, `wh review show <id>`, `wh review worklist`. |
+| Status + CI gate | 0.3.0 | `wh status` (rule-system score) + `wh ci --fail-on stale`. |
+| Refresh flow | 0.3.0 | `wh reinit` / `wh reinit --check`; diff at `.state/refresh-diff.json`. |
+| Two-layer merge | 0.3.0 | Personal (gitignored) + project (committed). `wh init --personal` scaffolds the personal tree. |
+| Custom sources | 0.3.0 | Arbitrary URLs declared in `whetstone.yaml`. |
+| Triggers | 0.3.0 | `wh init --hooks` installs session + post-merge hooks; `wh init --ci --schedule=<cadence>` writes the CI workflow. |
+| Binary distribution | 0.3.0 | GitHub Releases · `install.sh` · `wh` alias · `wh update` self-update. |
+| Pre-push hook | 0.3.0 | `.githooks/pre-push` runs all 5 gates (clippy · cargo test · ruff · validate · pytest) before any push. |
+| **JIT rule lookup** | 3E | `wh rules query --file <path>` returns the rules that apply to a file as JSON. Agents call it mid-turn instead of re-scanning AGENTS.md. |
+| **Terse bootstrap + per-language sidecars** | 3E | `wh context --terse` / `wh actions --terse` shrinks AGENTS.md by ~51% on whetstone-self. Per-language `AGENTS.<lang>.md` sidecars (cross-linked) emit automatically when rules span >1 language. |
+| **Personal-taste shortcuts** | 3E | `wh rule add <id> --description ... --match 'regex'` writes directly to `.personal/rules/` as approved. `wh rule edit` bumps severity/confidence (single or bulk via `--all --dep --category`). |
+| **Code-quality scoring** | 3E | `wh status` now returns BOTH `rule_system_score` (rule health) AND `adherence_score` (code quality, hybrid 60% clean-file + 40% severity-weighted). `.metrics.jsonl` captures violation counts per snapshot for trend. |
+| **`wh report`** | 3E | One-page markdown: adherence + top 10 violations + drift + next actions. `--pr-comment` emits PR-friendly markdown with a `<!-- whetstone-report -->` tracking marker. |
+| **Smarter reinit** | 3E | `refresh-diff.json` now carries `re_extraction_candidates` (per-rule, with current severity + source URL) and a canned `extraction_prompt`. Flags both version drift AND content-hash drift (docs rewritten without version bump). |
+| **Format-validation tests** | 3E | Snapshot tests lock the minimum required markers in all 6 context formats so silent tool-parser divergence is caught pre-push. |
+| **Measurement harness** | 3E | `scripts/measure-epic-3e.sh` + `planning/measurements/epic-3e-baseline.md` record token cost, runtime, and the epic acceptance deltas. |
 
 ---
 
 ## Where we're headed
 
+### Recently shipped
+
+#### Epic 3E: Active Whetstone — CLOSED 2026-04-20
+
+> **Tracked as:** `whetstone-n34` | **Status:** Closed · 14/14 children + acceptance gate met
+
+Identified four architectural gaps that kept Whetstone from answering "is my code in good shape?" as well as it answers "are my rules in good shape?". Landed as nine commits on `main` (currently `[Unreleased]` on track to ship in 0.4.0).
+
+| Theme | Shipped |
+|-------|---------|
+| **A. Architecture — JIT consumption** | `wh rules query` · `wh context --terse` · per-language AGENTS sidecars |
+| **B. Observability — project scoring** | `adherence_score` in `wh status` · violation-trend in `.metrics.jsonl` · `wh report` narrative |
+| **C. Authoring — taste shortcuts** | `wh rule add` · `wh rule edit` (single + bulk) |
+| **D. Maintenance — drift + hand-off** | `re_extraction_candidates` + canned `extraction_prompt` in `refresh-diff.json` · content-hash drift detection |
+| **Measurement** | `scripts/measure-epic-3e.sh` + `planning/measurements/epic-3e-baseline.md` |
+
+**Acceptance deltas achieved:**
+
+- Session token cost: **−51.5%** on whetstone-self (target was ≥−40%).
+- Time-to-add-personal-preference: **~10 s** via `wh rule add` (down from ~3–5 min).
+- Repo-health in one command with a code-quality number: **`wh status.adherence_score`** + `wh report` narrative.
+- `wh status` runtime: **15.7 ms** on whetstone-self (target ≤200 ms).
+
+Dogfooding: whetstone-self was the target throughout. External-repo dogfood is a post-epic user task.
+
 ### Near-term
-
-#### Epic 3E: Active Whetstone
-
-> **Tracked as:** `whetstone-n34` | **Status:** Open · 14 children + measurement gate
-
-The goal-review on 2026-04-20 identified four architectural gaps that keep Whetstone from answering "is my code in good shape?" as well as it answers "are my rules in good shape?". Epic 3E closes those gaps with measured outcomes — the epic does not close until token-cost, taste-cycle-time, and repo-scoring deltas hit their targets.
-
-| Theme | Question it answers | Children |
-|-------|---------------------|----------|
-| **A. Architecture — JIT consumption** | Why is the agent loading every rule every session? | `whetstone-80x` (`wh rules query` + SKILL integration — the lever), `whetstone-2gw` (per-language sidecars), `whetstone-ydw` (`--terse` + preamble trim) |
-| **B. Observability — project scoring** | Is my code in good shape? | `whetstone-m3k` (scoring-formula design pass), `whetstone-0m0` (wire `wh check` into `wh status`), `whetstone-90m` (top-line `adherence_score`), `whetstone-m2q` (violation-trend snapshots), `whetstone-hpq` (`wh report` — the narrative) |
-| **C. Authoring — taste shortcuts** | How do I add a personal preference without writing YAML? | `whetstone-9uh` (`wh rule add --personal`), `whetstone-5eb` (`wh rule edit` bulk mutations) |
-| **D. Maintenance — drift + hand-off** | How do I keep rules current as docs evolve? | `whetstone-jrs` (auto-extract on reinit), `whetstone-awj` (redesigned — reinit emits re_extraction_candidates, no grep heuristic), `whetstone-nuh` (content-hash drift — `wh reinit --deep-drift`) |
-| **Cross-cutting — measurement** | Did the epic actually move the needle? | `whetstone-piy` (baseline + delta targets; epic acceptance gate) |
-
-**Acceptance gate (epic closes when all are true):**
-
-1. All 14 child beads closed.
-2. Measurement deltas from `whetstone-piy` hit: session token cost down ≥40%, time-to-add-preference down ≥60%, repo-health in a single command with a code-quality number.
-3. Epic 3E landed successfully against Whetstone itself + 1 external repo (dogfood gate).
-
-Run `bd show whetstone-n34` for the live dependency graph.
-
-#### Other near-term items
 
 | Item | Status | Tracking |
 |------|--------|----------|
-| **`wh patterns` reinstatement** | Source commented-out at `src/detect_patterns.rs`; mod decl and CLI variant commented with `TODO(whetstone-aww)` markers. Reinstate when there's a clear use case. | `whetstone-e2r` |
-| **Format-validation tests** | `wh context` emits 6 formats (agents.md, .cursorrules, copilot, windsurf, codex) but zero tests verify they parse in the target tools. Silent divergence risk. | `whetstone-2r9` |
+| **`wh patterns` reinstatement** | Source commented-out at `src/detect_patterns.rs`; mod decl and CLI variant commented with `TODO(whetstone-aww)` markers. Reinstate when there's a clear use case. | `whetstone-e2r` (open) |
+| **0.4.0 release** | Epic 3E is in `[Unreleased]`. Cut the tag, bump `Cargo.toml`, rebuild release binaries, update Homebrew. | TBD |
 | **Config depth** | Only discovery + formats knobs are surfaced today. Extract timeouts, extraction settings, and resolve tuning live in code but aren't user-configurable. | TBD |
-| **Deferred overview content cleanup** | Archived planning docs (epic retros, dogfood logs) still carry pre-0.3 command names in narrative form. Not harmful; will be pruned when touched. | TBD |
+| **Archived planning cleanup** | `planning/archive/` docs still carry pre-0.3 command names. Not harmful; prune when touched. | TBD |
 
 ### Future concerns (not scoped to the lean core)
 
@@ -193,17 +217,21 @@ The complete canonical surface (no aliases):
 | Command | What it returns |
 |---------|----------------|
 | `wh init` | Bootstrap: deps detected, sources resolved, extraction handoff written. `--detect-only` for scan only. `--personal` / `--hooks` / `--ci` for setup side-tasks. |
-| `wh reinit` | Drift summary; rewrites `whetstone/.state/refresh-diff.json`. `--check` exits non-zero on drift. |
+| `wh reinit` | Drift summary (version + content-hash); rewrites `refresh-diff.json` with `re_extraction_candidates` + canned `extraction_prompt`. `--check` exits non-zero on drift. |
 | `wh set-sources` | Resolution results (lower-level slice of init). |
 | `wh extract` | Top worklist dep + ranked sources + quota. `wh extract submit <bundle>` writes candidates. |
 | `wh approve` | Flip candidates to approved. `<rule-id>` or `--all [--dep] [--confidence]`. |
-| `wh context` | Agent context files under `whetstone/context/`. |
+| `wh rule add <id>` | Personal-taste shortcut. Writes a rule directly (default: `.personal/rules/`). `--match <regex>`, `--severity`, `--category`, `--lang`, `--dep`, `--project`. |
+| `wh rule edit <id> \| --all` | Bumps `--severity` / `--confidence` in place; `--dry-run` to preview. Refuses candidate rules. |
+| `wh rules query` | JIT rule lookup. Filters: `--file <path>` (infers language), `--lang`, `--dep`, `--severity`, `--personal-only`, `--project-only`, `--full`. Preferred over re-scanning `AGENTS.md` mid-turn. |
+| `wh context` | Agent context files under `whetstone/context/`. `--terse` for one-line-per-rule bootstrap; per-language `AGENTS.<lang>.md` sidecars emit automatically when rules span >1 language. |
 | `wh tests` | Test scaffolds under `whetstone/evals/`. |
 | `wh lint` | Linter overlays under `whetstone/lint/`. |
-| `wh actions` | Chains context + tests + lint. |
+| `wh actions` | Chains context + tests + lint. Inherits `--terse` / `--lang` / `--personal`. |
 | `wh check` | Deterministic rule scan (tree-sitter + regex + lint_proxy). |
 | `wh validate` | Schema + fixture validation. |
-| `wh status` | Health score, freshness, drift. |
+| `wh status` | Both `rule_system_score` (rule health) AND `adherence_score` (code quality, hybrid formula). Violation counts + trend snapshot. |
+| `wh report` | One-page markdown: adherence + top 10 violations + drift + next actions. `--pr-comment` for PR-friendly markdown. |
 | `wh ci` | Freshness gate with optional PR comment. |
 | `wh review` | Rule inspection only (`[--status]`, `show <id>`, `worklist`). |
 | `wh update` | Self-update the binary. |
@@ -236,6 +264,9 @@ All commands accept `--json` (auto when piped) and `--project-dir`. Full artifac
 | `references/workflow-matrix.md` | Shipped command matrix with artifact I/O |
 | `references/handoff-schema.md` | `.state/*.json` contracts |
 | `planning/whetstone-logic-flow.mmd` | Visual flow chart (mermaid) |
+| `planning/measurements/epic-3e-baseline.md` | Token/runtime baselines + delta targets for Epic 3E |
+| `planning/measurements/adherence-score-design.md` | Design-pass record for the hybrid adherence formula |
+| `scripts/measure-epic-3e.sh` | Repeatable measurement harness |
 | `.githooks/pre-push` | Pre-push gate — runs all 5 quality gates before any push |
 
 ---
