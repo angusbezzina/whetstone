@@ -4,7 +4,9 @@ All notable changes to Whetstone are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-04-21
+
+Epic 4A first slice: interactive TUI dashboard. The binary is now the operator's dashboard when launched from a terminal.
 
 ### Added
 - **`wh tui` (Epic 4A)** — interactive TUI dashboard powered by ratatui + crossterm. Amber `#FF7E00` accent, ALL-CAPS footer, vim-first keybinds (`1`–`7` screen switch, `R` refresh, `?` help, `Q`/`Esc` quit). Renders real health data (`rule_system_score`, `adherence_score`, violation counts, drift deps, top-5 violations). Responsive: master/detail panels at ≥80×20, compact single-panel fallback below, "terminal too small" notice under 50×15. First vertical slice ships only the Dashboard + Help screens; Rules / Sources / Extract / Check / Report / Drift screens are stubbed with "Coming soon" placeholders that point at their CLI counterparts. Tracks `whetstone-tnj`.
@@ -260,6 +262,7 @@ no Python runtime dependency.
 - **Release workflow** building Linux and macOS binaries for x86_64 and
   aarch64 with cross-compilation support.
 
+[0.5.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.5.0
 [0.4.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.4.0
 [0.3.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.3.0
 [0.1.2]: https://github.com/angusbezzina/whetstone/releases/tag/v0.1.2
