@@ -114,10 +114,10 @@ Everything marked `0.3.0` shipped in the lean refactor. Everything marked `3E` i
 | Status + CI gate | 0.3.0 | `wh status` (rule-system score) + `wh ci --fail-on stale`. |
 | Refresh flow | 0.3.0 | `wh reinit` / `wh reinit --check`; diff at `.state/refresh-diff.json`. |
 | Two-layer merge | 0.3.0 | Personal (gitignored) + project (committed). `wh init --personal` scaffolds the personal tree. |
-| Custom sources | 0.3.0 | Arbitrary URLs declared in `whetstone.yaml`. |
+| Custom sources (config) | 0.3.0 | `sources.custom[]` in `whetstone.yaml` / `.personal/config.yaml`; resolver fetches them on `wh init`. CLI surface shipped post-3E — see below. |
 | Triggers | 0.3.0 | `wh init --hooks` installs session + post-merge hooks; `wh init --ci --schedule=<cadence>` writes the CI workflow. |
 | Binary distribution | 0.3.0 | GitHub Releases · `install.sh` · `wh` alias · `wh update` self-update. |
-| Pre-push hook | 0.3.0 | `.githooks/pre-push` runs all 5 gates (clippy · cargo test · ruff · validate · pytest) before any push. |
+| Pre-push hook | 0.3.0 + `[Unreleased]` | `.githooks/pre-push` runs all 6 gates (clippy · cargo test · ruff check · ruff format · validate · pytest) before any push. `ruff format --check` added in `[Unreleased]`. |
 | **JIT rule lookup** | 3E | `wh rules query --file <path>` returns the rules that apply to a file as JSON. Agents call it mid-turn instead of re-scanning AGENTS.md. |
 | **Terse bootstrap + per-language sidecars** | 3E | `wh context --terse` / `wh actions --terse` shrinks AGENTS.md by ~51% on whetstone-self. Per-language `AGENTS.<lang>.md` sidecars (cross-linked) emit automatically when rules span >1 language. |
 | **Personal-taste shortcuts** | 3E | `wh rule add <id> --description ... --match 'regex'` writes directly to `.personal/rules/` as approved. `wh rule edit` bumps severity/confidence (single or bulk via `--all --dep --category`). |
@@ -269,7 +269,7 @@ All commands accept `--json` (auto when piped) and `--project-dir`. Full artifac
 | `planning/measurements/epic-3e-baseline.md` | Token/runtime baselines + delta targets for Epic 3E |
 | `planning/measurements/adherence-score-design.md` | Design-pass record for the hybrid adherence formula |
 | `scripts/measure-epic-3e.sh` | Repeatable measurement harness |
-| `.githooks/pre-push` | Pre-push gate — runs all 5 quality gates before any push |
+| `.githooks/pre-push` | Pre-push gate — runs all 6 quality gates before any push |
 
 ---
 
