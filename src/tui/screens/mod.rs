@@ -2,5 +2,6 @@
 //! the key hints it wants in the footer.
 
 pub mod dashboard;
+pub mod debt;
 pub mod help;
 pub mod stub;

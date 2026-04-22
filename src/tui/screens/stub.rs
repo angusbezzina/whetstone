@@ -67,6 +67,7 @@ fn cli_hint(screen: Screen) -> &'static str {
         Screen::Check => "check src/",
         Screen::Report => "report",
         Screen::Drift => "reinit",
+        Screen::Debt => "debt",
         Screen::Dashboard | Screen::Help => "tui",
     }
 }

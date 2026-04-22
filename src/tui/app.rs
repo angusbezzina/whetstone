@@ -32,6 +32,39 @@ pub struct DashboardState {
     pub last_refresh: Option<String>,
     pub top_violations: Vec<TopViolation>,
     pub violation_counts: ViolationCounts,
+    /// Debt report. `None` = not yet computed (press R or open Debt screen).
+    /// `Some(Err(..))` = the compute failed and the screen shows the reason.
+    pub debt: DebtView,
+}
+
+#[derive(Default, Clone)]
+pub enum DebtView {
+    #[default]
+    NotComputed,
+    Loading,
+    Ready(Box<DebtSummaryView>),
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct DebtSummaryView {
+    pub debt_label: String,
+    pub finding_count: u32,
+    pub by_dead: u32,
+    pub by_dup: u32,
+    pub by_deps: u32,
+    pub by_hotspots: u32,
+    pub hotspots: Vec<DebtHotspotRow>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DebtHotspotRow {
+    pub rank: u32,
+    pub category: String,
+    pub confidence: String,
+    pub title: String,
+    pub next_action: String,
+    pub score: f64,
 }
 
 #[derive(Default, Clone)]
@@ -71,11 +104,65 @@ impl App {
     pub fn update(&mut self, msg: Msg) {
         match msg {
             Msg::Quit => self.quit = true,
-            Msg::GoToScreen(s) => self.screen = s,
-            Msg::Refresh => self.load_dashboard(),
+            Msg::GoToScreen(s) => {
+                self.screen = s;
+                if s == Screen::Debt {
+                    self.ensure_debt_loaded();
+                }
+            }
+            Msg::Refresh => {
+                self.load_dashboard();
+                // Recompute debt on an explicit refresh.
+                self.dashboard.debt = DebtView::NotComputed;
+                if self.screen == Screen::Debt {
+                    self.ensure_debt_loaded();
+                }
+            }
             Msg::Tick => {} // reserved for future spinner animation
             Msg::Key(ev) => self.handle_key(ev),
         }
+    }
+
+    /// Compute the debt report on-demand. Synchronous — running `wh debt`
+    /// on a medium repo takes a couple of seconds, which is acceptable
+    /// for a user-triggered screen open.
+    pub fn ensure_debt_loaded(&mut self) {
+        if !matches!(self.dashboard.debt, DebtView::NotComputed) {
+            return;
+        }
+        self.dashboard.debt = DebtView::Loading;
+        let opts = crate::debt::DebtOptions {
+            project_dir: self.project_dir.clone(),
+            top: 20,
+            min_confidence: crate::debt::types::Confidence::Medium,
+            since_days: 90,
+        };
+        self.dashboard.debt = match crate::debt::run(&opts) {
+            Ok(report) => {
+                let hotspots = report
+                    .hotspots
+                    .iter()
+                    .map(|h| DebtHotspotRow {
+                        rank: h.rank,
+                        category: h.category.as_str().to_string(),
+                        confidence: h.confidence.as_str().to_string(),
+                        title: h.title.clone(),
+                        next_action: h.next_action.clone(),
+                        score: h.score,
+                    })
+                    .collect();
+                DebtView::Ready(Box::new(DebtSummaryView {
+                    debt_label: report.summary.debt_label.as_str().to_string(),
+                    finding_count: report.summary.finding_count,
+                    by_dead: report.summary.by_category.dead,
+                    by_dup: report.summary.by_category.dup,
+                    by_deps: report.summary.by_category.deps,
+                    by_hotspots: report.summary.by_category.hotspots,
+                    hotspots,
+                }))
+            }
+            Err(e) => DebtView::Error(e.to_string()),
+        };
     }
 
     fn handle_key(&mut self, ev: KeyEvent) {
@@ -96,8 +183,18 @@ impl App {
             KeyCode::Char('5') => self.screen = Screen::Check,
             KeyCode::Char('6') => self.screen = Screen::Report,
             KeyCode::Char('7') => self.screen = Screen::Drift,
+            KeyCode::Char('8') => {
+                self.screen = Screen::Debt;
+                self.ensure_debt_loaded();
+            }
             KeyCode::Char('?') => self.screen = Screen::Help,
-            KeyCode::Char('r') | KeyCode::Char('R') => self.load_dashboard(),
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                self.load_dashboard();
+                self.dashboard.debt = DebtView::NotComputed;
+                if self.screen == Screen::Debt {
+                    self.ensure_debt_loaded();
+                }
+            }
             _ => {}
         }
     }

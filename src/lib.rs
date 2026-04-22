@@ -5,6 +5,7 @@ mod check;
 mod ci_check;
 mod cli;
 mod config;
+mod debt;
 mod detect;
 // Temporarily disabled — see whetstone-aww
 // mod detect_patterns;

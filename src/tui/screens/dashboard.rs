@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::tui::{
-    app::{App, ViolationCounts},
+    app::{App, DebtView, ViolationCounts},
     components::{footer, gauge},
     theme,
 };
@@ -23,6 +23,7 @@ pub fn hints() -> &'static [footer::Hint] {
         ("4", "EXTRACT"),
         ("5", "CHECK"),
         ("6", "REPORT"),
+        ("8", "DEBT"),
         ("R", "REFRESH"),
         ("?", "HELP"),
         ("Q", "QUIT"),
@@ -41,6 +42,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .constraints([
             Constraint::Length(7),   // top row (health | rules | drift)
             Constraint::Min(8),      // top violations (flexible)
+            Constraint::Length(5),   // debt summary strip
             Constraint::Length(1),   // spacer
         ])
         .split(area);
@@ -58,6 +60,85 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     render_rules_panel(frame, top_row[1], app);
     render_drift_panel(frame, top_row[2], app);
     render_violations_panel(frame, outer[1], app);
+    render_debt_panel(frame, outer[2], app);
+}
+
+fn render_debt_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let lines: Vec<Line<'static>> = match &app.dashboard.debt {
+        DebtView::NotComputed => vec![
+            Line::from(Span::styled(
+                "Debt not yet computed",
+                Style::default().fg(theme::MUTED),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Press ", Style::default().fg(theme::MUTED)),
+                Span::styled("8", theme::header_meta()),
+                Span::raw(" to open the debt screen, or "),
+                Span::styled("R", theme::header_meta()),
+                Span::raw(" to compute inline."),
+            ]),
+        ],
+        DebtView::Loading => vec![Line::from(Span::styled(
+            "Computing debt…",
+            Style::default().fg(theme::AMBER),
+        ))],
+        DebtView::Error(msg) => vec![
+            Line::from(Span::styled(
+                "Debt compute failed:",
+                Style::default().fg(theme::STATUS_WARN),
+            )),
+            Line::from(truncate(msg, area.width.saturating_sub(4) as usize)),
+        ],
+        DebtView::Ready(summary) => {
+            let label_color = match summary.debt_label.as_str() {
+                "low" => theme::STATUS_OK,
+                "moderate" => theme::AMBER,
+                _ => theme::STATUS_WARN,
+            };
+            let mut v = vec![
+                Line::from(vec![
+                    Span::styled("Label  ", theme::header_meta()),
+                    Span::styled(
+                        summary.debt_label.to_uppercase(),
+                        Style::default().fg(label_color).bold(),
+                    ),
+                    Span::raw(format!("   total {}", summary.finding_count)),
+                    Span::raw(format!(
+                        "   dead {}  dup {}  deps {}  hot {}",
+                        summary.by_dead, summary.by_dup, summary.by_deps, summary.by_hotspots
+                    )),
+                ]),
+                Line::from(""),
+            ];
+            if summary.hotspots.is_empty() {
+                v.push(Line::from(Span::styled(
+                    "No hotspots. Nothing to triage.",
+                    Style::default().fg(theme::STATUS_OK),
+                )));
+            } else {
+                for h in summary.hotspots.iter().take(2) {
+                    v.push(Line::from(vec![
+                        Span::styled(
+                            format!("  {:>2}. ", h.rank),
+                            Style::default().fg(theme::MUTED),
+                        ),
+                        Span::styled(
+                            format!("[{}/{}]", h.category, h.confidence),
+                            Style::default().fg(theme::AMBER),
+                        ),
+                        Span::raw(" "),
+                        Span::raw(truncate(&h.title, area.width.saturating_sub(26) as usize)),
+                    ]));
+                }
+            }
+            v
+        }
+    };
+
+    let block = panel_block("DEBT");
+    let p = Paragraph::new(lines).block(block);
+    frame.render_widget(p, area);
 }
 
 fn render_health_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {

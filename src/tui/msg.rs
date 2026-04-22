@@ -17,6 +17,7 @@ pub enum Screen {
     Check,
     Report,
     Drift,
+    Debt,
     Help,
 }
 
@@ -30,6 +31,7 @@ impl Screen {
             Screen::Check => "CHECK",
             Screen::Report => "REPORT",
             Screen::Drift => "DRIFT",
+            Screen::Debt => "DEBT",
             Screen::Help => "HELP",
         }
     }

@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 use crate::{
-    approve, check, ci_check, config, detect, doctor, extract, gen, generate_context,
+    approve, check, ci_check, config, debt, detect, doctor, extract, gen, generate_context,
     generate_lint, generate_tests, output, personal, report, resolve, review, rule_authoring,
     rules, rules_query, source_mgmt, status, triggers, tui, update, worklist,
 };
@@ -661,6 +661,35 @@ enum Commands {
         /// Emit the GitHub-flavored PR-comment markdown (adds a tracking marker)
         #[arg(long)]
         pr_comment: bool,
+    },
+
+    /// Surface AI-amplified technical debt hotspots (dead code, duplicates,
+    /// dep hygiene, churn × violations).
+    #[command(name = "debt")]
+    Debt {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Emit a compact remediation prompt instead of the human report
+        #[arg(long, conflicts_with = "beads")]
+        prompt: bool,
+
+        /// Emit a shell script that creates an epic + child tasks in bd
+        #[arg(long)]
+        beads: bool,
+
+        /// Cap the number of ranked hotspots (default: 20)
+        #[arg(long, default_value = "20")]
+        top: usize,
+
+        /// Minimum confidence filter: high | medium (default: medium)
+        #[arg(long, default_value = "medium")]
+        min_confidence: String,
+
+        /// Churn window for the hotspot detector, in days (default: 90)
+        #[arg(long, default_value = "90")]
+        since_days: u32,
     },
 
     /// Update whetstone to the latest release
@@ -1883,6 +1912,56 @@ pub fn run() -> i32 {
                 1
             }
         },
+
+        Commands::Debt {
+            project_dir,
+            prompt,
+            beads,
+            top,
+            min_confidence,
+            since_days,
+        } => {
+            let min_conf = match min_confidence.as_str() {
+                "high" => debt::types::Confidence::High,
+                "medium" | "med" => debt::types::Confidence::Medium,
+                other => {
+                    output::print_json(&output::error_json(
+                        &format!("invalid --min-confidence: {other}"),
+                        "Use --min-confidence=high or --min-confidence=medium",
+                    ));
+                    return 1;
+                }
+            };
+            let opts = debt::DebtOptions {
+                project_dir: project_dir.clone(),
+                top,
+                min_confidence: min_conf,
+                since_days,
+            };
+            match debt::run(&opts) {
+                Ok(report) => {
+                    // Explicit mode flags take precedence over auto-piped JSON —
+                    // `wh debt --prompt` on a pipe still emits the prompt, not JSON.
+                    if prompt {
+                        print!("{}", debt::output::format_prompt(&report));
+                    } else if beads {
+                        print!("{}", debt::output::format_beads(&report));
+                    } else if json_mode {
+                        output::print_json(&serde_json::to_value(&report).unwrap_or_default());
+                    } else {
+                        println!("{}", debt::output::format_human(&report));
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "wh debt needs a readable project dir with at least a manifest or source tree",
+                    ));
+                    1
+                }
+            }
+        }
 
         Commands::Update { check, force } => match update::check_and_update(force, check) {
             Ok(result) => {

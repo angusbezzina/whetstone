@@ -2917,3 +2917,126 @@ fn test_review_worklist_human_output() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+// ── wh debt tests ──
+
+#[test]
+fn test_debt_json_envelope_on_small_fixture() {
+    let tmp = std::env::temp_dir().join("whetstone_debt_envelope");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        r#"
+[project]
+name = "debt-sample"
+version = "0.1.0"
+dependencies = ["requests", "definitely-unused"]
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("src/app.py"),
+        r#"
+import requests
+
+def public_fn():
+    return requests.get("https://example.com")
+
+def _never_called_helper():
+    return 42
+"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) =
+        run_whetstone(&["debt", "--json", "--top=10"], tmp.to_str().unwrap());
+    assert!(ok, "wh debt should succeed on the fixture");
+
+    let result = parse_json(&stdout);
+    assert_json_has_keys(
+        &result,
+        &[
+            "schema_version",
+            "generated_at",
+            "project_dir",
+            "summary",
+            "hotspots",
+        ],
+        "wh debt JSON envelope",
+    );
+    assert_eq!(result["schema_version"].as_u64().unwrap(), 1);
+
+    let hotspots = result["hotspots"].as_array().unwrap();
+    let titles: Vec<&str> = hotspots
+        .iter()
+        .filter_map(|h| h["title"].as_str())
+        .collect();
+    assert!(
+        titles.iter().any(|t| t.contains("definitely-unused")),
+        "expected unused dep to appear: {titles:?}"
+    );
+    assert!(
+        titles.iter().any(|t| t.contains("_never_called_helper")),
+        "expected unreferenced private fn to appear: {titles:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_debt_prompt_mode_is_compact_markdown() {
+    let tmp = std::env::temp_dir().join("whetstone_debt_prompt");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        r#"
+[project]
+name = "debt-sample"
+version = "0.1.0"
+dependencies = ["definitely-unused"]
+"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) =
+        run_whetstone(&["debt", "--prompt", "--top=5"], tmp.to_str().unwrap());
+    assert!(ok);
+    assert!(
+        stdout.starts_with("# Debt triage handoff"),
+        "prompt should start with the handoff header; got: {}",
+        &stdout[..stdout.len().min(120)]
+    );
+    assert!(stdout.contains("definitely-unused"));
+    assert!(!stdout.contains("\"schema_version\""));
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_debt_beads_mode_emits_runnable_shell() {
+    let tmp = std::env::temp_dir().join("whetstone_debt_beads");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        r#"
+[project]
+name = "debt-sample"
+version = "0.1.0"
+dependencies = ["definitely-unused"]
+"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) =
+        run_whetstone(&["debt", "--beads", "--top=3"], tmp.to_str().unwrap());
+    assert!(ok);
+    assert!(stdout.starts_with("#!/bin/sh"));
+    assert!(stdout.contains("bd create --type=epic"));
+    assert!(stdout.contains("bd create --type=task"));
+    assert!(stdout.contains("--parent=\"$EPIC\""));
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

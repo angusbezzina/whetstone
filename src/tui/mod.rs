@@ -130,12 +130,14 @@ pub fn view(frame: &mut Frame<'_>, app: &App) {
     let body = chunks[1];
     let hints: &[footer::Hint] = match app.screen {
         Screen::Dashboard => screens::dashboard::hints(),
+        Screen::Debt => screens::debt::hints(),
         Screen::Help => screens::help::hints(),
         _ => screens::stub::hints(),
     };
 
     match app.screen {
         Screen::Dashboard => screens::dashboard::render(frame, body, app),
+        Screen::Debt => screens::debt::render(frame, body, app),
         Screen::Help => screens::help::render(frame, body),
         other => screens::stub::render(frame, body, other),
     }
@@ -182,6 +184,54 @@ mod tests {
             .map(|cell| cell.symbol().to_owned())
             .collect();
         assert!(rendered.contains("Whetstone"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn debt_screen_renders_not_computed_hint() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let tmp =
+            std::env::temp_dir().join(format!("wh_tui_debt_empty_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.screen = Screen::Debt; // without ensure_debt_loaded — stays NotComputed
+        terminal.draw(|frame| view(frame, &app)).unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol().to_owned())
+            .collect();
+        assert!(
+            rendered.contains("not computed"),
+            "debt empty-state should show a hint; got: {}",
+            &rendered[..rendered.len().min(400)]
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn debt_screen_renders_error_state() {
+        use crate::tui::app::DebtView;
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let tmp = std::env::temp_dir().join(format!("wh_tui_debt_err_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.screen = Screen::Debt;
+        app.dashboard.debt = DebtView::Error("boom".into());
+        terminal.draw(|frame| view(frame, &app)).unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol().to_owned())
+            .collect();
+        assert!(rendered.contains("compute failed"));
+        assert!(rendered.contains("boom"));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
