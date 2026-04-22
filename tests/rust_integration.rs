@@ -74,6 +74,14 @@ fn run_bd(args: &[&str], current_dir: &Path) -> (String, String, bool) {
     (stdout, stderr, output.status.success())
 }
 
+fn bd_available() -> bool {
+    Command::new("bd")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 fn run_legacy_script(name: &str, args: &[&str], project_dir: &str) -> (String, String, bool) {
     let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("scripts")
@@ -3028,6 +3036,11 @@ dependencies = ["definitely-unused"]
 
 #[test]
 fn test_debt_beads_mode_files_epic_and_tasks() {
+    if !bd_available() {
+        eprintln!("skipping Beads integration path: `bd` not installed in this environment");
+        return;
+    }
+
     let tmp = std::env::temp_dir().join(format!(
         "whetstone_debt_beads_{}_{}",
         std::process::id(),
