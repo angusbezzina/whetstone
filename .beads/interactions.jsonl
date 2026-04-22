@@ -314,3 +314,4 @@
 {"id":"int-4b497cc4","kind":"field_change","created_at":"2026-04-22T18:33:22.950687Z","actor":"Angus Bezzina","issue_id":"whetstone-8hm.6","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-c6fd120f","kind":"field_change","created_at":"2026-04-22T19:05:51.795106Z","actor":"Angus Bezzina","issue_id":"whetstone-8hm.7","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-bf4ec618","kind":"field_change","created_at":"2026-04-22T19:06:35.283127Z","actor":"Angus Bezzina","issue_id":"whetstone-8hm.7","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-525bec0f","kind":"field_change","created_at":"2026-04-22T19:51:02.714576Z","actor":"Angus Bezzina","issue_id":"whetstone-chs","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}

@@ -6,9 +6,14 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-22
+
 ### Added
 - **`wh debt` command — AI-code debt triage (whetstone-8hm).** Surfaces dead code, duplicate blocks, dep hygiene issues, and churn × violations hotspots as a single ranked report. Deterministic detectors only; no subjective categories. Output modes: `--json` (stable schema, `schema_version: 1`), `--prompt` (compact remediation handoff for another agent, ~10× smaller than open-ended repo-scan prompts), `--beads` (files a bd epic plus one child task per ranked hotspot and returns created ids under `--json`). Flags: `--top`, `--min-confidence={high|medium}`, `--since` / `--since-days` (churn window, default 90). Ranking now breaks hotspot score ties on raw evidence magnitude so high-churn/high-violation files float to the top instead of sorting alphabetically. Design doc: `planning/debt.md`; self-dogfood log: `planning/dogfood-debt.md`. Splinter dogfood tracked under `whetstone-pww`.
 - **TUI debt screen (whetstone-8hm.5).** Press `8` from the dashboard or navigate to `Screen::Debt`. Renders the same ranked hotspot list as the CLI with explicit not-computed, loading, ready, and error states. Dashboard gains a compact DEBT summary strip showing the repo debt label plus the top two hotspots.
+
+### Fixed
+- **CI-safe `wh debt --beads` integration coverage.** The Beads integration test now skips the end-to-end `bd` path when the `bd` binary is unavailable, while preserving real integration coverage in local environments that do have Beads installed.
 
 ## [0.5.0] - 2026-04-21
 
