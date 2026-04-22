@@ -62,6 +62,18 @@ fn run_whetstone_from_cwd(args: &[&str], current_dir: &std::path::Path) -> (Stri
     (stdout, stderr, output.status.success())
 }
 
+fn run_bd(args: &[&str], current_dir: &Path) -> (String, String, bool) {
+    let output = Command::new("bd")
+        .args(args)
+        .current_dir(current_dir)
+        .output()
+        .unwrap_or_else(|e| panic!("Failed to run bd: {e}"));
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    (stdout, stderr, output.status.success())
+}
+
 fn run_legacy_script(name: &str, args: &[&str], project_dir: &str) -> (String, String, bool) {
     let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("scripts")
@@ -3015,8 +3027,15 @@ dependencies = ["definitely-unused"]
 }
 
 #[test]
-fn test_debt_beads_mode_emits_runnable_shell() {
-    let tmp = std::env::temp_dir().join("whetstone_debt_beads");
+fn test_debt_beads_mode_files_epic_and_tasks() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_debt_beads_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(tmp.join("src")).unwrap();
     std::fs::write(
@@ -3030,13 +3049,26 @@ dependencies = ["definitely-unused"]
     )
     .unwrap();
 
+    let (_bd_init_out, bd_init_err, bd_ok) =
+        run_bd(&["init", "--skip-agents", "--skip-hooks", "-q"], &tmp);
+    assert!(bd_ok, "bd init should succeed for debt integration test: {bd_init_err}");
+
     let (stdout, _stderr, ok) =
-        run_whetstone(&["debt", "--beads", "--top=3"], tmp.to_str().unwrap());
+        run_whetstone(&["--json", "debt", "--beads", "--top=3"], tmp.to_str().unwrap());
     assert!(ok);
-    assert!(stdout.starts_with("#!/bin/sh"));
-    assert!(stdout.contains("bd create --type=epic"));
-    assert!(stdout.contains("bd create --type=task"));
-    assert!(stdout.contains("--parent=\"$EPIC\""));
+    let result = parse_json(&stdout);
+    let epic_id = result["epic_id"]
+        .as_str()
+        .expect("beads run should return epic_id");
+    let task_ids = result["task_ids"]
+        .as_array()
+        .expect("beads run should return task_ids");
+    assert!(!epic_id.is_empty());
+    assert!(!task_ids.is_empty());
+
+    let (epic_show, epic_err, epic_ok) = run_bd(&["show", epic_id], &tmp);
+    assert!(epic_ok, "bd show should find filed epic: {epic_err}");
+    assert!(epic_show.contains("Debt triage:"));
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

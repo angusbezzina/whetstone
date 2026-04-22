@@ -176,6 +176,7 @@ The complete canonical surface, grouped by concern. No aliases. All commands acc
 | `wh validate` | Schema + fixture validation. CI-friendly. |
 | `wh status` | Both `rule_system_score` (rule health) AND `adherence_score` (code quality). Violation counts + trend in `.metrics.jsonl`. |
 | `wh report` | One-page markdown: adherence + top 10 violations + drift + next actions. `--pr-comment` for PR-friendly markdown with a `<!-- whetstone-report -->` marker. `--json` for structured. |
+| `wh debt` | Deterministic technical-debt triage for AI-amplified hotspots: dead code, duplicate blocks, dep hygiene, and churn × violations. Supports `--json`, `--prompt`, and `--beads`. |
 | `wh ci` | Freshness gate with optional PR comment. `--fail-on stale \| needs_review`. |
 
 ### Inspection & self-update

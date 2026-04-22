@@ -79,7 +79,7 @@ captured here are direct outputs of `wh debt`:
 ```
 wh debt --prompt --top=10       → ~2.1kB (≈ 700 tokens)
 wh debt --json --top=20         → ~12kB  (≈ 3000 tokens)
-wh debt --beads --top=10        → shell script, ~2.5kB
+wh debt --beads --top=10        → files a bd epic + child tasks; `--json` returns created ids
 ```
 
 Open-ended "find debt" prompts to an agent on this repo typically run

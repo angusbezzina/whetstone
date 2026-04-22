@@ -141,7 +141,7 @@ score = base_weight[category] * evidence_strength * confidence_factor
 
 ### Ranking
 
-Findings are ranked by descending `score`, then ascending `category` alphabetical for ties. Ranks are 1-indexed and stable across runs given the same inputs.
+Findings are ranked by descending `score`. Ties break on detector-native evidence magnitude (for example, duplicate occurrence count or raw `changes × violations` product) before falling back to stable alphabetical ordering. Ranks are 1-indexed and stable across runs given the same inputs.
 
 ### Confidence assignment
 
@@ -174,10 +174,10 @@ Rationale: fixed bands are interpretable and resistant to gaming. No hour estima
 wh debt                            # human report, top 20 hotspots
 wh debt --json                     # full JSON envelope
 wh debt --prompt                   # compact remediation prompt (stdout)
-wh debt --beads                    # emit an epic + child tasks into the local bd store
+wh debt --beads                    # file an epic + child tasks into the local bd store
 wh debt --top=N                    # cap hotspot list
 wh debt --min-confidence=high      # drop medium-confidence findings
-wh debt --since=90d                # churn window for hotspots
+wh debt --since=90d                # churn window for hotspots (`--since-days=90` alias also works)
 wh debt --project-dir=.            # standard flag
 ```
 

@@ -182,7 +182,7 @@ Whetstone follows a seven-step lifecycle. `wh init` handles steps 1 + 2 in one g
 | **4. Submit** | `wh extract submit <bundle>` | Writes the bundle as `status: candidate` |
 | **5. Approve** | `wh approve <id>` or `wh approve --all` | Flip candidates to approved |
 | **6. Generate** | `wh actions` | Run `wh context`, `wh tests`, `wh lint` |
-| **7. Monitor** | `wh status` / `wh ci` / `wh check` | Track freshness, drift, enforce rules |
+| **7. Monitor** | `wh status` / `wh ci` / `wh check` / `wh debt` | Track freshness, drift, enforce rules, and triage deterministic debt hotspots |
 
 When dependencies update, run `wh reinit` to re-resolve changed sources, then re-extract rules for what changed. `wh reinit --check` exits non-zero if drift was detected (useful in CI).
 
@@ -343,6 +343,24 @@ wh status --history
 This shows a table of score, label, rules count, and drift over time. Use `--no-snapshot` to skip recording (e.g., in scripts that poll status without wanting to inflate history).
 
 **Anti-gaming guidance:** Metrics reflect the state of your rules, not your code quality. A high score with 5 well-chosen rules is better than a high score with 50 trivial rules. Focus on the `must_rules` and `deterministic_coverage` metrics — these indicate rules that catch real mistakes with real checks. The `approval_rate` metric helps calibrate extraction quality: if it's consistently low, your extraction prompt may need tuning.
+
+### Debt triage
+
+`wh debt` complements `wh status` by surfacing deterministic maintainability hotspots caused or amplified by AI-assisted code generation:
+
+- dead code
+- duplicate blocks
+- dependency hygiene issues
+- churn × violations hotspots
+
+Useful modes:
+
+```bash
+wh debt --json                 # stable machine-readable envelope
+wh debt --prompt               # compact remediation handoff for another agent
+wh debt --beads --json         # file a bd epic + child tasks and return created ids
+wh debt --since=90d --top=10   # tune hotspot window + list length
+```
 
 ## CI Integration
 

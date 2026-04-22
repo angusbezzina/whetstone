@@ -10,6 +10,7 @@ use anyhow::Result;
 use std::path::Path;
 
 pub mod detectors;
+pub mod beads;
 pub mod output;
 pub mod rank;
 pub mod source_walk;
@@ -57,4 +58,3 @@ pub fn run(opts: &DebtOptions) -> Result<DebtReport> {
     let report = rank::build_report(project_dir, findings, opts.top);
     Ok(report)
 }
-

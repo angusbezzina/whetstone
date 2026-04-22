@@ -97,8 +97,10 @@ pub fn format_prompt(report: &DebtReport) -> String {
     s
 }
 
-/// Shell commands that materialize the report as Beads issues. Emitted as
-/// a single here-doc block so the user can pipe it to `sh` if they want.
+#[allow(dead_code)]
+/// Preview shell commands that would materialize the report as Beads issues.
+/// Kept for tests and debugging; the CLI's `--beads` mode now files issues
+/// directly via `bd`.
 pub fn format_beads(report: &DebtReport) -> String {
     let mut s = String::new();
     s.push_str("#!/bin/sh\n");
@@ -147,7 +149,7 @@ pub fn format_beads(report: &DebtReport) -> String {
     s
 }
 
-fn evidence_one_liner(e: &Evidence) -> String {
+pub(crate) fn evidence_one_liner(e: &Evidence) -> String {
     match e {
         Evidence::ManifestEntry {
             snippet,
@@ -183,6 +185,7 @@ fn evidence_one_liner(e: &Evidence) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn shell_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');

@@ -49,6 +49,11 @@ pub fn rank(findings: Vec<Finding>) -> Vec<Hotspot> {
     scored.sort_by(|a, b| {
         b.0.partial_cmp(&a.0)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                evidence_tie_break(&b.1)
+                    .partial_cmp(&evidence_tie_break(&a.1))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .then_with(|| a.1.category.as_str().cmp(b.1.category.as_str()))
             .then_with(|| a.1.rule_id.cmp(&b.1.rule_id))
             .then_with(|| a.1.title.cmp(&b.1.title))
@@ -74,6 +79,24 @@ pub fn rank(findings: Vec<Finding>) -> Vec<Hotspot> {
 
 fn round2(x: f64) -> f64 {
     (x * 100.0).round() / 100.0
+}
+
+fn evidence_tie_break(f: &Finding) -> f64 {
+    match &f.evidence {
+        super::types::Evidence::ManifestEntry { references, .. } => 1_000.0 - (*references as f64),
+        super::types::Evidence::SymbolDef { references, .. } => 1_000.0 - (*references as f64),
+        super::types::Evidence::DuplicateCluster {
+            normalized_lines,
+            occurrences,
+            ..
+        } => (*occurrences as f64 * 1_000.0) + (*normalized_lines as f64),
+        super::types::Evidence::OrphanedFile { .. } => 0.0,
+        super::types::Evidence::ChurnViolationIntersection {
+            changes,
+            violations,
+            ..
+        } => (*changes as f64) * (*violations as f64),
+    }
 }
 
 pub fn build_report(project_dir: &Path, findings: Vec<Finding>, top: usize) -> DebtReport {
@@ -104,4 +127,36 @@ fn now_iso() -> String {
     chrono::Utc::now()
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::debt::types::{Category, Confidence, Evidence, Finding, Location};
+
+    #[test]
+    fn hotspot_ties_break_on_raw_churn_x_violation_product() {
+        let mk = |title: &str, changes: u32, violations: u32| Finding {
+            category: Category::Hotspots,
+            rule_id: "hotspots.churn_x_violations".into(),
+            title: title.into(),
+            confidence: Confidence::High,
+            evidence_strength: 2.0,
+            files: vec![title.into()],
+            evidence: Evidence::ChurnViolationIntersection {
+                changes,
+                violations,
+                window_days: 90,
+                locations: vec![Location {
+                    file: title.into(),
+                    line: None,
+                }],
+            },
+            next_action: "fix".into(),
+        };
+
+        let ranked = rank(vec![mk("low", 5, 13), mk("high", 27, 307)]);
+        assert_eq!(ranked[0].title, "high");
+        assert_eq!(ranked[1].title, "low");
+    }
 }

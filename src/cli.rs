@@ -675,7 +675,7 @@ enum Commands {
         #[arg(long, conflicts_with = "beads")]
         prompt: bool,
 
-        /// Emit a shell script that creates an epic + child tasks in bd
+        /// File a Beads epic + one child task per ranked hotspot
         #[arg(long)]
         beads: bool,
 
@@ -687,8 +687,8 @@ enum Commands {
         #[arg(long, default_value = "medium")]
         min_confidence: String,
 
-        /// Churn window for the hotspot detector, in days (default: 90)
-        #[arg(long, default_value = "90")]
+        /// Churn window for the hotspot detector (`90d` or plain day count)
+        #[arg(long = "since", alias = "since-days", default_value = "90d", value_parser = parse_since_days)]
         since_days: u32,
     },
 
@@ -1944,14 +1944,40 @@ pub fn run() -> i32 {
                     // `wh debt --prompt` on a pipe still emits the prompt, not JSON.
                     if prompt {
                         print!("{}", debt::output::format_prompt(&report));
+                        0
                     } else if beads {
-                        print!("{}", debt::output::format_beads(&report));
+                        match debt::beads::file(&report, &project_dir) {
+                            Ok(filed) => {
+                                if json_mode {
+                                    output::print_json(
+                                        &serde_json::to_value(&filed).unwrap_or_default(),
+                                    );
+                                } else {
+                                    println!("{}", filed.message);
+                                    if let Some(epic_id) = filed.epic_id {
+                                        println!("Epic: {epic_id}");
+                                    }
+                                    if !filed.task_ids.is_empty() {
+                                        println!("Tasks: {}", filed.task_ids.join(", "));
+                                    }
+                                }
+                                0
+                            }
+                            Err(e) => {
+                                output::print_json(&output::error_json(
+                                    &e.to_string(),
+                                    "Ensure bd is installed and the repo is initialized with beads before using --beads",
+                                ));
+                                1
+                            }
+                        }
                     } else if json_mode {
                         output::print_json(&serde_json::to_value(&report).unwrap_or_default());
+                        0
                     } else {
                         println!("{}", debt::output::format_human(&report));
+                        0
                     }
-                    0
                 }
                 Err(e) => {
                     output::print_json(&output::error_json(
@@ -1991,11 +2017,35 @@ pub fn run() -> i32 {
     }
 }
 
+fn parse_since_days(raw: &str) -> Result<u32, String> {
+    let trimmed = raw.trim();
+    let digits = trimmed.strip_suffix('d').unwrap_or(trimmed);
+    digits
+        .parse::<u32>()
+        .map_err(|_| format!("invalid churn window `{raw}`; use `90d` or a plain day count"))
+}
+
 fn load_deps_input(input: Option<&std::path::Path>) -> anyhow::Result<serde_json::Value> {
     if let Some(path) = input {
         let text = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&text)?)
     } else {
         Ok(serde_json::from_reader(std::io::stdin())?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_since_days;
+
+    #[test]
+    fn parse_since_days_accepts_duration_suffix() {
+        assert_eq!(parse_since_days("90d").unwrap(), 90);
+        assert_eq!(parse_since_days("7").unwrap(), 7);
+    }
+
+    #[test]
+    fn parse_since_days_rejects_bad_values() {
+        assert!(parse_since_days("ten days").is_err());
     }
 }
