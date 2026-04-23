@@ -6,6 +6,16 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **TUI second slice — Rules / Sources / Extract / Check / Report / Drift screens (whetstone-69jb).** The six "Coming soon" dashboard stubs are gone; every number key `1`–`8` now routes to a real renderer. Each screen follows the four-state pattern established by the Debt screen (`NotComputed` → `Loading` → `Ready` / `Error`), loads lazily on first open or on `R` refresh, and surfaces actionable data from existing CLI modules:
+  - **Rules (`2`)** — list + detail of merged approved rules via `crate::layers::resolve_merged`, severity-colored list, selected-rule detail pane with description + source_url + layer.
+  - **Sources (`3`)** — two-column subscription manager over `crate::source_mgmt::list`, committed vs personal layers side-by-side with name + language/kind.
+  - **Extract (`4`)** — worklist + detail over `crate::worklist::load`, dep-ranked list left, selected-entry context right; empty and missing-handoff states call out the remediation CLI.
+  - **Check (`5`)** — full violations explorer over `crate::check::run`, severity-sorted list with per-row badge + file:line + snippet, plus a summary bar (violations / rules applied / files scanned).
+  - **Report (`6`)** — scrollable markdown viewer over `crate::report::build` + `to_markdown`; renders the same body `wh report` emits.
+  - **Drift (`7`)** — two-pane walkthrough over `.state/refresh-diff.json`: candidate list (rule_id / severity / drift_types / dep) plus the canned re-extraction prompt and selected-candidate detail. Empty state calls out `wh reinit` as the next step.
+- The old `src/tui/screens/stub.rs` "Coming soon" fallback is deleted.
+
 ## [0.6.0] - 2026-04-22
 
 ### Added

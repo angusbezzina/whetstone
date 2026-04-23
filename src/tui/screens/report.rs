@@ -1,8 +1,9 @@
 //! Report screen — markdown viewer for `wh report` output.
 //!
-//! Scaffolded stub for whetstone-69jb.5. Fill in [`ReportData`], teach
-//! [`load`] to call `crate::report::run`, and replace [`render_ready`]
-//! with a scrollable markdown view.
+//! Implemented for whetstone-69jb.5. Calls `crate::report::build` +
+//! `crate::report::to_markdown` on first open and caches the rendered
+//! markdown. Rendered as plain text through a wrapped, scrollable
+//! `Paragraph` — no markdown-to-ratatui formatting in v1.
 
 use std::path::Path;
 
@@ -10,7 +11,7 @@ use ratatui::{
     layout::Rect,
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
 
@@ -26,7 +27,6 @@ pub fn hints() -> &'static [footer::Hint] {
 }
 
 #[derive(Default, Clone)]
-#[allow(dead_code, clippy::enum_variant_names)] // TODO: remove once subagent wires real loader
 pub enum ReportView {
     #[default]
     NotComputed,
@@ -36,11 +36,29 @@ pub enum ReportView {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct ReportData {}
+pub struct ReportData {
+    /// Fully-rendered markdown body from `crate::report::to_markdown`.
+    pub markdown: String,
+    /// Vertical scroll offset (lines). Reserved for a follow-up bead that
+    /// wires PageUp/PageDown — `render_ready` already honours it.
+    pub scroll: u16,
+}
 
-pub fn load(_project_dir: &Path) -> ReportView {
-    // TODO(whetstone-69jb.5): call crate::report and cache markdown.
-    ReportView::Ready(Box::<ReportData>::default())
+pub fn load(project_dir: &Path) -> ReportView {
+    let opts = crate::report::ReportOptions {
+        project_dir,
+        pr_comment: false,
+    };
+    match crate::report::build(&opts) {
+        Ok(data) => {
+            let markdown = crate::report::to_markdown(&data);
+            ReportView::Ready(Box::new(ReportData {
+                markdown,
+                scroll: 0,
+            }))
+        }
+        Err(e) => ReportView::Error(e.to_string()),
+    }
 }
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -56,9 +74,24 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     }
 }
 
-fn render_ready(frame: &mut Frame<'_>, area: Rect, _data: &ReportData) {
-    // TODO(whetstone-69jb.5): scrollable markdown.
-    render_placeholder(frame, area, "Report screen ready — renderer pending.")
+fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &ReportData) {
+    if data.markdown.is_empty() {
+        let lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Report is empty — run wh check first to populate violations.",
+                Style::default().fg(theme::MUTED),
+            )),
+        ];
+        frame.render_widget(Paragraph::new(lines).block(block("REPORT")), area);
+        return;
+    }
+
+    let paragraph = Paragraph::new(data.markdown.as_str())
+        .block(block("REPORT"))
+        .wrap(Wrap { trim: false })
+        .scroll((data.scroll, 0));
+    frame.render_widget(paragraph, area);
 }
 
 fn render_placeholder(frame: &mut Frame<'_>, area: Rect, message: &str) {
@@ -92,4 +125,71 @@ fn block(title: &str) -> Block<'static> {
         ))
         .borders(Borders::ALL)
         .border_style(theme::border_inactive())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::app::App;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn render_shows_markdown_body() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let tmp = std::env::temp_dir()
+            .join(format!("wh_tui_report_ready_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.dashboard.report = ReportView::Ready(Box::new(ReportData {
+            markdown: "# Whetstone report\n\nAdherence: 92/100".to_string(),
+            scroll: 0,
+        }));
+        terminal
+            .draw(|frame| render(frame, frame.area(), &app))
+            .unwrap();
+        let rendered = buffer_text(&terminal);
+        assert!(
+            rendered.contains("Whetstone report"),
+            "expected markdown header in buffer; got: {}",
+            &rendered[..rendered.len().min(400)]
+        );
+        assert!(
+            rendered.contains("92/100"),
+            "expected adherence score in buffer; got: {}",
+            &rendered[..rendered.len().min(400)]
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn render_shows_error_message() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let tmp = std::env::temp_dir()
+            .join(format!("wh_tui_report_err_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.dashboard.report = ReportView::Error("boom".into());
+        terminal
+            .draw(|frame| render(frame, frame.area(), &app))
+            .unwrap();
+        let rendered = buffer_text(&terminal);
+        assert!(
+            rendered.contains("boom"),
+            "expected error message in buffer; got: {}",
+            &rendered[..rendered.len().min(400)]
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
