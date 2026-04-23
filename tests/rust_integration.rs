@@ -403,31 +403,39 @@ fn test_ci_check_parity_snapshot() {
 fn test_help_output() {
     let (stdout, _stderr, success) = run_whetstone(&["--help"], ".");
     assert!(success);
-    // New command names
+    // Core visible commands
     assert!(stdout.contains("init"), "help should contain 'init'");
-    assert!(
-        stdout.contains("set-sources"),
-        "help should contain 'set-sources'"
-    );
     assert!(stdout.contains("reinit"), "help should contain 'reinit'");
     assert!(stdout.contains("status"), "help should contain 'status'");
-    assert!(stdout.contains("context"), "help should contain 'context'");
-    assert!(stdout.contains("tests"), "help should contain 'tests'");
-    assert!(stdout.contains("lint"), "help should contain 'lint'");
     assert!(stdout.contains("actions"), "help should contain 'actions'");
     assert!(stdout.contains("extract"), "help should contain 'extract'");
     assert!(stdout.contains("approve"), "help should contain 'approve'");
     assert!(stdout.contains("check"), "help should contain 'check'");
-    assert!(stdout.contains("ci"), "help should contain 'ci'");
-    assert!(stdout.contains("rules"), "help should contain 'rules'");
+    assert!(stdout.contains("debt"), "help should contain 'debt'");
+    assert!(stdout.contains("tui"), "help should contain 'tui'");
+    assert!(stdout.contains("rule"), "help should contain 'rule'");
+    assert!(stdout.contains("source"), "help should contain 'source'");
     assert!(
         stdout.contains("validate"),
         "help should contain 'validate'"
     );
+    assert!(stdout.contains("Core workflow:"), "help should contain taxonomy guidance");
+    assert!(stdout.contains("whetstone actions --only <context|tests|lint>"));
     // Aliases were removed in 0.3.0 — these legacy spellings must NOT appear.
     assert!(!stdout.contains("doctor"), "'doctor' alias should be gone");
     assert!(!stdout.contains("generate-context"), "'generate-context' alias should be gone");
     assert!(!stdout.contains("generate-tests"), "'generate-tests' alias should be gone");
+}
+
+#[test]
+fn test_rule_help_shows_grouped_advanced_subcommands() {
+    let (stdout, _stderr, success) = run_whetstone(&["rule", "--help"], ".");
+    assert!(success);
+    assert!(stdout.contains("add"));
+    assert!(stdout.contains("edit"));
+    assert!(stdout.contains("query"));
+    assert!(stdout.contains("review"));
+    assert!(stdout.contains("worklist"));
 }
 
 #[test]

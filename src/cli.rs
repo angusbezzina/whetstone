@@ -7,6 +7,27 @@ use crate::{
     rules, rules_query, source_mgmt, status, triggers, tui, update, worklist,
 };
 
+const TAXONOMY_HELP: &str = "Core workflow:
+  whetstone init      Bootstrap from zero
+  whetstone extract   Draft or submit candidate rules
+  whetstone approve   Approve candidate rules
+  whetstone actions   Generate enforcement artifacts
+  whetstone check     Scan code for rule violations
+  whetstone reinit    Refresh changed dependencies/docs
+  whetstone status    Health + adherence summary
+  whetstone debt      Deterministic debt hotspots
+  whetstone tui       Interactive dashboard
+
+Advanced groups:
+  whetstone rule ...     add | edit | query | review | worklist
+  whetstone source ...   add | list | remove | fetch
+  whetstone actions --only <context|tests|lint>
+  whetstone status --report [--pr-comment]
+
+Compatibility notes:
+  Some older top-level commands remain available but are hidden from this help:
+  set-sources, context, tests, lint, ci, review, rules, report.";
+
 // TODO(whetstone-aww): reinstate patterns
 // use crate::detect_patterns;
 
@@ -14,7 +35,8 @@ use crate::{
 #[command(
     name = "whetstone",
     about = "Whetstone \u{2014} sharpen the tools that write your code.",
-    version
+    version,
+    after_help = TAXONOMY_HELP
 )]
 struct Cli {
     /// Output machine-readable JSON instead of human-friendly text
@@ -132,6 +154,68 @@ enum RuleAction {
         /// Preview the changes without writing
         #[arg(long)]
         dry_run: bool,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Query approved rules that match the given filters
+    Query {
+        /// Return rules for the language inferred from this file's extension
+        #[arg(long)]
+        file: Option<PathBuf>,
+
+        /// Filter by language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Filter by dependency / source name
+        #[arg(long)]
+        dep: Option<String>,
+
+        /// Filter by severity (must, should, may)
+        #[arg(long)]
+        severity: Option<String>,
+
+        /// Layer filter: personal-only
+        #[arg(long, conflicts_with = "project_only")]
+        personal_only: bool,
+
+        /// Layer filter: project-only
+        #[arg(long, conflicts_with = "personal_only")]
+        project_only: bool,
+
+        /// Include full signal details and golden examples (default: summary only)
+        #[arg(long)]
+        full: bool,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Review rules by lifecycle status (candidate / approved)
+    Review {
+        /// Filter by status
+        #[arg(long)]
+        status: Option<String>,
+
+        /// Filter by language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Show the extraction worklist through the rule workflow lens
+    Worklist {
+        /// Filter to a single dependency name
+        #[arg(long)]
+        dep: Option<String>,
+
+        /// Filter to a single language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
 
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -329,7 +413,7 @@ enum Commands {
     },
 
     /// Resolve documentation URLs and fetch content for dependencies
-    #[command(name = "set-sources")]
+    #[command(name = "set-sources", hide = true)]
     SetSources {
         /// JSON input file from detect-deps (default: stdin)
         #[arg(long)]
@@ -372,7 +456,7 @@ enum Commands {
         workers: Option<usize>,
     },
 
-    /// Project health summary and drift detection
+    /// Project health summary and drift detection (`--report` for markdown narrative)
     Status {
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -381,6 +465,14 @@ enum Commands {
         /// Output only score and label
         #[arg(long)]
         score: bool,
+
+        /// Render the one-page report instead of the status summary
+        #[arg(long)]
+        report: bool,
+
+        /// When used with --report, emit the PR-comment markdown variant
+        #[arg(long, requires = "report")]
+        pr_comment: bool,
 
         /// Skip dependency drift check
         #[arg(long)]
@@ -404,7 +496,7 @@ enum Commands {
     },
 
     /// Generate agent context files from approved rules
-    #[command(name = "context")]
+    #[command(name = "context", hide = true)]
     Context {
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -432,7 +524,7 @@ enum Commands {
     },
 
     /// Generate test files from approved rules
-    #[command(name = "tests")]
+    #[command(name = "tests", hide = true)]
     Tests {
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -451,7 +543,7 @@ enum Commands {
         personal: bool,
     },
 
-    /// Generate context, tests, and lint configs in one chain
+    /// Generate context, tests, and lint configs in one chain (`--only` for one generator)
     #[command(name = "actions")]
     Actions {
         /// Project root directory
@@ -473,10 +565,14 @@ enum Commands {
         /// Emit terse context (one-line-per-rule bootstrap)
         #[arg(long)]
         terse: bool,
+
+        /// Run only one generator (context | tests | lint)
+        #[arg(long)]
+        only: Option<String>,
     },
 
     /// Generate linter configuration overlays from approved rules
-    #[command(name = "lint")]
+    #[command(name = "lint", hide = true)]
     Lint {
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -569,7 +665,7 @@ enum Commands {
     },
 
     /// Lightweight freshness check for CI/CD
-    #[command(name = "ci")]
+    #[command(name = "ci", hide = true)]
     Ci {
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -605,6 +701,7 @@ enum Commands {
     },
 
     /// Review rules by lifecycle status (candidate / approved)
+    #[command(hide = true)]
     Review {
         #[command(subcommand)]
         action: Option<ReviewAction>,
@@ -623,13 +720,13 @@ enum Commands {
     },
 
     /// Query rules that apply to a file / language / dep (JIT consumption)
-    #[command(name = "rules")]
+    #[command(name = "rules", hide = true)]
     Rules {
         #[command(subcommand)]
         action: RulesAction,
     },
 
-    /// Add or edit an approved rule directly (authoring shortcut)
+    /// Advanced rule operations: add, edit, query, review, and worklist
     #[command(name = "rule")]
     Rule {
         #[command(subcommand)]
@@ -652,7 +749,7 @@ enum Commands {
     },
 
     /// One-page report: adherence score, top violations, drift, next actions
-    #[command(name = "report")]
+    #[command(name = "report", hide = true)]
     Report {
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -993,12 +1090,40 @@ pub fn run() -> i32 {
         Commands::Status {
             project_dir,
             score,
+            report: status_report,
+            pr_comment,
             no_drift_check,
             changed_only,
             history,
             no_snapshot,
             extraction_ready,
         } => {
+            if status_report {
+                let opts = report::ReportOptions {
+                    project_dir: &project_dir,
+                    pr_comment,
+                };
+                match report::build(&opts) {
+                    Ok(data) => {
+                        if pr_comment {
+                            print!("{}", report::to_markdown(&data));
+                        } else if json_mode {
+                            output::print_json(&data);
+                        } else {
+                            print!("{}", report::to_markdown(&data));
+                        }
+                        return 0;
+                    }
+                    Err(e) => {
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "wh status --report composes wh status + wh check; fix the underlying failure and retry",
+                        ));
+                        return 1;
+                    }
+                }
+            }
+
             if extraction_ready {
                 let list = status::extraction_ready_list(&project_dir);
                 output::print_json(&serde_json::json!(list));
@@ -1105,7 +1230,80 @@ pub fn run() -> i32 {
             dry_run,
             personal,
             terse,
-        } => match gen::run(&project_dir, lang.as_deref(), dry_run, personal, terse) {
+            only,
+        } => match only.as_deref() {
+            Some("context") => match generate_context::generate_context(
+                &project_dir,
+                None,
+                lang.as_deref(),
+                dry_run,
+                personal,
+                terse,
+            ) {
+                Ok(result) => {
+                    if json_mode {
+                        output::print_json(&result);
+                    } else {
+                        println!("wh actions --only context: generated context files");
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "Check whetstone/rules/ directory for approved rules",
+                    ));
+                    1
+                }
+            },
+            Some("tests") => {
+                match generate_tests::generate_tests(&project_dir, lang.as_deref(), dry_run, personal)
+                {
+                    Ok(result) => {
+                        if json_mode {
+                            output::print_json(&result);
+                        } else {
+                            println!("wh actions --only tests: generated test files");
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "Check whetstone/rules/ directory for approved rules",
+                        ));
+                        1
+                    }
+                }
+            }
+            Some("lint") => {
+                match generate_lint::generate_lint(&project_dir, lang.as_deref(), dry_run, personal)
+                {
+                    Ok(result) => {
+                        if json_mode {
+                            output::print_json(&result);
+                        } else {
+                            println!("wh actions --only lint: generated lint overlays");
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "Check whetstone/rules/ directory for approved rules with lint_proxy signals",
+                        ));
+                        1
+                    }
+                }
+            }
+            Some(other) => {
+                output::print_json(&output::error_json(
+                    &format!("invalid --only target: {other}"),
+                    "Use --only=context, --only=tests, or --only=lint",
+                ));
+                1
+            }
+            None => match gen::run(&project_dir, lang.as_deref(), dry_run, personal, terse) {
             Ok(result) => {
                 if json_mode {
                     output::print_json(&result);
@@ -1124,6 +1322,7 @@ pub fn run() -> i32 {
                 ));
                 1
             }
+        },
         },
 
         Commands::Lint {
@@ -1677,6 +1876,108 @@ pub fn run() -> i32 {
                     }
                 }
             }
+            RuleAction::Query {
+                file,
+                lang,
+                dep,
+                severity,
+                personal_only,
+                project_only,
+                full,
+                project_dir,
+            } => {
+                let layer_filter = if personal_only {
+                    rules_query::LayerFilter::PersonalOnly
+                } else if project_only {
+                    rules_query::LayerFilter::ProjectOnly
+                } else {
+                    rules_query::LayerFilter::All
+                };
+                let detail = if full {
+                    rules_query::Detail::Full
+                } else {
+                    rules_query::Detail::Summary
+                };
+
+                let filters = rules_query::Filters {
+                    file: file.as_deref(),
+                    lang: lang.as_deref(),
+                    dep: dep.as_deref(),
+                    severity: severity.as_deref(),
+                    layer_filter,
+                };
+
+                let result = rules_query::query(&project_dir, &filters);
+                let echo = rules_query::filters_to_json(
+                    file.as_deref(),
+                    lang.as_deref(),
+                    dep.as_deref(),
+                    severity.as_deref(),
+                    layer_filter,
+                    detail,
+                );
+
+                if json_mode {
+                    output::print_json(&rules_query::to_json(&result, detail, echo));
+                } else {
+                    print!("{}", rules_query::to_human(&result, detail));
+                }
+                0
+            }
+            RuleAction::Review {
+                status,
+                lang,
+                project_dir,
+            } => match review::list(review::ReviewListOptions {
+                project_dir: &project_dir,
+                status_filter: status.as_deref(),
+                lang_filter: lang.as_deref(),
+            }) {
+                Ok(value) => {
+                    if json_mode {
+                        output::print_json(&value);
+                    } else {
+                        print!("{}", review::format_list(&value));
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(&e.to_string(), "wh rule review --help"));
+                    1
+                }
+            },
+            RuleAction::Worklist {
+                dep,
+                lang,
+                project_dir,
+            } => match worklist::load(&project_dir) {
+                Ok(handoff) => {
+                    let wl = handoff
+                        .get("worklist")
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+                    let filtered = worklist::filter(&wl, dep.as_deref(), lang.as_deref());
+                    let value = serde_json::json!({
+                        "status": "ok",
+                        "generated_at": handoff.get("generated_at"),
+                        "trigger": handoff.get("trigger"),
+                        "total": filtered.len(),
+                        "entries": filtered,
+                        "next_command": "Pick the first `ready_now` entry, extract rules, and `wh extract submit <bundle>`",
+                    });
+                    if json_mode {
+                        output::print_json(&value);
+                    } else {
+                        print!("{}", review::format_worklist(&value));
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(&e.to_string(), "wh rule worklist --help"));
+                    1
+                }
+            },
         },
 
         Commands::Source { action } => match action {
