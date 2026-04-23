@@ -35,6 +35,15 @@ pub struct DashboardState {
     /// Debt report. `None` = not yet computed (press R or open Debt screen).
     /// `Some(Err(..))` = the compute failed and the screen shows the reason.
     pub debt: DebtView,
+    /// Per-screen view state for the second-slice screens (whetstone-69jb).
+    /// Each starts at `NotComputed` and transitions via its `ensure_*_loaded`
+    /// method. Screens own their own data shape — see `src/tui/screens/*.rs`.
+    pub rules: crate::tui::screens::rules::RulesView,
+    pub sources: crate::tui::screens::sources::SourcesView,
+    pub extract: crate::tui::screens::extract::ExtractView,
+    pub check: crate::tui::screens::check::CheckView,
+    pub report: crate::tui::screens::report::ReportView,
+    pub drift: crate::tui::screens::drift::DriftView,
 }
 
 #[derive(Default, Clone)]
@@ -106,21 +115,109 @@ impl App {
             Msg::Quit => self.quit = true,
             Msg::GoToScreen(s) => {
                 self.screen = s;
-                if s == Screen::Debt {
-                    self.ensure_debt_loaded();
-                }
+                self.ensure_current_screen_loaded();
             }
             Msg::Refresh => {
                 self.load_dashboard();
-                // Recompute debt on an explicit refresh.
+                // Refresh resets all cached per-screen views so the next
+                // open recomputes from scratch.
                 self.dashboard.debt = DebtView::NotComputed;
-                if self.screen == Screen::Debt {
-                    self.ensure_debt_loaded();
-                }
+                self.dashboard.rules = Default::default();
+                self.dashboard.sources = Default::default();
+                self.dashboard.extract = Default::default();
+                self.dashboard.check = Default::default();
+                self.dashboard.report = Default::default();
+                self.dashboard.drift = Default::default();
+                self.ensure_current_screen_loaded();
             }
             Msg::Tick => {} // reserved for future spinner animation
             Msg::Key(ev) => self.handle_key(ev),
         }
+    }
+
+    /// Trigger the lazy loader for whichever screen is currently active.
+    /// Screens that don't have a loader (Dashboard, Help) are no-ops.
+    pub fn ensure_current_screen_loaded(&mut self) {
+        match self.screen {
+            Screen::Debt => self.ensure_debt_loaded(),
+            Screen::Rules => self.ensure_rules_loaded(),
+            Screen::Sources => self.ensure_sources_loaded(),
+            Screen::Extract => self.ensure_extract_loaded(),
+            Screen::Check => self.ensure_check_loaded(),
+            Screen::Report => self.ensure_report_loaded(),
+            Screen::Drift => self.ensure_drift_loaded(),
+            Screen::Dashboard | Screen::Help => {}
+        }
+    }
+
+    /// Each ensure_*_loaded method transitions `NotComputed` → `Loading` →
+    /// `Ready`/`Error` synchronously. Wire the actual compute into the
+    /// screen's `load` function in `src/tui/screens/<name>.rs`; the method
+    /// below just drives the state machine.
+    pub fn ensure_rules_loaded(&mut self) {
+        if !matches!(
+            self.dashboard.rules,
+            crate::tui::screens::rules::RulesView::NotComputed
+        ) {
+            return;
+        }
+        self.dashboard.rules = crate::tui::screens::rules::RulesView::Loading;
+        self.dashboard.rules = crate::tui::screens::rules::load(&self.project_dir);
+    }
+
+    pub fn ensure_sources_loaded(&mut self) {
+        if !matches!(
+            self.dashboard.sources,
+            crate::tui::screens::sources::SourcesView::NotComputed
+        ) {
+            return;
+        }
+        self.dashboard.sources = crate::tui::screens::sources::SourcesView::Loading;
+        self.dashboard.sources = crate::tui::screens::sources::load(&self.project_dir);
+    }
+
+    pub fn ensure_extract_loaded(&mut self) {
+        if !matches!(
+            self.dashboard.extract,
+            crate::tui::screens::extract::ExtractView::NotComputed
+        ) {
+            return;
+        }
+        self.dashboard.extract = crate::tui::screens::extract::ExtractView::Loading;
+        self.dashboard.extract = crate::tui::screens::extract::load(&self.project_dir);
+    }
+
+    pub fn ensure_check_loaded(&mut self) {
+        if !matches!(
+            self.dashboard.check,
+            crate::tui::screens::check::CheckView::NotComputed
+        ) {
+            return;
+        }
+        self.dashboard.check = crate::tui::screens::check::CheckView::Loading;
+        self.dashboard.check = crate::tui::screens::check::load(&self.project_dir);
+    }
+
+    pub fn ensure_report_loaded(&mut self) {
+        if !matches!(
+            self.dashboard.report,
+            crate::tui::screens::report::ReportView::NotComputed
+        ) {
+            return;
+        }
+        self.dashboard.report = crate::tui::screens::report::ReportView::Loading;
+        self.dashboard.report = crate::tui::screens::report::load(&self.project_dir);
+    }
+
+    pub fn ensure_drift_loaded(&mut self) {
+        if !matches!(
+            self.dashboard.drift,
+            crate::tui::screens::drift::DriftView::NotComputed
+        ) {
+            return;
+        }
+        self.dashboard.drift = crate::tui::screens::drift::DriftView::Loading;
+        self.dashboard.drift = crate::tui::screens::drift::load(&self.project_dir);
     }
 
     /// Compute the debt report on-demand. Synchronous — running `wh debt`
@@ -177,23 +274,37 @@ impl App {
         match ev.code {
             KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => self.quit = true,
             KeyCode::Char('1') => self.screen = Screen::Dashboard,
-            KeyCode::Char('2') => self.screen = Screen::Rules,
-            KeyCode::Char('3') => self.screen = Screen::Sources,
-            KeyCode::Char('4') => self.screen = Screen::Extract,
-            KeyCode::Char('5') => self.screen = Screen::Check,
-            KeyCode::Char('6') => self.screen = Screen::Report,
-            KeyCode::Char('7') => self.screen = Screen::Drift,
+            KeyCode::Char('2') => {
+                self.screen = Screen::Rules;
+                self.ensure_rules_loaded();
+            }
+            KeyCode::Char('3') => {
+                self.screen = Screen::Sources;
+                self.ensure_sources_loaded();
+            }
+            KeyCode::Char('4') => {
+                self.screen = Screen::Extract;
+                self.ensure_extract_loaded();
+            }
+            KeyCode::Char('5') => {
+                self.screen = Screen::Check;
+                self.ensure_check_loaded();
+            }
+            KeyCode::Char('6') => {
+                self.screen = Screen::Report;
+                self.ensure_report_loaded();
+            }
+            KeyCode::Char('7') => {
+                self.screen = Screen::Drift;
+                self.ensure_drift_loaded();
+            }
             KeyCode::Char('8') => {
                 self.screen = Screen::Debt;
                 self.ensure_debt_loaded();
             }
             KeyCode::Char('?') => self.screen = Screen::Help,
             KeyCode::Char('r') | KeyCode::Char('R') => {
-                self.load_dashboard();
-                self.dashboard.debt = DebtView::NotComputed;
-                if self.screen == Screen::Debt {
-                    self.ensure_debt_loaded();
-                }
+                self.update(Msg::Refresh);
             }
             _ => {}
         }

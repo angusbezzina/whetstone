@@ -130,16 +130,26 @@ pub fn view(frame: &mut Frame<'_>, app: &App) {
     let body = chunks[1];
     let hints: &[footer::Hint] = match app.screen {
         Screen::Dashboard => screens::dashboard::hints(),
+        Screen::Rules => screens::rules::hints(),
+        Screen::Sources => screens::sources::hints(),
+        Screen::Extract => screens::extract::hints(),
+        Screen::Check => screens::check::hints(),
+        Screen::Report => screens::report::hints(),
+        Screen::Drift => screens::drift::hints(),
         Screen::Debt => screens::debt::hints(),
         Screen::Help => screens::help::hints(),
-        _ => screens::stub::hints(),
     };
 
     match app.screen {
         Screen::Dashboard => screens::dashboard::render(frame, body, app),
+        Screen::Rules => screens::rules::render(frame, body, app),
+        Screen::Sources => screens::sources::render(frame, body, app),
+        Screen::Extract => screens::extract::render(frame, body, app),
+        Screen::Check => screens::check::render(frame, body, app),
+        Screen::Report => screens::report::render(frame, body, app),
+        Screen::Drift => screens::drift::render(frame, body, app),
         Screen::Debt => screens::debt::render(frame, body, app),
         Screen::Help => screens::help::render(frame, body),
-        other => screens::stub::render(frame, body, other),
     }
 
     footer::render(frame, chunks[2], hints);
