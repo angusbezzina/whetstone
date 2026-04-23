@@ -306,7 +306,37 @@ impl App {
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 self.update(Msg::Refresh);
             }
+            KeyCode::Up | KeyCode::Char('k') => self.select_prev_on_current_screen(1),
+            KeyCode::Down | KeyCode::Char('j') => self.select_next_on_current_screen(1),
+            KeyCode::PageUp => self.select_prev_on_current_screen(10),
+            KeyCode::PageDown => self.select_next_on_current_screen(10),
             _ => {}
+        }
+    }
+
+    /// Move selection one step backward on whichever list-oriented screen is
+    /// active. No-op on screens without a selectable list.
+    fn select_prev_on_current_screen(&mut self, steps: usize) {
+        for _ in 0..steps {
+            match self.screen {
+                Screen::Rules => self.dashboard.rules.select_prev(),
+                Screen::Extract => self.dashboard.extract.select_prev(),
+                Screen::Drift => self.dashboard.drift.select_prev(),
+                Screen::Report => self.dashboard.report.scroll_up(1),
+                _ => break,
+            }
+        }
+    }
+
+    fn select_next_on_current_screen(&mut self, steps: usize) {
+        for _ in 0..steps {
+            match self.screen {
+                Screen::Rules => self.dashboard.rules.select_next(),
+                Screen::Extract => self.dashboard.extract.select_next(),
+                Screen::Drift => self.dashboard.drift.select_next(),
+                Screen::Report => self.dashboard.report.scroll_down(1),
+                _ => break,
+            }
         }
     }
 }

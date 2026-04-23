@@ -37,7 +37,6 @@ pub fn hints() -> &'static [footer::Hint] {
 pub enum ExtractView {
     #[default]
     NotComputed,
-    #[allow(dead_code)]
     Loading,
     Ready(Box<ExtractData>),
     Error(String),
@@ -49,6 +48,23 @@ pub struct ExtractData {
     pub entries: Vec<WorklistRow>,
     pub selected: usize,
     pub total: u32,
+}
+
+impl ExtractView {
+    pub fn select_prev(&mut self) {
+        if let ExtractView::Ready(data) = self {
+            data.selected = data.selected.saturating_sub(1);
+        }
+    }
+
+    pub fn select_next(&mut self) {
+        if let ExtractView::Ready(data) = self {
+            let len = data.entries.len();
+            if len > 0 && data.selected + 1 < len {
+                data.selected += 1;
+            }
+        }
+    }
 }
 
 /// One row in the worklist — the fields we surface in the TUI. Derived

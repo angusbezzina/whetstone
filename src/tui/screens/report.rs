@@ -44,6 +44,20 @@ pub struct ReportData {
     pub scroll: u16,
 }
 
+impl ReportView {
+    pub fn scroll_up(&mut self, lines: u16) {
+        if let ReportView::Ready(data) = self {
+            data.scroll = data.scroll.saturating_sub(lines);
+        }
+    }
+
+    pub fn scroll_down(&mut self, lines: u16) {
+        if let ReportView::Ready(data) = self {
+            data.scroll = data.scroll.saturating_add(lines);
+        }
+    }
+}
+
 pub fn load(project_dir: &Path) -> ReportView {
     let opts = crate::report::ReportOptions {
         project_dir,

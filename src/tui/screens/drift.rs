@@ -42,7 +42,6 @@ pub fn hints() -> &'static [footer::Hint] {
 pub enum DriftView {
     #[default]
     NotComputed,
-    #[allow(dead_code)]
     Loading,
     Ready(Box<DriftData>),
     Error(String),
@@ -55,6 +54,23 @@ pub struct DriftData {
     pub extraction_prompt: String,
     pub count: i64,
     pub selected: usize,
+}
+
+impl DriftView {
+    pub fn select_prev(&mut self) {
+        if let DriftView::Ready(data) = self {
+            data.selected = data.selected.saturating_sub(1);
+        }
+    }
+
+    pub fn select_next(&mut self) {
+        if let DriftView::Ready(data) = self {
+            let len = data.candidates.len();
+            if len > 0 && data.selected + 1 < len {
+                data.selected += 1;
+            }
+        }
+    }
 }
 
 #[derive(Clone, Default)]

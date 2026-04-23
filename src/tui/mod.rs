@@ -246,6 +246,108 @@ mod tests {
     }
 
     #[test]
+    fn arrow_keys_move_selection_on_rules_screen() {
+        use crate::tui::screens::rules::{RulesData, RulesView, RuleRow};
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let tmp =
+            std::env::temp_dir().join(format!("wh_tui_nav_rules_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.screen = Screen::Rules;
+
+        fn row(id: &str) -> RuleRow {
+            RuleRow {
+                id: id.into(),
+                severity: "should".into(),
+                confidence: "high".into(),
+                language: "rust".into(),
+                dep: id.split('.').next().unwrap_or(id).into(),
+                layer: "project".into(),
+                source_url: "https://example.com".into(),
+                description: "x".into(),
+            }
+        }
+        app.dashboard.rules = RulesView::Ready(Box::new(RulesData {
+            rows: vec![row("a.one"), row("b.two"), row("c.three")],
+            by_language: vec![("rust".into(), 3)],
+            selected: 0,
+        }));
+
+        app.update(Msg::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
+        app.update(Msg::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
+        if let RulesView::Ready(d) = &app.dashboard.rules {
+            assert_eq!(d.selected, 2, "two Down presses should land on index 2");
+        } else {
+            panic!("rules view flipped out of Ready");
+        }
+
+        // Down at the bottom clamps to the last row.
+        app.update(Msg::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
+        if let RulesView::Ready(d) = &app.dashboard.rules {
+            assert_eq!(d.selected, 2);
+        }
+
+        // j/k work as vim aliases.
+        app.update(Msg::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::NONE,
+        )));
+        if let RulesView::Ready(d) = &app.dashboard.rules {
+            assert_eq!(d.selected, 1);
+        }
+        app.update(Msg::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::NONE,
+        )));
+        app.update(Msg::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            KeyModifiers::NONE,
+        )));
+        if let RulesView::Ready(d) = &app.dashboard.rules {
+            assert_eq!(d.selected, 0, "Up at the top clamps to 0");
+        }
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn pagedown_advances_report_scroll() {
+        use crate::tui::screens::report::{ReportData, ReportView};
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let tmp =
+            std::env::temp_dir().join(format!("wh_tui_nav_report_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.screen = Screen::Report;
+        app.dashboard.report = ReportView::Ready(Box::new(ReportData {
+            markdown: "line\n".repeat(100),
+            scroll: 0,
+        }));
+
+        app.update(Msg::Key(KeyEvent::new(
+            KeyCode::PageDown,
+            KeyModifiers::NONE,
+        )));
+        if let ReportView::Ready(d) = &app.dashboard.report {
+            assert_eq!(d.scroll, 10);
+        } else {
+            panic!("report flipped out of Ready");
+        }
+
+        app.update(Msg::Key(KeyEvent::new(
+            KeyCode::PageUp,
+            KeyModifiers::NONE,
+        )));
+        if let ReportView::Ready(d) = &app.dashboard.report {
+            assert_eq!(d.scroll, 0);
+        }
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn view_renders_too_small_fallback() {
         let backend = TestBackend::new(40, 10);
         let mut terminal = Terminal::new(backend).unwrap();

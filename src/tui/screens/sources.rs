@@ -44,9 +44,6 @@ pub struct SourcesData {
 #[derive(Debug, Default, Clone)]
 pub struct SourceRow {
     pub name: String,
-    /// Retained for a future hover/detail pane; not displayed in the v1 list.
-    #[allow(dead_code)]
-    pub url: String,
     pub lang: Option<String>,
     pub kind: Option<String>,
     pub last_fetched: Option<String>,
@@ -77,16 +74,15 @@ pub fn load(project_dir: &Path) -> SourcesView {
 /// `last_fetched` is not yet emitted by `list` — kept as `None` so the
 /// renderer is ready when source-fetch telemetry lands.
 fn row_from_json(entry: &serde_json::Value) -> SourceRow {
-    let url = entry
+    let url_fallback = entry
         .get("url")
         .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
+        .unwrap_or_default();
     let name = entry
         .get("name")
         .and_then(|v| v.as_str())
         .map(str::to_string)
-        .unwrap_or_else(|| url.clone());
+        .unwrap_or_else(|| url_fallback.to_string());
     let lang = entry
         .get("language")
         .and_then(|v| v.as_str())
@@ -101,7 +97,6 @@ fn row_from_json(entry: &serde_json::Value) -> SourceRow {
         .map(str::to_string);
     SourceRow {
         name,
-        url,
         lang,
         kind,
         last_fetched,
@@ -245,14 +240,12 @@ mod tests {
         app.dashboard.sources = SourcesView::Ready(Box::new(SourcesData {
             project: vec![SourceRow {
                 name: "fastapi-docs".to_string(),
-                url: "https://fastapi.tiangolo.com/llms.txt".to_string(),
                 lang: Some("python".to_string()),
                 kind: Some("llms-txt".to_string()),
                 last_fetched: None,
             }],
             personal: vec![SourceRow {
                 name: "my-notes".to_string(),
-                url: "https://example.com/notes.md".to_string(),
                 lang: None,
                 kind: None,
                 last_fetched: None,

@@ -65,6 +65,23 @@ pub struct RulesData {
     pub selected: usize,
 }
 
+impl RulesView {
+    pub fn select_prev(&mut self) {
+        if let RulesView::Ready(data) = self {
+            data.selected = data.selected.saturating_sub(1);
+        }
+    }
+
+    pub fn select_next(&mut self) {
+        if let RulesView::Ready(data) = self {
+            let len = data.rows.len();
+            if len > 0 && data.selected + 1 < len {
+                data.selected += 1;
+            }
+        }
+    }
+}
+
 /// Synchronously collect the data for this screen. Returns `Error(..)` when
 /// the project has no rules at all; callers stay in `NotComputed` until the
 /// screen is first opened.
