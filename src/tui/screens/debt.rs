@@ -25,6 +25,35 @@ pub fn hints() -> &'static [footer::Hint] {
     ]
 }
 
+impl DebtView {
+    pub fn select_prev(&mut self) {
+        if let DebtView::Ready(data) = self {
+            data.selected = data.selected.saturating_sub(1);
+        }
+    }
+
+    pub fn select_next(&mut self) {
+        if let DebtView::Ready(data) = self {
+            let len = data.hotspots.len();
+            if len > 0 && data.selected + 1 < len {
+                data.selected += 1;
+            }
+        }
+    }
+
+    pub fn scroll_left(&mut self, cols: u16) {
+        if let DebtView::Ready(data) = self {
+            data.scroll_x = data.scroll_x.saturating_sub(cols);
+        }
+    }
+
+    pub fn scroll_right(&mut self, cols: u16) {
+        if let DebtView::Ready(data) = self {
+            data.scroll_x = data.scroll_x.saturating_add(cols);
+        }
+    }
+}
+
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     match &app.dashboard.debt {
         DebtView::NotComputed => render_empty(frame, area, "Debt report not computed yet. Press R to compute."),
@@ -114,15 +143,21 @@ fn render_hotspots(
     summary: &crate::tui::app::DebtSummaryView,
 ) {
     let width = area.width.saturating_sub(4) as usize;
+    let visible = (area.height.saturating_sub(2) / 2).max(1) as usize;
+    let (start, end) = window_bounds(summary.selected, summary.hotspots.len(), visible);
     let items: Vec<ListItem> = summary
         .hotspots
         .iter()
-        .map(|h| {
+        .enumerate()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .map(|(i, h)| {
             let title_w = width.saturating_sub(30);
+            let prefix = if i == summary.selected { "▶ " } else { "  " };
             ListItem::new(vec![
                 Line::from(vec![
                     Span::styled(
-                        format!("{:>3}.  ", h.rank),
+                        format!("{prefix}{:>2}. ", h.rank),
                         Style::default().fg(theme::MUTED),
                     ),
                     Span::styled(
@@ -133,10 +168,10 @@ fn render_hotspots(
                         format!("score {:.2}  ", h.score),
                         Style::default().fg(theme::MUTED),
                     ),
-                    Span::raw(truncate(&h.title, title_w)),
+                    Span::raw(slice_text(&h.title, summary.scroll_x as usize, title_w)),
                 ]),
                 Line::from(Span::styled(
-                    format!("        → {}", truncate(&h.next_action, width.saturating_sub(10))),
+                    format!("      → {}", slice_text(&h.next_action, summary.scroll_x as usize, width.saturating_sub(8))),
                     Style::default().fg(theme::MUTED),
                 )),
             ])
@@ -162,14 +197,21 @@ fn block(title: &str) -> Block<'static> {
         .border_style(theme::border_inactive())
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if max == 0 {
+fn slice_text(s: &str, start: usize, width: usize) -> String {
+    if width == 0 {
         return String::new();
     }
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let t: String = s.chars().take(max.saturating_sub(1)).collect();
-        format!("{t}…")
+    let chars: Vec<char> = s.chars().collect();
+    if start >= chars.len() {
+        return String::new();
     }
+    chars[start..chars.len().min(start + width)].iter().collect()
+}
+
+fn window_bounds(selected: usize, len: usize, visible: usize) -> (usize, usize) {
+    if visible == 0 || len <= visible {
+        return (0, len);
+    }
+    let start = selected.saturating_sub(visible / 2).min(len - visible);
+    (start, (start + visible).min(len))
 }

@@ -288,6 +288,13 @@ fn render_placeholder(frame: &mut Frame<'_>, area: Rect, message: &str) {
 }
 
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
+    if msg.contains("No rules found") {
+        return render_placeholder(
+            frame,
+            area,
+            "No rules yet. Run wh init, then wh extract and wh approve — or add one with wh rule add.",
+        );
+    }
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled(

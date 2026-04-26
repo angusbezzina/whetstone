@@ -757,7 +757,7 @@ fn test_report_pr_comment_contains_marker_and_headers() {
     );
     assert!(stdout.contains("# Whetstone Report"));
     assert!(stdout.contains("**Rule system:**"));
-    assert!(stdout.contains("**Adherence:**"));
+    assert!(!stdout.contains("**Adherence:** n/a / 100"));
 }
 
 #[test]

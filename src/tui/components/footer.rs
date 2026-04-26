@@ -30,34 +30,12 @@ const FULL_HINTS: &[Hint] = &[
     ("Q", "QUIT"),
 ];
 
-const COMPACT_HINTS: &[Hint] = &[("1", "HOME"), ("R", "REFRESH"), ("?", "HELP"), ("Q", "QUIT")];
-
-fn hint_width(hints: &[Hint]) -> usize {
-    hints
-        .iter()
-        .enumerate()
-        .map(|(i, (key, label))| {
-            let sep = if i == 0 { 0 } else { 2 };
-            sep + key.len() + 1 + label.len()
-        })
-        .sum()
-}
-
-fn hints_for_width(width: u16) -> &'static [Hint] {
-    let usable = width.saturating_sub(2) as usize;
-    if hint_width(FULL_HINTS) <= usable {
-        FULL_HINTS
-    } else {
-        COMPACT_HINTS
-    }
-}
-
 pub fn render(frame: &mut Frame<'_>, area: Rect, _hints: &[Hint]) {
-    let hints = hints_for_width(area.width);
+    let hints = FULL_HINTS;
     let mut spans: Vec<Span> = Vec::with_capacity(hints.len() * 3);
     for (i, (key, label)) in hints.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled("  ", Style::default()));
+            spans.push(Span::styled(" ", Style::default()));
         }
         spans.push(Span::styled(*key, theme::key_hint_accent()));
         spans.push(Span::styled(" ", Style::default()));

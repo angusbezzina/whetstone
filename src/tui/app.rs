@@ -17,6 +17,7 @@ pub struct App {
     pub quit: bool,
     pub help_scroll_y: u16,
     pub help_scroll_x: u16,
+    pub dashboard_scroll: usize,
     pub dashboard: DashboardState,
 }
 
@@ -66,6 +67,8 @@ pub struct DebtSummaryView {
     pub by_dup: u32,
     pub by_deps: u32,
     pub by_hotspots: u32,
+    pub selected: usize,
+    pub scroll_x: u16,
     pub hotspots: Vec<DebtHotspotRow>,
 }
 
@@ -103,6 +106,7 @@ impl App {
             quit: false,
             help_scroll_y: 0,
             help_scroll_x: 0,
+            dashboard_scroll: 0,
             dashboard: DashboardState::default(),
         };
         app.load_dashboard();
@@ -128,6 +132,7 @@ impl App {
                 // open recomputes from scratch.
                 self.help_scroll_y = 0;
                 self.help_scroll_x = 0;
+                self.dashboard_scroll = 0;
                 self.dashboard.result = Default::default();
                 self.dashboard.debt = DebtView::NotComputed;
                 self.dashboard.rules = Default::default();
@@ -264,6 +269,8 @@ impl App {
                     by_dup: report.summary.by_category.dup,
                     by_deps: report.summary.by_category.deps,
                     by_hotspots: report.summary.by_category.hotspots,
+                    selected: 0,
+                    scroll_x: 0,
                     hotspots,
                 }))
             }
@@ -330,15 +337,16 @@ impl App {
     fn select_prev_on_current_screen(&mut self, steps: usize) {
         for _ in 0..steps {
             match self.screen {
+                Screen::Dashboard => self.dashboard_scroll = self.dashboard_scroll.saturating_sub(1),
                 Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_sub(1),
                 Screen::Result => self.dashboard.result.scroll_up(1),
+                Screen::Debt => self.dashboard.debt.select_prev(),
                 Screen::Rules => self.dashboard.rules.select_prev(),
                 Screen::Sources => self.dashboard.sources.select_prev(),
                 Screen::Extract => self.dashboard.extract.select_prev(),
                 Screen::Check => self.dashboard.check.select_prev(),
                 Screen::Drift => self.dashboard.drift.select_prev(),
                 Screen::Report => self.dashboard.report.scroll_up(1),
-                _ => break,
             }
         }
     }
@@ -346,15 +354,16 @@ impl App {
     fn select_next_on_current_screen(&mut self, steps: usize) {
         for _ in 0..steps {
             match self.screen {
+                Screen::Dashboard => self.dashboard_scroll = self.dashboard_scroll.saturating_add(1),
                 Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_add(1),
                 Screen::Result => self.dashboard.result.scroll_down(1),
+                Screen::Debt => self.dashboard.debt.select_next(),
                 Screen::Rules => self.dashboard.rules.select_next(),
                 Screen::Sources => self.dashboard.sources.select_next(),
                 Screen::Extract => self.dashboard.extract.select_next(),
                 Screen::Check => self.dashboard.check.select_next(),
                 Screen::Drift => self.dashboard.drift.select_next(),
                 Screen::Report => self.dashboard.report.scroll_down(1),
-                _ => break,
             }
         }
     }
@@ -363,6 +372,7 @@ impl App {
         match self.screen {
             Screen::Help => self.help_scroll_x = self.help_scroll_x.saturating_sub(steps),
             Screen::Result => self.dashboard.result.scroll_left(steps),
+            Screen::Debt => self.dashboard.debt.scroll_left(steps),
             Screen::Report => self.dashboard.report.scroll_left(steps),
             _ => {}
         }
@@ -372,6 +382,7 @@ impl App {
         match self.screen {
             Screen::Help => self.help_scroll_x = self.help_scroll_x.saturating_add(steps),
             Screen::Result => self.dashboard.result.scroll_right(steps),
+            Screen::Debt => self.dashboard.debt.scroll_right(steps),
             Screen::Report => self.dashboard.report.scroll_right(steps),
             _ => {}
         }

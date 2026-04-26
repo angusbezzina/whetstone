@@ -81,7 +81,7 @@ fn render_debt_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ],
         DebtView::Loading => vec![Line::from(Span::styled(
             "Computing debt…",
-            Style::default().fg(theme::AMBER),
+            Style::default().fg(theme::MUTED),
         ))],
         DebtView::Error(msg) => vec![
             Line::from(Span::styled(
@@ -114,10 +114,15 @@ fn render_debt_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
             if summary.hotspots.is_empty() {
                 v.push(Line::from(Span::styled(
                     "No hotspots. Nothing to triage.",
-                    Style::default().fg(theme::STATUS_OK),
+                    Style::default().fg(ratatui::style::Color::White),
                 )));
             } else {
-                for h in summary.hotspots.iter().take(2) {
+                for h in summary
+                    .hotspots
+                    .iter()
+                    .skip(app.dashboard_scroll)
+                    .take(2)
+                {
                     v.push(Line::from(vec![
                         Span::styled(
                             format!("  {:>2}. ", h.rank),
@@ -215,7 +220,7 @@ fn render_drift_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
     if d.drift_deps.is_empty() && d.drift_count == 0 {
         lines.push(Line::from(Span::styled(
             "No drift — rules are current.",
-            Style::default().fg(theme::STATUS_OK),
+            Style::default().fg(ratatui::style::Color::White),
         )));
     } else {
         for dep in d.drift_deps.iter().take(6) {
@@ -238,10 +243,10 @@ fn render_violations_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
     if d.top_violations.is_empty() {
         items.push(ListItem::new(Line::from(Span::styled(
             "No violations detected. Nice.",
-            Style::default().fg(theme::STATUS_OK),
+            Style::default().fg(ratatui::style::Color::White),
         ))));
     } else {
-        for v in &d.top_violations {
+        for v in d.top_violations.iter().skip(app.dashboard_scroll).take(5) {
             let sev_color = theme::severity_color(&v.severity);
             items.push(ListItem::new(Line::from(vec![
                 Span::styled(
@@ -280,14 +285,24 @@ fn render_compact(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
     let mut lines = vec![
         gauge_row("Rule system", gauge::render(d.rule_system_score, bar_width)),
-        gauge_row("Adherence  ", gauge::render(d.adherence_score, bar_width)),
-        Line::from(""),
-        pair_line("Rules", &format!("{} approved, {} personal", d.rules_total, d.rules_personal)),
-        pair_line("Drift", &format!("{} deps", d.drift_count)),
-        Line::from(""),
-        Line::from(Span::styled("Top violations", theme::header_meta())),
     ];
-    for v in d.top_violations.iter().take(3) {
+    lines.push(Line::from(vec![
+        Span::styled("Adherence   ", theme::header_meta()),
+        if d.adherence_score.is_some() {
+            Span::raw("")
+        } else {
+            Span::styled("N/A", Style::default().fg(theme::MUTED).bold())
+        },
+    ]));
+    if d.adherence_score.is_some() {
+        lines.push(gauge::render(d.adherence_score, bar_width));
+    }
+    lines.push(Line::from(""));
+    lines.push(pair_line("Rules", &format!("{} approved, {} personal", d.rules_total, d.rules_personal)));
+    lines.push(pair_line("Drift", &format!("{} deps", d.drift_count)));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("Top violations", theme::header_meta())));
+    for v in d.top_violations.iter().skip(app.dashboard_scroll).take(3) {
         lines.push(Line::from(vec![
             Span::styled(
                 format!("  {:<6}", v.severity.to_uppercase()),

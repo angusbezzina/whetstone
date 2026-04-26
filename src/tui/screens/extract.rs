@@ -233,17 +233,15 @@ fn render_worklist(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
             ]);
             let meta_line = Line::from(vec![
                 Span::styled(
-                    "        ",
-                    Style::default().fg(theme::MUTED),
-                ),
-                Span::styled(
                     format!("{lang_label:<10}"),
                     Style::default().fg(theme::MUTED),
                 ),
+                Span::raw(" · "),
                 Span::styled(
-                    format!("{:<14}", row.priority),
+                    row.priority.clone(),
                     Style::default().fg(priority_color),
                 ),
+                Span::raw(" · "),
                 Span::styled(
                     format!("score {:.1}", row.score),
                     Style::default().fg(theme::MUTED),
@@ -283,31 +281,40 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     let lines: Vec<Line> = vec![
         Line::from(""),
         Line::from(vec![
-            Span::styled("  Name       ", Style::default().fg(theme::MUTED)),
+            Span::styled("Name      ", Style::default().fg(theme::MUTED)),
             Span::styled(row.name.clone(), Style::default().fg(theme::AMBER).bold()),
         ]),
         Line::from(vec![
-            Span::styled("  Language   ", Style::default().fg(theme::MUTED)),
+            Span::styled("Language  ", Style::default().fg(theme::MUTED)),
             Span::raw(language),
         ]),
         Line::from(vec![
-            Span::styled("  Priority   ", Style::default().fg(theme::MUTED)),
+            Span::styled("Priority  ", Style::default().fg(theme::MUTED)),
             Span::styled(row.priority.clone(), Style::default().fg(priority_color)),
         ]),
         Line::from(vec![
-            Span::styled("  Score      ", Style::default().fg(theme::MUTED)),
+            Span::styled("Score     ", Style::default().fg(theme::MUTED)),
             Span::raw(format!("{:.2}", row.score)),
         ]),
         Line::from(vec![
-            Span::styled("  Existing   ", Style::default().fg(theme::MUTED)),
+            Span::styled("Existing  ", Style::default().fg(theme::MUTED)),
             Span::raw(format!("{} rule(s)", row.existing_rules)),
         ]),
         Line::from(""),
         Line::from(Span::styled(
-            "  Next step:",
+            "What the score means",
+            theme::header_title(),
+        )),
+        Line::from(Span::styled(
+            "Higher scores mean this dependency is a better next extraction target based on docs/source quality and freshness.",
             Style::default().fg(theme::MUTED),
         )),
-        Line::from(format!("  {}", row.next_step)),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Next step",
+            Style::default().fg(theme::MUTED),
+        )),
+        Line::from(row.next_step.clone()),
     ];
 
     let block = block("DETAIL");

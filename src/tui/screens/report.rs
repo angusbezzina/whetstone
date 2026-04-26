@@ -11,7 +11,7 @@ use ratatui::{
     layout::Rect,
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
     Frame,
 };
 
@@ -111,13 +111,11 @@ fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &ReportData) {
                 Style::default().fg(theme::MUTED),
             )),
         ];
-        frame.render_widget(Paragraph::new(lines).block(block("REPORT")), area);
+        frame.render_widget(Paragraph::new(lines), area);
         return;
     }
 
-    let paragraph = Paragraph::new(data.markdown.as_str())
-        .block(block("REPORT"))
-        .scroll((data.scroll_y, data.scroll_x));
+    let paragraph = Paragraph::new(data.markdown.as_str()).scroll((data.scroll_y, data.scroll_x));
     frame.render_widget(paragraph, area);
 }
 
@@ -129,7 +127,7 @@ fn render_placeholder(frame: &mut Frame<'_>, area: Rect, message: &str) {
             Style::default().fg(theme::MUTED),
         )),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("REPORT")), area);
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
@@ -141,17 +139,7 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
         )),
         Line::from(format!("  {msg}")),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("REPORT")), area);
-}
-
-fn block(title: &str) -> Block<'static> {
-    Block::default()
-        .title(Span::styled(
-            format!(" {title} "),
-            theme::header_title(),
-        ))
-        .borders(Borders::ALL)
-        .border_style(theme::border_inactive())
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 #[cfg(test)]

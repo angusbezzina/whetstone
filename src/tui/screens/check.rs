@@ -210,7 +210,7 @@ fn render_violations(frame: &mut Frame<'_>, area: Rect, data: &CheckData) {
     let items: Vec<ListItem> = if data.violations.is_empty() {
         vec![ListItem::new(Line::from(Span::styled(
             "No violations. Nice.",
-            Style::default().fg(theme::STATUS_OK),
+            Style::default().fg(ratatui::style::Color::White),
         )))]
     } else {
         data.violations

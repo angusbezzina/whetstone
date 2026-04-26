@@ -102,13 +102,9 @@ pub fn to_markdown(data: &Value) -> String {
             .map(|n| n.to_string())
             .unwrap_or_else(|| "—".into())
     ));
-    out.push_str(&format!(
-        "**Adherence:** {} / 100  \n",
-        adherence
-            .and_then(|v| v.as_i64())
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "n/a".into())
-    ));
+    if let Some(adherence_score) = adherence.and_then(|v| v.as_i64()) {
+        out.push_str(&format!("**Adherence:** {adherence_score} / 100  \n"));
+    }
     out.push_str(&format!("**Approved rules:** {rules}\n\n"));
 
     // Adherence breakdown.

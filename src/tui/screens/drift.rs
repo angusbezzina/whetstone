@@ -210,7 +210,7 @@ fn render_ok(frame: &mut Frame<'_>, area: Rect) {
         Line::from(""),
         Line::from(Span::styled(
             "  No drift — rules are current. Run wh reinit to check.",
-            Style::default().fg(theme::STATUS_OK),
+            Style::default().fg(ratatui::style::Color::White),
         )),
     ];
     frame.render_widget(Paragraph::new(lines).block(block("DRIFT")), area);
