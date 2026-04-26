@@ -6,6 +6,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-04-26
+
+### Fixed
+- **TUI polish across layout and navigation.** Screens now support practical scrolling and viewport behavior, the footer uses a shared adaptive hint model for consistency, refresh no longer corrupts the bottom layout, unavailable adherence renders as plain `N/A` with no phantom bar, and the header now uses all-caps `WHESTONE` branding with the orange version pinned to the top-right.
+
 ## [0.8.0] - 2026-04-26
 
 ### Changed
