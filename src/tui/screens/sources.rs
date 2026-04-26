@@ -39,6 +39,7 @@ pub enum SourcesView {
 pub struct SourcesData {
     pub project: Vec<SourceRow>,
     pub personal: Vec<SourceRow>,
+    pub scroll: usize,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -47,6 +48,23 @@ pub struct SourceRow {
     pub lang: Option<String>,
     pub kind: Option<String>,
     pub last_fetched: Option<String>,
+}
+
+impl SourcesView {
+    pub fn select_prev(&mut self) {
+        if let SourcesView::Ready(data) = self {
+            data.scroll = data.scroll.saturating_sub(1);
+        }
+    }
+
+    pub fn select_next(&mut self) {
+        if let SourcesView::Ready(data) = self {
+            let longest = data.project.len().max(data.personal.len());
+            if data.scroll + 1 < longest {
+                data.scroll += 1;
+            }
+        }
+    }
 }
 
 pub fn load(project_dir: &Path) -> SourcesView {
@@ -62,7 +80,11 @@ pub fn load(project_dir: &Path) -> SourcesView {
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().map(row_from_json).collect())
                 .unwrap_or_default();
-            SourcesView::Ready(Box::new(SourcesData { project, personal }))
+            SourcesView::Ready(Box::new(SourcesData {
+                project,
+                personal,
+                scroll: 0,
+            }))
         }
         Err(e) => SourcesView::Error(e.to_string()),
     }
@@ -122,11 +144,11 @@ fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &SourcesData) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
-    render_column(frame, cols[0], "PROJECT", &data.project);
-    render_column(frame, cols[1], "PERSONAL", &data.personal);
+    render_column(frame, cols[0], "PROJECT", &data.project, data.scroll);
+    render_column(frame, cols[1], "PERSONAL", &data.personal, data.scroll);
 }
 
-fn render_column(frame: &mut Frame<'_>, area: Rect, title: &str, rows: &[SourceRow]) {
+fn render_column(frame: &mut Frame<'_>, area: Rect, title: &str, rows: &[SourceRow], scroll: usize) {
     let block = block(title);
     if rows.is_empty() {
         let lines = vec![
@@ -140,7 +162,13 @@ fn render_column(frame: &mut Frame<'_>, area: Rect, title: &str, rows: &[SourceR
         return;
     }
 
-    let items: Vec<ListItem> = rows.iter().map(row_to_item).collect();
+    let visible = area.height.saturating_sub(2) as usize;
+    let items: Vec<ListItem> = rows
+        .iter()
+        .skip(scroll)
+        .take(visible)
+        .map(row_to_item)
+        .collect();
     frame.render_widget(List::new(items).block(block), area);
 }
 
@@ -250,6 +278,7 @@ mod tests {
                 kind: None,
                 last_fetched: None,
             }],
+            scroll: 0,
         }));
 
         terminal

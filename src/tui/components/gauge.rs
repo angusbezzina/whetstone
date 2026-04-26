@@ -1,7 +1,7 @@
 //! Score gauge — amber-filled block bar 0–100.
 //!
 //! Renders as e.g. `▰▰▰▰▰▰▰▱▱▱  72` at the specified width. Null / unavailable
-//! scores render as `░░░░░░░░░░  n/a`.
+//! scores render as plain `N/A` (no bar).
 
 use ratatui::{
     style::{Style, Stylize},
@@ -28,12 +28,6 @@ pub fn render(score: Option<i64>, width: usize) -> Line<'static> {
                 Span::raw(format!(" {:>3}", s)),
             ])
         }
-        None => Line::from(vec![
-            Span::styled(
-                "░".repeat(bar_width),
-                Style::default().fg(theme::MUTED),
-            ),
-            Span::raw(" n/a").dim(),
-        ]),
+        None => Line::from(Span::styled("N/A", Style::default().fg(theme::MUTED).bold())),
     }
 }

@@ -72,7 +72,12 @@ pub fn run_with_target(project_dir: &Path, target: LaunchTarget) -> Result<()> {
         LaunchTarget::Result { title, body } => {
             app.screen = Screen::Result;
             app.dashboard.result = screens::result::ResultView::Ready(Box::new(
-                screens::result::ResultData { title, body },
+                screens::result::ResultData {
+                    title,
+                    body,
+                    scroll_y: 0,
+                    scroll_x: 0,
+                },
             ));
         }
     }
@@ -177,7 +182,7 @@ pub fn view(frame: &mut Frame<'_>, app: &App) {
         Screen::Report => screens::report::render(frame, body, app),
         Screen::Drift => screens::drift::render(frame, body, app),
         Screen::Debt => screens::debt::render(frame, body, app),
-        Screen::Help => screens::help::render(frame, body),
+        Screen::Help => screens::help::render(frame, body, app),
     }
 
     footer::render(frame, chunks[2], hints);
@@ -221,7 +226,7 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol().to_owned())
             .collect();
-        assert!(rendered.contains("Whetstone"));
+        assert!(rendered.contains("WHESTONE"));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -351,7 +356,8 @@ mod tests {
         app.screen = Screen::Report;
         app.dashboard.report = ReportView::Ready(Box::new(ReportData {
             markdown: "line\n".repeat(100),
-            scroll: 0,
+            scroll_y: 0,
+            scroll_x: 0,
         }));
 
         app.update(Msg::Key(KeyEvent::new(
@@ -359,7 +365,7 @@ mod tests {
             KeyModifiers::NONE,
         )));
         if let ReportView::Ready(d) = &app.dashboard.report {
-            assert_eq!(d.scroll, 10);
+            assert_eq!(d.scroll_y, 10);
         } else {
             panic!("report flipped out of Ready");
         }
@@ -369,7 +375,7 @@ mod tests {
             KeyModifiers::NONE,
         )));
         if let ReportView::Ready(d) = &app.dashboard.report {
-            assert_eq!(d.scroll, 0);
+            assert_eq!(d.scroll_y, 0);
         }
 
         let _ = std::fs::remove_dir_all(&tmp);

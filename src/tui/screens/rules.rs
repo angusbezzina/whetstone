@@ -4,8 +4,8 @@
 //! four-state `RulesView` enum. The left pane lists merged rule ids with a
 //! colored severity badge; the right pane shows full detail (description,
 //! source_url, layer, language, dep) for the currently selected rule.
-//! Keyboard selection is intentionally NOT wired in v1 — `selected` defaults
-//! to 0 so the first rule is always the one shown.
+//! Keyboard selection is wired via up/down and j/k; the list renders a moving
+//! viewport so large rule sets remain navigable.
 
 use std::path::Path;
 
@@ -172,10 +172,14 @@ fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &RulesData) {
 
 fn render_list(frame: &mut Frame<'_>, area: Rect, data: &RulesData) {
     let width = area.width.saturating_sub(4) as usize;
+    let visible = area.height.saturating_sub(2) as usize;
+    let (start, end) = window_bounds(data.selected, data.rows.len(), visible);
     let items: Vec<ListItem> = data
         .rows
         .iter()
         .enumerate()
+        .skip(start)
+        .take(end.saturating_sub(start))
         .map(|(i, row)| {
             let marker = if i == data.selected { "▶ " } else { "  " };
             let marker_color = if i == data.selected {
@@ -315,6 +319,14 @@ fn truncate(s: &str, max: usize) -> String {
         let t: String = s.chars().take(max.saturating_sub(1)).collect();
         format!("{t}…")
     }
+}
+
+fn window_bounds(selected: usize, len: usize, visible: usize) -> (usize, usize) {
+    if visible == 0 || len <= visible {
+        return (0, len);
+    }
+    let start = selected.saturating_sub(visible / 2).min(len - visible);
+    (start, (start + visible).min(len))
 }
 
 #[cfg(test)]

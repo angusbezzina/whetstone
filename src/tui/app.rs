@@ -15,6 +15,8 @@ pub struct App {
     pub project_dir: PathBuf,
     pub screen: Screen,
     pub quit: bool,
+    pub help_scroll_y: u16,
+    pub help_scroll_x: u16,
     pub dashboard: DashboardState,
 }
 
@@ -99,6 +101,8 @@ impl App {
             project_dir: project_dir.clone(),
             screen: Screen::Dashboard,
             quit: false,
+            help_scroll_y: 0,
+            help_scroll_x: 0,
             dashboard: DashboardState::default(),
         };
         app.load_dashboard();
@@ -122,6 +126,8 @@ impl App {
                 self.load_dashboard();
                 // Refresh resets all cached per-screen views so the next
                 // open recomputes from scratch.
+                self.help_scroll_y = 0;
+                self.help_scroll_x = 0;
                 self.dashboard.result = Default::default();
                 self.dashboard.debt = DebtView::NotComputed;
                 self.dashboard.rules = Default::default();
@@ -313,6 +319,8 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => self.select_next_on_current_screen(1),
             KeyCode::PageUp => self.select_prev_on_current_screen(10),
             KeyCode::PageDown => self.select_next_on_current_screen(10),
+            KeyCode::Left | KeyCode::Char('h') => self.scroll_left_on_current_screen(4),
+            KeyCode::Right | KeyCode::Char('l') => self.scroll_right_on_current_screen(4),
             _ => {}
         }
     }
@@ -322,8 +330,12 @@ impl App {
     fn select_prev_on_current_screen(&mut self, steps: usize) {
         for _ in 0..steps {
             match self.screen {
+                Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_sub(1),
+                Screen::Result => self.dashboard.result.scroll_up(1),
                 Screen::Rules => self.dashboard.rules.select_prev(),
+                Screen::Sources => self.dashboard.sources.select_prev(),
                 Screen::Extract => self.dashboard.extract.select_prev(),
+                Screen::Check => self.dashboard.check.select_prev(),
                 Screen::Drift => self.dashboard.drift.select_prev(),
                 Screen::Report => self.dashboard.report.scroll_up(1),
                 _ => break,
@@ -334,12 +346,34 @@ impl App {
     fn select_next_on_current_screen(&mut self, steps: usize) {
         for _ in 0..steps {
             match self.screen {
+                Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_add(1),
+                Screen::Result => self.dashboard.result.scroll_down(1),
                 Screen::Rules => self.dashboard.rules.select_next(),
+                Screen::Sources => self.dashboard.sources.select_next(),
                 Screen::Extract => self.dashboard.extract.select_next(),
+                Screen::Check => self.dashboard.check.select_next(),
                 Screen::Drift => self.dashboard.drift.select_next(),
                 Screen::Report => self.dashboard.report.scroll_down(1),
                 _ => break,
             }
+        }
+    }
+
+    fn scroll_left_on_current_screen(&mut self, steps: u16) {
+        match self.screen {
+            Screen::Help => self.help_scroll_x = self.help_scroll_x.saturating_sub(steps),
+            Screen::Result => self.dashboard.result.scroll_left(steps),
+            Screen::Report => self.dashboard.report.scroll_left(steps),
+            _ => {}
+        }
+    }
+
+    fn scroll_right_on_current_screen(&mut self, steps: u16) {
+        match self.screen {
+            Screen::Help => self.help_scroll_x = self.help_scroll_x.saturating_add(steps),
+            Screen::Result => self.dashboard.result.scroll_right(steps),
+            Screen::Report => self.dashboard.report.scroll_right(steps),
+            _ => {}
         }
     }
 }

@@ -11,7 +11,7 @@ use ratatui::{
     layout::Rect,
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph},
     Frame,
 };
 
@@ -39,21 +39,34 @@ pub enum ReportView {
 pub struct ReportData {
     /// Fully-rendered markdown body from `crate::report::to_markdown`.
     pub markdown: String,
-    /// Vertical scroll offset (lines). Reserved for a follow-up bead that
-    /// wires PageUp/PageDown — `render_ready` already honours it.
-    pub scroll: u16,
+    /// Vertical scroll offset (lines).
+    pub scroll_y: u16,
+    /// Horizontal scroll offset (columns).
+    pub scroll_x: u16,
 }
 
 impl ReportView {
     pub fn scroll_up(&mut self, lines: u16) {
         if let ReportView::Ready(data) = self {
-            data.scroll = data.scroll.saturating_sub(lines);
+            data.scroll_y = data.scroll_y.saturating_sub(lines);
         }
     }
 
     pub fn scroll_down(&mut self, lines: u16) {
         if let ReportView::Ready(data) = self {
-            data.scroll = data.scroll.saturating_add(lines);
+            data.scroll_y = data.scroll_y.saturating_add(lines);
+        }
+    }
+
+    pub fn scroll_left(&mut self, cols: u16) {
+        if let ReportView::Ready(data) = self {
+            data.scroll_x = data.scroll_x.saturating_sub(cols);
+        }
+    }
+
+    pub fn scroll_right(&mut self, cols: u16) {
+        if let ReportView::Ready(data) = self {
+            data.scroll_x = data.scroll_x.saturating_add(cols);
         }
     }
 }
@@ -68,7 +81,8 @@ pub fn load(project_dir: &Path) -> ReportView {
             let markdown = crate::report::to_markdown(&data);
             ReportView::Ready(Box::new(ReportData {
                 markdown,
-                scroll: 0,
+                scroll_y: 0,
+                scroll_x: 0,
             }))
         }
         Err(e) => ReportView::Error(e.to_string()),
@@ -103,8 +117,7 @@ fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &ReportData) {
 
     let paragraph = Paragraph::new(data.markdown.as_str())
         .block(block("REPORT"))
-        .wrap(Wrap { trim: false })
-        .scroll((data.scroll, 0));
+        .scroll((data.scroll_y, data.scroll_x));
     frame.render_widget(paragraph, area);
 }
 
@@ -167,7 +180,8 @@ mod tests {
         let mut app = App::new(&tmp).unwrap();
         app.dashboard.report = ReportView::Ready(Box::new(ReportData {
             markdown: "# Whetstone report\n\nAdherence: 92/100".to_string(),
-            scroll: 0,
+            scroll_y: 0,
+            scroll_x: 0,
         }));
         terminal
             .draw(|frame| render(frame, frame.area(), &app))

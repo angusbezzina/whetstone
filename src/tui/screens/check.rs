@@ -39,6 +39,7 @@ pub struct CheckData {
     pub counts: ViolationCounts,
     pub files_scanned: u32,
     pub rules_applied: u32,
+    pub selected: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +56,23 @@ pub struct ViolationCounts {
     pub must: u32,
     pub should: u32,
     pub may: u32,
+}
+
+impl CheckView {
+    pub fn select_prev(&mut self) {
+        if let CheckView::Ready(data) = self {
+            data.selected = data.selected.saturating_sub(1);
+        }
+    }
+
+    pub fn select_next(&mut self) {
+        if let CheckView::Ready(data) = self {
+            let len = data.violations.len();
+            if len > 0 && data.selected + 1 < len {
+                data.selected += 1;
+            }
+        }
+    }
 }
 
 pub fn load(project_dir: &Path) -> CheckView {
@@ -132,6 +150,7 @@ pub fn load(project_dir: &Path) -> CheckView {
         counts,
         files_scanned,
         rules_applied,
+        selected: 0,
     }))
 }
 
@@ -185,6 +204,8 @@ fn render_summary(frame: &mut Frame<'_>, area: Rect, data: &CheckData) {
 
 fn render_violations(frame: &mut Frame<'_>, area: Rect, data: &CheckData) {
     let width = area.width.saturating_sub(4) as usize;
+    let visible = area.height.saturating_sub(2) as usize;
+    let (start, end) = window_bounds(data.selected, data.violations.len(), visible);
 
     let items: Vec<ListItem> = if data.violations.is_empty() {
         vec![ListItem::new(Line::from(Span::styled(
@@ -194,7 +215,10 @@ fn render_violations(frame: &mut Frame<'_>, area: Rect, data: &CheckData) {
     } else {
         data.violations
             .iter()
-            .map(|v| {
+            .enumerate()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .map(|(i, v)| {
                 let sev_color = theme::severity_color(&v.severity);
                 let location = format!("{}:{}", v.file, v.line);
                 // Mirror dashboard's render_violations_panel column widths,
@@ -203,6 +227,10 @@ fn render_violations(frame: &mut Frame<'_>, area: Rect, data: &CheckData) {
                     .saturating_sub(7 + 30 + 28 + 3)
                     .max(10);
                 ListItem::new(Line::from(vec![
+                    Span::styled(
+                        if i == data.selected { "▶" } else { " " },
+                        Style::default().fg(if i == data.selected { theme::AMBER } else { theme::MUTED }),
+                    ),
                     Span::styled(
                         format!("{:<7}", v.severity.to_uppercase()),
                         Style::default().fg(sev_color).bold(),
@@ -275,6 +303,14 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+fn window_bounds(selected: usize, len: usize, visible: usize) -> (usize, usize) {
+    if visible == 0 || len <= visible {
+        return (0, len);
+    }
+    let start = selected.saturating_sub(visible / 2).min(len - visible);
+    (start, (start + visible).min(len))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,6 +356,7 @@ mod tests {
             },
             files_scanned: 3,
             rules_applied: 7,
+            selected: 0,
         }));
 
         let backend = TestBackend::new(120, 24);

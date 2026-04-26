@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph},
     Frame,
 };
 
@@ -26,6 +26,34 @@ pub enum ResultView {
 pub struct ResultData {
     pub title: String,
     pub body: String,
+    pub scroll_y: u16,
+    pub scroll_x: u16,
+}
+
+impl ResultView {
+    pub fn scroll_up(&mut self, lines: u16) {
+        if let ResultView::Ready(data) = self {
+            data.scroll_y = data.scroll_y.saturating_sub(lines);
+        }
+    }
+
+    pub fn scroll_down(&mut self, lines: u16) {
+        if let ResultView::Ready(data) = self {
+            data.scroll_y = data.scroll_y.saturating_add(lines);
+        }
+    }
+
+    pub fn scroll_left(&mut self, cols: u16) {
+        if let ResultView::Ready(data) = self {
+            data.scroll_x = data.scroll_x.saturating_sub(cols);
+        }
+    }
+
+    pub fn scroll_right(&mut self, cols: u16) {
+        if let ResultView::Ready(data) = self {
+            data.scroll_x = data.scroll_x.saturating_add(cols);
+        }
+    }
 }
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -45,7 +73,7 @@ fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &ResultData) {
         .border_style(theme::border_inactive());
     let p = Paragraph::new(data.body.clone())
         .block(block)
-        .wrap(Wrap { trim: false });
+        .scroll((data.scroll_y, data.scroll_x));
     frame.render_widget(p, area);
 }
 

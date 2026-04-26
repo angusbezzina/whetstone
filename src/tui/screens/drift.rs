@@ -245,10 +245,14 @@ fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &DriftData) {
 
 fn render_candidate_list(frame: &mut Frame<'_>, area: Rect, data: &DriftData) {
     let width = area.width.saturating_sub(4) as usize;
+    let visible = area.height.saturating_sub(2) as usize;
+    let (start, end) = window_bounds(data.selected, data.candidates.len(), visible);
     let items: Vec<ListItem> = data
         .candidates
         .iter()
         .enumerate()
+        .skip(start)
+        .take(end.saturating_sub(start))
         .map(|(idx, c)| {
             let marker = if idx == data.selected { "▸ " } else { "  " };
             let drift = if c.drift_types.is_empty() {
@@ -375,6 +379,14 @@ fn truncate(s: &str, max: usize) -> String {
         let t: String = s.chars().take(max.saturating_sub(1)).collect();
         format!("{t}…")
     }
+}
+
+fn window_bounds(selected: usize, len: usize, visible: usize) -> (usize, usize) {
+    if visible == 0 || len <= visible {
+        return (0, len);
+    }
+    let start = selected.saturating_sub(visible / 2).min(len - visible);
+    (start, (start + visible).min(len))
 }
 
 #[cfg(test)]

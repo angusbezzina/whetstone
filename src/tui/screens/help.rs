@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::tui::{components::footer, theme};
+use crate::tui::{app::App, components::footer, theme};
 
 pub fn hints() -> &'static [footer::Hint] {
     &[
@@ -18,7 +18,7 @@ pub fn hints() -> &'static [footer::Hint] {
     ]
 }
 
-pub fn render(frame: &mut Frame<'_>, area: Rect) {
+pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let lines = vec![
         section("GLOBAL"),
         kv("1–8", "Jump to a screen (Dashboard, Rules, Sources, Extract, Check, Report, Drift, Debt)"),
@@ -65,7 +65,9 @@ pub fn render(frame: &mut Frame<'_>, area: Rect) {
         .title(Span::styled(" HELP ", theme::header_title()))
         .borders(Borders::ALL)
         .border_style(theme::border_active());
-    let p = Paragraph::new(lines).block(block);
+    let p = Paragraph::new(lines)
+        .block(block)
+        .scroll((app.help_scroll_y, app.help_scroll_x));
     frame.render_widget(p, area);
 }
 
