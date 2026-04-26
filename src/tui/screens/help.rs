@@ -58,6 +58,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect) {
         kv("Report", "markdown report viewer"),
         kv("Drift", "dependencies/docs needing re-extraction"),
         kv("Debt", "ranked hotspot triage for dead/dup/dep/hotspot findings"),
+        kv("Result", "generic command-result view for actions without a dedicated screen"),
     ];
 
     let block = Block::default()

@@ -36,6 +36,11 @@ use app::App;
 use components::{footer, header};
 use msg::{Msg, Screen};
 
+pub enum LaunchTarget {
+    Screen(Screen),
+    Result { title: String, body: String },
+}
+
 /// Minimum usable terminal size. Below this we render a "please resize" notice.
 const MIN_WIDTH: u16 = 50;
 const MIN_HEIGHT: u16 = 15;
@@ -50,6 +55,27 @@ pub fn stdout_is_tty() -> bool {
 /// Blocking entry point. Sets up the terminal, runs the main loop, restores.
 pub fn run(project_dir: &Path) -> Result<()> {
     let mut app = App::new(project_dir).context("failed to load project data")?;
+
+    let mut terminal = setup_terminal()?;
+    let result = run_loop(&mut terminal, &mut app);
+    restore_terminal(&mut terminal)?;
+    result
+}
+
+pub fn run_with_target(project_dir: &Path, target: LaunchTarget) -> Result<()> {
+    let mut app = App::new(project_dir).context("failed to load project data")?;
+    match target {
+        LaunchTarget::Screen(screen) => {
+            app.screen = screen;
+            app.ensure_current_screen_loaded();
+        }
+        LaunchTarget::Result { title, body } => {
+            app.screen = Screen::Result;
+            app.dashboard.result = screens::result::ResultView::Ready(Box::new(
+                screens::result::ResultData { title, body },
+            ));
+        }
+    }
 
     let mut terminal = setup_terminal()?;
     let result = run_loop(&mut terminal, &mut app);
@@ -130,6 +156,7 @@ pub fn view(frame: &mut Frame<'_>, app: &App) {
     let body = chunks[1];
     let hints: &[footer::Hint] = match app.screen {
         Screen::Dashboard => screens::dashboard::hints(),
+        Screen::Result => screens::result::hints(),
         Screen::Rules => screens::rules::hints(),
         Screen::Sources => screens::sources::hints(),
         Screen::Extract => screens::extract::hints(),
@@ -142,6 +169,7 @@ pub fn view(frame: &mut Frame<'_>, app: &App) {
 
     match app.screen {
         Screen::Dashboard => screens::dashboard::render(frame, body, app),
+        Screen::Result => screens::result::render(frame, body, app),
         Screen::Rules => screens::rules::render(frame, body, app),
         Screen::Sources => screens::sources::render(frame, body, app),
         Screen::Extract => screens::extract::render(frame, body, app),

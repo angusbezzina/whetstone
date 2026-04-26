@@ -11,6 +11,7 @@ use crossterm::event::KeyEvent;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Dashboard,
+    Result,
     Rules,
     Sources,
     Extract,
@@ -25,6 +26,7 @@ impl Screen {
     pub fn title(&self) -> &'static str {
         match self {
             Screen::Dashboard => "DASHBOARD",
+            Screen::Result => "RESULT",
             Screen::Rules => "RULES",
             Screen::Sources => "SOURCES",
             Screen::Extract => "EXTRACT",

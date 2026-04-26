@@ -32,6 +32,7 @@ pub struct DashboardState {
     pub last_refresh: Option<String>,
     pub top_violations: Vec<TopViolation>,
     pub violation_counts: ViolationCounts,
+    pub result: crate::tui::screens::result::ResultView,
     /// Debt report. `None` = not yet computed (press R or open Debt screen).
     /// `Some(Err(..))` = the compute failed and the screen shows the reason.
     pub debt: DebtView,
@@ -121,6 +122,7 @@ impl App {
                 self.load_dashboard();
                 // Refresh resets all cached per-screen views so the next
                 // open recomputes from scratch.
+                self.dashboard.result = Default::default();
                 self.dashboard.debt = DebtView::NotComputed;
                 self.dashboard.rules = Default::default();
                 self.dashboard.sources = Default::default();
@@ -139,6 +141,7 @@ impl App {
     /// Screens that don't have a loader (Dashboard, Help) are no-ops.
     pub fn ensure_current_screen_loaded(&mut self) {
         match self.screen {
+            Screen::Result => {}
             Screen::Debt => self.ensure_debt_loaded(),
             Screen::Rules => self.ensure_rules_loaded(),
             Screen::Sources => self.ensure_sources_loaded(),

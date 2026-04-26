@@ -26,7 +26,10 @@ Advanced groups:
 
 Compatibility notes:
   Some older top-level commands remain available but are hidden from this help:
-  set-sources, context, tests, lint, ci, review, rules, report.";
+  set-sources, context, tests, lint, ci, review, rules, report.
+
+Agent mode:
+  Pass --json for machine-readable output. Interactive TTY runs default to the TUI.";
 
 // TODO(whetstone-aww): reinstate patterns
 // use crate::detect_patterns;
@@ -803,7 +806,10 @@ enum Commands {
 
 pub fn run() -> i32 {
     let cli = Cli::parse();
-    let json_mode = cli.json || output::is_piped();
+    let human_tui_mode = !cli.json
+        && tui::stdout_is_tty()
+        && std::env::var_os("WHETSTONE_NO_TUI").is_none();
+    let json_mode = cli.json || (!human_tui_mode && output::is_piped());
 
     // Bare `wh` on a TTY → launch the interactive TUI dashboard.
     // Bare `wh` piped or redirected → print help (so scripts don't hang).
@@ -826,6 +832,10 @@ pub fn run() -> i32 {
             }
         }
     };
+
+    if human_tui_mode && !matches!(command, Commands::Tui { .. }) {
+        return launch_tui_for_command(&command);
+    }
 
     match command {
         Commands::Init {
@@ -2206,11 +2216,21 @@ pub fn run() -> i32 {
             }
         }
 
-        Commands::Tui { project_dir } => match tui::run(&project_dir) {
-            Ok(()) => 0,
-            Err(e) => {
-                eprintln!("whetstone: tui exited with error: {e}");
+        Commands::Tui { project_dir } => {
+            if json_mode {
+                output::print_json(&output::error_json(
+                    "The TUI is only available in interactive human mode",
+                    "Run a domain command with --json (for example: wh status --json)",
+                ));
                 1
+            } else {
+                match tui::run(&project_dir) {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("whetstone: tui exited with error: {e}");
+                        1
+                    }
+                }
             }
         },
 
@@ -2324,6 +2344,194 @@ fn parse_since_days(raw: &str) -> Result<u32, String> {
     digits
         .parse::<u32>()
         .map_err(|_| format!("invalid churn window `{raw}`; use `90d` or a plain day count"))
+}
+
+fn launch_tui_for_command(command: &Commands) -> i32 {
+    let project_dir = project_dir_for_command(command);
+    let mut args = vec![std::ffi::OsString::from("--json")];
+    args.extend(std::env::args_os().skip(1));
+
+    let output = match std::process::Command::new(std::env::current_exe().unwrap_or_default())
+        .args(args)
+        .env("WHETSTONE_NO_TUI", "1")
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            return launch_tui_result(
+                &project_dir,
+                command_title(command),
+                format!("Failed to run command in background for TUI mode:\n\n{e}"),
+            )
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let body = render_command_body(&stdout, &stderr);
+    let success = output.status.success();
+
+    if success {
+        if let Some(screen) = success_screen_for_command(command) {
+            launch_tui_screen(&project_dir, screen)
+        } else {
+            launch_tui_result(&project_dir, command_title(command), body)
+        }
+    } else {
+        launch_tui_result(&project_dir, command_title(command), body)
+    }
+}
+
+fn render_command_body(stdout: &str, stderr: &str) -> String {
+    if !stdout.trim().is_empty() {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(stdout) {
+            return serde_json::to_string_pretty(&v).unwrap_or_else(|_| stdout.to_string());
+        }
+        return stdout.to_string();
+    }
+    if !stderr.trim().is_empty() {
+        return stderr.to_string();
+    }
+    "Command completed with no textual output.".to_string()
+}
+
+fn launch_tui_result(project_dir: &Path, title: &str, body: String) -> i32 {
+    match tui::run_with_target(
+        project_dir,
+        tui::LaunchTarget::Result {
+            title: title.to_string(),
+            body,
+        },
+    ) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("whetstone: tui exited with error: {e}");
+            1
+        }
+    }
+}
+
+fn launch_tui_screen(project_dir: &Path, screen: tui::msg::Screen) -> i32 {
+    match tui::run_with_target(project_dir, tui::LaunchTarget::Screen(screen)) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("whetstone: tui exited with error: {e}");
+            1
+        }
+    }
+}
+
+fn command_title(command: &Commands) -> &'static str {
+    match command {
+        Commands::Init { .. } => "INIT",
+        Commands::SetSources { .. } => "SET-SOURCES",
+        Commands::Status { .. } => "STATUS",
+        Commands::Context { .. } => "CONTEXT",
+        Commands::Tests { .. } => "TESTS",
+        Commands::Actions { .. } => "ACTIONS",
+        Commands::Lint { .. } => "LINT",
+        Commands::Approve { .. } => "APPROVE",
+        Commands::Extract { .. } => "EXTRACT",
+        Commands::Validate { .. } => "VALIDATE",
+        Commands::Check { .. } => "CHECK",
+        Commands::Ci { .. } => "CI",
+        Commands::Reinit { .. } => "REINIT",
+        Commands::Review { .. } => "REVIEW",
+        Commands::Rules { .. } => "RULES",
+        Commands::Rule { .. } => "RULE",
+        Commands::Source { .. } => "SOURCE",
+        Commands::Tui { .. } => "TUI",
+        Commands::Report { .. } => "REPORT",
+        Commands::Debt { .. } => "DEBT",
+        Commands::Update { .. } => "UPDATE",
+    }
+}
+
+fn success_screen_for_command(command: &Commands) -> Option<tui::msg::Screen> {
+    use tui::msg::Screen;
+    match command {
+        Commands::Init {
+            detect_only,
+            personal,
+            hooks,
+            ci,
+            ..
+        } if !detect_only && !personal && !hooks && !ci => Some(Screen::Extract),
+        Commands::SetSources { .. } => Some(Screen::Sources),
+        Commands::Status {
+            report,
+            score,
+            history,
+            extraction_ready,
+            ..
+        } => {
+            if *report {
+                Some(Screen::Report)
+            } else if *score || *history || *extraction_ready {
+                None
+            } else {
+                Some(Screen::Dashboard)
+            }
+        }
+        Commands::Extract { action: None, .. } => Some(Screen::Extract),
+        Commands::Check { .. } => Some(Screen::Check),
+        Commands::Reinit { .. } => Some(Screen::Drift),
+        Commands::Report { .. } => Some(Screen::Report),
+        Commands::Debt { prompt, beads, .. } if !prompt && !beads => Some(Screen::Debt),
+        Commands::Source { .. } => Some(Screen::Sources),
+        Commands::Approve { .. } => Some(Screen::Rules),
+        Commands::Rule { action } => match action {
+            RuleAction::Add { .. } | RuleAction::Edit { .. } => Some(Screen::Rules),
+            RuleAction::Worklist { .. } => Some(Screen::Extract),
+            _ => None,
+        },
+        Commands::Review {
+            action: Some(ReviewAction::Worklist { .. }),
+            ..
+        } => Some(Screen::Extract),
+        _ => None,
+    }
+}
+
+fn project_dir_for_command(command: &Commands) -> PathBuf {
+    match command {
+        Commands::Init { project_dir, .. }
+        | Commands::SetSources { project_dir, .. }
+        | Commands::Status { project_dir, .. }
+        | Commands::Context { project_dir, .. }
+        | Commands::Tests { project_dir, .. }
+        | Commands::Actions { project_dir, .. }
+        | Commands::Lint { project_dir, .. }
+        | Commands::Approve { project_dir, .. }
+        | Commands::Extract { project_dir, .. }
+        | Commands::Validate { project_dir, .. }
+        | Commands::Check { project_dir, .. }
+        | Commands::Ci { project_dir, .. }
+        | Commands::Review { project_dir, .. }
+        | Commands::Rules {
+            action: RulesAction::Query { project_dir, .. },
+        }
+        | Commands::Source {
+            action:
+                SourceAction::Add { project_dir, .. }
+                | SourceAction::List { project_dir }
+                | SourceAction::Remove { project_dir, .. }
+                | SourceAction::Fetch { project_dir, .. },
+        }
+        | Commands::Rule {
+            action:
+                RuleAction::Add { project_dir, .. }
+                | RuleAction::Edit { project_dir, .. }
+                | RuleAction::Query { project_dir, .. }
+                | RuleAction::Review { project_dir, .. }
+                | RuleAction::Worklist { project_dir, .. },
+        }
+        | Commands::Tui { project_dir }
+        | Commands::Report { project_dir, .. }
+        | Commands::Debt { project_dir, .. } => project_dir.clone(),
+        Commands::Reinit { project_dir, .. } => PathBuf::from(project_dir),
+        Commands::Update { .. } => PathBuf::from("."),
+    }
 }
 
 fn load_deps_input(input: Option<&std::path::Path>) -> anyhow::Result<serde_json::Value> {

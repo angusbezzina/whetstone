@@ -398,21 +398,11 @@ mod tests {
     }
 
     fn tmp_project() -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!(
-            "wh_tui_drift_{}_{}",
-            std::process::id(),
-            rand_suffix()
-        ));
-        std::fs::create_dir_all(&p).unwrap();
-        p
-    }
-
-    fn rand_suffix() -> u128 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
+        tempfile::Builder::new()
+            .prefix("wh_tui_drift_")
+            .tempdir()
+            .unwrap()
+            .keep()
     }
 
     fn seed_refresh_diff(project: &Path, body: &str) {

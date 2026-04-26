@@ -439,6 +439,17 @@ fn test_rule_help_shows_grouped_advanced_subcommands() {
 }
 
 #[test]
+fn test_tui_json_mode_returns_machine_error() {
+    let (stdout, _stderr, success) = run_whetstone(&["--json", "tui"], ".");
+    assert!(!success);
+    let result = parse_json(&stdout);
+    assert!(result["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("TUI is only available"));
+}
+
+#[test]
 fn test_rules_query_by_file() {
     let dir = fixtures_dir();
     let (stdout, _stderr, success) = run_whetstone(

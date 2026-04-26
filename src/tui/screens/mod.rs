@@ -7,6 +7,7 @@ pub mod debt;
 pub mod drift;
 pub mod extract;
 pub mod help;
+pub mod result;
 pub mod report;
 pub mod rules;
 pub mod sources;
