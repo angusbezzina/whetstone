@@ -6,6 +6,14 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-04-26
+
+### Changed
+- **Human-vs-agent interaction model is now explicit and consistent.** On an interactive TTY, Whetstone now defaults to the TUI for human operators across command flows; `--json` remains the machine-readable contract for agents and automation. This follows contemporary CLI practice (structured JSON flag for machines, rich terminal UX for humans) without introducing an agent-specific flag.
+- **Every major command flow now has a TUI entry path.** Commands with dedicated domain screens (`status`, `check`, `extract`, `report`, `drift`, `debt`, etc.) open those screens directly in interactive mode; commands without a dedicated domain screen route through a shared **Result** screen so the TUI shell, layout, and navigation stay consistent.
+- **`wh tui --json` now returns a structured machine error** instead of attempting to launch an interactive session.
+- Documented the interaction strategy in `planning/interaction-modes.md`.
+
 ## [0.7.0] - 2026-04-23
 
 ### Added
