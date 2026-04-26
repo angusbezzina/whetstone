@@ -331,3 +331,5 @@
 {"id":"int-494b219f","kind":"field_change","created_at":"2026-04-26T17:05:35.794112Z","actor":"Angus Bezzina","issue_id":"whetstone-32yj","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-6020b788","kind":"field_change","created_at":"2026-04-26T17:21:13.56188Z","actor":"Angus Bezzina","issue_id":"whetstone-32yj","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-cad9629b","kind":"field_change","created_at":"2026-04-26T17:30:16.667242Z","actor":"Angus Bezzina","issue_id":"whetstone-hcad","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-b72a0ccc","kind":"field_change","created_at":"2026-04-26T17:38:05.296593Z","actor":"Angus Bezzina","issue_id":"whetstone-hcad.1","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-90a48b66","kind":"field_change","created_at":"2026-04-26T17:38:05.880888Z","actor":"Angus Bezzina","issue_id":"whetstone-hcad.2","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
