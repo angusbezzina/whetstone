@@ -1,6 +1,6 @@
 [package]
 name = "whetstone"
-version = "0.8.1"
+version = "0.8.2"
 edition = "2021"
 description = "Whetstone sharpens the tools that write your code"
 license = "MIT"

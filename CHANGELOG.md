@@ -6,6 +6,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-04-26
+
+### Fixed
+- **Follow-up TUI polish.** Debt and dashboard views now scroll more predictably, the shared footer stays consistent across screens, empty-state success text no longer uses green where neutral white is clearer, extract scoring copy is more explicit, rules onboarding is friendlier when no rules exist, report markdown no longer shows `n/a / 100` for adherence, and report rendering drops the extra inner frame for a cleaner reading surface.
+
 ## [0.8.1] - 2026-04-26
 
 ### Fixed
