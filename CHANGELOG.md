@@ -6,6 +6,8 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-23
+
 ### Added
 - **TUI second slice — Rules / Sources / Extract / Check / Report / Drift screens (whetstone-69jb).** The six "Coming soon" dashboard stubs are gone; every number key `1`–`8` now routes to a real renderer. Each screen follows the four-state pattern established by the Debt screen (`NotComputed` → `Loading` → `Ready` / `Error`), loads lazily on first open or on `R` refresh, and surfaces actionable data from existing CLI modules:
   - **Rules (`2`)** — list + detail of merged approved rules via `crate::layers::resolve_merged`, severity-colored list, selected-rule detail pane with description + source_url + layer.
@@ -15,6 +17,9 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - **Report (`6`)** — scrollable markdown viewer over `crate::report::build` + `to_markdown`; renders the same body `wh report` emits.
   - **Drift (`7`)** — two-pane walkthrough over `.state/refresh-diff.json`: candidate list (rule_id / severity / drift_types / dep) plus the canned re-extraction prompt and selected-candidate detail. Empty state calls out `wh reinit` as the next step.
 - The old `src/tui/screens/stub.rs` "Coming soon" fallback is deleted.
+
+### Changed
+- **Command taxonomy and help surfaces are cleaner by default.** Top-level `wh --help` now foregrounds the core workflow (`init`, `extract`, `approve`, `actions`, `check`, `reinit`, `status`, `debt`, `tui`) and groups advanced operations under `rule ...`, `source ...`, `actions --only ...`, and `status --report`. Duplicate top-level compatibility commands (`set-sources`, `context`, `tests`, `lint`, `ci`, `review`, `rules`, `report`) remain callable but are hidden from the default help so discovery is less noisy. TUI help mirrors the same taxonomy. See `planning/command-taxonomy.md`.
 
 ## [0.6.0] - 2026-04-22
 
