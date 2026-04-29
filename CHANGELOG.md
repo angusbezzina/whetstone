@@ -6,6 +6,16 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-04-29
+
+### Changed
+- **CLI vNext first tranche ships.** `wh scan` is now the canonical enforcement command, `wh rules` and `wh sources` are the canonical management groups, and `wh actions` now uses explicit subcommands: `all`, `context`, `lint`, and `test`. Compatibility aliases remain in place for `check`, `rule`, `source`, and `fetch` so existing workflows do not break immediately.
+- **The explicit `wh tui` command is gone.** Bare `wh` remains the interactive human entrypoint, while command help and TUI help now teach the reorganized CLI surface instead of a separate dashboard verb.
+- **Rule and source management are more complete.** Added `wh rules remove`, `wh rules approve`, `wh sources edit`, and `wh sources verify`, plus updated next-step guidance across scan, report, handoff, and TUI surfaces so canonical commands are used consistently.
+
+### Docs
+- Added `planning/shared-config-packs.md` and refreshed `planning/command-taxonomy.md` to document the confirmed vNext command model and the planned org/team/project/personal YAML sharing design, including personal-scope commit as an explicit opt-in.
+
 ## [0.8.2] - 2026-04-26
 
 ### Fixed
