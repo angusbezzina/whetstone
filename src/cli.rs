@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 use crate::{
@@ -8,28 +8,34 @@ use crate::{
 };
 
 const TAXONOMY_HELP: &str = "Core workflow:
-  whetstone init      Bootstrap from zero
-  whetstone extract   Draft or submit candidate rules
-  whetstone approve   Approve candidate rules
-  whetstone actions   Generate enforcement artifacts
-  whetstone check     Scan code for rule violations
-  whetstone reinit    Refresh changed dependencies/docs
-  whetstone status    Health + adherence summary
-  whetstone debt      Deterministic debt hotspots
-  whetstone tui       Interactive dashboard
+  whetstone init             Bootstrap from zero
+  whetstone reinit           Refresh changed dependencies/docs
+  whetstone status           Health + adherence summary
+  whetstone scan             Scan code for rule violations
+  whetstone debt             Deterministic debt hotspots
+  whetstone actions all      Generate context + tests + lint
 
-Advanced groups:
-  whetstone rule ...     add | edit | query | review | worklist
-  whetstone source ...   add | list | remove | fetch
-  whetstone actions --only <context|tests|lint>
+Management:
+  whetstone rules ...        list | show | query | add | edit | remove | approve | worklist
+  whetstone sources ...      list | add | edit | remove | verify
+
+Maintenance:
+  whetstone extract          Draft or submit candidate rules
+  whetstone approve          Approve candidate rules
+  whetstone validate         Validate rule files
+  whetstone update           Update whetstone
+
+Reporting:
   whetstone status --report [--pr-comment]
 
 Compatibility notes:
   Some older top-level commands remain available but are hidden from this help:
-  set-sources, context, tests, lint, ci, review, rules, report.
+  set-sources, context, tests, lint, ci, review, report.
+  Older spellings still work as aliases: check -> scan, rule -> rules,
+  source -> sources, fetch -> verify.
 
 Agent mode:
-  Pass --json for machine-readable output. Interactive TTY runs default to the TUI.";
+  Pass --json for machine-readable output. Bare interactive TTY runs default to the TUI.";
 
 // TODO(whetstone-aww): reinstate patterns
 // use crate::detect_patterns;
@@ -78,8 +84,185 @@ enum ExtractAction {
     },
 }
 
+#[derive(Args, Clone)]
+struct ActionArgs {
+    /// Project root directory
+    #[arg(long, default_value = ".")]
+    project_dir: PathBuf,
+
+    /// Filter by language (python, typescript, rust)
+    #[arg(long)]
+    lang: Option<String>,
+
+    /// Show what would be generated without writing files
+    #[arg(long)]
+    dry_run: bool,
+
+    /// Emit everything under whetstone/.personal/ instead of whetstone/
+    #[arg(long)]
+    personal: bool,
+
+    /// Emit terse context (one-line-per-rule bootstrap)
+    #[arg(long)]
+    terse: bool,
+}
+
+#[derive(Args, Clone)]
+struct ActionNoTerseArgs {
+    /// Project root directory
+    #[arg(long, default_value = ".")]
+    project_dir: PathBuf,
+
+    /// Filter by language (python, typescript, rust)
+    #[arg(long)]
+    lang: Option<String>,
+
+    /// Show what would be generated without writing files
+    #[arg(long)]
+    dry_run: bool,
+
+    /// Emit everything under whetstone/.personal/ instead of whetstone/
+    #[arg(long)]
+    personal: bool,
+}
+
 #[derive(Subcommand)]
-enum RuleAction {
+enum ActionsAction {
+    /// Generate context, tests, and lint configs in one chain
+    All(ActionArgs),
+    /// Generate agent context files from approved rules
+    Context(ActionArgs),
+    /// Generate linter configuration overlays from approved rules
+    Lint(ActionNoTerseArgs),
+    /// Generate test files from approved rules
+    #[command(name = "test", alias = "tests")]
+    Test(ActionNoTerseArgs),
+}
+
+#[derive(Subcommand)]
+enum SourceAction {
+    /// Subscribe to a custom rule source (blog / wiki / llms.txt / internal doc)
+    Add {
+        /// URL of the source (http:// or https://)
+        url: String,
+
+        /// Short name for the source (defaults to the URL)
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Language scope (python | typescript | rust | any)
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Source kind (blog | official_docs | team_guide | community | custom)
+        #[arg(long)]
+        kind: Option<String>,
+
+        /// Route to the committed project layer instead of the gitignored personal layer
+        #[arg(long, conflicts_with = "personal")]
+        project: bool,
+
+        /// Route to the personal layer (default)
+        #[arg(long, conflicts_with = "project")]
+        personal: bool,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Edit a subscribed custom source in place
+    Edit {
+        /// URL or name of the source to edit
+        target: String,
+
+        /// Replace the source URL
+        #[arg(long)]
+        url: Option<String>,
+
+        /// Replace the short name
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Replace the language scope (python | typescript | rust | any)
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Replace the source kind
+        #[arg(long)]
+        kind: Option<String>,
+
+        /// Route to the committed project layer instead of personal
+        #[arg(long, conflicts_with = "personal")]
+        project: bool,
+
+        /// Route to the personal layer (default)
+        #[arg(long, conflicts_with = "project")]
+        personal: bool,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Show all subscribed custom sources across both layers
+    List {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Remove a subscription (matches by URL or name). Flags citing rules.
+    Remove {
+        /// URL or name of the source to remove
+        target: String,
+
+        /// Route to the committed project layer instead of personal
+        #[arg(long, conflicts_with = "personal")]
+        project: bool,
+
+        /// Route to the personal layer (default)
+        #[arg(long, conflicts_with = "project")]
+        personal: bool,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Verify one subscribed source by re-fetching it without a full wh reinit
+    #[command(name = "verify", alias = "fetch")]
+    Verify {
+        /// URL or name of the source to verify
+        target: String,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum RulesAction {
+    /// List rules by lifecycle status (candidate / approved)
+    List {
+        /// Filter by status
+        #[arg(long)]
+        status: Option<String>,
+
+        /// Filter by language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Show full context for a single rule
+    Show {
+        /// Rule id to inspect
+        rule_id: String,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
     /// Add a new rule directly (personal taste shortcut; defaults to the personal layer)
     Add {
         /// Rule id (format: `<dep>.<rule-name>`, or pass --dep with bare rule name)
@@ -162,6 +345,15 @@ enum RuleAction {
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
     },
+    /// Remove a rule by id
+    Remove {
+        /// Rule id to remove
+        rule_id: String,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
     /// Query approved rules that match the given filters
     Query {
         /// Return rules for the language inferred from this file's extension
@@ -195,6 +387,27 @@ enum RuleAction {
         /// Project root directory
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
+    },
+    /// Approve candidate rules (single id or batch filters)
+    Approve {
+        /// Rule id to approve. Omit when using --all.
+        rule_id: Option<String>,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Approve every matching candidate rule.
+        #[arg(long, conflicts_with = "rule_id")]
+        all: bool,
+
+        /// Restrict --all to a single dependency
+        #[arg(long, requires = "all")]
+        dep: Option<String>,
+
+        /// Restrict --all to candidates with this confidence (`high`|`medium`)
+        #[arg(long, requires = "all")]
+        confidence: Option<String>,
     },
     /// Review rules by lifecycle status (candidate / approved)
     Review {
@@ -219,109 +432,6 @@ enum RuleAction {
         /// Filter to a single language (python, typescript, rust)
         #[arg(long)]
         lang: Option<String>,
-
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-    },
-}
-
-#[derive(Subcommand)]
-enum SourceAction {
-    /// Subscribe to a custom rule source (blog / wiki / llms.txt / internal doc)
-    Add {
-        /// URL of the source (http:// or https://)
-        url: String,
-
-        /// Short name for the source (defaults to the URL)
-        #[arg(long)]
-        name: Option<String>,
-
-        /// Language scope (python | typescript | rust | any)
-        #[arg(long)]
-        lang: Option<String>,
-
-        /// Source kind (blog | official_docs | team_guide | community | custom)
-        #[arg(long)]
-        kind: Option<String>,
-
-        /// Route to the committed project layer instead of the gitignored personal layer
-        #[arg(long, conflicts_with = "personal")]
-        project: bool,
-
-        /// Route to the personal layer (default)
-        #[arg(long, conflicts_with = "project")]
-        personal: bool,
-
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-    },
-    /// Show all subscribed custom sources across both layers
-    List {
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-    },
-    /// Remove a subscription (matches by URL or name). Flags citing rules.
-    Remove {
-        /// URL or name of the source to remove
-        target: String,
-
-        /// Route to the committed project layer instead of personal
-        #[arg(long, conflicts_with = "personal")]
-        project: bool,
-
-        /// Route to the personal layer (default)
-        #[arg(long, conflicts_with = "project")]
-        personal: bool,
-
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-    },
-    /// Force re-fetch a single subscribed source (without a full wh reinit)
-    Fetch {
-        /// URL or name of the source to fetch
-        target: String,
-
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-    },
-}
-
-#[derive(Subcommand)]
-enum RulesAction {
-    /// Query approved rules that match the given filters
-    Query {
-        /// Return rules for the language inferred from this file's extension
-        #[arg(long)]
-        file: Option<PathBuf>,
-
-        /// Filter by language (python, typescript, rust)
-        #[arg(long)]
-        lang: Option<String>,
-
-        /// Filter by dependency / source name
-        #[arg(long)]
-        dep: Option<String>,
-
-        /// Filter by severity (must, should, may)
-        #[arg(long)]
-        severity: Option<String>,
-
-        /// Layer filter: personal-only
-        #[arg(long, conflicts_with = "project_only")]
-        personal_only: bool,
-
-        /// Layer filter: project-only
-        #[arg(long, conflicts_with = "personal_only")]
-        project_only: bool,
-
-        /// Include full signal details and golden examples (default: summary only)
-        #[arg(long)]
-        full: bool,
 
         /// Project root directory
         #[arg(long, default_value = ".")]
@@ -546,32 +656,11 @@ enum Commands {
         personal: bool,
     },
 
-    /// Generate context, tests, and lint configs in one chain (`--only` for one generator)
+    /// Generate context, tests, and lint configs via explicit subcommands
     #[command(name = "actions")]
     Actions {
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-
-        /// Filter by language (python, typescript, rust)
-        #[arg(long)]
-        lang: Option<String>,
-
-        /// Show what would be generated without writing files
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Emit everything under whetstone/.personal/ instead of whetstone/
-        #[arg(long)]
-        personal: bool,
-
-        /// Emit terse context (one-line-per-rule bootstrap)
-        #[arg(long)]
-        terse: bool,
-
-        /// Run only one generator (context | tests | lint)
-        #[arg(long)]
-        only: Option<String>,
+        #[command(subcommand)]
+        action: ActionsAction,
     },
 
     /// Generate linter configuration overlays from approved rules
@@ -646,7 +735,8 @@ enum Commands {
     // /// Mine style patterns from transcripts, git history, and PR comments
     // Patterns { ... }
     /// Scan source files for rule violations using tree-sitter and regex signals
-    Check {
+    #[command(name = "scan", alias = "check")]
+    Scan {
         /// Paths to scan (defaults to the project directory)
         paths: Vec<PathBuf>,
 
@@ -722,33 +812,18 @@ enum Commands {
         lang: Option<String>,
     },
 
-    /// Query rules that apply to a file / language / dep (JIT consumption)
-    #[command(name = "rules", hide = true)]
+    /// Manage rules, approvals, and JIT rule lookup
+    #[command(name = "rules", alias = "rule")]
     Rules {
         #[command(subcommand)]
         action: RulesAction,
     },
 
-    /// Advanced rule operations: add, edit, query, review, and worklist
-    #[command(name = "rule")]
-    Rule {
-        #[command(subcommand)]
-        action: RuleAction,
-    },
-
     /// Subscribe to custom rule sources (blogs, wikis, llms.txt, internal docs)
-    #[command(name = "source")]
-    Source {
+    #[command(name = "sources", alias = "source")]
+    Sources {
         #[command(subcommand)]
         action: SourceAction,
-    },
-
-    /// Launch the interactive TUI dashboard (Epic 4A)
-    #[command(name = "tui")]
-    Tui {
-        /// Project root directory
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
     },
 
     /// One-page report: adherence score, top violations, drift, next actions
@@ -833,7 +908,7 @@ pub fn run() -> i32 {
         }
     };
 
-    if human_tui_mode && !matches!(command, Commands::Tui { .. }) {
+    if human_tui_mode {
         return launch_tui_for_command(&command);
     }
 
@@ -1127,7 +1202,7 @@ pub fn run() -> i32 {
                     Err(e) => {
                         output::print_json(&output::error_json(
                             &e.to_string(),
-                            "wh status --report composes wh status + wh check; fix the underlying failure and retry",
+                            "wh status --report composes wh status + wh scan; fix the underlying failure and retry",
                         ));
                         return 1;
                     }
@@ -1234,27 +1309,46 @@ pub fn run() -> i32 {
             }
         }
 
-        Commands::Actions {
-            project_dir,
-            lang,
-            dry_run,
-            personal,
-            terse,
-            only,
-        } => match only.as_deref() {
-            Some("context") => match generate_context::generate_context(
-                &project_dir,
-                None,
-                lang.as_deref(),
-                dry_run,
-                personal,
-                terse,
+        Commands::Actions { action } => match action {
+            ActionsAction::All(args) => match gen::run(
+                &args.project_dir,
+                args.lang.as_deref(),
+                args.dry_run,
+                args.personal,
+                args.terse,
             ) {
                 Ok(result) => {
                     if json_mode {
                         output::print_json(&result);
                     } else {
-                        println!("wh actions --only context: generated context files");
+                        println!("wh actions all: context + tests + lint generated");
+                        if let Some(next) = result.get("next_command").and_then(|v| v.as_str()) {
+                            println!("Next: {next}");
+                        }
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "wh actions all runs context + tests + lint; fix the first failing generator and retry",
+                    ));
+                    1
+                }
+            },
+            ActionsAction::Context(args) => match generate_context::generate_context(
+                &args.project_dir,
+                None,
+                args.lang.as_deref(),
+                args.dry_run,
+                args.personal,
+                args.terse,
+            ) {
+                Ok(result) => {
+                    if json_mode {
+                        output::print_json(&result);
+                    } else {
+                        println!("wh actions context: generated context files");
                     }
                     0
                 }
@@ -1266,73 +1360,50 @@ pub fn run() -> i32 {
                     1
                 }
             },
-            Some("tests") => {
-                match generate_tests::generate_tests(&project_dir, lang.as_deref(), dry_run, personal)
-                {
-                    Ok(result) => {
-                        if json_mode {
-                            output::print_json(&result);
-                        } else {
-                            println!("wh actions --only tests: generated test files");
-                        }
-                        0
+            ActionsAction::Test(args) => match generate_tests::generate_tests(
+                &args.project_dir,
+                args.lang.as_deref(),
+                args.dry_run,
+                args.personal,
+            ) {
+                Ok(result) => {
+                    if json_mode {
+                        output::print_json(&result);
+                    } else {
+                        println!("wh actions test: generated test files");
                     }
-                    Err(e) => {
-                        output::print_json(&output::error_json(
-                            &e.to_string(),
-                            "Check whetstone/rules/ directory for approved rules",
-                        ));
-                        1
-                    }
+                    0
                 }
-            }
-            Some("lint") => {
-                match generate_lint::generate_lint(&project_dir, lang.as_deref(), dry_run, personal)
-                {
-                    Ok(result) => {
-                        if json_mode {
-                            output::print_json(&result);
-                        } else {
-                            println!("wh actions --only lint: generated lint overlays");
-                        }
-                        0
-                    }
-                    Err(e) => {
-                        output::print_json(&output::error_json(
-                            &e.to_string(),
-                            "Check whetstone/rules/ directory for approved rules with lint_proxy signals",
-                        ));
-                        1
-                    }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "Check whetstone/rules/ directory for approved rules",
+                    ));
+                    1
                 }
-            }
-            Some(other) => {
-                output::print_json(&output::error_json(
-                    &format!("invalid --only target: {other}"),
-                    "Use --only=context, --only=tests, or --only=lint",
-                ));
-                1
-            }
-            None => match gen::run(&project_dir, lang.as_deref(), dry_run, personal, terse) {
-            Ok(result) => {
-                if json_mode {
-                    output::print_json(&result);
-                } else {
-                    println!("wh actions: context + tests + lint generated");
-                    if let Some(next) = result.get("next_command").and_then(|v| v.as_str()) {
-                        println!("Next: {next}");
+            },
+            ActionsAction::Lint(args) => match generate_lint::generate_lint(
+                &args.project_dir,
+                args.lang.as_deref(),
+                args.dry_run,
+                args.personal,
+            ) {
+                Ok(result) => {
+                    if json_mode {
+                        output::print_json(&result);
+                    } else {
+                        println!("wh actions lint: generated lint overlays");
                     }
+                    0
                 }
-                0
-            }
-            Err(e) => {
-                output::print_json(&output::error_json(
-                    &e.to_string(),
-                    "wh actions runs context + tests + lint; fix the first failing generator and retry",
-                ));
-                1
-            }
-        },
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "Check whetstone/rules/ directory for approved rules with lint_proxy signals",
+                    ));
+                    1
+                }
+            },
         },
 
         Commands::Lint {
@@ -1487,7 +1558,7 @@ pub fn run() -> i32 {
             }
         }
 
-        Commands::Check {
+        Commands::Scan {
             paths,
             project_dir,
             lang,
@@ -1786,8 +1857,52 @@ pub fn run() -> i32 {
             }
         }
 
-        Commands::Rule { action } => match action {
-            RuleAction::Add {
+        Commands::Rules { action } => match action {
+            RulesAction::List {
+                status,
+                lang,
+                project_dir,
+            }
+            | RulesAction::Review {
+                status,
+                lang,
+                project_dir,
+            } => match review::list(review::ReviewListOptions {
+                project_dir: &project_dir,
+                status_filter: status.as_deref(),
+                lang_filter: lang.as_deref(),
+            }) {
+                Ok(value) => {
+                    if json_mode {
+                        output::print_json(&value);
+                    } else {
+                        print!("{}", review::format_list(&value));
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(&e.to_string(), "wh rules list --help"));
+                    1
+                }
+            },
+            RulesAction::Show {
+                rule_id,
+                project_dir,
+            } => match review::show(&project_dir, &rule_id) {
+                Ok(value) => {
+                    if json_mode {
+                        output::print_json(&value);
+                    } else {
+                        print!("{}", review::format_list(&value));
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(&e.to_string(), "wh rules show --help"));
+                    1
+                }
+            },
+            RulesAction::Add {
                 rule_id,
                 description,
                 match_regex,
@@ -1801,7 +1916,6 @@ pub fn run() -> i32 {
                 personal: _personal,
                 project_dir,
             } => {
-                // Default is personal unless --project is explicit.
                 let personal = !project;
                 let opts = rule_authoring::AddOptions {
                     rule_id: &rule_id,
@@ -1835,7 +1949,7 @@ pub fn run() -> i32 {
                     }
                 }
             }
-            RuleAction::Edit {
+            RulesAction::Edit {
                 rule_id,
                 all,
                 dep,
@@ -1880,261 +1994,36 @@ pub fn run() -> i32 {
                     Err(e) => {
                         output::print_json(&output::error_json(
                             &e.to_string(),
-                            "Use `wh review` to find rule ids; `wh rule edit --help` for flags",
+                            "Use `wh rules list` to find rule ids; `wh rules edit --help` for flags",
                         ));
                         1
                     }
                 }
             }
-            RuleAction::Query {
-                file,
-                lang,
-                dep,
-                severity,
-                personal_only,
-                project_only,
-                full,
+            RulesAction::Remove {
+                rule_id,
                 project_dir,
-            } => {
-                let layer_filter = if personal_only {
-                    rules_query::LayerFilter::PersonalOnly
-                } else if project_only {
-                    rules_query::LayerFilter::ProjectOnly
-                } else {
-                    rules_query::LayerFilter::All
-                };
-                let detail = if full {
-                    rules_query::Detail::Full
-                } else {
-                    rules_query::Detail::Summary
-                };
-
-                let filters = rules_query::Filters {
-                    file: file.as_deref(),
-                    lang: lang.as_deref(),
-                    dep: dep.as_deref(),
-                    severity: severity.as_deref(),
-                    layer_filter,
-                };
-
-                let result = rules_query::query(&project_dir, &filters);
-                let echo = rules_query::filters_to_json(
-                    file.as_deref(),
-                    lang.as_deref(),
-                    dep.as_deref(),
-                    severity.as_deref(),
-                    layer_filter,
-                    detail,
-                );
-
-                if json_mode {
-                    output::print_json(&rules_query::to_json(&result, detail, echo));
-                } else {
-                    print!("{}", rules_query::to_human(&result, detail));
-                }
-                0
-            }
-            RuleAction::Review {
-                status,
-                lang,
-                project_dir,
-            } => match review::list(review::ReviewListOptions {
-                project_dir: &project_dir,
-                status_filter: status.as_deref(),
-                lang_filter: lang.as_deref(),
-            }) {
-                Ok(value) => {
-                    if json_mode {
-                        output::print_json(&value);
-                    } else {
-                        print!("{}", review::format_list(&value));
-                    }
-                    0
-                }
-                Err(e) => {
-                    output::print_json(&output::error_json(&e.to_string(), "wh rule review --help"));
-                    1
-                }
-            },
-            RuleAction::Worklist {
-                dep,
-                lang,
-                project_dir,
-            } => match worklist::load(&project_dir) {
-                Ok(handoff) => {
-                    let wl = handoff
-                        .get("worklist")
-                        .and_then(|v| v.as_array())
-                        .cloned()
-                        .unwrap_or_default();
-                    let filtered = worklist::filter(&wl, dep.as_deref(), lang.as_deref());
-                    let value = serde_json::json!({
-                        "status": "ok",
-                        "generated_at": handoff.get("generated_at"),
-                        "trigger": handoff.get("trigger"),
-                        "total": filtered.len(),
-                        "entries": filtered,
-                        "next_command": "Pick the first `ready_now` entry, extract rules, and `wh extract submit <bundle>`",
-                    });
-                    if json_mode {
-                        output::print_json(&value);
-                    } else {
-                        print!("{}", review::format_worklist(&value));
-                    }
-                    0
-                }
-                Err(e) => {
-                    output::print_json(&output::error_json(&e.to_string(), "wh rule worklist --help"));
-                    1
-                }
-            },
-        },
-
-        Commands::Source { action } => match action {
-            SourceAction::Add {
-                url,
-                name,
-                lang,
-                kind,
-                project,
-                personal: _personal,
-                project_dir,
-            } => {
-                let personal = !project;
-                let opts = source_mgmt::AddOptions {
-                    url: &url,
-                    name: name.as_deref(),
-                    language: lang.as_deref(),
-                    source_kind: kind.as_deref(),
-                    personal,
-                };
-                match source_mgmt::add(&project_dir, opts) {
-                    Ok(v) => {
-                        if json_mode {
-                            output::print_json(&v);
-                        } else {
-                            let wrote = v.get("wrote").and_then(|s| s.as_str()).unwrap_or("?");
-                            let url_out = v.get("url").and_then(|s| s.as_str()).unwrap_or("?");
-                            println!("Subscribed {url_out} → {wrote}");
-                            println!("Next: wh source fetch {url_out}  (verify the URL resolves)");
-                        }
-                        0
-                    }
-                    Err(e) => {
-                        output::print_json(&output::error_json(
-                            &e.to_string(),
-                            "Check URL format (http:// or https://) and whether it's already subscribed",
-                        ));
-                        1
-                    }
-                }
-            }
-            SourceAction::List { project_dir } => match source_mgmt::list(&project_dir) {
+            } => match rule_authoring::remove(
+                &project_dir,
+                rule_authoring::RemoveOptions { rule_id: &rule_id },
+            ) {
                 Ok(v) => {
                     if json_mode {
                         output::print_json(&v);
                     } else {
-                        print!("{}", source_mgmt::format_list_human(&v));
-                    }
-                    0
-                }
-                Err(e) => {
-                    output::print_json(&output::error_json(&e.to_string(), "wh source list"));
-                    1
-                }
-            },
-            SourceAction::Remove {
-                target,
-                project,
-                personal: _personal,
-                project_dir,
-            } => {
-                let personal = !project;
-                let opts = source_mgmt::RemoveOptions {
-                    target: &target,
-                    personal,
-                };
-                match source_mgmt::remove(&project_dir, opts) {
-                    Ok(v) => {
-                        if json_mode {
-                            output::print_json(&v);
-                        } else {
-                            let url = v
-                                .get("removed_url")
-                                .and_then(|s| s.as_str())
-                                .unwrap_or(&target);
-                            let wrote = v.get("wrote").and_then(|s| s.as_str()).unwrap_or("?");
-                            println!("Unsubscribed {url} ← {wrote}");
-                            if let Some(citers) =
-                                v.get("citing_rule_ids").and_then(|a| a.as_array())
-                            {
-                                if !citers.is_empty() {
-                                    println!(
-                                        "{} approved rule(s) cite this source:",
-                                        citers.len()
-                                    );
-                                    for c in citers.iter().take(10) {
-                                        let id = c
-                                            .get("rule_id")
-                                            .and_then(|s| s.as_str())
-                                            .unwrap_or("?");
-                                        println!("  {id}");
-                                    }
-                                    println!(
-                                        "Next: `wh rule edit <id>` or delete the rule file if the source is gone for good"
-                                    );
-                                }
-                            }
-                        }
-                        0
-                    }
-                    Err(e) => {
-                        output::print_json(&output::error_json(
-                            &e.to_string(),
-                            "Use `wh source list` to find the right target",
-                        ));
-                        1
-                    }
-                }
-            }
-            SourceAction::Fetch {
-                target,
-                project_dir,
-            } => match source_mgmt::fetch(&project_dir, &target) {
-                Ok(v) => {
-                    if json_mode {
-                        output::print_json(&v);
-                    } else {
-                        let fetched = v.get("fetched").and_then(|n| n.as_u64()).unwrap_or(0);
-                        println!("Fetched {fetched} source(s)");
-                        if let Some(arr) = v.get("sources").and_then(|a| a.as_array()) {
-                            for s in arr {
-                                let name = s
-                                    .get("name")
-                                    .and_then(|x| x.as_str())
-                                    .unwrap_or("?");
-                                let bytes = s
-                                    .get("content")
-                                    .and_then(|x| x.as_str())
-                                    .map(|c| c.len())
-                                    .unwrap_or(0);
-                                println!("  {name}  ({bytes} bytes)");
-                            }
-                        }
+                        let file = v.get("file").and_then(|s| s.as_str()).unwrap_or("?");
+                        println!("Removed {rule_id} from {file}");
                     }
                     0
                 }
                 Err(e) => {
                     output::print_json(&output::error_json(
                         &e.to_string(),
-                        "Check the URL resolves and `wh source list` shows it as subscribed",
+                        "Use `wh rules list` to find the right rule id",
                     ));
                     1
                 }
             },
-        },
-
-        Commands::Rules { action } => match action {
             RulesAction::Query {
                 file,
                 lang,
@@ -2183,6 +2072,261 @@ pub fn run() -> i32 {
                 }
                 0
             }
+            RulesAction::Approve {
+                rule_id,
+                project_dir,
+                all,
+                dep,
+                confidence,
+            } => {
+                let result = match (rule_id, all) {
+                    (Some(id), false) => approve::approve_by_id(&project_dir, &id),
+                    (None, true) => {
+                        approve::approve_bulk(&project_dir, dep.as_deref(), confidence.as_deref())
+                    }
+                    (None, false) => {
+                        output::print_json(&output::error_json(
+                            "wh rules approve requires a <rule-id> or --all",
+                            "wh rules approve <rule-id> | wh rules approve --all [--dep <name>] [--confidence high]",
+                        ));
+                        return 1;
+                    }
+                    (Some(_), true) => unreachable!("clap conflicts_with guards this"),
+                };
+                match result {
+                    Ok(value) => {
+                        if json_mode {
+                            output::print_json(&value);
+                        } else if let Some(count) = value.get("approved_count").and_then(|v| v.as_i64())
+                        {
+                            println!("wh rules approve: {count} candidate(s) approved");
+                        } else {
+                            let id = value.get("rule_id").and_then(|v| v.as_str()).unwrap_or("?");
+                            let action = value.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+                            println!("wh rules approve: {id} -> {action}");
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        output::print_json(&output::error_json(&e.to_string(), "wh rules approve --help"));
+                        1
+                    }
+                }
+            }
+            RulesAction::Worklist {
+                dep,
+                lang,
+                project_dir,
+            } => match worklist::load(&project_dir) {
+                Ok(handoff) => {
+                    let wl = handoff
+                        .get("worklist")
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+                    let filtered = worklist::filter(&wl, dep.as_deref(), lang.as_deref());
+                    let value = serde_json::json!({
+                        "status": "ok",
+                        "generated_at": handoff.get("generated_at"),
+                        "trigger": handoff.get("trigger"),
+                        "total": filtered.len(),
+                        "entries": filtered,
+                        "next_command": "Pick the first `ready_now` entry, extract rules, and `wh extract submit <bundle>`",
+                    });
+                    if json_mode {
+                        output::print_json(&value);
+                    } else {
+                        print!("{}", review::format_worklist(&value));
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(&e.to_string(), "wh rules worklist --help"));
+                    1
+                }
+            },
+        },
+
+        Commands::Sources { action } => match action {
+            SourceAction::Add {
+                url,
+                name,
+                lang,
+                kind,
+                project,
+                personal: _personal,
+                project_dir,
+            } => {
+                let personal = !project;
+                let opts = source_mgmt::AddOptions {
+                    url: &url,
+                    name: name.as_deref(),
+                    language: lang.as_deref(),
+                    source_kind: kind.as_deref(),
+                    personal,
+                };
+                match source_mgmt::add(&project_dir, opts) {
+                    Ok(v) => {
+                        if json_mode {
+                            output::print_json(&v);
+                        } else {
+                            let wrote = v.get("wrote").and_then(|s| s.as_str()).unwrap_or("?");
+                            let url_out = v.get("url").and_then(|s| s.as_str()).unwrap_or("?");
+                            println!("Subscribed {url_out} → {wrote}");
+                            println!("Next: wh sources verify {url_out}");
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "Check URL format (http:// or https://) and whether it's already subscribed",
+                        ));
+                        1
+                    }
+                }
+            }
+            SourceAction::Edit {
+                target,
+                url,
+                name,
+                lang,
+                kind,
+                project,
+                personal: _personal,
+                project_dir,
+            } => {
+                let personal = !project;
+                let opts = source_mgmt::EditOptions {
+                    target: &target,
+                    url: url.as_deref(),
+                    name: name.as_deref(),
+                    language: lang.as_deref(),
+                    source_kind: kind.as_deref(),
+                    personal,
+                };
+                match source_mgmt::edit(&project_dir, opts) {
+                    Ok(v) => {
+                        if json_mode {
+                            output::print_json(&v);
+                        } else {
+                            let wrote = v.get("wrote").and_then(|s| s.as_str()).unwrap_or("?");
+                            println!("Updated {target} → {wrote}");
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "Use `wh sources list` to find the right target",
+                        ));
+                        1
+                    }
+                }
+            }
+            SourceAction::List { project_dir } => match source_mgmt::list(&project_dir) {
+                Ok(v) => {
+                    if json_mode {
+                        output::print_json(&v);
+                    } else {
+                        print!("{}", source_mgmt::format_list_human(&v));
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(&e.to_string(), "wh sources list"));
+                    1
+                }
+            },
+            SourceAction::Remove {
+                target,
+                project,
+                personal: _personal,
+                project_dir,
+            } => {
+                let personal = !project;
+                let opts = source_mgmt::RemoveOptions {
+                    target: &target,
+                    personal,
+                };
+                match source_mgmt::remove(&project_dir, opts) {
+                    Ok(v) => {
+                        if json_mode {
+                            output::print_json(&v);
+                        } else {
+                            let url = v
+                                .get("removed_url")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or(&target);
+                            let wrote = v.get("wrote").and_then(|s| s.as_str()).unwrap_or("?");
+                            println!("Unsubscribed {url} ← {wrote}");
+                            if let Some(citers) =
+                                v.get("citing_rule_ids").and_then(|a| a.as_array())
+                            {
+                                if !citers.is_empty() {
+                                    println!(
+                                        "{} approved rule(s) cite this source:",
+                                        citers.len()
+                                    );
+                                    for c in citers.iter().take(10) {
+                                        let id = c
+                                            .get("rule_id")
+                                            .and_then(|s| s.as_str())
+                                            .unwrap_or("?");
+                                        println!("  {id}");
+                                    }
+                                    println!(
+                                        "Next: `wh rules edit <id>` or remove the rule if the source is gone for good"
+                                    );
+                                }
+                            }
+                        }
+                        0
+                    }
+                    Err(e) => {
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "Use `wh sources list` to find the right target",
+                        ));
+                        1
+                    }
+                }
+            }
+            SourceAction::Verify {
+                target,
+                project_dir,
+            } => match source_mgmt::fetch(&project_dir, &target) {
+                Ok(v) => {
+                    if json_mode {
+                        output::print_json(&v);
+                    } else {
+                        let fetched = v.get("fetched").and_then(|n| n.as_u64()).unwrap_or(0);
+                        println!("Verified {fetched} source(s)");
+                        if let Some(arr) = v.get("sources").and_then(|a| a.as_array()) {
+                            for s in arr {
+                                let name = s
+                                    .get("name")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or("?");
+                                let bytes = s
+                                    .get("content")
+                                    .and_then(|x| x.as_str())
+                                    .map(|c| c.len())
+                                    .unwrap_or(0);
+                                println!("  {name}  ({bytes} bytes)");
+                            }
+                        }
+                    }
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "Check the URL resolves and `wh sources list` shows it as subscribed",
+                    ));
+                    1
+                }
+            },
         },
 
         Commands::Report {
@@ -2209,30 +2353,12 @@ pub fn run() -> i32 {
                 Err(e) => {
                     output::print_json(&output::error_json(
                         &e.to_string(),
-                        "wh report composes wh status + wh check; fix the underlying failure and retry",
+                        "wh report composes wh status + wh scan; fix the underlying failure and retry",
                     ));
                     1
                 }
             }
         }
-
-        Commands::Tui { project_dir } => {
-            if json_mode {
-                output::print_json(&output::error_json(
-                    "The TUI is only available in interactive human mode",
-                    "Run a domain command with --json (for example: wh status --json)",
-                ));
-                1
-            } else {
-                match tui::run(&project_dir) {
-                    Ok(()) => 0,
-                    Err(e) => {
-                        eprintln!("whetstone: tui exited with error: {e}");
-                        1
-                    }
-                }
-            }
-        },
 
         Commands::Debt {
             project_dir,
@@ -2433,14 +2559,12 @@ fn command_title(command: &Commands) -> &'static str {
         Commands::Approve { .. } => "APPROVE",
         Commands::Extract { .. } => "EXTRACT",
         Commands::Validate { .. } => "VALIDATE",
-        Commands::Check { .. } => "CHECK",
+        Commands::Scan { .. } => "SCAN",
         Commands::Ci { .. } => "CI",
         Commands::Reinit { .. } => "REINIT",
         Commands::Review { .. } => "REVIEW",
         Commands::Rules { .. } => "RULES",
-        Commands::Rule { .. } => "RULE",
-        Commands::Source { .. } => "SOURCE",
-        Commands::Tui { .. } => "TUI",
+        Commands::Sources { .. } => "SOURCES",
         Commands::Report { .. } => "REPORT",
         Commands::Debt { .. } => "DEBT",
         Commands::Update { .. } => "UPDATE",
@@ -2474,15 +2598,21 @@ fn success_screen_for_command(command: &Commands) -> Option<tui::msg::Screen> {
             }
         }
         Commands::Extract { action: None, .. } => Some(Screen::Extract),
-        Commands::Check { .. } => Some(Screen::Check),
+        Commands::Scan { .. } => Some(Screen::Check),
         Commands::Reinit { .. } => Some(Screen::Drift),
         Commands::Report { .. } => Some(Screen::Report),
         Commands::Debt { prompt, beads, .. } if !prompt && !beads => Some(Screen::Debt),
-        Commands::Source { .. } => Some(Screen::Sources),
+        Commands::Sources { .. } => Some(Screen::Sources),
         Commands::Approve { .. } => Some(Screen::Rules),
-        Commands::Rule { action } => match action {
-            RuleAction::Add { .. } | RuleAction::Edit { .. } => Some(Screen::Rules),
-            RuleAction::Worklist { .. } => Some(Screen::Extract),
+        Commands::Rules { action } => match action {
+            RulesAction::Add { .. }
+            | RulesAction::Edit { .. }
+            | RulesAction::Remove { .. }
+            | RulesAction::Approve { .. }
+            | RulesAction::List { .. }
+            | RulesAction::Review { .. }
+            | RulesAction::Show { .. } => Some(Screen::Rules),
+            RulesAction::Worklist { .. } => Some(Screen::Extract),
             _ => None,
         },
         Commands::Review {
@@ -2500,35 +2630,37 @@ fn project_dir_for_command(command: &Commands) -> PathBuf {
         | Commands::Status { project_dir, .. }
         | Commands::Context { project_dir, .. }
         | Commands::Tests { project_dir, .. }
-        | Commands::Actions { project_dir, .. }
         | Commands::Lint { project_dir, .. }
         | Commands::Approve { project_dir, .. }
         | Commands::Extract { project_dir, .. }
         | Commands::Validate { project_dir, .. }
-        | Commands::Check { project_dir, .. }
         | Commands::Ci { project_dir, .. }
         | Commands::Review { project_dir, .. }
-        | Commands::Rules {
-            action: RulesAction::Query { project_dir, .. },
-        }
-        | Commands::Source {
-            action:
-                SourceAction::Add { project_dir, .. }
-                | SourceAction::List { project_dir }
-                | SourceAction::Remove { project_dir, .. }
-                | SourceAction::Fetch { project_dir, .. },
-        }
-        | Commands::Rule {
-            action:
-                RuleAction::Add { project_dir, .. }
-                | RuleAction::Edit { project_dir, .. }
-                | RuleAction::Query { project_dir, .. }
-                | RuleAction::Review { project_dir, .. }
-                | RuleAction::Worklist { project_dir, .. },
-        }
-        | Commands::Tui { project_dir }
         | Commands::Report { project_dir, .. }
         | Commands::Debt { project_dir, .. } => project_dir.clone(),
+        Commands::Actions { action } => match action {
+            ActionsAction::All(args) | ActionsAction::Context(args) => args.project_dir.clone(),
+            ActionsAction::Lint(args) | ActionsAction::Test(args) => args.project_dir.clone(),
+        },
+        Commands::Scan { project_dir, .. } => project_dir.clone(),
+        Commands::Rules { action } => match action {
+            RulesAction::List { project_dir, .. }
+            | RulesAction::Show { project_dir, .. }
+            | RulesAction::Add { project_dir, .. }
+            | RulesAction::Edit { project_dir, .. }
+            | RulesAction::Remove { project_dir, .. }
+            | RulesAction::Query { project_dir, .. }
+            | RulesAction::Approve { project_dir, .. }
+            | RulesAction::Review { project_dir, .. }
+            | RulesAction::Worklist { project_dir, .. } => project_dir.clone(),
+        },
+        Commands::Sources { action } => match action {
+            SourceAction::Add { project_dir, .. }
+            | SourceAction::Edit { project_dir, .. }
+            | SourceAction::List { project_dir }
+            | SourceAction::Remove { project_dir, .. }
+            | SourceAction::Verify { project_dir, .. } => project_dir.clone(),
+        },
         Commands::Reinit { project_dir, .. } => PathBuf::from(project_dir),
         Commands::Update { .. } => PathBuf::from("."),
     }

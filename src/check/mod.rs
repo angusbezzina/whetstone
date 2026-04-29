@@ -1,4 +1,4 @@
-//! `wh check` — scan source files and report rule violations.
+//! `wh scan` — scan source files and report rule violations.
 //!
 //! Signal handling:
 //! - `ast` with `ast_query:` → tree-sitter S-expression query evaluated
@@ -198,13 +198,13 @@ pub fn format_human_output(result: &Value) -> String {
 
     if count == 0 && config_count == 0 {
         out.push_str(&format!(
-            "wh check: no violations ({rules} rule(s), {files} file(s))\n"
+            "wh scan: no violations ({rules} rule(s), {files} file(s))\n"
         ));
         return out;
     }
 
     out.push_str(&format!(
-        "wh check: {count} violation(s), {config_count} config issue(s) across {files} file(s) against {rules} rule(s)\n"
+        "wh scan: {count} violation(s), {config_count} config issue(s) across {files} file(s) against {rules} rule(s)\n"
     ));
     if let Some(arr) = result.get("violations").and_then(|v| v.as_array()) {
         for v in arr {

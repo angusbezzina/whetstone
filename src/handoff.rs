@@ -381,8 +381,8 @@ pub fn write_refresh_diff(
         Some(format!(
             "Drift detected on {} rule(s): {}. \
              For each rule, re-read the current docs at its `current_source_url` (see this file), \
-             decide whether to keep / edit severity via `wh rule edit` / delete / re-author via \
-             `wh extract submit <bundle>`. Then run `wh actions` to regenerate outputs.",
+             decide whether to keep / edit severity via `wh rules edit` / delete / re-author via \
+             `wh extract submit <bundle>`. Then run `wh actions all` to regenerate outputs.",
             ids.len(),
             ids.join(", ")
         ))
@@ -402,7 +402,7 @@ pub fn write_refresh_diff(
         "next_action": if drift_count == 0 {
             "No drift detected. Rules are current.".to_string()
         } else {
-            "Read re_extraction_candidates, then for each entry decide: keep / `wh rule edit` severity / delete rule YAML / `wh extract submit <bundle>` a re-authored version. Finish with `wh actions`.".to_string()
+            "Read re_extraction_candidates, then for each entry decide: keep / `wh rules edit` severity / delete rule YAML / `wh extract submit <bundle>` a re-authored version. Finish with `wh actions all`.".to_string()
         },
     });
 

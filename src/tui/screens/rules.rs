@@ -97,12 +97,12 @@ pub fn load(project_dir: &Path) -> RulesView {
             let (personal_only, _) = crate::layers::load_personal_only(project_dir, None);
             if personal_only.is_empty() {
                 return RulesView::Error(
-                    "No rules found — run wh init or wh rule add".into(),
+                    "No rules found — run wh init or wh rules add".into(),
                 );
             }
         }
         // Initialized but no approved rules — same actionable hint.
-        return RulesView::Error("No rules found — run wh init or wh rule add".into());
+        return RulesView::Error("No rules found — run wh init or wh rules add".into());
     }
 
     let mut rows: Vec<RuleRow> = merged
@@ -292,7 +292,7 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
         return render_placeholder(
             frame,
             area,
-            "No rules yet. Run wh init, then wh extract and wh approve — or add one with wh rule add.",
+            "No rules yet. Run wh init, then wh extract and wh approve — or add one with wh rules add.",
         );
     }
     let lines = vec![

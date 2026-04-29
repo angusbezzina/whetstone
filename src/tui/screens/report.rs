@@ -107,7 +107,7 @@ fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &ReportData) {
         let lines = vec![
             Line::from(""),
             Line::from(Span::styled(
-                "  Report is empty — run wh check first to populate violations.",
+                "  Report is empty — run wh scan first to populate violations.",
                 Style::default().fg(theme::MUTED),
             )),
         ];

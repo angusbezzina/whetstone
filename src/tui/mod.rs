@@ -1,6 +1,7 @@
 //! Whetstone TUI — interactive dashboard for Epic 4A.
 //!
-//! Invoked by `wh tui` OR by a bare `wh` on a TTY. Elm-style loop:
+//! Invoked by a bare `wh` on a TTY, or used as the interactive wrapper for
+//! human-friendly command runs. Elm-style loop:
 //! `Terminal::draw(view) → event::read() → Msg → App::update(Msg) → loop`.
 //! Screens live under [`screens`]; reusable widgets under [`components`].
 

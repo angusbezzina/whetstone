@@ -259,7 +259,7 @@ fn build_next_actions(
         Some(a) if a < 80 => {
             out.push(json!({
                 "message": format!("Adherence is {a}/100. Fix top violations."),
-                "command": "wh check src/ --json",
+                "command": "wh scan src/ --json",
             }));
         }
         None => {

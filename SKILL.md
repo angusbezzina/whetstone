@@ -30,7 +30,7 @@ wh extract          # Walk the dependency worklist to find the next candidate
 wh extract submit <bundle.yaml>   # Land a candidate bundle as status: candidate
 wh approve --all --confidence high  # Flip high-confidence candidates to approved
 wh actions          # Generate context + tests + lint in one chain
-wh check src/       # Verify source code against approved rules
+wh scan src/        # Verify source code against approved rules
 wh reinit           # Refresh when dependencies change
 ```
 
@@ -68,7 +68,7 @@ The response is a JSON envelope: `{ total, filters, warnings, rules: [...] }`. E
 
 ### Cheaper bootstrap: `--terse` and per-language sidecars
 
-`wh actions --terse` (or `wh context --terse`) emits a one-line-per-rule `AGENTS.md` (~50% smaller) that agents can load at session start without consuming much context. Use it when you prefer to rely on `wh rules query` for the details.
+`wh actions all --terse` (or `wh context --terse`) emits a one-line-per-rule `AGENTS.md` (~50% smaller) that agents can load at session start without consuming much context. Use it when you prefer to rely on `wh rules query` for the details.
 
 When a project has approved rules in more than one language, `wh context` / `wh actions` also emit `AGENTS.<lang>.md` sidecars (one per language) alongside the main `AGENTS.md`. Tools with per-language hooks can point at the narrower file.
 
@@ -78,21 +78,21 @@ Skip the extract/submit/approve dance for quick personal preferences:
 
 ```bash
 # Add a personal rule in one command (writes to whetstone/.personal/rules/<lang>/<dep>.yaml as status: approved)
-wh rule add acme.snake-case \
+wh rules add acme.snake-case \
   --description "Always use snake_case for Python function names" \
   --match 'def [A-Z]' \
   --lang python \
   --dep acme
 
 # Bump severity as taste matures
-wh rule edit acme.snake-case --severity must
+wh rules edit acme.snake-case --severity must
 
 # Bulk: promote every "should" convention rule for a dep to "must"
-wh rule edit --all --dep fastapi --category convention --severity must --dry-run
+wh rules edit --all --dep fastapi --category convention --severity must --dry-run
 # Remove --dry-run to apply.
 ```
 
-`--project` routes to the committed layer instead of personal. `wh rule edit` refuses candidate rules — approve first (`wh approve <id>`). Delete is `rm whetstone/(.personal/)?rules/<lang>/<dep>.yaml` (no separate command).
+`--project` routes to the committed layer instead of personal. `wh rules edit` refuses candidate rules — approve first (`wh rules approve <id>`). Use `wh rules remove <id>` to delete one cleanly.
 
 ## Subscribe to custom sources (blogs, wikis, llms.txt, internal docs)
 
@@ -100,22 +100,22 @@ wh rule edit --all --dep fastapi --category convention --severity must --dry-run
 
 ```bash
 # Personal subscriptions (gitignored — don't leak to teammates)
-wh source add https://blog.example.com/python-tips --name py-tips --lang python --kind blog
+wh sources add https://blog.example.com/python-tips --name py-tips --lang python --kind blog
 
 # Team subscriptions (committed)
-wh source add https://internal.wiki/style.md --project --name team-style --kind team_guide
+wh sources add https://internal.wiki/style.md --project --name team-style --kind team_guide
 
 # See what's subscribed (both layers)
-wh source list
+wh sources list
 
 # Force re-fetch one source (skip a full wh reinit)
-wh source fetch py-tips
+wh sources verify py-tips
 
 # Unsubscribe (reports any approved rules that cite the source_url)
-wh source remove py-tips
+wh sources remove py-tips
 ```
 
-`--kind` is free-form but conventionally one of `blog`, `official_docs`, `team_guide`, `community`, `custom`. `--lang any` (or omitting `--lang`) scopes the source to all languages. After adding, run `wh init` (or `wh source fetch <name>`) to pull the content, then follow the normal `wh extract` → `wh approve` flow. `wh reinit` re-fetches subscribed sources and flags content-hash drift just like it does for detected deps.
+`--kind` is free-form but conventionally one of `blog`, `official_docs`, `team_guide`, `community`, `custom`. `--lang any` (or omitting `--lang`) scopes the source to all languages. After adding, run `wh init` (or `wh sources verify <name>`) to pull the content, then follow the normal `wh extract` → `wh approve` flow. `wh reinit` re-fetches subscribed sources and flags content-hash drift just like it does for detected deps.
 
 ## Roles
 

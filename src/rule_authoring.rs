@@ -1,10 +1,10 @@
-//! `wh rule add` and `wh rule edit` — direct rule authoring and mutation.
+//! `wh rules add`, `wh rules edit`, and `wh rules remove` — direct rule authoring and mutation.
 //!
 //! Covers Epic 3E theme C (authoring shortcuts):
-//! - `wh rule add` lets users write a personal preference in one command,
+//! - `wh rules add` lets users write a personal preference in one command,
 //!   skipping the extract/submit/approve dance. Rules land as
 //!   `status: approved` directly (user is the author AND the approver).
-//! - `wh rule edit` bumps severity / confidence on existing approved rules
+//! - `wh rules edit` bumps severity / confidence on existing approved rules
 //!   as taste matures. Bulk via `--all` + selectors.
 
 use anyhow::{anyhow, Result};
@@ -60,7 +60,7 @@ pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
     let existing = collect_existing_rule_ids(project_dir);
     if existing.contains(&full_id) {
         return Err(anyhow!(
-            "rule id `{full_id}` already exists in the project ruleset. Edit it with `wh rule edit` or pick a different id."
+            "rule id `{full_id}` already exists in the project ruleset. Edit it with `wh rules edit` or pick a different id."
         ));
     }
 
@@ -100,7 +100,7 @@ pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
         sig.insert(ystr("strategy"), ystr("lint_proxy"));
         sig.insert(
             ystr("description"),
-            ystr("Placeholder — add a `match` regex via `wh rule edit` to make this enforceable"),
+            ystr("Placeholder — add a `match` regex via `wh rules edit` to make this enforceable"),
         );
         sig.insert(ystr("weight"), ystr("optional"));
         signals.push(YamlValue::Mapping(sig));
@@ -159,7 +159,7 @@ pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
         "rule_id": full_id,
         "dependency": dep,
         "layer": if opts.personal { "personal" } else { "project" },
-        "next_command": "wh actions",
+        "next_command": "wh actions all",
     }))
 }
 
@@ -175,6 +175,10 @@ pub struct EditSelector<'a> {
 pub struct EditMutation<'a> {
     pub severity: Option<&'a str>,
     pub confidence: Option<&'a str>,
+}
+
+pub struct RemoveOptions<'a> {
+    pub rule_id: &'a str,
 }
 
 pub fn edit(
@@ -243,7 +247,7 @@ pub fn edit(
                         .unwrap_or("approved");
                     if status == "candidate" {
                         return Err(anyhow!(
-                            "rule `{id}` is a candidate; approve it via `wh approve` before editing"
+                            "rule `{id}` is a candidate; approve it via `wh rules approve` before editing"
                         ));
                     }
 
@@ -286,7 +290,7 @@ pub fn edit(
 
     if edits.is_empty() {
         return Err(anyhow!(
-            "no approved rules match the selector. Use `wh review` to inspect the ruleset."
+            "no approved rules match the selector. Use `wh rules list` to inspect the ruleset."
         ));
     }
 
@@ -295,7 +299,75 @@ pub fn edit(
         "dry_run": dry_run,
         "changed": edits.iter().map(edit_record_to_json).collect::<Vec<_>>(),
         "count": edits.len(),
-        "next_command": if dry_run { "wh rule edit <same args, without --dry-run>" } else { "wh actions" },
+        "next_command": if dry_run { "wh rules edit <same args, without --dry-run>" } else { "wh actions all" },
+    }))
+}
+
+// ── remove ──
+
+pub fn remove(project_dir: &Path, opts: RemoveOptions<'_>) -> Result<Value> {
+    let paths = crate::layers::LayerPaths::for_project(project_dir);
+    let mut matches: Vec<(PathBuf, Mapping, usize)> = Vec::new();
+
+    for dir in [&paths.project_rules_dir, &paths.personal_rules_dir] {
+        if !dir.exists() {
+            continue;
+        }
+        let (files, _) = load_rule_files(dir);
+        for lrf in &files {
+            let file_path = PathBuf::from(&lrf.file_path);
+            let top = read_yaml_mapping(&file_path)?;
+            if let Some(YamlValue::Sequence(rules_seq)) = top.get(ystr("rules")) {
+                for (idx, rule) in rules_seq.iter().enumerate() {
+                    let YamlValue::Mapping(rule_map) = rule else {
+                        continue;
+                    };
+                    let id = rule_map
+                        .get(ystr("id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    if id == opts.rule_id {
+                        matches.push((file_path.clone(), top.clone(), idx));
+                    }
+                }
+            }
+        }
+    }
+
+    if matches.is_empty() {
+        return Err(anyhow!(
+            "rule `{}` not found. Use `wh rules list` to inspect the ruleset.",
+            opts.rule_id
+        ));
+    }
+    if matches.len() > 1 {
+        return Err(anyhow!(
+            "rule `{}` appears in multiple files. Resolve the duplicate manually before using `wh rules remove`.",
+            opts.rule_id
+        ));
+    }
+
+    let (file_path, mut top, remove_idx) = matches.remove(0);
+    let mut deleted_file = false;
+    if let Some(YamlValue::Sequence(rules_seq)) = top.get_mut(ystr("rules")) {
+        rules_seq.remove(remove_idx);
+        if rules_seq.is_empty() {
+            fs::remove_file(&file_path)
+                .map_err(|e| anyhow!("failed to remove {}: {e}", file_path.display()))?;
+            deleted_file = true;
+        } else {
+            let body = serde_yaml::to_string(&YamlValue::Mapping(top))?;
+            fs::write(&file_path, body)
+                .map_err(|e| anyhow!("failed to write {}: {e}", file_path.display()))?;
+        }
+    }
+
+    Ok(json!({
+        "status": "ok",
+        "rule_id": opts.rule_id,
+        "file": file_path.display().to_string(),
+        "deleted_file": deleted_file,
+        "next_command": "wh actions all",
     }))
 }
 

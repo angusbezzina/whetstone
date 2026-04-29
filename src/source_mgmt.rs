@@ -1,4 +1,4 @@
-//! `wh source` — subscribe to custom rule sources.
+//! `wh sources` — subscribe to custom rule sources.
 //!
 //! The resolver and config layers already understand custom sources;
 //! this module is the user-facing UX for managing the subscription list
@@ -35,6 +35,15 @@ pub struct AddOptions<'a> {
 
 pub struct RemoveOptions<'a> {
     pub target: &'a str,
+    pub personal: bool,
+}
+
+pub struct EditOptions<'a> {
+    pub target: &'a str,
+    pub url: Option<&'a str>,
+    pub name: Option<&'a str>,
+    pub language: Option<&'a str>,
+    pub source_kind: Option<&'a str>,
     pub personal: bool,
 }
 
@@ -107,7 +116,7 @@ pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
         "layer": if opts.personal { "personal" } else { "project" },
         "url": opts.url,
         "name": opts.name,
-        "next_command": "wh source fetch",
+        "next_command": "wh sources verify",
     }))
 }
 
@@ -145,7 +154,8 @@ pub fn list(project_dir: &Path) -> Result<Value> {
 pub fn format_list_human(result: &Value) -> String {
     let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
     if total == 0 {
-        return "No custom sources subscribed. Add one with `wh source add <url>`.\n".to_string();
+        return "No custom sources subscribed. Add one with `wh sources add <url>`.\n"
+            .to_string();
     }
     let mut out = format!("{total} custom source(s):\n\n");
     for layer_key in ["project", "personal"] {
@@ -184,6 +194,146 @@ fn entry_json(s: &CustomSource, layer: &str) -> Value {
         "source_kind": s.source_kind,
         "layer": layer,
     })
+}
+
+// ── edit ──
+
+pub fn edit(project_dir: &Path, opts: EditOptions<'_>) -> Result<Value> {
+    if opts.url.is_none()
+        && opts.name.is_none()
+        && opts.language.is_none()
+        && opts.source_kind.is_none()
+    {
+        return Err(anyhow!(
+            "nothing to change. Pass at least one of --url, --name, --lang, or --kind"
+        ));
+    }
+    if let Some(url) = opts.url {
+        validate_url(url)?;
+    }
+    if let Some(lang) = opts.language {
+        if !VALID_LANGUAGES.contains(&lang) {
+            return Err(anyhow!(
+                "invalid --lang `{lang}`. Must be one of: {}",
+                VALID_LANGUAGES.join(", ")
+            ));
+        }
+    }
+
+    let path = target_config_path(project_dir, opts.personal);
+    if !path.exists() {
+        return Err(anyhow!(
+            "no config at {}; nothing to edit in the {} layer",
+            path.display(),
+            if opts.personal { "personal" } else { "project" }
+        ));
+    }
+    let mut top = read_yaml_mapping_or_empty(&path)?;
+    let sources = top.get_mut(ystr("sources"));
+    let Some(YamlValue::Mapping(sources_map)) = sources else {
+        return Err(anyhow!(
+            "source `{}` not found in {} (no sources configured)",
+            opts.target,
+            path.display()
+        ));
+    };
+    let custom = sources_map.get_mut(ystr("custom"));
+    let Some(YamlValue::Sequence(custom_seq)) = custom else {
+        return Err(anyhow!(
+            "source `{}` not found in {} (no custom sources configured)",
+            opts.target,
+            path.display()
+        ));
+    };
+
+    let matches: Vec<usize> = custom_seq
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, entry)| {
+            let m = entry.as_mapping()?;
+            let url = m.get(ystr("url")).and_then(|v| v.as_str()).unwrap_or_default();
+            let name = m
+                .get(ystr("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            if url == opts.target || name == opts.target {
+                Some(idx)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if matches.is_empty() {
+        return Err(anyhow!(
+            "source `{}` not found in {}",
+            opts.target,
+            path.display()
+        ));
+    }
+    if matches.len() > 1 {
+        return Err(anyhow!(
+            "source target `{}` matched multiple entries in {}. Re-run with the full URL.",
+            opts.target,
+            path.display()
+        ));
+    }
+
+    if let Some(new_url) = opts.url {
+        for (idx, entry) in custom_seq.iter().enumerate() {
+            if idx == matches[0] {
+                continue;
+            }
+            let existing_url = entry
+                .as_mapping()
+                .and_then(|m| m.get(ystr("url")))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            if existing_url == new_url {
+                return Err(anyhow!(
+                    "source already subscribed: {existing_url} (in {})",
+                    path.display()
+                ));
+            }
+        }
+    }
+
+    let Some(YamlValue::Mapping(entry)) = custom_seq.get_mut(matches[0]) else {
+        return Err(anyhow!(
+            "source `{}` in {} is malformed",
+            opts.target,
+            path.display()
+        ));
+    };
+
+    if let Some(url) = opts.url {
+        entry.insert(ystr("url"), ystr(url));
+    }
+    if let Some(name) = opts.name {
+        entry.insert(ystr("name"), ystr(name));
+    }
+    if let Some(lang) = opts.language {
+        entry.insert(ystr("language"), ystr(lang));
+    }
+    if let Some(kind) = opts.source_kind {
+        entry.insert(ystr("source_kind"), ystr(kind));
+    }
+
+    write_yaml_mapping(&path, &top)?;
+
+    Ok(json!({
+        "status": "ok",
+        "wrote": path.display().to_string(),
+        "layer": if opts.personal { "personal" } else { "project" },
+        "target": opts.target,
+        "updated": {
+            "url": opts.url,
+            "name": opts.name,
+            "language": opts.language,
+            "source_kind": opts.source_kind,
+        },
+        "next_command": "wh sources verify",
+    }))
 }
 
 // ── remove ──
@@ -262,9 +412,9 @@ pub fn remove(project_dir: &Path, opts: RemoveOptions<'_>) -> Result<Value> {
         "removed_url": removed_url,
         "citing_rule_ids": citing_rules,
         "next_command": if citing_rules_nonempty_hint(project_dir, &removed_url) {
-            "wh rule edit <id> or delete the rule file if the source is gone for good"
+            "wh rules edit <id> or remove the rule if the source is gone for good"
         } else {
-            "wh source list"
+            "wh sources list"
         },
     }))
 }
@@ -322,7 +472,7 @@ pub fn fetch(project_dir: &Path, target: &str) -> Result<Value> {
 
     if matched.is_empty() {
         return Err(anyhow!(
-            "source `{target}` not found in either layer. Use `wh source list` to see subscribed sources."
+            "source `{target}` not found in either layer. Use `wh sources list` to see subscribed sources."
         ));
     }
 

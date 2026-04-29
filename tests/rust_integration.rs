@@ -410,17 +410,17 @@ fn test_help_output() {
     assert!(stdout.contains("actions"), "help should contain 'actions'");
     assert!(stdout.contains("extract"), "help should contain 'extract'");
     assert!(stdout.contains("approve"), "help should contain 'approve'");
-    assert!(stdout.contains("check"), "help should contain 'check'");
+    assert!(stdout.contains("scan"), "help should contain 'scan'");
     assert!(stdout.contains("debt"), "help should contain 'debt'");
-    assert!(stdout.contains("tui"), "help should contain 'tui'");
-    assert!(stdout.contains("rule"), "help should contain 'rule'");
-    assert!(stdout.contains("source"), "help should contain 'source'");
+    assert!(stdout.contains("rules"), "help should contain 'rules'");
+    assert!(stdout.contains("sources"), "help should contain 'sources'");
     assert!(
         stdout.contains("validate"),
         "help should contain 'validate'"
     );
     assert!(stdout.contains("Core workflow:"), "help should contain taxonomy guidance");
-    assert!(stdout.contains("whetstone actions --only <context|tests|lint>"));
+    assert!(stdout.contains("whetstone actions all"));
+    assert!(!stdout.contains("\n  tui"), "tui should not be a separate command");
     // Aliases were removed in 0.3.0 — these legacy spellings must NOT appear.
     assert!(!stdout.contains("doctor"), "'doctor' alias should be gone");
     assert!(!stdout.contains("generate-context"), "'generate-context' alias should be gone");
@@ -429,24 +429,23 @@ fn test_help_output() {
 
 #[test]
 fn test_rule_help_shows_grouped_advanced_subcommands() {
-    let (stdout, _stderr, success) = run_whetstone(&["rule", "--help"], ".");
+    let (stdout, _stderr, success) = run_whetstone(&["rules", "--help"], ".");
     assert!(success);
+    assert!(stdout.contains("list"));
+    assert!(stdout.contains("show"));
     assert!(stdout.contains("add"));
     assert!(stdout.contains("edit"));
+    assert!(stdout.contains("remove"));
     assert!(stdout.contains("query"));
-    assert!(stdout.contains("review"));
+    assert!(stdout.contains("approve"));
     assert!(stdout.contains("worklist"));
 }
 
 #[test]
-fn test_tui_json_mode_returns_machine_error() {
-    let (stdout, _stderr, success) = run_whetstone(&["--json", "tui"], ".");
-    assert!(!success);
-    let result = parse_json(&stdout);
-    assert!(result["error"]
-        .as_str()
-        .unwrap_or("")
-        .contains("TUI is only available"));
+fn test_legacy_rule_alias_help_still_works() {
+    let (stdout, _stderr, success) = run_whetstone(&["rule", "--help"], ".");
+    assert!(success);
+    assert!(stdout.contains("Manage rules"));
 }
 
 #[test]
@@ -550,7 +549,7 @@ fn test_source_add_list_remove_round_trip() {
     // Add a personal source.
     let (_, _, ok) = run_whetstone(
         &[
-            "source",
+            "sources",
             "add",
             "https://blog.example.com/py",
             "--name",
@@ -565,13 +564,13 @@ fn test_source_add_list_remove_round_trip() {
         ],
         tmp.to_str().unwrap(),
     );
-    assert!(ok, "wh source add (personal) must succeed");
+    assert!(ok, "wh sources add (personal) must succeed");
     assert!(tmp.join("whetstone/.personal/config.yaml").exists());
 
     // Add a project source.
     let (_, _, ok2) = run_whetstone(
         &[
-            "source",
+            "sources",
             "add",
             "https://team.internal/conv",
             "--project",
@@ -587,7 +586,7 @@ fn test_source_add_list_remove_round_trip() {
     // List.
     let (list_out, _, ok3) = run_whetstone(
         &[
-            "source",
+            "sources",
             "list",
             "--json",
             "--project-dir",
@@ -601,10 +600,43 @@ fn test_source_add_list_remove_round_trip() {
     assert_eq!(listed["personal"][0]["name"], "py-blog");
     assert_eq!(listed["project"][0]["url"], "https://team.internal/conv");
 
+    // Edit the personal source.
+    let (_, _, ok_edit) = run_whetstone(
+        &[
+            "sources",
+            "edit",
+            "py-blog",
+            "--name",
+            "py-blog-renamed",
+            "--kind",
+            "community",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok_edit, "wh sources edit must succeed");
+
+    let (list_after_edit, _, ok_after_edit) = run_whetstone(
+        &[
+            "sources",
+            "list",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok_after_edit);
+    let listed_after_edit: serde_json::Value = serde_json::from_str(&list_after_edit).unwrap();
+    assert_eq!(listed_after_edit["personal"][0]["name"], "py-blog-renamed");
+    assert_eq!(listed_after_edit["personal"][0]["source_kind"], "community");
+
     // Duplicate add must refuse.
     let (_, _, ok_dup) = run_whetstone(
         &[
-            "source",
+            "sources",
             "add",
             "https://blog.example.com/py",
             "--json",
@@ -618,9 +650,9 @@ fn test_source_add_list_remove_round_trip() {
     // Remove by name.
     let (rm_out, _, ok4) = run_whetstone(
         &[
-            "source",
+            "sources",
             "remove",
-            "py-blog",
+            "py-blog-renamed",
             "--json",
             "--project-dir",
             tmp.to_str().unwrap(),
@@ -634,7 +666,7 @@ fn test_source_add_list_remove_round_trip() {
     // List again: personal empty, project kept.
     let (list_out2, _, _) = run_whetstone(
         &[
-            "source",
+            "sources",
             "list",
             "--json",
             "--project-dir",
@@ -656,7 +688,7 @@ fn test_source_add_rejects_bad_url() {
     std::fs::create_dir_all(&tmp).unwrap();
     let (_, _, ok) = run_whetstone(
         &[
-            "source",
+            "sources",
             "add",
             "not-a-url",
             "--project-dir",
@@ -687,7 +719,7 @@ fn test_personal_only_project_still_gets_adherence_score() {
     // Personal rule: never use print()
     let (_, _, add_ok) = run_whetstone(
         &[
-            "rule",
+            "rules",
             "add",
             "demo.no-print",
             "--description",
@@ -1005,7 +1037,7 @@ fn test_rule_add_writes_personal_yaml() {
         ],
         tmp.to_str().unwrap(),
     );
-    assert!(ok, "wh rule add must succeed: {stdout}");
+    assert!(ok, "wh rules add must succeed: {stdout}");
     let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(result["status"], "ok");
     assert_eq!(result["layer"], "personal");
@@ -1030,7 +1062,7 @@ fn test_rule_edit_bumps_severity_in_place() {
     // Seed with rule add.
     let (_add_stdout, _, add_ok) = run_whetstone(
         &[
-            "rule",
+            "rules",
             "add",
             "acme.prefer-X",
             "--description",
@@ -1052,7 +1084,7 @@ fn test_rule_edit_bumps_severity_in_place() {
     // Edit severity.
     let (edit_stdout, _, edit_ok) = run_whetstone(
         &[
-            "rule",
+            "rules",
             "edit",
             "acme.prefer-X",
             "--severity",
@@ -1063,7 +1095,7 @@ fn test_rule_edit_bumps_severity_in_place() {
         ],
         tmp.to_str().unwrap(),
     );
-    assert!(edit_ok, "wh rule edit must succeed: {edit_stdout}");
+    assert!(edit_ok, "wh rules edit must succeed: {edit_stdout}");
     let result: serde_json::Value = serde_json::from_str(&edit_stdout).unwrap();
     assert_eq!(result["count"], 1);
     assert_eq!(result["changed"][0]["severity"]["before"], "should");
@@ -1087,7 +1119,7 @@ fn test_rule_edit_dry_run_does_not_write() {
     .unwrap();
     let (_, _, ok) = run_whetstone(
         &[
-            "rule",
+            "rules",
             "add",
             "acme.x",
             "--description",
@@ -1108,7 +1140,7 @@ fn test_rule_edit_dry_run_does_not_write() {
 
     let (stdout, _, edit_ok) = run_whetstone(
         &[
-            "rule",
+            "rules",
             "edit",
             "acme.x",
             "--severity",
@@ -1127,6 +1159,61 @@ fn test_rule_edit_dry_run_does_not_write() {
         std::fs::read_to_string(tmp.join("whetstone/.personal/rules/python/acme.yaml")).unwrap();
     // File must still have the original severity.
     assert!(text.contains("severity: should"));
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_rule_remove_deletes_rule_yaml() {
+    let tmp = std::env::temp_dir().join(format!("wh_rule_remove_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(
+        tmp.join("pyproject.toml"),
+        b"[project]\nname=\"t\"\nversion=\"0.1.0\"\ndependencies=[]\n",
+    )
+    .unwrap();
+
+    let (_, _, add_ok) = run_whetstone(
+        &[
+            "rules",
+            "add",
+            "acme.delete-me",
+            "--description",
+            "Delete me",
+            "--match",
+            "delete_me",
+            "--lang",
+            "python",
+            "--dep",
+            "acme",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(add_ok);
+
+    let target = tmp.join("whetstone/.personal/rules/python/acme.yaml");
+    assert!(target.exists());
+
+    let (stdout, _, remove_ok) = run_whetstone(
+        &[
+            "rules",
+            "remove",
+            "acme.delete-me",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(remove_ok, "wh rules remove must succeed: {stdout}");
+    let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(result["rule_id"], "acme.delete-me");
+    assert_eq!(result["deleted_file"], true);
+    assert!(!target.exists(), "single-rule file should be deleted after remove");
+
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -2756,9 +2843,9 @@ rules:
 fn test_check_finds_rust_unwrap_violation() {
     // Self-check: Whetstone's own built-in Rust rule flags `.unwrap()` calls.
     // The repo knowingly has `.unwrap()` usages for infallible regex compiles,
-    // so `wh check --lang rust` must report at least one violation.
+    // so `wh scan --lang rust` must report at least one violation.
     let (stdout, _stderr, _ok) = run_whetstone(
-        &["--json", "check", "src", "--lang", "rust", "--no-fail"],
+        &["--json", "scan", "src", "--lang", "rust", "--no-fail"],
         env!("CARGO_MANIFEST_DIR"),
     );
     let result = parse_json(&stdout);

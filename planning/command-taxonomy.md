@@ -1,77 +1,97 @@
-# Command Taxonomy Cleanup
+# Command Taxonomy vNext
 
-> **Status:** stage 1 implemented · 2026-04-22
-> **Tracking:** whetstone-8to1
+> **Status:** draft in implementation · 2026-04-28
+> **Tracking:** whetstone-ng9g, whetstone-ng9g.2, whetstone-ng9g.5
 
-## Goal
+## Confirmed decisions
 
-Reduce the visible Whetstone command surface to the core happy path while
-preserving backward compatibility for existing scripts and operator muscle
-memory.
+- `wh status` stays top-level.
+- `wh reinit` stays separate from `wh init`.
+- Personal rules remain local by default; committing them is opt-in.
+- Bare `wh` remains the interactive human/TUI entrypoint.
+- The explicit `wh tui` command is removed.
 
-## Desired visible taxonomy
+## Canonical visible taxonomy
 
 ### Core workflow
 
 - `wh init`
-- `wh extract`
-- `wh approve`
-- `wh actions`
-- `wh check`
 - `wh reinit`
 - `wh status`
+- `wh scan`
 - `wh debt`
-- `wh tui`
+- `wh actions all`
 
-### Advanced grouped commands
+### Management groups
 
-- `wh rule add | edit | query | review | worklist`
-- `wh source add | list | remove | fetch`
-- `wh actions --only context|tests|lint`
-- `wh status --report [--pr-comment]`
+- `wh rules list | show | query | add | edit | remove | approve | worklist`
+- `wh sources list | add | edit | remove | verify`
 
-### Maintenance
+### Maintenance / advanced
 
+- `wh extract`
+- `wh approve`
 - `wh validate`
 - `wh update`
+- `wh status --report [--pr-comment]`
 
-## Stage 1 migration plan
+## UX intent
 
-1. **Hide duplicated top-level commands from default help**
-   - `set-sources`
-   - `context`
-   - `tests`
-   - `lint`
-   - `ci`
-   - `review`
-   - `rules`
-   - `report`
-2. **Keep them callable for compatibility** so existing scripts do not break.
-3. **Promote grouped entrypoints**
-   - add `wh rule query`
-   - add `wh rule review`
-   - add `wh rule worklist`
-   - add `wh actions --only ...`
-   - add `wh status --report`
-4. **Update help surfaces**
-   - `wh --help`
-   - TUI help overlay
+### `wh init`
+
+`wh init` is the onboarding/orchestration verb. It should detect dependencies,
+resolve docs and subscribed sources, surface extraction-ready work, and point
+users at `wh sources ...` when coverage is weak.
+
+### `wh scan`
+
+`wh scan` is the canonical enforcement verb: “scan this repo against the active
+ruleset and tell me what is wrong right now.”
+
+### `wh status`
+
+`wh status` is the system/repo health verb: freshness, coverage, adherence,
+drift, and reporting.
+
+### `wh actions`
+
+`wh actions` becomes an explicit subcommand family:
+
+- `wh actions all`
+- `wh actions context`
+- `wh actions lint`
+- `wh actions test`
+
+### `wh rules`
+
+`wh rules` becomes the single obvious home for rule management. `wh approve`
+and `wh extract` may remain for compatibility/advanced workflow, but rule review
+and mutation should be discoverable under `wh rules` first.
+
+### `wh sources`
+
+`wh sources` becomes the single obvious home for custom source management.
+Users should not need to know about `set-sources`.
 
 ## Compatibility mapping
 
-| Legacy/top-level form | Preferred form |
-|-----------------------|----------------|
-| `wh set-sources` | `wh init` |
-| `wh context` | `wh actions --only context` |
-| `wh tests` | `wh actions --only tests` |
-| `wh lint` | `wh actions --only lint` |
-| `wh rules query` | `wh rule query` |
-| `wh review` | `wh rule review` |
-| `wh review worklist` | `wh rule worklist` |
-| `wh report` | `wh status --report` |
-| `wh ci` | hidden CI-specialized command (still supported) |
+| Old form | Preferred form |
+|---|---|
+| `wh check` | `wh scan` |
+| `wh rule ...` | `wh rules ...` |
+| `wh source ...` | `wh sources ...` |
+| `wh source fetch` | `wh sources verify` |
+| `wh context` | `wh actions context` |
+| `wh tests` | `wh actions test` |
+| `wh lint` | `wh actions lint` |
+| `wh actions` | `wh actions all` |
+| `wh tui` | bare `wh` |
 
-## Non-goal for stage 1
+## Migration rules
 
-Do not remove compatibility entrypoints yet. This is a help/discovery cleanup
-first, not a breaking CLI rewrite.
+1. Keep compatibility aliases where cheap and unambiguous.
+2. Prefer canonical names in all help text, docs, generated next-command hints,
+   TUI strings, and fixtures.
+3. Do not require users to learn hidden commands for the happy path.
+4. If a workflow is interactive-first, bare `wh` should expose it; we should
+   avoid redundant top-level verbs for the same mode.

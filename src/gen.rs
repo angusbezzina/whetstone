@@ -30,6 +30,6 @@ pub fn run(
         "context": context,
         "tests": tests,
         "lint": lint,
-        "next_command": "wh check src/",
+        "next_command": "wh scan src/",
     }))
 }

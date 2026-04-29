@@ -13,8 +13,8 @@ Whetstone is an Agent Skill (agentskills.io format) with a Rust CLI binary. The 
 | 1. Bootstrap | Binary | `wh init` — detect deps, resolve docs, write extraction handoff |
 | 2. Extract | Agent | `wh extract` → read docs → `wh extract submit <bundle.yaml>` |
 | 3. Approve | Agent + User | `wh approve <rule-id>` or `wh approve --all [--dep] [--confidence]` |
-| 4. Generate | Binary | `wh actions` (chains context + tests + lint) or the three individually |
-| 5. Verify | Binary | `wh check <path>` — deterministic scan, agent's "am I done?" gate |
+| 4. Generate | Binary | `wh actions all` (chains context + tests + lint) or `wh actions context|lint|test` |
+| 5. Verify | Binary | `wh scan <path>` — deterministic scan, agent's "am I done?" gate |
 | 6. Maintain | Binary | `wh reinit` when deps change; `wh status` for health |
 
 There are no command aliases. Use the canonical names above — if older scripts or memories reference `wh doctor`, `wh refresh`, `wh gen`, `wh propose`, `wh apply`, `wh promote`, `wh bench`, `wh patterns`, or `wh eval`, those are gone as of 0.3.0. Rules have exactly two statuses: `candidate` and `approved`. Denial = delete the rule from YAML.
