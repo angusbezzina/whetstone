@@ -6,6 +6,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-04-30
+
+### Changed
+- **The Sources screen now behaves like a true master/detail view.** Users switch between Dependencies, Personal, and Team source lists from one place, see only one list panel and one detail panel at a time, and can open a full-screen add-source form instead of juggling multiple visible sections.
+- **TUI authoring and source detail presentation are more polished.** Users can add new rules and handpicked sources directly in the TUI with scope toggles, dependency source details use clearer High/Moderate/Low utility labels and cleaner source-material formatting, and debt rows now focus on impact plus the primary file path.
+
 ## [0.8.6] - 2026-04-30
 
 ### Changed
