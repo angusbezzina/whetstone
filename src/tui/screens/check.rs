@@ -15,13 +15,9 @@ use ratatui::{
 
 use crate::tui::{app::App, components::footer, theme};
 
+#[allow(dead_code)]
 pub fn hints() -> &'static [footer::Hint] {
-    &[
-        ("1", "HOME"),
-        ("R", "REFRESH"),
-        ("?", "HELP"),
-        ("Q", "QUIT"),
-    ]
+    &[("1", "HOME"), ("?", "HELP"), ("Q", "QUIT")]
 }
 
 #[derive(Default, Clone)]
@@ -159,7 +155,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         CheckView::NotComputed => render_placeholder(
             frame,
             area,
-            "Violations screen not yet loaded. Press R to compute.",
+            "Violations screen not yet loaded.",
         ),
         CheckView::Loading => render_placeholder(frame, area, "Scanning for violations…"),
         CheckView::Error(msg) => render_error(frame, area, msg),

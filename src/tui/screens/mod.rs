@@ -4,7 +4,6 @@
 pub mod check;
 pub mod dashboard;
 pub mod debt;
-pub mod drift;
 pub mod extract;
 pub mod help;
 pub mod result;

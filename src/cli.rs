@@ -2629,7 +2629,7 @@ fn success_screen_for_command(command: &Commands) -> Option<tui::msg::Screen> {
         }
         Commands::Extract { action: None, .. } => Some(Screen::Extract),
         Commands::Scan { .. } => Some(Screen::Check),
-        Commands::Reinit { .. } => Some(Screen::Drift),
+        Commands::Reinit { .. } => Some(Screen::Dashboard),
         Commands::Report { .. } => None,
         Commands::Debt { prompt, beads, .. } if !prompt && !beads => Some(Screen::Debt),
         Commands::Sources { .. } => Some(Screen::Sources),

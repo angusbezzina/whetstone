@@ -22,7 +22,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, breadcrumb: &str, project_path:
         .split(area);
 
     let left = Paragraph::new(Line::from(vec![
-        Span::styled("WHESTONE ", theme::header_title()),
+        Span::styled("WHETSTONE ", theme::header_title()),
         Span::styled(format!("› {breadcrumb}"), theme::header_title()),
     ]));
 

@@ -1,4 +1,4 @@
-//! Sources screen — subscription manager for committed + personal layers.
+//! External sources screen — subscription manager for committed + personal layers.
 //!
 //! Renders the two-layer list of custom sources tracked by
 //! [`crate::source_mgmt::list`] — one column per layer (PERSONAL / PROJECT).
@@ -17,13 +17,9 @@ use ratatui::{
 
 use crate::tui::{app::App, components::footer, theme};
 
+#[allow(dead_code)]
 pub fn hints() -> &'static [footer::Hint] {
-    &[
-        ("1", "HOME"),
-        ("R", "REFRESH"),
-        ("?", "HELP"),
-        ("Q", "QUIT"),
-    ]
+    &[("1", "HOME"), ("?", "HELP"), ("Q", "QUIT")]
 }
 
 #[derive(Default, Clone)]
@@ -130,9 +126,9 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         SourcesView::NotComputed => render_placeholder(
             frame,
             area,
-            "Sources screen not yet loaded. Press R to compute.",
+            "External sources are not loaded yet.",
         ),
-        SourcesView::Loading => render_placeholder(frame, area, "Loading sources…"),
+        SourcesView::Loading => render_placeholder(frame, area, "Loading external sources…"),
         SourcesView::Error(msg) => render_error(frame, area, msg),
         SourcesView::Ready(data) => render_ready(frame, area, data),
     }
@@ -207,19 +203,19 @@ fn render_placeholder(frame: &mut Frame<'_>, area: Rect, message: &str) {
             Style::default().fg(theme::MUTED),
         )),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("SOURCES")), area);
+    frame.render_widget(Paragraph::new(lines).block(block("EXTERNAL SOURCES")), area);
 }
 
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "  Sources compute failed:",
+            "  External sources failed to load:",
             Style::default().fg(theme::STATUS_WARN),
         )),
         Line::from(format!("  {msg}")),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("SOURCES")), area);
+    frame.render_widget(Paragraph::new(lines).block(block("EXTERNAL SOURCES")), area);
 }
 
 fn block(title: &str) -> Block<'static> {
@@ -317,7 +313,7 @@ mod tests {
             "expected error message to render; got: {}",
             &out[..out.len().min(400)]
         );
-        assert!(out.contains("compute failed"));
+        assert!(out.contains("failed to load"));
     }
 
     #[test]

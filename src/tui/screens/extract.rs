@@ -15,8 +15,9 @@ use serde_json::Value;
 
 use crate::tui::{app::App, components::footer, theme};
 
+#[allow(dead_code)]
 pub fn hints() -> &'static [footer::Hint] {
-    &[("1", "HOME"), ("R", "REFRESH"), ("?", "HELP"), ("Q", "QUIT")]
+    &[("1", "HOME"), ("?", "HELP"), ("Q", "QUIT")]
 }
 
 #[derive(Default, Clone)]
@@ -100,10 +101,10 @@ fn project_entries(handoff: &Value) -> Vec<WorklistRow> {
             name: str_field(e, "name"),
             language: str_field(e, "language"),
             priority: str_field(e, "priority"),
-            utility_percent: e
-                .get("utility_percent")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u8,
+            utility_percent: parse_utility_percent(
+                e,
+                e.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0),
+            ),
             next_step: str_field(e, "next_step"),
             existing_rules: e.get("existing_rules").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
             remaining_quota: e
@@ -176,14 +177,14 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ExtractView::NotComputed => render_empty(
             frame,
             area,
-            "Rule extraction worklist not loaded yet. Press R to load.",
+            "Internal sources are not loaded yet.",
         ),
-        ExtractView::Loading => render_empty(frame, area, "Loading rule extraction worklist…"),
+        ExtractView::Loading => render_empty(frame, area, "Loading internal sources…"),
         ExtractView::Error(msg) => render_error(frame, area, msg),
         ExtractView::Ready(data) if data.entries.is_empty() => render_empty(
             frame,
             area,
-            "No core packages are ready for extraction right now. Run wh init to generate one.",
+            "No internal sources are available right now. Run wh init to generate them.",
         ),
         ExtractView::Ready(data) => render_ready(frame, area, data),
     }
@@ -194,14 +195,14 @@ fn render_empty(frame: &mut Frame<'_>, area: Rect, message: &str) {
         Line::from(""),
         Line::from(Span::styled(format!("  {message}"), Style::default().fg(theme::MUTED))),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("RULE EXTRACTION")), area);
+    frame.render_widget(Paragraph::new(lines).block(block("INTERNAL SOURCES")), area);
 }
 
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
     let mut lines: Vec<Line> = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "  Rule extraction load failed:",
+            "  Internal sources failed to load:",
             Style::default().fg(theme::STATUS_WARN),
         )),
     ];
@@ -210,11 +211,11 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  Press R to retry.",
+        "  Exit and reopen the TUI to retry.",
         Style::default().fg(theme::MUTED),
     )));
 
-    frame.render_widget(Paragraph::new(lines).block(block("RULE EXTRACTION")), area);
+    frame.render_widget(Paragraph::new(lines).block(block("INTERNAL SOURCES")), area);
 }
 
 fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
@@ -263,7 +264,7 @@ fn render_worklist(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
                 ),
                 Span::raw(" · "),
                 Span::styled(
-                    theme::humanize_token(&row.priority),
+                    recommendation_label(&row.priority),
                     Style::default().fg(priority_color(&row.priority)),
                 ),
             ]);
@@ -299,7 +300,7 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
             "Utility",
             &format!("{}% Useful", row.utility_percent),
         ),
-        detail_line("Readiness", &theme::humanize_token(&row.priority)),
+        detail_line("Recommendation", recommendation_label(&row.priority)),
         detail_line(
             "Rules",
             &format!(
@@ -331,7 +332,7 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
         lines.push(detail_line("Docs", &truncate(url, 88)));
     }
     if let Some(reason) = &row.reason {
-        lines.push(detail_line("Status Note", reason));
+        lines.push(detail_line("Constraint", reason));
     }
 
     lines.push(Line::from(""));
@@ -357,11 +358,16 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("Why this is useful", theme::header_title())));
     lines.push(Line::from(Span::styled(
-        utility_explainer(row),
-        Style::default().fg(theme::MUTED),
+        "Why this can produce rules",
+        theme::header_title(),
     )));
+    for reason in utility_reasons(row) {
+        lines.push(Line::from(Span::styled(
+            format!("• {reason}"),
+            Style::default().fg(theme::MUTED),
+        )));
+    }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("Next step", theme::header_title())));
     lines.push(Line::from(row.next_step.clone()));
@@ -374,13 +380,84 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     );
 }
 
-fn utility_explainer(row: &WorklistRow) -> String {
-    if row.utility_percent >= 80 {
-        "High utility: Whetstone has enough source quality, freshness, and readiness signals that this package is a strong next extraction candidate.".to_string()
-    } else if row.utility_percent >= 60 {
-        "Medium utility: this package is promising, but you may need to read the source material carefully or accept thinner documentation coverage.".to_string()
+fn utility_reasons(row: &WorklistRow) -> Vec<String> {
+    let mut reasons = Vec::new();
+
+    reasons.push(match row.priority.as_str() {
+        "ready_now" => {
+            "Documentation resolved cleanly enough that this package is ready for rule extraction now."
+                .to_string()
+        }
+        "resolved_low" => {
+            "Documentation was resolved, but the source quality is weaker, so only well-cited rules should be extracted."
+                .to_string()
+        }
+        "pending" => {
+            "Source resolution is still pending, so utility is limited until Whetstone finds a better source."
+                .to_string()
+        }
+        "failed" => {
+            "Source resolution failed, so this package cannot produce reliable rules yet."
+                .to_string()
+        }
+        "skipped" => "This package is currently skipped by configuration filters.".to_string(),
+        _ => {
+            "This package needs more source context before it becomes a strong extraction target."
+                .to_string()
+        }
+    });
+
+    if let Some(source_type) = &row.source_type {
+        reasons.push(format!(
+            "Primary source type is {}.",
+            theme::humanize_token(source_type)
+        ));
+    }
+
+    if let Some(confidence) = &row.freshness_confidence {
+        let mut freshness = format!(
+            "Freshness confidence is {}",
+            theme::humanize_token(confidence)
+        );
+        if let Some(days) = row.source_age_days {
+            freshness.push_str(&format!(" and the source is about {days} day(s) old"));
+        }
+        freshness.push('.');
+        reasons.push(freshness);
+    }
+
+    if !row.sections.is_empty() {
+        reasons.push(format!(
+            "Whetstone captured {} structured source section(s) for this package.",
+            row.sections.len()
+        ));
     } else {
-        "Low utility: this package currently looks weak for rule extraction because the source quality, readiness, or freshness signals are limited.".to_string()
+        reasons.push(
+            "No structured source sections were captured, so every proposed rule will need careful doc verification."
+                .to_string(),
+        );
+    }
+
+    if row.remaining_quota == 0 {
+        reasons.push("There is no remaining per-package rule quota, so new rules would need existing rules to be removed or rebalanced.".to_string());
+    } else {
+        reasons.push(format!(
+            "There are {} remaining rule slot(s) for this package.",
+            row.remaining_quota
+        ));
+    }
+
+    reasons
+}
+
+fn recommendation_label(priority: &str) -> &'static str {
+    match priority {
+        "ready_now" => "Extract Now",
+        "resolved_low" => "Review Source First",
+        "pending" => "Await Better Source",
+        "failed" => "Fix Source Resolution",
+        "skipped" => "Skipped by Config",
+        _ => "Needs Review",
     }
 }
 
@@ -390,6 +467,21 @@ fn display_language(language: &str) -> String {
     } else {
         theme::humanize_token(language)
     }
+}
+
+fn parse_utility_percent(entry: &Value, score: f64) -> u8 {
+    entry.get("utility_percent")
+        .and_then(|v| v.as_u64().map(|n| n as u8))
+        .or_else(|| {
+            entry.get("utility_percent")
+                .and_then(|v| v.as_f64())
+                .map(|n| n.round().clamp(0.0, 100.0) as u8)
+        })
+        .unwrap_or_else(|| utility_from_score(score))
+}
+
+fn utility_from_score(score: f64) -> u8 {
+    ((score / 140.0) * 100.0).round().clamp(0.0, 100.0) as u8
 }
 
 fn detail_line(label: &str, value: &str) -> Line<'static> {
@@ -544,5 +636,13 @@ mod tests {
             _ => panic!("expected ExtractView::Error when handoff is missing"),
         }
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn utility_percent_falls_back_to_score_when_missing() {
+        let entry = serde_json::json!({
+            "score": 125.0,
+        });
+        assert_eq!(parse_utility_percent(&entry, 125.0), 89);
     }
 }

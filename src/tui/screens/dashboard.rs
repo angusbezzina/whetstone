@@ -1,6 +1,6 @@
 //! Dashboard — landing screen. Presents Whetstone as a living report card
-//! with a single overall health score and four supporting domains: rules,
-//! violations, drift, and debt.
+//! with a single overall health score and supporting domains: rules,
+//! violations, reinit status, and debt.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -16,16 +16,15 @@ use crate::tui::{
     theme,
 };
 
+#[allow(dead_code)]
 pub fn hints() -> &'static [footer::Hint] {
     &[
         ("1", "HOME"),
-        ("2", "RULES"),
-        ("3", "SOURCES"),
-        ("4", "EXTRACTION"),
+        ("2", "INTERNAL SOURCES"),
+        ("3", "EXTERNAL SOURCES"),
+        ("4", "RULES"),
         ("5", "VIOLATIONS"),
-        ("6", "DRIFT"),
-        ("7", "DEBT"),
-        ("R", "REFRESH"),
+        ("6", "DEBT"),
         ("?", "HELP"),
         ("Q", "QUIT"),
     ]
@@ -60,7 +59,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     render_overall_health(frame, outer[0], app);
     render_rules_panel(frame, top_breakdown[0], app);
     render_violations_panel(frame, top_breakdown[1], app);
-    render_drift_panel(frame, bottom_breakdown[0], app);
+    render_reinit_panel(frame, bottom_breakdown[0], app);
     render_debt_panel(frame, bottom_breakdown[1], app);
 }
 
@@ -98,7 +97,7 @@ fn render_overall_health(frame: &mut Frame<'_>, area: Rect, app: &App) {
     if d.drift_count > 0 {
         lines.push(Line::from(Span::styled(
             format!(
-                "{} drifted dependency changes need review. See the Drift panel for the affected packages.",
+                "{} dependency or docs changes need attention. Run `wh reinit` to refresh sources and review rule freshness.",
                 d.drift_count
             ),
             Style::default().fg(theme::AMBER),
@@ -185,12 +184,12 @@ fn render_violations_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
     );
 }
 
-fn render_drift_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
+fn render_reinit_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let d = &app.dashboard;
     let mut lines = vec![
-        pair_line("Drifted Dependencies", &d.drift_count.to_string()),
+        pair_line("Changed Dependencies", &d.drift_count.to_string()),
         pair_line(
-            "Last Refresh",
+            "Last Reinit",
             d.last_refresh
                 .as_deref()
                 .map(|last| last.split('T').next().unwrap_or(last))
@@ -201,11 +200,17 @@ fn render_drift_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
     if d.drift_deps.is_empty() && d.drift_count == 0 {
         lines.push(Line::from(Span::styled(
-            "No drift detected. Rules are current.",
+            "No drift detected. No reinit needed right now.",
             Style::default().fg(ratatui::style::Color::White),
         )));
     } else {
-        lines.push(Line::from(Span::styled("Affected Packages", theme::header_meta())));
+        lines.push(Line::from(Span::styled("Next Action", theme::header_meta())));
+        lines.push(Line::from(Span::styled(
+            "Run `wh reinit` to refresh dependency docs and recompute freshness.",
+            Style::default().fg(theme::AMBER),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("Changed Packages", theme::header_meta())));
         for dep in d.drift_deps.iter().take(5) {
             lines.push(Line::from(vec![
                 Span::styled("  ▸ ", Style::default().fg(theme::AMBER)),
@@ -215,7 +220,9 @@ fn render_drift_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
     }
 
     frame.render_widget(
-        Paragraph::new(lines).block(panel_block("DRIFT")).wrap(Wrap { trim: false }),
+        Paragraph::new(lines)
+            .block(panel_block("REINIT STATUS"))
+            .wrap(Wrap { trim: false }),
         area,
     );
 }
@@ -230,10 +237,8 @@ fn render_debt_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Line::from(""),
             Line::from(vec![
                 Span::styled("Press ", Style::default().fg(theme::MUTED)),
-                Span::styled("7", theme::header_meta()),
-                Span::raw(" to open Debt, or "),
-                Span::styled("R", theme::header_meta()),
-                Span::raw(" to refresh the dashboard."),
+                Span::styled("6", theme::header_meta()),
+                Span::raw(" to open the debt screen."),
             ]),
         ],
         DebtView::Loading => vec![Line::from(Span::styled(
@@ -312,7 +317,7 @@ fn render_compact(frame: &mut Frame<'_>, area: Rect, app: &App) {
     lines.push(Line::from(""));
     lines.push(pair_line("Rules", &format!("{} approved", d.rules_total)));
     lines.push(pair_line("Violations", &total_violations.to_string()));
-    lines.push(pair_line("Drift", &format!("{} deps", d.drift_count)));
+    lines.push(pair_line("Reinit", &format!("{} deps changed", d.drift_count)));
     match &d.debt {
         DebtView::Ready(summary) => {
             lines.push(pair_line(

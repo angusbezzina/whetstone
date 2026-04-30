@@ -19,13 +19,9 @@ use ratatui::{
 
 use crate::tui::{app::App, components::footer, theme};
 
+#[allow(dead_code)]
 pub fn hints() -> &'static [footer::Hint] {
-    &[
-        ("1", "HOME"),
-        ("R", "REFRESH"),
-        ("?", "HELP"),
-        ("Q", "QUIT"),
-    ]
+    &[("1", "HOME"), ("?", "HELP"), ("Q", "QUIT")]
 }
 
 /// Four data states, identical shape across every second-slice screen.
@@ -147,7 +143,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         RulesView::NotComputed => render_placeholder(
             frame,
             area,
-            "Rules screen not yet loaded. Press R to compute.",
+            "Rules screen not yet loaded.",
         ),
         RulesView::Loading => render_placeholder(frame, area, "Loading rules…"),
         RulesView::Error(msg) => render_error(frame, area, msg),

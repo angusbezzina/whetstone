@@ -11,8 +11,9 @@ use ratatui::{
 
 use crate::tui::{app::App, components::footer, theme};
 
+#[allow(dead_code)]
 pub fn hints() -> &'static [footer::Hint] {
-    &[("1", "HOME"), ("R", "REFRESH"), ("?", "HELP"), ("Q", "QUIT")]
+    &[("1", "HOME"), ("?", "HELP"), ("Q", "QUIT")]
 }
 
 #[derive(Default, Clone)]

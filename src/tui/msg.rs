@@ -6,17 +6,16 @@
 
 use crossterm::event::KeyEvent;
 
-/// Identifies which top-level screen is active. Navigation via `1`–`7` or
+/// Identifies which top-level screen is active. Navigation via `1`–`6` or
 /// within-screen actions producing `Msg::GoToScreen`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
     Dashboard,
     Result,
-    Rules,
-    Sources,
     Extract,
+    Sources,
+    Rules,
     Check,
-    Drift,
     Debt,
     Help,
 }
@@ -24,13 +23,12 @@ pub enum Screen {
 impl Screen {
     pub fn title(&self) -> &'static str {
         match self {
-            Screen::Dashboard => "DASHBOARD",
+            Screen::Dashboard => "HOME",
             Screen::Result => "RESULT",
+            Screen::Extract => "INTERNAL SOURCES",
+            Screen::Sources => "EXTERNAL SOURCES",
             Screen::Rules => "RULES",
-            Screen::Sources => "SOURCES",
-            Screen::Extract => "RULE EXTRACTION",
             Screen::Check => "VIOLATIONS",
-            Screen::Drift => "DRIFT",
             Screen::Debt => "DEBT",
             Screen::Help => "HELP",
         }
@@ -38,14 +36,12 @@ impl Screen {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // GoToScreen/Refresh/Tick/Quit are emitted by future async sources
+#[allow(dead_code)] // GoToScreen/Tick/Quit are emitted by future async sources
 pub enum Msg {
     /// Raw key event — the update function decodes it into higher-level messages.
     Key(KeyEvent),
     /// Jump to a specific top-level screen.
     GoToScreen(Screen),
-    /// Re-load dashboard / per-screen data from disk + `wh check`.
-    Refresh,
     /// Periodic tick (every ~250ms) for spinner animation.
     Tick,
     /// User pressed Q / Ctrl-C. Exit the loop cleanly.

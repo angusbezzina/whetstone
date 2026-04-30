@@ -21,7 +21,7 @@ pub struct App {
     pub dashboard: DashboardState,
 }
 
-/// Cached data for the dashboard. Populated on start and on `Msg::Refresh`.
+/// Cached data for the dashboard. Populated on start.
 #[derive(Default)]
 pub struct DashboardState {
     pub rule_system_score: Option<i64>,
@@ -36,7 +36,7 @@ pub struct DashboardState {
     pub top_violations: Vec<TopViolation>,
     pub violation_counts: ViolationCounts,
     pub result: crate::tui::screens::result::ResultView,
-    /// Debt report. `None` = not yet computed (press R or open Debt screen).
+    /// Debt report. `None` = not yet computed (open the Debt screen to compute it).
     /// `Some(Err(..))` = the compute failed and the screen shows the reason.
     pub debt: DebtView,
     /// Per-screen view state for the second-slice screens (whetstone-69jb).
@@ -46,7 +46,6 @@ pub struct DashboardState {
     pub sources: crate::tui::screens::sources::SourcesView,
     pub extract: crate::tui::screens::extract::ExtractView,
     pub check: crate::tui::screens::check::CheckView,
-    pub drift: crate::tui::screens::drift::DriftView,
 }
 
 #[derive(Default, Clone)]
@@ -128,22 +127,6 @@ impl App {
                 self.screen = s;
                 self.ensure_current_screen_loaded();
             }
-            Msg::Refresh => {
-                self.load_dashboard();
-                // Refresh resets all cached per-screen views so the next
-                // open recomputes from scratch.
-                self.help_scroll_y = 0;
-                self.help_scroll_x = 0;
-                self.dashboard_scroll = 0;
-                self.dashboard.result = Default::default();
-                self.dashboard.debt = DebtView::NotComputed;
-                self.dashboard.rules = Default::default();
-                self.dashboard.sources = Default::default();
-                self.dashboard.extract = Default::default();
-                self.dashboard.check = Default::default();
-                self.dashboard.drift = Default::default();
-                self.ensure_current_screen_loaded();
-            }
             Msg::Tick => {} // reserved for future spinner animation
             Msg::Key(ev) => self.handle_key(ev),
         }
@@ -155,11 +138,10 @@ impl App {
         match self.screen {
             Screen::Result => {}
             Screen::Debt => self.ensure_debt_loaded(),
-            Screen::Rules => self.ensure_rules_loaded(),
-            Screen::Sources => self.ensure_sources_loaded(),
             Screen::Extract => self.ensure_extract_loaded(),
+            Screen::Sources => self.ensure_sources_loaded(),
+            Screen::Rules => self.ensure_rules_loaded(),
             Screen::Check => self.ensure_check_loaded(),
-            Screen::Drift => self.ensure_drift_loaded(),
             Screen::Dashboard | Screen::Help => {}
         }
     }
@@ -210,17 +192,6 @@ impl App {
         }
         self.dashboard.check = crate::tui::screens::check::CheckView::Loading;
         self.dashboard.check = crate::tui::screens::check::load(&self.project_dir);
-    }
-
-    pub fn ensure_drift_loaded(&mut self) {
-        if !matches!(
-            self.dashboard.drift,
-            crate::tui::screens::drift::DriftView::NotComputed
-        ) {
-            return;
-        }
-        self.dashboard.drift = crate::tui::screens::drift::DriftView::Loading;
-        self.dashboard.drift = crate::tui::screens::drift::load(&self.project_dir);
     }
 
     /// Compute the debt report on-demand. Synchronous — running `wh debt`
@@ -284,33 +255,26 @@ impl App {
             KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => self.quit = true,
             KeyCode::Char('1') => self.screen = Screen::Dashboard,
             KeyCode::Char('2') => {
-                self.screen = Screen::Rules;
-                self.ensure_rules_loaded();
+                self.screen = Screen::Extract;
+                self.ensure_extract_loaded();
             }
             KeyCode::Char('3') => {
                 self.screen = Screen::Sources;
                 self.ensure_sources_loaded();
             }
             KeyCode::Char('4') => {
-                self.screen = Screen::Extract;
-                self.ensure_extract_loaded();
+                self.screen = Screen::Rules;
+                self.ensure_rules_loaded();
             }
             KeyCode::Char('5') => {
                 self.screen = Screen::Check;
                 self.ensure_check_loaded();
             }
             KeyCode::Char('6') => {
-                self.screen = Screen::Drift;
-                self.ensure_drift_loaded();
-            }
-            KeyCode::Char('7') => {
                 self.screen = Screen::Debt;
                 self.ensure_debt_loaded();
             }
             KeyCode::Char('?') => self.screen = Screen::Help,
-            KeyCode::Char('r') | KeyCode::Char('R') => {
-                self.update(Msg::Refresh);
-            }
             KeyCode::Up | KeyCode::Char('k') => self.select_prev_on_current_screen(1),
             KeyCode::Down | KeyCode::Char('j') => self.select_next_on_current_screen(1),
             KeyCode::PageUp => self.select_prev_on_current_screen(10),
@@ -330,11 +294,10 @@ impl App {
                 Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_sub(1),
                 Screen::Result => self.dashboard.result.scroll_up(1),
                 Screen::Debt => self.dashboard.debt.select_prev(),
-                Screen::Rules => self.dashboard.rules.select_prev(),
-                Screen::Sources => self.dashboard.sources.select_prev(),
                 Screen::Extract => self.dashboard.extract.select_prev(),
+                Screen::Sources => self.dashboard.sources.select_prev(),
+                Screen::Rules => self.dashboard.rules.select_prev(),
                 Screen::Check => self.dashboard.check.select_prev(),
-                Screen::Drift => self.dashboard.drift.select_prev(),
             }
         }
     }
@@ -351,11 +314,10 @@ impl App {
                 Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_add(1),
                 Screen::Result => self.dashboard.result.scroll_down(1),
                 Screen::Debt => self.dashboard.debt.select_next(),
-                Screen::Rules => self.dashboard.rules.select_next(),
-                Screen::Sources => self.dashboard.sources.select_next(),
                 Screen::Extract => self.dashboard.extract.select_next(),
+                Screen::Sources => self.dashboard.sources.select_next(),
+                Screen::Rules => self.dashboard.rules.select_next(),
                 Screen::Check => self.dashboard.check.select_next(),
-                Screen::Drift => self.dashboard.drift.select_next(),
             }
         }
     }

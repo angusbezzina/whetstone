@@ -10,10 +10,11 @@ use ratatui::{
 
 use crate::tui::{app::App, components::footer, theme};
 
+#[allow(dead_code)]
 pub fn hints() -> &'static [footer::Hint] {
     &[
         ("1", "HOME"),
-        ("ESC", "BACK"),
+        ("ESC", "QUIT"),
         ("Q", "QUIT"),
     ]
 }
@@ -21,9 +22,8 @@ pub fn hints() -> &'static [footer::Hint] {
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let lines = vec![
         section("GLOBAL"),
-        kv("1–7", "Jump to a screen (Dashboard, Rules, Sources, Rule Extraction, Violations, Drift, Debt)"),
-        kv("R", "Refresh the current screen's data"),
-        kv("?", "Toggle this help overlay"),
+        kv("1–6", "Jump to a screen (Home, Internal Sources, External Sources, Rules, Violations, Debt)"),
+        kv("?", "Open this help screen"),
         kv("Q / ESC", "Quit the TUI"),
         kv("Ctrl-C", "Hard quit"),
         Line::from(""),
@@ -38,24 +38,22 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         kv("debt", "Deterministic AI-amplified debt hotspots"),
         Line::from(""),
         section("ADVANCED CLI"),
-        kv("rules ...", "list | show | add | edit | remove | query | approve | worklist"),
+        kv("rules ...", "list | show | add | edit | remove | query | approve | review | worklist"),
         kv("sources ...", "add | edit | list | remove | verify"),
         kv("actions X", "Run just all, context, test, or lint"),
         kv("status --report", "Render the one-page markdown summary"),
         Line::from(""),
         section("IN A LIST"),
         kv("↑ / ↓ / j / k", "Navigate"),
-        kv("Enter", "Drill into the selected item"),
-        kv("/", "Filter"),
-        kv("Tab", "Toggle focus between list + detail panes"),
+        kv("PgUp / PgDn", "Move faster through longer lists"),
+        kv("← / → / h / l", "Horizontal scroll on supported screens"),
         Line::from(""),
         section("SHIPPED SCREENS"),
-        kv("Dashboard", "overall health report card with rules, violations, drift, and debt"),
+        kv("Home", "overall health report card with rules, violations, reinit status, and debt"),
+        kv("Internal Sources", "core packages and source quality for the next rule targets"),
+        kv("External Sources", "custom source subscriptions across personal and project layers"),
         kv("Rules", "approved rules with file and source detail"),
-        kv("Sources", "custom source subscriptions across layers"),
-        kv("Rule Extraction", "core packages and utility detail for next rule targets"),
         kv("Violations", "violation list + config issues"),
-        kv("Drift", "dependencies/docs needing re-extraction"),
         kv("Debt", "ranked hotspot triage for dead/dup/dep/hotspot findings"),
         kv("Result", "generic command-result view for actions without a dedicated screen"),
     ];

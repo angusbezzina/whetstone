@@ -18,19 +18,21 @@ pub type Hint = (&'static str, &'static str);
 
 const FULL_HINTS: &[Hint] = &[
     ("1", "HOME"),
-    ("2", "RULES"),
-    ("3", "SOURCES"),
-    ("4", "EXTRACTION"),
+    ("2", "INTERNAL SOURCES"),
+    ("3", "EXTERNAL SOURCES"),
+    ("4", "RULES"),
     ("5", "VIOLATIONS"),
-    ("6", "DRIFT"),
-    ("7", "DEBT"),
-    ("R", "REFRESH"),
+    ("6", "DEBT"),
     ("?", "HELP"),
+    ("ESC", "QUIT"),
     ("Q", "QUIT"),
 ];
 
-pub fn render(frame: &mut Frame<'_>, area: Rect, _hints: &[Hint]) {
-    let hints = FULL_HINTS;
+pub fn global_hints() -> &'static [Hint] {
+    FULL_HINTS
+}
+
+pub fn render(frame: &mut Frame<'_>, area: Rect, hints: &[Hint]) {
     let mut spans: Vec<Span> = Vec::with_capacity(hints.len() * 3);
     for (i, (key, label)) in hints.iter().enumerate() {
         if i > 0 {
