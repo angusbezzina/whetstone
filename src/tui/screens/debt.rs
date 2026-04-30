@@ -169,7 +169,11 @@ fn hotspot_item(selected: bool, hotspot: &DebtHotspotRow, width: usize) -> ListI
                 Style::default().fg(theme::AMBER),
             ),
             Span::styled(
-                format!("{} (Impact: {}%)", truncate(&hotspot.compact_title, title_w), hotspot.impact_percent),
+                format!(
+                    "{} (Impact: {})",
+                    truncate(&hotspot.compact_title, title_w),
+                    hotspot.impact_level
+                ),
                 Style::default().fg(theme::debt_label_color("moderate")).bold(),
             ),
         ]),
@@ -193,40 +197,21 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
         return;
     };
 
-    let mut lines = vec![
+    let lines = vec![
         Line::from(Span::styled(hotspot.title.clone(), Style::default().fg(theme::AMBER).bold())),
         Line::from(""),
-        detail_line("Hotspot ID", &hotspot.id),
         detail_line("Rule ID", &hotspot.rule_id),
-        detail_line("Category", &theme::humanize_token(&hotspot.category)),
-        detail_line("Confidence", &theme::humanize_token(&hotspot.confidence)),
         detail_line(
-            "Impact Score",
-            &format!("{}% (relative to the highest-impact finding in this report)", hotspot.impact_percent),
+            "Category",
+            &format!("{} ({})", theme::humanize_token(&hotspot.category), hotspot.category),
         ),
-        detail_line("File Count", &hotspot.files.len().to_string()),
+        detail_line("Confidence", &theme::humanize_token(&hotspot.confidence)),
+        detail_line("Impact", &hotspot.impact_level),
+        detail_line("Files", &hotspot.files.join(", ")),
         Line::from(""),
-        Line::from(Span::styled("Why this was flagged", theme::header_title())),
+        Line::from(Span::styled("Snippet", theme::header_title())),
+        Line::from(hotspot.snippet.clone()),
     ];
-
-    for item in &hotspot.evidence_summary {
-        lines.push(Line::from(Span::styled(
-            format!("• {}", item),
-            Style::default().fg(theme::MUTED),
-        )));
-    }
-
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("Affected files", theme::header_title())));
-    for file in hotspot.files.iter().take(8) {
-        lines.push(Line::from(format!("• {}", file)));
-    }
-    if hotspot.files.len() > 8 {
-        lines.push(Line::from(Span::styled(
-            format!("• … +{} more", hotspot.files.len() - 8),
-            Style::default().fg(theme::MUTED),
-        )));
-    }
 
     frame.render_widget(
         Paragraph::new(lines)

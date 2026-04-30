@@ -139,6 +139,11 @@ pub fn load(project_dir: &Path) -> RulesView {
 }
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    if app.input_mode == crate::tui::app::InputMode::RulesAdd {
+        render_add_rule_form(frame, area, app);
+        return;
+    }
+
     match &app.dashboard.rules {
         RulesView::NotComputed => render_placeholder(
             frame,
@@ -153,10 +158,6 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
             "No approved rules to display.",
         ),
         RulesView::Ready(data) => render_ready(frame, area, data),
-    }
-
-    if app.input_mode == crate::tui::app::InputMode::RulesAdd {
-        render_add_rule_form(frame, area, app);
     }
 }
 
@@ -292,7 +293,7 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
         return render_placeholder(
             frame,
             area,
-            "No rules yet. Run wh init, then wh extract and wh approve — or press A to add one here.",
+            "No rules yet. Press A to add a custom rule, or run wh init / wh extract / wh approve to build the ruleset from sources.",
         );
     }
     let lines = vec![
@@ -307,22 +308,30 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
 }
 
 fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let popup = centered_rect(70, 55, area);
     let form = &app.rules_form;
+    let lang = match form.language_idx {
+        0 => "TS",
+        1 => "Rust",
+        2 => "Python",
+        _ => "All",
+    };
     let lines = vec![
         form_line("Scope", if form.team_scope { "Team" } else { "Personal" }, false),
-        form_line("Rule ID", &form.rule_id, form.active_field == 0),
-        form_line("Dependency", &form.dep, form.active_field == 1),
-        form_line("Language", &form.language, form.active_field == 2),
-        form_line("Description", &form.description, form.active_field == 3),
-        form_line("Match Regex", &form.match_regex, form.active_field == 4),
+        form_line("Name", &form.name, form.active_field == 0),
+        form_line("Language", lang, form.active_field == 1),
+        Line::from(""),
+        Line::from(Span::styled("Rule Text", theme::header_meta())),
+        Line::from(Span::styled(
+            if form.rule_text.is_empty() { "—" } else { &form.rule_text },
+            if form.active_field == 2 {
+                Style::default().fg(theme::AMBER).bold()
+            } else {
+                Style::default().fg(ratatui::style::Color::White)
+            },
+        )),
         Line::from(""),
         Line::from(Span::styled(
-            "Defaults: Severity=should · Confidence=high · Category=convention",
-            Style::default().fg(theme::MUTED),
-        )),
-        Line::from(Span::styled(
-            "Tab next field · T toggle Personal/Team · Enter save · Esc cancel",
+            "Tab next · T scope · P/R/S/A language · Enter newline in Rule Text · Ctrl-S save · Esc cancel",
             Style::default().fg(theme::MUTED),
         )),
         Line::from(""),
@@ -336,7 +345,7 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Paragraph::new(lines)
             .block(block("ADD RULE"))
             .wrap(Wrap { trim: false }),
-        popup,
+        area,
     );
 }
 
@@ -351,26 +360,6 @@ fn form_line(label: &str, value: &str, active: bool) -> Line<'static> {
         Span::styled(format!("{label:<12}"), theme::header_meta()),
         Span::styled(value_text.to_string(), value_style),
     ])
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }
 
 fn block(title: &str) -> Block<'static> {

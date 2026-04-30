@@ -348,9 +348,13 @@ fn language_short(lang: Option<&str>) -> &'static str {
 }
 
 fn source_kind_badge(kind: Option<&str>) -> String {
-    kind.map(theme::humanize_token)
-        .unwrap_or_else(|| "Custom".to_string())
-        .replace(' ', "")
+    match kind.unwrap_or("custom") {
+        "llms_full_txt" => "LLMsFullTxt".to_string(),
+        "llms_txt" => "LLMsTxt".to_string(),
+        "readme" => "Readme".to_string(),
+        "html_converted" => "HtmlConverted".to_string(),
+        other => theme::humanize_token(other).replace(' ', ""),
+    }
 }
 
 fn kv_line(label: &str, value: &str) -> Line<'static> {
@@ -471,6 +475,6 @@ mod tests {
         assert!(out.contains("Dependencies"));
         assert!(out.contains("pydantic"));
         assert_eq!(language_short(Some("python")), "PY");
-        assert_eq!(source_kind_badge(Some("llms_full_txt")), "LlmsFullTxt");
+        assert_eq!(source_kind_badge(Some("llms_full_txt")), "LLMsFullTxt");
     }
 }

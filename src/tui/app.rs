@@ -73,11 +73,9 @@ pub struct SourcesFormState {
 pub struct RulesFormState {
     pub active_field: usize,
     pub team_scope: bool,
-    pub rule_id: String,
-    pub dep: String,
-    pub language: String,
-    pub description: String,
-    pub match_regex: String,
+    pub name: String,
+    pub language_idx: usize,
+    pub rule_text: String,
     pub error: Option<String>,
 }
 
@@ -87,13 +85,10 @@ pub struct DashboardState {
     pub rule_system_score: Option<i64>,
     pub adherence_score: Option<i64>,
     pub adherence_detail: Value,
+    pub sources_total: usize,
     pub rules_total: usize,
     pub rules_personal: usize,
     pub rules_by_language: Vec<(String, usize)>,
-    pub drift_count: i64,
-    pub drift_deps: Vec<String>,
-    pub last_refresh: Option<String>,
-    pub top_violations: Vec<TopViolation>,
     pub violation_counts: ViolationCounts,
     pub result: crate::tui::screens::result::ResultView,
     /// Debt report. `None` = not yet computed (open the Debt screen to compute it).
@@ -132,7 +127,6 @@ pub struct DebtSummaryView {
 
 #[derive(Debug, Clone)]
 pub struct DebtHotspotRow {
-    pub id: String,
     pub category: String,
     pub confidence: String,
     pub rule_id: String,
@@ -140,8 +134,8 @@ pub struct DebtHotspotRow {
     pub compact_title: String,
     pub primary_file: String,
     pub files: Vec<String>,
-    pub evidence_summary: Vec<String>,
-    pub impact_percent: u8,
+    pub snippet: String,
+    pub impact_level: String,
 }
 
 #[derive(Default, Clone)]
@@ -149,13 +143,6 @@ pub struct ViolationCounts {
     pub must: usize,
     pub should: usize,
     pub may: usize,
-}
-
-pub struct TopViolation {
-    pub severity: String,
-    pub rule_id: String,
-    pub file: String,
-    pub line: u64,
 }
 
 impl App {
@@ -284,7 +271,6 @@ impl App {
                     .hotspots
                     .iter()
                     .map(|h| DebtHotspotRow {
-                        id: h.id.clone(),
                         category: h.category.as_str().to_string(),
                         confidence: h.confidence.as_str().to_string(),
                         rule_id: h.rule_id.clone(),
@@ -292,8 +278,9 @@ impl App {
                         compact_title: compact_hotspot_title(&h.title),
                         primary_file: h.files.first().cloned().unwrap_or_else(|| "—".to_string()),
                         files: h.files.clone(),
-                        evidence_summary: debt_evidence_summary(&h.evidence),
-                        impact_percent: normalize_impact_percent(h.score, max_score),
+                        snippet: debt_snippet(&h.evidence),
+                        impact_level: impact_level(normalize_impact_percent(h.score, max_score))
+                            .to_string(),
                     })
                     .collect();
                 DebtView::Ready(Box::new(DebtSummaryView {
@@ -405,12 +392,7 @@ impl App {
     fn select_next_on_current_screen(&mut self, steps: usize) {
         for _ in 0..steps {
             match self.screen {
-                Screen::Dashboard => {
-                    let max_rows = dashboard_scroll_max(&self.dashboard);
-                    if self.dashboard_scroll < max_rows {
-                        self.dashboard_scroll += 1;
-                    }
-                }
+                Screen::Dashboard => {}
                 Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_add(1),
                 Screen::Result => self.dashboard.result.scroll_down(1),
                 Screen::Debt => self.dashboard.debt.select_next(),
@@ -512,19 +494,48 @@ impl App {
                 self.rules_form.error = None;
             }
             KeyCode::Tab => {
-                self.rules_form.active_field = (self.rules_form.active_field + 1) % 5;
+                self.rules_form.active_field = (self.rules_form.active_field + 1) % 3;
             }
             KeyCode::BackTab => {
                 self.rules_form.active_field = self.rules_form.active_field.saturating_sub(1);
             }
             KeyCode::Backspace => {
-                self.current_rules_field_mut().pop();
+                if self.rules_form.active_field != 1 {
+                    self.current_rules_field_mut().pop();
+                }
             }
-            KeyCode::Enter => self.submit_rules_form(),
+            KeyCode::Enter => {
+                if self.rules_form.active_field == 2 {
+                    self.current_rules_field_mut().push('\n');
+                } else {
+                    self.rules_form.active_field = (self.rules_form.active_field + 1) % 3;
+                }
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') if ev.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.submit_rules_form();
+            }
             KeyCode::Char('t') | KeyCode::Char('T') => {
                 self.rules_form.team_scope = !self.rules_form.team_scope;
             }
-            KeyCode::Char(c) => {
+            KeyCode::Left | KeyCode::Char('h') if self.rules_form.active_field == 1 => {
+                self.rules_form.language_idx = self.rules_form.language_idx.saturating_sub(1);
+            }
+            KeyCode::Right | KeyCode::Char('l') if self.rules_form.active_field == 1 => {
+                self.rules_form.language_idx = (self.rules_form.language_idx + 1).min(3);
+            }
+            KeyCode::Char('p') | KeyCode::Char('P') if self.rules_form.active_field == 1 => {
+                self.rules_form.language_idx = 2;
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') if self.rules_form.active_field == 1 => {
+                self.rules_form.language_idx = 1;
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') if self.rules_form.active_field == 1 => {
+                self.rules_form.language_idx = 0;
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') if self.rules_form.active_field == 1 => {
+                self.rules_form.language_idx = 3;
+            }
+            KeyCode::Char(c) if self.rules_form.active_field != 1 => {
                 self.current_rules_field_mut().push(c);
             }
             _ => {}
@@ -540,11 +551,9 @@ impl App {
 
     fn current_rules_field_mut(&mut self) -> &mut String {
         match self.rules_form.active_field {
-            0 => &mut self.rules_form.rule_id,
-            1 => &mut self.rules_form.dep,
-            2 => &mut self.rules_form.language,
-            3 => &mut self.rules_form.description,
-            _ => &mut self.rules_form.match_regex,
+            0 => &mut self.rules_form.name,
+            1 => &mut self.rules_form.name,
+            _ => &mut self.rules_form.rule_text,
         }
     }
 
@@ -576,39 +585,62 @@ impl App {
     }
 
     fn submit_rules_form(&mut self) {
-        let dep = if self.rules_form.dep.trim().is_empty() {
-            None
-        } else {
-            Some(self.rules_form.dep.trim())
+        let slug = slugify_rule_name(&self.rules_form.name);
+        if slug.is_empty() {
+            self.rules_form.error = Some("Rule name must contain at least one letter or number.".into());
+            return;
+        }
+        let languages: &[&str] = match self.rules_form.language_idx {
+            0 => &["typescript"],
+            1 => &["rust"],
+            2 => &["python"],
+            _ => &["python", "rust", "typescript"],
         };
-        let match_regex = if self.rules_form.match_regex.trim().is_empty() {
-            None
-        } else {
-            Some(self.rules_form.match_regex.trim())
-        };
+        let planned_ids: Vec<String> = languages
+            .iter()
+            .map(|language| {
+                if languages.len() == 1 {
+                    format!("custom.{slug}")
+                } else {
+                    format!("custom.{slug}-{language}")
+                }
+            })
+            .collect();
+        if let Some(existing) = first_existing_rule_id(&self.project_dir, &planned_ids) {
+            self.rules_form.error = Some(format!(
+                "Rule `{existing}` already exists. Choose a different name or remove the existing rule first."
+            ));
+            return;
+        }
+        let mut errors = Vec::new();
 
-        match crate::rule_authoring::add(
-            &self.project_dir,
-            crate::rule_authoring::AddOptions {
-                rule_id: self.rules_form.rule_id.trim(),
-                description: self.rules_form.description.trim(),
-                match_regex,
-                severity: "should",
-                confidence: "high",
-                category: "convention",
-                language: self.rules_form.language.trim(),
-                source_url: None,
-                dep,
-                personal: !self.rules_form.team_scope,
-            },
-        ) {
-            Ok(_) => {
-                self.dashboard.rules = crate::tui::screens::rules::RulesView::NotComputed;
-                self.ensure_rules_loaded();
-                self.input_mode = InputMode::Normal;
-                self.rules_form = RulesFormState::default();
+        for (language, rule_id) in languages.iter().zip(planned_ids.iter()) {
+            if let Err(e) = crate::rule_authoring::add(
+                &self.project_dir,
+                crate::rule_authoring::AddOptions {
+                    rule_id,
+                    description: self.rules_form.rule_text.trim(),
+                    match_regex: None,
+                    severity: "should",
+                    confidence: "high",
+                    category: "convention",
+                    language,
+                    source_url: None,
+                    dep: Some("custom"),
+                    personal: !self.rules_form.team_scope,
+                },
+            ) {
+                errors.push(e.to_string());
             }
-            Err(e) => self.rules_form.error = Some(e.to_string()),
+        }
+
+        if errors.is_empty() {
+            self.dashboard.rules = crate::tui::screens::rules::RulesView::NotComputed;
+            self.ensure_rules_loaded();
+            self.input_mode = InputMode::Normal;
+            self.rules_form = RulesFormState::default();
+        } else {
+            self.rules_form.error = Some(errors.join("\n"));
         }
     }
 }
@@ -637,17 +669,6 @@ fn collect_dashboard(project_dir: &Path) -> DashboardState {
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize;
 
-        if let Some(drift) = status.get("drift") {
-            d.drift_count = drift.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
-            if let Some(changes) = drift.get("dependency_changes").and_then(|v| v.as_array()) {
-                d.drift_deps = changes
-                    .iter()
-                    .filter_map(|c| c.get("name").and_then(|n| n.as_str()).map(String::from))
-                    .take(10)
-                    .collect();
-            }
-        }
-
         if let Some(counts) = d.adherence_detail.get("violations") {
             d.violation_counts.must =
                 counts.get("must").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
@@ -671,64 +692,18 @@ fn collect_dashboard(project_dir: &Path) -> DashboardState {
     }
     d.rules_by_language = by_lang.into_iter().collect();
 
-    // Last-refresh timestamp from refresh-diff.json, if present.
-    let refresh_diff_path = project_dir
-        .join("whetstone")
-        .join(".state")
-        .join("refresh-diff.json");
-    if let Ok(text) = std::fs::read_to_string(&refresh_diff_path) {
-        if let Ok(v) = serde_json::from_str::<Value>(&text) {
-            d.last_refresh = v
-                .get("generated_at")
-                .and_then(|s| s.as_str())
-                .map(String::from);
-        }
+    if let Ok(handoff) = crate::worklist::load(project_dir) {
+        d.sources_total = handoff
+            .get("worklist")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.len())
+            .unwrap_or(0);
     }
-
-    // Top violations — reuse `wh check` directly.
-    let scan_root = if project_dir.join("src").is_dir() {
-        project_dir.join("src")
-    } else {
-        project_dir.to_path_buf()
-    };
-    if let Ok(check) = crate::check::run(crate::check::CheckOptions {
-        project_dir,
-        scan_paths: std::slice::from_ref(&scan_root),
-        lang_filter: None,
-        rule_filter: None,
-    }) {
-        if let Some(arr) = check.get("violations").and_then(|v| v.as_array()) {
-            let mut sorted = arr.clone();
-            sorted.sort_by_key(|v| match v.get("severity").and_then(|s| s.as_str()) {
-                Some("must") => 0,
-                Some("should") => 1,
-                _ => 2,
-            });
-            d.top_violations = sorted
-                .iter()
-                .take(5)
-                .filter_map(|v| {
-                    Some(TopViolation {
-                        severity: v.get("severity").and_then(|s| s.as_str())?.to_string(),
-                        rule_id: v.get("rule_id").and_then(|s| s.as_str())?.to_string(),
-                        file: v.get("file").and_then(|s| s.as_str())?.to_string(),
-                        line: v.get("line").and_then(|s| s.as_u64()).unwrap_or(0),
-                    })
-                })
-                .collect();
-        }
+    if let Ok(custom) = crate::source_mgmt::list(project_dir) {
+        d.sources_total += custom.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     }
 
     d
-}
-
-fn dashboard_scroll_max(dashboard: &DashboardState) -> usize {
-    let violations_max = dashboard.top_violations.len().saturating_sub(3);
-    let debt_max = match &dashboard.debt {
-        DebtView::Ready(summary) => summary.hotspots.len().saturating_sub(2),
-        _ => 0,
-    };
-    violations_max.max(debt_max)
 }
 
 fn normalize_impact_percent(score: f64, max_score: f64) -> u8 {
@@ -736,6 +711,14 @@ fn normalize_impact_percent(score: f64, max_score: f64) -> u8 {
         0
     } else {
         ((score / max_score) * 100.0).round().clamp(0.0, 100.0) as u8
+    }
+}
+
+fn impact_level(percent: u8) -> &'static str {
+    match percent {
+        67..=100 => "High",
+        34..=66 => "Moderate",
+        _ => "Low",
     }
 }
 
@@ -761,56 +744,25 @@ fn compact_hotspot_title(title: &str) -> String {
     out
 }
 
-fn debt_evidence_summary(evidence: &crate::debt::types::Evidence) -> Vec<String> {
+fn debt_snippet(evidence: &crate::debt::types::Evidence) -> String {
     use crate::debt::types::Evidence;
 
     match evidence {
-        Evidence::ManifestEntry {
-            snippet,
-            references,
-            locations,
-        } => vec![
-            format!("Manifest references: {references}"),
-            format!("Locations: {}", locations.len()),
-            format!("Snippet: {}", truncate_inline(snippet, 120)),
-        ],
-        Evidence::SymbolDef {
-            name,
-            symbol_kind,
-            references,
-            locations,
-        } => vec![
-            format!("Symbol: {name}"),
-            format!("Kind: {symbol_kind}"),
-            format!("References: {references}"),
-            format!("Locations: {}", locations.len()),
-        ],
+        Evidence::ManifestEntry { snippet, .. } => truncate_inline(snippet, 220),
+        Evidence::SymbolDef { name, symbol_kind, .. } => {
+            format!("{symbol_kind}: {name}")
+        }
         Evidence::DuplicateCluster {
             snippet,
-            normalized_lines,
-            occurrences,
-            locations,
-        } => vec![
-            format!("Occurrences: {occurrences}"),
-            format!("Normalized lines: {normalized_lines}"),
-            format!("Locations: {}", locations.len()),
-            format!("Snippet: {}", truncate_inline(snippet, 120)),
-        ],
-        Evidence::OrphanedFile { path, locations } => vec![
-            format!("Path: {path}"),
-            format!("Locations: {}", locations.len()),
-        ],
+            ..
+        } => truncate_inline(snippet, 220),
+        Evidence::OrphanedFile { path, .. } => path.clone(),
         Evidence::ChurnViolationIntersection {
             changes,
             violations,
             window_days,
-            locations,
-        } => vec![
-            format!("Changes: {changes}"),
-            format!("Violations: {violations}"),
-            format!("Window: {window_days}d"),
-            format!("Locations: {}", locations.len()),
-        ],
+            ..
+        } => format!("{changes} changes and {violations} violations over {window_days}d"),
     }
 }
 
@@ -823,4 +775,38 @@ fn truncate_inline(text: &str, max: usize) -> String {
     } else {
         taken
     }
+}
+
+fn slugify_rule_name(input: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in input.chars() {
+        let lc = ch.to_ascii_lowercase();
+        if lc.is_ascii_alphanumeric() {
+            out.push(lc);
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn first_existing_rule_id(project_dir: &Path, planned: &[String]) -> Option<String> {
+    let paths = crate::layers::LayerPaths::for_project(project_dir);
+    for dir in [&paths.project_rules_dir, &paths.personal_rules_dir] {
+        if !dir.exists() {
+            continue;
+        }
+        let (files, _) = crate::rules::load_rule_files(dir);
+        for file in files {
+            for rule in file.rule_file.rules {
+                if planned.iter().any(|id| id == &rule.id) {
+                    return Some(rule.id);
+                }
+            }
+        }
+    }
+    None
 }
