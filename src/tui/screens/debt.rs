@@ -228,13 +228,6 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
         )));
     }
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "Recommended next action",
-        theme::header_title(),
-    )));
-    lines.push(Line::from(hotspot.next_action.clone()));
-
     frame.render_widget(
         Paragraph::new(lines)
             .block(block("DETAIL"))

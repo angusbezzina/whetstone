@@ -50,7 +50,7 @@ pub struct EditOptions<'a> {
 // ── add ──
 
 pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
-    validate_url(opts.url)?;
+    validate_source_reference(project_dir, opts.url)?;
     if let Some(lang) = opts.language {
         if !VALID_LANGUAGES.contains(&lang) {
             return Err(anyhow!(
@@ -209,7 +209,7 @@ pub fn edit(project_dir: &Path, opts: EditOptions<'_>) -> Result<Value> {
         ));
     }
     if let Some(url) = opts.url {
-        validate_url(url)?;
+        validate_source_reference(project_dir, url)?;
     }
     if let Some(lang) = opts.language {
         if !VALID_LANGUAGES.contains(&lang) {
@@ -543,24 +543,53 @@ fn ystr(s: &str) -> YamlValue {
     YamlValue::String(s.to_string())
 }
 
-fn validate_url(url: &str) -> Result<()> {
-    if !url.starts_with("http://") && !url.starts_with("https://") {
+fn validate_source_reference(project_dir: &Path, url: &str) -> Result<()> {
+    if !url.starts_with("http://")
+        && !url.starts_with("https://")
+        && !is_repo_relative_path(project_dir, url)
+    {
         return Err(anyhow!(
-            "URL must start with http:// or https:// (got `{url}`)"
+            "source must be an http(s) URL or repo-relative file path (got `{url}`)"
         ));
     }
     Ok(())
 }
 
+fn is_repo_relative_path(project_dir: &Path, input: &str) -> bool {
+    if input.trim().is_empty() {
+        return false;
+    }
+    let path = Path::new(input);
+    if path.is_absolute() || input.contains("://") {
+        return false;
+    }
+    project_dir.join(path).exists()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::validate_url;
+    use super::validate_source_reference;
+    use std::path::Path;
 
     #[test]
     fn url_must_be_http_or_https() {
-        assert!(validate_url("https://example.com/llms.txt").is_ok());
-        assert!(validate_url("http://example.com").is_ok());
-        assert!(validate_url("ftp://example.com").is_err());
-        assert!(validate_url("example.com").is_err());
+        let tmp = std::env::temp_dir().join(format!("wh_source_ref_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("docs")).unwrap();
+        std::fs::create_dir_all(tmp.join("notes")).unwrap();
+        std::fs::write(tmp.join("docs/guide.md"), "guide").unwrap();
+        std::fs::write(tmp.join("notes/source.txt"), "source").unwrap();
+        std::fs::write(tmp.join("llms.txt"), "llms").unwrap();
+
+        assert!(validate_source_reference(Path::new(&tmp), "https://example.com/llms.txt").is_ok());
+        assert!(validate_source_reference(Path::new(&tmp), "http://example.com").is_ok());
+        assert!(validate_source_reference(Path::new(&tmp), "docs/guide.md").is_ok());
+        assert!(validate_source_reference(Path::new(&tmp), "./notes/source.txt").is_ok());
+        assert!(validate_source_reference(Path::new(&tmp), "llms.txt").is_ok());
+        assert!(validate_source_reference(Path::new(&tmp), "ftp://example.com").is_err());
+        assert!(validate_source_reference(Path::new(&tmp), "example.com").is_err());
+        assert!(validate_source_reference(Path::new(&tmp), "/tmp/source.md").is_err());
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

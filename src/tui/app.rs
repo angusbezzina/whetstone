@@ -20,6 +20,8 @@ pub struct App {
     pub help_scroll_x: u16,
     pub dashboard_scroll: usize,
     pub dashboard: DashboardState,
+    pub sources_dataset: SourcesDataset,
+    pub sources_selected: usize,
     pub sources_form: SourcesFormState,
     pub rules_form: RulesFormState,
 }
@@ -32,14 +34,38 @@ pub enum InputMode {
     RulesAdd,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SourcesDataset {
+    #[default]
+    Dependencies,
+    Personal,
+    Team,
+}
+
+impl SourcesDataset {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Dependencies => Self::Personal,
+            Self::Personal => Self::Team,
+            Self::Team => Self::Dependencies,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Dependencies => Self::Team,
+            Self::Personal => Self::Dependencies,
+            Self::Team => Self::Personal,
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct SourcesFormState {
     pub active_field: usize,
     pub team_scope: bool,
     pub url: String,
     pub name: String,
-    pub language: String,
-    pub kind: String,
     pub error: Option<String>,
 }
 
@@ -115,7 +141,6 @@ pub struct DebtHotspotRow {
     pub primary_file: String,
     pub files: Vec<String>,
     pub evidence_summary: Vec<String>,
-    pub next_action: String,
     pub impact_percent: u8,
 }
 
@@ -145,6 +170,8 @@ impl App {
             help_scroll_x: 0,
             dashboard_scroll: 0,
             dashboard: DashboardState::default(),
+            sources_dataset: SourcesDataset::default(),
+            sources_selected: 0,
             sources_form: SourcesFormState::default(),
             rules_form: RulesFormState::default(),
         };
@@ -266,7 +293,6 @@ impl App {
                         primary_file: h.files.first().cloned().unwrap_or_else(|| "—".to_string()),
                         files: h.files.clone(),
                         evidence_summary: debt_evidence_summary(&h.evidence),
-                        next_action: h.next_action.clone(),
                         impact_percent: normalize_impact_percent(h.score, max_score),
                     })
                     .collect();
@@ -325,6 +351,26 @@ impl App {
                 Screen::Rules => self.open_rules_form(),
                 _ => {}
             },
+            KeyCode::Tab if self.screen == Screen::Sources => {
+                self.sources_dataset = self.sources_dataset.next();
+                self.sources_selected = 0;
+            }
+            KeyCode::BackTab if self.screen == Screen::Sources => {
+                self.sources_dataset = self.sources_dataset.prev();
+                self.sources_selected = 0;
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') if self.screen == Screen::Sources => {
+                self.sources_dataset = SourcesDataset::Dependencies;
+                self.sources_selected = 0;
+            }
+            KeyCode::Char('p') | KeyCode::Char('P') if self.screen == Screen::Sources => {
+                self.sources_dataset = SourcesDataset::Personal;
+                self.sources_selected = 0;
+            }
+            KeyCode::Char('t') | KeyCode::Char('T') if self.screen == Screen::Sources => {
+                self.sources_dataset = SourcesDataset::Team;
+                self.sources_selected = 0;
+            }
             KeyCode::Up | KeyCode::Char('k') => self.select_prev_on_current_screen(1),
             KeyCode::Down | KeyCode::Char('j') => self.select_next_on_current_screen(1),
             KeyCode::PageUp => self.select_prev_on_current_screen(10),
@@ -344,7 +390,12 @@ impl App {
                 Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_sub(1),
                 Screen::Result => self.dashboard.result.scroll_up(1),
                 Screen::Debt => self.dashboard.debt.select_prev(),
-                Screen::Sources => self.dashboard.extract.select_prev(),
+                Screen::Sources => match self.sources_dataset {
+                    SourcesDataset::Dependencies => self.dashboard.extract.select_prev(),
+                    SourcesDataset::Personal | SourcesDataset::Team => {
+                        self.sources_selected = self.sources_selected.saturating_sub(1)
+                    }
+                },
                 Screen::Rules => self.dashboard.rules.select_prev(),
                 Screen::Check => self.dashboard.check.select_prev(),
             }
@@ -363,7 +414,29 @@ impl App {
                 Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_add(1),
                 Screen::Result => self.dashboard.result.scroll_down(1),
                 Screen::Debt => self.dashboard.debt.select_next(),
-                Screen::Sources => self.dashboard.extract.select_next(),
+                Screen::Sources => match self.sources_dataset {
+                    SourcesDataset::Dependencies => self.dashboard.extract.select_next(),
+                    SourcesDataset::Personal => {
+                        let max = self
+                            .dashboard
+                            .sources
+                            .row_count_for(SourcesDataset::Personal)
+                            .saturating_sub(1);
+                        if self.sources_selected < max {
+                            self.sources_selected += 1;
+                        }
+                    }
+                    SourcesDataset::Team => {
+                        let max = self
+                            .dashboard
+                            .sources
+                            .row_count_for(SourcesDataset::Team)
+                            .saturating_sub(1);
+                        if self.sources_selected < max {
+                            self.sources_selected += 1;
+                        }
+                    }
+                },
                 Screen::Rules => self.dashboard.rules.select_next(),
                 Screen::Check => self.dashboard.check.select_next(),
             }
@@ -413,7 +486,7 @@ impl App {
                 self.sources_form.error = None;
             }
             KeyCode::Tab => {
-                self.sources_form.active_field = (self.sources_form.active_field + 1) % 4;
+                self.sources_form.active_field = (self.sources_form.active_field + 1) % 2;
             }
             KeyCode::BackTab => {
                 self.sources_form.active_field = self.sources_form.active_field.saturating_sub(1);
@@ -461,9 +534,7 @@ impl App {
     fn current_sources_field_mut(&mut self) -> &mut String {
         match self.sources_form.active_field {
             0 => &mut self.sources_form.url,
-            1 => &mut self.sources_form.name,
-            2 => &mut self.sources_form.language,
-            _ => &mut self.sources_form.kind,
+            _ => &mut self.sources_form.name,
         }
     }
 
@@ -478,20 +549,10 @@ impl App {
     }
 
     fn submit_sources_form(&mut self) {
-        let language = if self.sources_form.language.trim().is_empty() {
-            None
-        } else {
-            Some(self.sources_form.language.trim())
-        };
         let name = if self.sources_form.name.trim().is_empty() {
             None
         } else {
             Some(self.sources_form.name.trim())
-        };
-        let kind = if self.sources_form.kind.trim().is_empty() {
-            None
-        } else {
-            Some(self.sources_form.kind.trim())
         };
 
         match crate::source_mgmt::add(
@@ -499,8 +560,8 @@ impl App {
             crate::source_mgmt::AddOptions {
                 url: self.sources_form.url.trim(),
                 name,
-                language,
-                source_kind: kind,
+                language: None,
+                source_kind: None,
                 personal: !self.sources_form.team_scope,
             },
         ) {

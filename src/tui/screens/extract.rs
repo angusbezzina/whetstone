@@ -299,20 +299,19 @@ pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     };
 
     let mut lines: Vec<Line> = vec![
-        Line::from(vec![
-            Span::styled("Package      ", theme::header_meta()),
-            Span::styled(row.name.clone(), Style::default().fg(theme::AMBER).bold()),
-        ]),
+        kv_line(
+            "Package",
+            &row.name,
+            Style::default().fg(theme::AMBER).bold(),
+        ),
         detail_line("Language", &display_language(&row.language)),
-        Line::from(vec![
-            Span::styled("Utility: ", theme::header_meta()),
-            Span::styled(
-                format!("{}%", row.utility_percent),
-                Style::default()
-                    .fg(theme::utility_color(row.utility_percent))
-                    .bold(),
-            ),
-        ]),
+        kv_line(
+            "Utility",
+            utility_label(row.utility_percent),
+            Style::default()
+                .fg(theme::utility_color(row.utility_percent))
+                .bold(),
+        ),
         detail_line("Recommendation", recommendation_label(&row.priority)),
         detail_line("Rules", &row.remaining_quota.to_string()),
         Line::from(""),
@@ -391,6 +390,23 @@ pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+fn utility_label(percent: u8) -> &'static str {
+    if percent >= 80 {
+        "High"
+    } else if percent >= 50 {
+        "Moderate"
+    } else {
+        "Low"
+    }
+}
+
+fn kv_line(label: &str, value: &str, value_style: Style) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label:<14}"), theme::header_meta()),
+        Span::styled(value.to_string(), value_style),
+    ])
 }
 
 fn utility_reasons(row: &WorklistRow) -> Vec<String> {
@@ -648,5 +664,12 @@ mod tests {
             "score": 125.0,
         });
         assert_eq!(parse_utility_percent(&entry, 125.0), 89);
+    }
+
+    #[test]
+    fn utility_band_labels_are_human_readable() {
+        assert_eq!(utility_label(90), "High");
+        assert_eq!(utility_label(65), "Moderate");
+        assert_eq!(utility_label(20), "Low");
     }
 }
