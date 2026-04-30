@@ -83,3 +83,41 @@ pub fn severity_color(severity: &str) -> Color {
         _ => MUTED,
     }
 }
+
+pub fn debt_label_color(label: &str) -> Color {
+    match label {
+        "low" | "Low" => STATUS_OK,
+        "moderate" | "Moderate" => AMBER,
+        _ => STATUS_WARN,
+    }
+}
+
+pub fn utility_color(percent: u8) -> Color {
+    if percent >= 80 {
+        STATUS_OK
+    } else if percent >= 60 {
+        AMBER
+    } else {
+        MUTED
+    }
+}
+
+pub fn humanize_token(token: &str) -> String {
+    token
+        .split(['_', '-', ' '])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => {
+                    let mut out = String::new();
+                    out.extend(first.to_uppercase());
+                    out.push_str(&chars.as_str().to_lowercase());
+                    out
+                }
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}

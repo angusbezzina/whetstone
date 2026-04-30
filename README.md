@@ -65,7 +65,7 @@ cargo build --release && ./target/release/whetstone --help
 ```
 
 `whetstone` is a single self-contained binary; once installed, `whetstone
-doctor --project-dir <your-repo>` works from any directory — there is no
+init --project-dir <your-repo>` works from any directory — there is no
 requirement to run it from inside the Whetstone checkout.
 
 ### Recommended repo setup for contributors
@@ -109,7 +109,7 @@ wh actions     # chains wh context, wh tests, wh lint
 # → whetstone/context/*, whetstone/evals/**, whetstone/lint/*
 
 # 6. Verify source code against approved rules
-wh check src/
+wh scan src/
 
 # 7. When dependencies drift, re-resolve only what changed
 wh reinit              # writes whetstone/.state/refresh-diff.json
@@ -177,12 +177,12 @@ Whetstone follows a seven-step lifecycle. `wh init` handles steps 1 + 2 in one g
 | Step | Command | What happens |
 |------|---------|-------------|
 | **1. Detect** | `wh init` | Scan manifests for dependencies |
-| **2. Resolve** | `wh init` (or `wh set-sources`) | Resolve docs URLs from registries, probe for llms.txt |
+| **2. Resolve** | `wh init` | Resolve docs URLs from registries, probe for llms.txt |
 | **3. Extract** | `wh extract` + agent | Agent reads docs, drafts a candidate bundle |
 | **4. Submit** | `wh extract submit <bundle>` | Writes the bundle as `status: candidate` |
 | **5. Approve** | `wh approve <id>` or `wh approve --all` | Flip candidates to approved |
 | **6. Generate** | `wh actions` | Run `wh context`, `wh tests`, `wh lint` |
-| **7. Monitor** | `wh status` / `wh ci` / `wh check` / `wh debt` | Track freshness, drift, enforce rules, and triage deterministic debt hotspots |
+| **7. Monitor** | `wh status` / `wh ci` / `wh scan` / `wh debt` | Track freshness, drift, enforce rules, and triage deterministic debt hotspots |
 
 When dependencies update, run `wh reinit` to re-resolve changed sources, then re-extract rules for what changed. `wh reinit --check` exits non-zero if drift was detected (useful in CI).
 
@@ -194,20 +194,20 @@ See [`references/workflow-matrix.md`](references/workflow-matrix.md) for the ful
 ┌─────────────────────────────────────────────────────────────┐
 │  Rust binary (deterministic)       Agent (LLM-mediated)     │
 │                                                             │
-│  detect-deps ─────────┐                                     │
-│  resolve-sources ─────┤── doctor ──→  Extract rules         │
-│                       │       │       (agent reads docs,    │
-│                       │       │        proposes rules)      │
-│                       │       │             ↓               │
-│                       │       │       Approve rules         │
-│                       │       │       (user reviews         │
-│                       │       │        each one)            │
-│                       │       │             ↓               │
-│  generate-tests ──────┤───────┤── writes approved YAML      │
-│  generate-context ────┘       │                             │
-│                               │                             │
-│  status ── health score, drift detection, next actions      │
-│  ci-check ── CI gating, PR comments                        │
+│  wh init ─────────────┐                                     │
+│                       ├─────────────→  Extract rules         │
+│                       │               (agent reads docs,     │
+│                       │                proposes rules)       │
+│                       │                      ↓               │
+│                       │               Approve rules          │
+│                       │               (user reviews         │
+│                       │                each one)             │
+│                       │                      ↓               │
+│  wh actions all ──────┤────────────── writes approved YAML   │
+│                               │                              │
+│  wh status ─ health score, drift detection, next actions     │
+│  wh scan  ─ enforcement against approved rules               │
+│  wh debt  ─ deterministic debt hotspots                      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -236,30 +236,23 @@ See [`references/workflow-matrix.md`](references/workflow-matrix.md) for the ful
 whetstone <command> [options]   # `wh` is the shorter alias
 ```
 
-Shipped commands (primary name first, aliases in parentheses):
+Shipped commands (canonical surface first):
 
-| Command | Aliases | Purpose | Key Flags |
-|---------|---------|---------|-----------|
-| `doctor` | `start` | One-command bootstrap (detect → resolve → handoff) | `--json`, `--full-run`, `--resume`, `--changed-only`, `--refresh` |
-| `refresh` | `refresh-rules` | Re-resolve changed sources and prepare refresh handoff | `--check` (exits non-zero if drift), `--project-dir` |
-| `status` | — | Project health summary with 5-dimension score | `--json`, `--score`, `--history`, `--no-drift-check` |
-| `ci` | `check`, `ci-check` | CI freshness check | `--json`, `--pr-comment`, `--fail-on`, `--changed-only` |
-| `init` | `deps`, `detect-deps` | Detect dependencies from manifests (or run setup modes) | `--check-drift`, `--changed-only`, `--incremental`, `--personal`, `--hooks`, `--ci --schedule=<cadence>` |
-| `set-sources` | `sources`, `resolve-sources` | Resolve documentation URLs | `--changed-only`, `--force-refresh`, `--resume`, `--retry-failed` |
-| `context` | `generate-context` | Generate agent context files | `--dry-run`, `--formats`, `--lang`, `--personal` |
-| `tests` | `generate-tests` | Generate test files + lint overlays | `--dry-run`, `--lang`, `--personal` |
-| `layers` | — | Show the 4-layer merge summary and per-rule layer provenance | `--lang` |
-| `promote` | — | Move a rule between layers (personal → project → team) | `<rule-id>`, `--to`, `--keep-source` |
-| `validate` | `validate-rules` | Validate rule schema and every rule fixture | `--project-dir` |
-| `check` | — | Scan source files for rule violations and linter-config gaps | `<paths>`, `--lang`, `--rule`, `--no-fail` |
-| `eval` | — | AI eval lifecycle: `generate`, `run`, `calibrate` | `--collect`, `--deterministic-only`, `--lang`, `--dry-run` |
-| `review` | — | Review rules by lifecycle status or build a refresh review queue | `show <rule-id>`, `queue`, `--status`, `--lang` |
-| `apply` | — | Apply lifecycle transitions without hand-editing YAML | `<rule-id>`, `--approve|--deny|--deprecate|--supersede`, `--reason`, `--batch`, `--dry-run` |
-| `bench` | — | Run the benchmark corpus or snapshot a baseline | `run|snapshot`, `--scenario`, `--min-f1`, `--check` |
-| `propose` | — | Inspect the proposal schema, diff a bundle, or import candidate proposals | `schema`, `diff <bundle>`, `import <bundle>` |
-| `config` | — | Show or validate the effective config stack with provenance | `show`, `validate`, `--project-dir` |
-| `patterns` | `detect-patterns` | Mine style patterns from transcripts/git/PRs | `--sources`, `--since`, `--quiet`, `--global-transcripts` |
-| `update` | — | Update the `whetstone` binary to the latest release | `--check`, `--force` |
+| Command | Purpose | Key Flags |
+|---------|---------|-----------|
+| `init` | Bootstrap from zero: detect deps, resolve docs, write extraction handoff | `--changed-only`, `--refresh`, `--resume`, `--personal`, `--hooks`, `--ci`, `--ready-only` |
+| `reinit` | Re-resolve changed dependencies/docs and emit refresh diff | `--check`, `--project-dir` |
+| `status` | Project health summary, adherence, drift, and report generation | `--json`, `--score`, `--history`, `--no-drift-check`, `--report` |
+| `scan` | Scan source files for rule violations and linter-config gaps | `<paths>`, `--lang`, `--rule`, `--no-fail` |
+| `actions all` | Generate context, tests, and lint overlays in one chain | `--dry-run`, `--lang`, `--personal`, `--terse` |
+| `actions context\|test\|lint` | Run one generator explicitly | `--dry-run`, `--lang`, `--personal` |
+| `rules ...` | Manage rules, approvals, and JIT rule lookup | `list`, `show`, `query`, `add`, `edit`, `remove`, `approve`, `worklist` |
+| `sources ...` | Manage custom rule sources | `list`, `add`, `edit`, `remove`, `verify` |
+| `extract` | Walk the extraction worklist or submit a candidate bundle | `submit <bundle.yaml>`, `--dep`, `--lang` |
+| `approve` | Compatibility top-level approval entrypoint | `<rule-id>`, `--all`, `--dep`, `--confidence` |
+| `debt` | Deterministic debt triage across dead code, dupes, deps, hotspots | `--json`, `--prompt`, `--beads`, `--top`, `--since` |
+| `validate` | Validate the rule schema and rule fixtures | `--project-dir` |
+| `update` | Update the `whetstone` binary to the latest release | `--check`, `--force` |
 
 Project-scoped commands accept `--project-dir` (default: `.`), and all commands support `--json` (auto-enabled when piped). Human-readable progress goes to stderr. JSON responses include a `next_command` field suggesting what to run next.
 
@@ -523,7 +516,7 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - Custom source URLs in `whetstone.yaml` (blogs, team guides, any public URL)
 - Agent-mediated rule extraction via `wh extract` + bundle submission (`wh extract submit`)
 - Bulk approval via `wh approve --all [--dep] [--confidence]`
-- Tree-sitter-backed `wh check` across Python, TypeScript, and Rust, including AST-query and AST-scoped regex enforcement
+- Tree-sitter-backed `wh scan` across Python, TypeScript, and Rust, including AST-query and AST-scoped regex enforcement
 - Rule listing and per-rule context via `wh review` / `wh review show`
 - Test generation with real regex checks (via `match` field on signals) for Python, TypeScript, and Rust
 - Lint overlay generation (ruff, biome, clippy) via `wh lint`

@@ -1,7 +1,7 @@
 //! Sources screen — subscription manager for committed + personal layers.
 //!
 //! Renders the two-layer list of custom sources tracked by
-//! [`crate::source_mgmt::list`] — one column per layer (PROJECT / PERSONAL).
+//! [`crate::source_mgmt::list`] — one column per layer (PERSONAL / PROJECT).
 //! Supports the four view states defined in whetstone-8hm.5.3:
 //! NotComputed, Loading, Error, Ready.
 
@@ -144,8 +144,8 @@ fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &SourcesData) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
-    render_column(frame, cols[0], "PROJECT", &data.project, data.scroll);
-    render_column(frame, cols[1], "PERSONAL", &data.personal, data.scroll);
+    render_column(frame, cols[0], "PERSONAL", &data.personal, data.scroll);
+    render_column(frame, cols[1], "PROJECT", &data.project, data.scroll);
 }
 
 fn render_column(frame: &mut Frame<'_>, area: Rect, title: &str, rows: &[SourceRow], scroll: usize) {

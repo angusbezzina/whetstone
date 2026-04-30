@@ -1,10 +1,6 @@
-//! Dedicated extract screen — per-dependency extraction worklist with a
-//! detail pane for the currently selected entry. Supports the four data
-//! states defined in whetstone-8hm.5.3: not-computed, loading, error, ready.
-//!
-//! Data source: `whetstone/.state/extraction-handoff.json`, loaded via
-//! `crate::worklist::load`. If that artifact is missing (no `wh init` yet)
-//! we surface an Error with a helpful next-step.
+//! Dedicated rule extraction screen — per-package extraction utility view with
+//! a detailed explanation of why a dependency is or is not a strong next rule
+//! extraction target.
 
 use std::path::Path;
 
@@ -17,22 +13,12 @@ use ratatui::{
 };
 use serde_json::Value;
 
-use crate::tui::{
-    app::App,
-    components::footer,
-    theme,
-};
+use crate::tui::{app::App, components::footer, theme};
 
 pub fn hints() -> &'static [footer::Hint] {
-    &[
-        ("1", "HOME"),
-        ("R", "REFRESH"),
-        ("?", "HELP"),
-        ("Q", "QUIT"),
-    ]
+    &[("1", "HOME"), ("R", "REFRESH"), ("?", "HELP"), ("Q", "QUIT")]
 }
 
-/// Four-state view for the Extract screen; mirrors DebtView on the debt screen.
 #[derive(Default, Clone)]
 pub enum ExtractView {
     #[default]
@@ -42,7 +28,6 @@ pub enum ExtractView {
     Error(String),
 }
 
-/// Fully-hydrated Extract screen data. Populated by [`load`] on first open.
 #[derive(Debug, Clone, Default)]
 pub struct ExtractData {
     pub entries: Vec<WorklistRow>,
@@ -67,21 +52,26 @@ impl ExtractView {
     }
 }
 
-/// One row in the worklist — the fields we surface in the TUI. Derived
-/// from `crate::worklist::load`'s per-entry JSON object.
 #[derive(Debug, Clone)]
 pub struct WorklistRow {
     pub name: String,
     pub language: String,
     pub priority: String,
-    pub score: f64,
+    pub utility_percent: u8,
     pub next_step: String,
     pub existing_rules: u32,
+    pub remaining_quota: u32,
+    pub max_rules_per_dep: u32,
+    pub source_type: Option<String>,
+    pub source_url: Option<String>,
+    pub version: Option<String>,
+    pub registry: Option<String>,
+    pub freshness_confidence: Option<String>,
+    pub source_age_days: Option<i64>,
+    pub reason: Option<String>,
+    pub sections: Vec<String>,
 }
 
-/// Read the on-disk worklist and project it into `ExtractData`. Returns
-/// `ExtractView::Error(..)` when the handoff artifact is missing or
-/// unreadable so the screen can explain the next step.
 pub fn load(project_dir: &Path) -> ExtractView {
     match crate::worklist::load(project_dir) {
         Err(e) => ExtractView::Error(format!(
@@ -100,41 +90,85 @@ pub fn load(project_dir: &Path) -> ExtractView {
 }
 
 fn project_entries(handoff: &Value) -> Vec<WorklistRow> {
-    let arr = handoff
+    handoff
         .get("worklist")
         .and_then(|v| v.as_array())
         .cloned()
-        .unwrap_or_default();
-
-    arr.iter()
+        .unwrap_or_default()
+        .iter()
         .map(|e| WorklistRow {
-            name: e
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            language: e
-                .get("language")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            priority: e
-                .get("priority")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            score: e.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0),
-            next_step: e
-                .get("next_step")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            existing_rules: e
-                .get("existing_rules")
+            name: str_field(e, "name"),
+            language: str_field(e, "language"),
+            priority: str_field(e, "priority"),
+            utility_percent: e
+                .get("utility_percent")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u8,
+            next_step: str_field(e, "next_step"),
+            existing_rules: e.get("existing_rules").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            remaining_quota: e
+                .get("quota")
+                .and_then(|v| v.get("remaining"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
+            max_rules_per_dep: e
+                .get("quota")
+                .and_then(|v| v.get("max_rules_per_dep"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
+            source_type: opt_str_field(e, "source_type"),
+            source_url: opt_str_field(e, "source_url"),
+            version: opt_str_field(e, "version"),
+            registry: opt_str_field(e, "registry"),
+            freshness_confidence: e
+                .get("freshness")
+                .and_then(|v| v.get("confidence"))
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            source_age_days: e
+                .get("freshness")
+                .and_then(|v| v.get("source_age_days"))
+                .and_then(|v| v.as_i64()),
+            reason: opt_str_field(e, "reason"),
+            sections: e
+                .get("sections")
+                .and_then(|v| v.as_array())
+                .map(|sections| sections.iter().map(section_summary).collect())
+                .unwrap_or_default(),
         })
         .collect()
+}
+
+fn section_summary(section: &Value) -> String {
+    let kind = section
+        .get("source_kind")
+        .and_then(|v| v.as_str())
+        .or_else(|| section.get("type").and_then(|v| v.as_str()))
+        .map(theme::humanize_token)
+        .unwrap_or_else(|| "Unknown".to_string());
+    let bytes = section.get("bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+    let url = section
+        .get("url")
+        .and_then(|v| v.as_str())
+        .map(|url| truncate(url, 64))
+        .unwrap_or_else(|| "no linked section".to_string());
+    let published = section
+        .get("published_at")
+        .and_then(|v| v.as_str())
+        .map(|v| format!(" · {v}"))
+        .unwrap_or_default();
+    format!("{kind} · {bytes} bytes{published} · {url}")
+}
+
+fn str_field(entry: &Value, key: &str) -> String {
+    entry.get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+fn opt_str_field(entry: &Value, key: &str) -> Option<String> {
+    entry.get(key).and_then(|v| v.as_str()).map(String::from)
 }
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -142,14 +176,14 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ExtractView::NotComputed => render_empty(
             frame,
             area,
-            "Extraction worklist not loaded yet. Press R to load.",
+            "Rule extraction worklist not loaded yet. Press R to load.",
         ),
-        ExtractView::Loading => render_empty(frame, area, "Loading worklist…"),
+        ExtractView::Loading => render_empty(frame, area, "Loading rule extraction worklist…"),
         ExtractView::Error(msg) => render_error(frame, area, msg),
         ExtractView::Ready(data) if data.entries.is_empty() => render_empty(
             frame,
             area,
-            "Worklist is empty — run wh init to generate one.",
+            "No core packages are ready for extraction right now. Run wh init to generate one.",
         ),
         ExtractView::Ready(data) => render_ready(frame, area, data),
     }
@@ -158,20 +192,16 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
 fn render_empty(frame: &mut Frame<'_>, area: Rect, message: &str) {
     let lines = vec![
         Line::from(""),
-        Line::from(Span::styled(
-            format!("  {message}"),
-            Style::default().fg(theme::MUTED),
-        )),
+        Line::from(Span::styled(format!("  {message}"), Style::default().fg(theme::MUTED))),
     ];
-    let block = block("EXTRACT");
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    frame.render_widget(Paragraph::new(lines).block(block("RULE EXTRACTION")), area);
 }
 
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
     let mut lines: Vec<Line> = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "  Worklist load failed:",
+            "  Rule extraction load failed:",
             Style::default().fg(theme::STATUS_WARN),
         )),
     ];
@@ -184,14 +214,13 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
         Style::default().fg(theme::MUTED),
     )));
 
-    let block = block("EXTRACT");
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    frame.render_widget(Paragraph::new(lines).block(block("RULE EXTRACTION")), area);
 }
 
 fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([Constraint::Percentage(46), Constraint::Percentage(54)])
         .split(area);
 
     render_worklist(frame, cols[0], data);
@@ -211,40 +240,31 @@ fn render_worklist(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
         .map(|(i, row)| {
             let rank = i + 1;
             let is_selected = i == data.selected;
-            let priority_color = priority_color(&row.priority);
+            let utility_color = theme::utility_color(row.utility_percent);
             let name_style = if is_selected {
                 Style::default().fg(theme::AMBER).bold()
             } else {
                 Style::default()
             };
 
-            let lang_label = if row.language.is_empty() {
-                "—".to_string()
-            } else {
-                row.language.clone()
-            };
-
             let title_line = Line::from(vec![
-                Span::styled(
-                    format!("{rank:>3}.  "),
-                    Style::default().fg(theme::MUTED),
-                ),
-                Span::styled(truncate(&row.name, width.saturating_sub(12)), name_style),
+                Span::styled(format!("{rank:>3}.  "), Style::default().fg(theme::MUTED)),
+                Span::styled(truncate(&row.name, width.saturating_sub(14)), name_style),
             ]);
             let meta_line = Line::from(vec![
                 Span::styled(
-                    format!("{lang_label:<10}"),
+                    format!("{:<12}", display_language(&row.language)),
                     Style::default().fg(theme::MUTED),
                 ),
                 Span::raw(" · "),
                 Span::styled(
-                    row.priority.clone(),
-                    Style::default().fg(priority_color),
+                    format!("{}% Useful", row.utility_percent),
+                    Style::default().fg(utility_color).bold(),
                 ),
                 Span::raw(" · "),
                 Span::styled(
-                    format!("score {:.1}", row.score),
-                    Style::default().fg(theme::MUTED),
+                    theme::humanize_token(&row.priority),
+                    Style::default().fg(priority_color(&row.priority)),
                 ),
             ]);
 
@@ -252,76 +272,131 @@ fn render_worklist(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
         })
         .collect();
 
-    let title = format!("WORKLIST ({} total)", data.total);
-    let list = List::new(items).block(block(&title));
-    frame.render_widget(list, area);
+    let title = format!("CORE PACKAGES ({} total)", data.total);
+    frame.render_widget(List::new(items).block(block(&title)), area);
 }
 
 fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     let Some(row) = data.entries.get(data.selected) else {
-        let block = block("DETAIL");
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                "  No entry selected.",
+                "  No package selected.",
                 Style::default().fg(theme::MUTED),
             )))
-            .block(block),
+            .block(block("DETAIL")),
             area,
         );
         return;
     };
 
-    let priority_color = priority_color(&row.priority);
-    let language = if row.language.is_empty() {
-        "—".to_string()
-    } else {
-        row.language.clone()
-    };
-
-    let lines: Vec<Line> = vec![
-        Line::from(""),
+    let mut lines: Vec<Line> = vec![
         Line::from(vec![
-            Span::styled("Name      ", Style::default().fg(theme::MUTED)),
+            Span::styled("Package      ", theme::header_meta()),
             Span::styled(row.name.clone(), Style::default().fg(theme::AMBER).bold()),
         ]),
-        Line::from(vec![
-            Span::styled("Language  ", Style::default().fg(theme::MUTED)),
-            Span::raw(language),
-        ]),
-        Line::from(vec![
-            Span::styled("Priority  ", Style::default().fg(theme::MUTED)),
-            Span::styled(row.priority.clone(), Style::default().fg(priority_color)),
-        ]),
-        Line::from(vec![
-            Span::styled("Score     ", Style::default().fg(theme::MUTED)),
-            Span::raw(format!("{:.2}", row.score)),
-        ]),
-        Line::from(vec![
-            Span::styled("Existing  ", Style::default().fg(theme::MUTED)),
-            Span::raw(format!("{} rule(s)", row.existing_rules)),
-        ]),
+        detail_line("Language", &display_language(&row.language)),
+        detail_line(
+            "Utility",
+            &format!("{}% Useful", row.utility_percent),
+        ),
+        detail_line("Readiness", &theme::humanize_token(&row.priority)),
+        detail_line(
+            "Rules",
+            &format!(
+                "{} existing · {} remaining of {}",
+                row.existing_rules, row.remaining_quota, row.max_rules_per_dep
+            ),
+        ),
         Line::from(""),
-        Line::from(Span::styled(
-            "What the score means",
-            theme::header_title(),
-        )),
-        Line::from(Span::styled(
-            "Higher scores mean this dependency is a better next extraction target based on docs/source quality and freshness.",
-            Style::default().fg(theme::MUTED),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Next step",
-            Style::default().fg(theme::MUTED),
-        )),
-        Line::from(row.next_step.clone()),
+        Line::from(Span::styled("Source quality", theme::header_title())),
     ];
 
-    let block = block("DETAIL");
+    if let Some(source_type) = &row.source_type {
+        lines.push(detail_line("Source Type", &theme::humanize_token(source_type)));
+    }
+    if let Some(version) = &row.version {
+        lines.push(detail_line("Version", version));
+    }
+    if let Some(registry) = &row.registry {
+        lines.push(detail_line("Registry", &theme::humanize_token(registry)));
+    }
+    if let Some(confidence) = &row.freshness_confidence {
+        let mut value = theme::humanize_token(confidence);
+        if let Some(days) = row.source_age_days {
+            value.push_str(&format!(" · {days}d old"));
+        }
+        lines.push(detail_line("Freshness", &value));
+    }
+    if let Some(url) = &row.source_url {
+        lines.push(detail_line("Docs", &truncate(url, 88)));
+    }
+    if let Some(reason) = &row.reason {
+        lines.push(detail_line("Status Note", reason));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Available source material",
+        theme::header_title(),
+    )));
+    if row.sections.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No structured sections were captured for this package in the current handoff.",
+            Style::default().fg(theme::MUTED),
+        )));
+    } else {
+        for section in row.sections.iter().take(5) {
+            lines.push(Line::from(format!("• {}", section)));
+        }
+        if row.sections.len() > 5 {
+            lines.push(Line::from(Span::styled(
+                format!("• … +{} more sections", row.sections.len() - 5),
+                Style::default().fg(theme::MUTED),
+            )));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("Why this is useful", theme::header_title())));
+    lines.push(Line::from(Span::styled(
+        utility_explainer(row),
+        Style::default().fg(theme::MUTED),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("Next step", theme::header_title())));
+    lines.push(Line::from(row.next_step.clone()));
+
     frame.render_widget(
-        Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+        Paragraph::new(lines)
+            .block(block("DETAIL"))
+            .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+fn utility_explainer(row: &WorklistRow) -> String {
+    if row.utility_percent >= 80 {
+        "High utility: Whetstone has enough source quality, freshness, and readiness signals that this package is a strong next extraction candidate.".to_string()
+    } else if row.utility_percent >= 60 {
+        "Medium utility: this package is promising, but you may need to read the source material carefully or accept thinner documentation coverage.".to_string()
+    } else {
+        "Low utility: this package currently looks weak for rule extraction because the source quality, readiness, or freshness signals are limited.".to_string()
+    }
+}
+
+fn display_language(language: &str) -> String {
+    if language.trim().is_empty() {
+        "Unknown".to_string()
+    } else {
+        theme::humanize_token(language)
+    }
+}
+
+fn detail_line(label: &str, value: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label:<12}"), theme::header_meta()),
+        Span::raw(value.to_string()),
+    ])
 }
 
 fn priority_color(priority: &str) -> ratatui::style::Color {
@@ -336,10 +411,7 @@ fn priority_color(priority: &str) -> ratatui::style::Color {
 
 fn block(title: &str) -> Block<'static> {
     Block::default()
-        .title(Span::styled(
-            format!(" {title} "),
-            theme::header_title(),
-        ))
+        .title(Span::styled(format!(" {title} "), theme::header_title()))
         .borders(Borders::ALL)
         .border_style(theme::border_inactive())
 }
@@ -371,15 +443,14 @@ mod tests {
     use ratatui::{backend::TestBackend, Terminal};
 
     fn synthetic_app() -> App {
-        let tmp =
-            std::env::temp_dir().join(format!("wh_tui_extract_test_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("wh_tui_extract_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         App::new(&tmp).expect("App::new")
     }
 
     #[test]
     fn render_shows_worklist_entries() {
-        let backend = TestBackend::new(80, 24);
+        let backend = TestBackend::new(100, 28);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = synthetic_app();
         app.dashboard.extract = ExtractView::Ready(Box::new(ExtractData {
@@ -388,26 +459,44 @@ mod tests {
                     name: "fastapi".into(),
                     language: "python".into(),
                     priority: "ready_now".into(),
-                    score: 125.0,
+                    utility_percent: 89,
                     next_step: "Read the linked source, draft up to 3 rule(s)".into(),
                     existing_rules: 2,
+                    remaining_quota: 3,
+                    max_rules_per_dep: 5,
+                    source_type: Some("llms_full_txt".into()),
+                    source_url: Some("https://fastapi.tiangolo.com".into()),
+                    version: Some("1.0.0".into()),
+                    registry: Some("pypi".into()),
+                    freshness_confidence: Some("high".into()),
+                    source_age_days: Some(12),
+                    reason: None,
+                    sections: vec!["Guide · 1200 bytes · https://example.com/guide".into()],
                 },
                 WorklistRow {
                     name: "react".into(),
                     language: "typescript".into(),
                     priority: "resolved_low".into(),
-                    score: 55.0,
+                    utility_percent: 55,
                     next_step: "Source is llms_txt — proceed carefully".into(),
                     existing_rules: 0,
+                    remaining_quota: 5,
+                    max_rules_per_dep: 5,
+                    source_type: Some("llms_txt".into()),
+                    source_url: Some("https://react.dev".into()),
+                    version: Some("19.0.0".into()),
+                    registry: Some("npm".into()),
+                    freshness_confidence: Some("medium".into()),
+                    source_age_days: Some(48),
+                    reason: None,
+                    sections: vec![],
                 },
             ],
             selected: 0,
             total: 2,
         }));
 
-        terminal
-            .draw(|frame| render(frame, frame.area(), &app))
-            .unwrap();
+        terminal.draw(|frame| render(frame, frame.area(), &app)).unwrap();
 
         let rendered: String = terminal
             .backend()
@@ -417,16 +506,10 @@ mod tests {
             .map(|c| c.symbol().to_owned())
             .collect();
 
-        assert!(
-            rendered.contains("fastapi"),
-            "expected fastapi in worklist; got: {}",
-            &rendered[..rendered.len().min(600)]
-        );
-        assert!(
-            rendered.contains("react"),
-            "expected react in worklist; got: {}",
-            &rendered[..rendered.len().min(600)]
-        );
+        assert!(rendered.contains("CORE PACKAGES"));
+        assert!(rendered.contains("89% Useful"));
+        assert!(rendered.contains("fastapi"));
+        assert!(rendered.contains("react"));
     }
 
     #[test]
@@ -436,9 +519,7 @@ mod tests {
         let mut app = synthetic_app();
         app.dashboard.extract = ExtractView::Error("boom".into());
 
-        terminal
-            .draw(|frame| render(frame, frame.area(), &app))
-            .unwrap();
+        terminal.draw(|frame| render(frame, frame.area(), &app)).unwrap();
 
         let rendered: String = terminal
             .backend()
@@ -448,27 +529,17 @@ mod tests {
             .map(|c| c.symbol().to_owned())
             .collect();
 
-        assert!(
-            rendered.contains("boom"),
-            "expected error message to contain 'boom'; got: {}",
-            &rendered[..rendered.len().min(600)]
-        );
+        assert!(rendered.contains("boom"));
     }
 
     #[test]
     fn load_missing_handoff_returns_error() {
-        let tmp = std::env::temp_dir().join(format!(
-            "wh_tui_extract_missing_{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("wh_tui_extract_missing_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let view = load(&tmp);
         match view {
             ExtractView::Error(msg) => {
-                assert!(
-                    msg.contains("wh init") || msg.contains("wh reinit"),
-                    "expected next-step hint referencing wh init/reinit, got: {msg}"
-                );
+                assert!(msg.contains("wh init") || msg.contains("wh reinit"));
             }
             _ => panic!("expected ExtractView::Error when handoff is missing"),
         }

@@ -1189,13 +1189,30 @@ pub fn run() -> i32 {
                     pr_comment,
                 };
                 match report::build(&opts) {
-                    Ok(data) => {
+                    Ok(mut data) => {
+                        let markdown = report::to_markdown(&data);
+                        let path = match report::write_markdown_report(&project_dir, &markdown) {
+                            Ok(path) => path,
+                            Err(e) => {
+                                output::print_json(&output::error_json(
+                                    &e.to_string(),
+                                    "Whetstone could not write whetstone/report.md; check filesystem permissions and retry",
+                                ));
+                                return 1;
+                            }
+                        };
+                        if let Some(obj) = data.as_object_mut() {
+                            obj.insert(
+                                "report_path".to_string(),
+                                serde_json::Value::String(path.display().to_string()),
+                            );
+                        }
                         if pr_comment {
-                            print!("{}", report::to_markdown(&data));
+                            print!("{}", markdown);
                         } else if json_mode {
                             output::print_json(&data);
                         } else {
-                            print!("{}", report::to_markdown(&data));
+                            println!("Report written to {}", path.display());
                         }
                         return 0;
                     }
@@ -2338,15 +2355,30 @@ pub fn run() -> i32 {
                 pr_comment,
             };
             match report::build(&opts) {
-                Ok(data) => {
-                    // --pr-comment always emits markdown (it's the whole point);
-                    // otherwise honor JSON auto-detect.
+                Ok(mut data) => {
+                    let markdown = report::to_markdown(&data);
+                    let path = match report::write_markdown_report(&project_dir, &markdown) {
+                        Ok(path) => path,
+                        Err(e) => {
+                            output::print_json(&output::error_json(
+                                &e.to_string(),
+                                "Whetstone could not write whetstone/report.md; check filesystem permissions and retry",
+                            ));
+                            return 1;
+                        }
+                    };
+                    if let Some(obj) = data.as_object_mut() {
+                        obj.insert(
+                            "report_path".to_string(),
+                            serde_json::Value::String(path.display().to_string()),
+                        );
+                    }
                     if pr_comment {
-                        print!("{}", report::to_markdown(&data));
+                        print!("{}", markdown);
                     } else if json_mode {
                         output::print_json(&data);
                     } else {
-                        print!("{}", report::to_markdown(&data));
+                        println!("Report written to {}", path.display());
                     }
                     0
                 }
@@ -2589,9 +2621,7 @@ fn success_screen_for_command(command: &Commands) -> Option<tui::msg::Screen> {
             extraction_ready,
             ..
         } => {
-            if *report {
-                Some(Screen::Report)
-            } else if *score || *history || *extraction_ready {
+            if *report || *score || *history || *extraction_ready {
                 None
             } else {
                 Some(Screen::Dashboard)
@@ -2600,7 +2630,7 @@ fn success_screen_for_command(command: &Commands) -> Option<tui::msg::Screen> {
         Commands::Extract { action: None, .. } => Some(Screen::Extract),
         Commands::Scan { .. } => Some(Screen::Check),
         Commands::Reinit { .. } => Some(Screen::Drift),
-        Commands::Report { .. } => Some(Screen::Report),
+        Commands::Report { .. } => None,
         Commands::Debt { prompt, beads, .. } if !prompt && !beads => Some(Screen::Debt),
         Commands::Sources { .. } => Some(Screen::Sources),
         Commands::Approve { .. } => Some(Screen::Rules),

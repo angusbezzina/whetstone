@@ -36,6 +36,36 @@ fn fixtures_dir() -> PathBuf {
         .join("fixtures")
 }
 
+fn copy_dir_recursive(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path);
+        } else {
+            std::fs::copy(&src_path, &dst_path).unwrap();
+        }
+    }
+}
+
+fn copied_whetstone_fixture(name: &str) -> PathBuf {
+    let src = fixtures_dir().join("whetstone");
+    let dst = std::env::temp_dir().join(format!(
+        "wh_fixture_{}_{}_{}",
+        name,
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&dst);
+    copy_dir_recursive(&src, &dst);
+    dst
+}
+
 fn run_whetstone(args: &[&str], project_dir: &str) -> (String, String, bool) {
     let bin = whetstone_bin();
     let output = Command::new(&bin)
@@ -772,7 +802,9 @@ fn test_personal_only_project_still_gets_adherence_score() {
 
 #[test]
 fn test_report_pr_comment_contains_marker_and_headers() {
-    let dir = fixtures_dir();
+    let dir = copied_whetstone_fixture("report_pr_comment");
+    let report_path = dir.join("whetstone/report.md");
+    let _ = std::fs::remove_file(&report_path);
     let (stdout, _, ok) = run_whetstone(
         &[
             "report",
@@ -790,11 +822,16 @@ fn test_report_pr_comment_contains_marker_and_headers() {
     assert!(stdout.contains("# Whetstone Report"));
     assert!(stdout.contains("**Rule system:**"));
     assert!(!stdout.contains("**Adherence:** n/a / 100"));
+    assert!(report_path.exists(), "report markdown file must be written");
+    let _ = std::fs::remove_file(report_path);
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
 fn test_report_json_includes_required_keys() {
-    let dir = fixtures_dir();
+    let dir = copied_whetstone_fixture("report_json");
+    let report_path = dir.join("whetstone/report.md");
+    let _ = std::fs::remove_file(&report_path);
     let (stdout, _, ok) = run_whetstone(
         &[
             "report",
@@ -812,9 +849,38 @@ fn test_report_json_includes_required_keys() {
         "adherence",
         "violations",
         "next_actions",
+        "report_path",
     ] {
         assert!(result.get(key).is_some(), "key `{key}` missing from wh report output");
     }
+    let report_path = result["report_path"].as_str().unwrap();
+    assert!(Path::new(report_path).exists(), "report file path must exist");
+    let _ = std::fs::remove_file(report_path);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_status_report_writes_markdown_file() {
+    let dir = copied_whetstone_fixture("status_report");
+    let report_path = dir.join("whetstone/report.md");
+    let _ = std::fs::remove_file(&report_path);
+    let (stdout, _, ok) = run_whetstone(
+        &[
+            "status",
+            "--report",
+            "--project-dir",
+            dir.to_str().unwrap(),
+        ],
+        dir.to_str().unwrap(),
+    );
+    assert!(ok);
+    let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(result.get("report_path").is_some());
+    assert!(report_path.exists());
+    let body = std::fs::read_to_string(report_path).unwrap();
+    assert!(body.contains("# Whetstone Report"));
+    let _ = std::fs::remove_file(dir.join("whetstone/report.md"));
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

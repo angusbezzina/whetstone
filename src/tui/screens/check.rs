@@ -1,4 +1,4 @@
-//! Check screen — violations explorer.
+//! Violations screen — violations explorer.
 //!
 //! Runs `crate::check::run` against the same scan root the dashboard uses
 //! and displays every violation in a scrollable list grouped by severity.
@@ -159,9 +159,9 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         CheckView::NotComputed => render_placeholder(
             frame,
             area,
-            "Check screen not yet loaded. Press R to compute.",
+            "Violations screen not yet loaded. Press R to compute.",
         ),
-        CheckView::Loading => render_placeholder(frame, area, "Running check…"),
+        CheckView::Loading => render_placeholder(frame, area, "Scanning for violations…"),
         CheckView::Error(msg) => render_error(frame, area, msg),
         CheckView::Ready(data) => render_ready(frame, area, data),
     }
@@ -185,13 +185,13 @@ fn render_summary(frame: &mut Frame<'_>, area: Rect, data: &CheckData) {
             Style::default().fg(theme::AMBER).bold(),
         ),
         Span::raw(" ("),
-        Span::styled("must ", Style::default().fg(theme::SEVERITY_MUST)),
+        Span::styled("Must ", Style::default().fg(theme::SEVERITY_MUST)),
         Span::raw(format!("{}", data.counts.must)),
         Span::raw(", "),
-        Span::styled("should ", Style::default().fg(theme::SEVERITY_SHOULD)),
+        Span::styled("Should ", Style::default().fg(theme::SEVERITY_SHOULD)),
         Span::raw(format!("{}", data.counts.should)),
         Span::raw(", "),
-        Span::styled("may ", Style::default().fg(theme::SEVERITY_MAY)),
+        Span::styled("May ", Style::default().fg(theme::SEVERITY_MAY)),
         Span::raw(format!("{}", data.counts.may)),
         Span::raw(")"),
         Span::styled("  ·  ", Style::default().fg(theme::MUTED)),
@@ -266,19 +266,19 @@ fn render_placeholder(frame: &mut Frame<'_>, area: Rect, message: &str) {
             Style::default().fg(theme::MUTED),
         )),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("CHECK")), area);
+    frame.render_widget(Paragraph::new(lines).block(block("VIOLATIONS")), area);
 }
 
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "  Check compute failed:",
+            "  Violations compute failed:",
             Style::default().fg(theme::STATUS_WARN),
         )),
         Line::from(format!("  {msg}")),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("CHECK")), area);
+    frame.render_widget(Paragraph::new(lines).block(block("VIOLATIONS")), area);
 }
 
 fn block(title: &str) -> Block<'static> {

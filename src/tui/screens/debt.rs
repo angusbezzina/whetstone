@@ -1,28 +1,22 @@
-//! Dedicated debt screen — full list of ranked hotspots with their
-//! evidence summary and next-action line. Supports the four data states
-//! defined in whetstone-8hm.5.3: not-computed, loading, error, ready.
+//! Dedicated debt screen — full list of ranked hotspots with a richer detail
+//! pane for the selected finding.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Frame,
 };
 
 use crate::tui::{
-    app::{App, DebtView},
+    app::{App, DebtHotspotRow, DebtSummaryView, DebtView},
     components::footer,
     theme,
 };
 
 pub fn hints() -> &'static [footer::Hint] {
-    &[
-        ("1", "HOME"),
-        ("R", "RECOMPUTE"),
-        ("?", "HELP"),
-        ("Q", "QUIT"),
-    ]
+    &[("1", "HOME"), ("R", "RECOMPUTE"), ("?", "HELP"), ("Q", "QUIT")]
 }
 
 impl DebtView {
@@ -71,13 +65,9 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
 fn render_empty(frame: &mut Frame<'_>, area: Rect, message: &str) {
     let lines = vec![
         Line::from(""),
-        Line::from(Span::styled(
-            format!("  {message}"),
-            Style::default().fg(theme::MUTED),
-        )),
+        Line::from(Span::styled(format!("  {message}"), Style::default().fg(theme::MUTED))),
     ];
-    let block = block("DEBT");
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    frame.render_widget(Paragraph::new(lines).block(block("DEBT")), area);
 }
 
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
@@ -94,118 +84,188 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
             Style::default().fg(theme::MUTED),
         )),
     ];
-    let block = block("DEBT");
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    frame.render_widget(Paragraph::new(lines).block(block("DEBT")), area);
 }
 
-fn render_ready(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    summary: &crate::tui::app::DebtSummaryView,
-) {
+fn render_ready(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(5)])
+        .constraints([Constraint::Length(3), Constraint::Min(8)])
         .split(area);
 
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
+        .split(rows[1]);
+
     render_header(frame, rows[0], summary);
-    render_hotspots(frame, rows[1], summary);
+    render_hotspots(frame, cols[0], summary);
+    render_detail(frame, cols[1], summary);
 }
 
-fn render_header(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    summary: &crate::tui::app::DebtSummaryView,
-) {
-    let label_color = match summary.debt_label.as_str() {
-        "low" => theme::STATUS_OK,
-        "moderate" => theme::AMBER,
-        _ => theme::STATUS_WARN,
-    };
+fn render_header(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
     let lines = vec![Line::from(vec![
-        Span::styled("Debt label  ", theme::header_meta()),
+        Span::styled("Debt Label  ", theme::header_meta()),
         Span::styled(
-            summary.debt_label.to_uppercase(),
-            Style::default().fg(label_color).bold(),
+            theme::humanize_token(&summary.debt_label),
+            Style::default()
+                .fg(theme::debt_label_color(&summary.debt_label))
+                .bold(),
         ),
-        Span::raw(format!("   total {}", summary.finding_count)),
-        Span::raw(format!(
-            "   dead {}  dup {}  deps {}  hot {}",
-            summary.by_dead, summary.by_dup, summary.by_deps, summary.by_hotspots
-        )),
+        Span::raw("   "),
+        Span::styled("Total  ", theme::header_meta()),
+        Span::raw(summary.finding_count.to_string()),
+        Span::raw("   "),
+        Span::styled("Dead  ", theme::header_meta()),
+        Span::raw(summary.by_dead.to_string()),
+        Span::raw("   "),
+        Span::styled("Dup  ", theme::header_meta()),
+        Span::raw(summary.by_dup.to_string()),
+        Span::raw("   "),
+        Span::styled("Deps  ", theme::header_meta()),
+        Span::raw(summary.by_deps.to_string()),
+        Span::raw("   "),
+        Span::styled("Hot  ", theme::header_meta()),
+        Span::raw(summary.by_hotspots.to_string()),
     ])];
     frame.render_widget(Paragraph::new(lines).block(block("SUMMARY")), area);
 }
 
-fn render_hotspots(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    summary: &crate::tui::app::DebtSummaryView,
-) {
+fn render_hotspots(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
     let width = area.width.saturating_sub(4) as usize;
     let visible = (area.height.saturating_sub(2) / 2).max(1) as usize;
     let (start, end) = window_bounds(summary.selected, summary.hotspots.len(), visible);
+
     let items: Vec<ListItem> = summary
         .hotspots
         .iter()
         .enumerate()
         .skip(start)
         .take(end.saturating_sub(start))
-        .map(|(i, h)| {
-            let title_w = width.saturating_sub(30);
-            let prefix = if i == summary.selected { "▶ " } else { "  " };
-            ListItem::new(vec![
-                Line::from(vec![
-                    Span::styled(
-                        format!("{prefix}{:>2}. ", h.rank),
-                        Style::default().fg(theme::MUTED),
-                    ),
-                    Span::styled(
-                        format!("[{}/{}]  ", h.category, h.confidence),
-                        Style::default().fg(theme::AMBER),
-                    ),
-                    Span::styled(
-                        format!("score {:.2}  ", h.score),
-                        Style::default().fg(theme::MUTED),
-                    ),
-                    Span::raw(slice_text(&h.title, summary.scroll_x as usize, title_w)),
-                ]),
-                Line::from(Span::styled(
-                    format!("      → {}", slice_text(&h.next_action, summary.scroll_x as usize, width.saturating_sub(8))),
-                    Style::default().fg(theme::MUTED),
-                )),
-            ])
-        })
+        .map(|(i, h)| hotspot_item(i == summary.selected, h, width))
         .collect();
 
-    let total_text = format!(
+    let title = format!(
         "TOP HOTSPOTS ({} shown, {} total findings)",
         summary.hotspots.len(),
         summary.finding_count
     );
-    let list = List::new(items).block(block(&total_text));
-    frame.render_widget(list, area);
+    frame.render_widget(List::new(items).block(block(&title)), area);
+}
+
+fn hotspot_item(selected: bool, hotspot: &DebtHotspotRow, width: usize) -> ListItem<'static> {
+    let title_w = width.saturating_sub(34).max(16);
+    let prefix = if selected { "▶ " } else { "  " };
+
+    ListItem::new(vec![
+        Line::from(vec![
+            Span::styled(prefix, Style::default().fg(if selected { theme::AMBER } else { theme::MUTED })),
+            Span::styled(
+                format!("{:>2}. ", hotspot.rank),
+                Style::default().fg(theme::MUTED),
+            ),
+            Span::styled(
+                format!(
+                    "[{}/{}]  ",
+                    theme::humanize_token(&hotspot.category),
+                    theme::humanize_token(&hotspot.confidence)
+                ),
+                Style::default().fg(theme::AMBER),
+            ),
+            Span::styled(
+                format!("Score {:.2}  ", hotspot.score),
+                Style::default().fg(theme::MUTED),
+            ),
+            Span::raw(truncate(&hotspot.title, title_w)),
+        ]),
+        Line::from(Span::styled(
+            format!("      → {}", truncate(&hotspot.next_action, width.saturating_sub(8))),
+            Style::default().fg(theme::MUTED),
+        )),
+    ])
+}
+
+fn render_detail(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
+    let Some(hotspot) = summary.hotspots.get(summary.selected) else {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  No hotspot selected.",
+                Style::default().fg(theme::MUTED),
+            )))
+            .block(block("DETAIL")),
+            area,
+        );
+        return;
+    };
+
+    let mut lines = vec![
+        Line::from(Span::styled(hotspot.title.clone(), Style::default().fg(theme::AMBER).bold())),
+        Line::from(""),
+        detail_line("Id", &hotspot.id),
+        detail_line("Rule", &hotspot.rule_id),
+        detail_line("Category", &theme::humanize_token(&hotspot.category)),
+        detail_line("Confidence", &theme::humanize_token(&hotspot.confidence)),
+        detail_line("Score", &format!("{:.2}", hotspot.score)),
+        detail_line("Files", &hotspot.files.len().to_string()),
+        Line::from(""),
+        Line::from(Span::styled("Why this was flagged", theme::header_title())),
+    ];
+
+    for item in &hotspot.evidence_summary {
+        lines.push(Line::from(Span::styled(
+            format!("• {}", item),
+            Style::default().fg(theme::MUTED),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("Affected files", theme::header_title())));
+    for file in hotspot.files.iter().take(8) {
+        lines.push(Line::from(format!("• {}", file)));
+    }
+    if hotspot.files.len() > 8 {
+        lines.push(Line::from(Span::styled(
+            format!("• … +{} more", hotspot.files.len() - 8),
+            Style::default().fg(theme::MUTED),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("Next action", theme::header_title())));
+    lines.push(Line::from(hotspot.next_action.clone()));
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block("DETAIL"))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn detail_line(label: &str, value: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label:<12}"), theme::header_meta()),
+        Span::raw(value.to_string()),
+    ])
 }
 
 fn block(title: &str) -> Block<'static> {
     Block::default()
-        .title(Span::styled(
-            format!(" {title} "),
-            theme::header_title(),
-        ))
+        .title(Span::styled(format!(" {title} "), theme::header_title()))
         .borders(Borders::ALL)
         .border_style(theme::border_inactive())
 }
 
-fn slice_text(s: &str, start: usize, width: usize) -> String {
-    if width == 0 {
+fn truncate(s: &str, max: usize) -> String {
+    if max == 0 {
         return String::new();
     }
-    let chars: Vec<char> = s.chars().collect();
-    if start >= chars.len() {
-        return String::new();
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let t: String = s.chars().take(max.saturating_sub(1)).collect();
+        format!("{t}…")
     }
-    chars[start..chars.len().min(start + width)].iter().collect()
 }
 
 fn window_bounds(selected: usize, len: usize, visible: usize) -> (usize, usize) {

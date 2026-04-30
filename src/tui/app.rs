@@ -46,7 +46,6 @@ pub struct DashboardState {
     pub sources: crate::tui::screens::sources::SourcesView,
     pub extract: crate::tui::screens::extract::ExtractView,
     pub check: crate::tui::screens::check::CheckView,
-    pub report: crate::tui::screens::report::ReportView,
     pub drift: crate::tui::screens::drift::DriftView,
 }
 
@@ -74,10 +73,14 @@ pub struct DebtSummaryView {
 
 #[derive(Debug, Clone)]
 pub struct DebtHotspotRow {
+    pub id: String,
     pub rank: u32,
     pub category: String,
     pub confidence: String,
+    pub rule_id: String,
     pub title: String,
+    pub files: Vec<String>,
+    pub evidence_summary: Vec<String>,
     pub next_action: String,
     pub score: f64,
 }
@@ -94,7 +97,6 @@ pub struct TopViolation {
     pub rule_id: String,
     pub file: String,
     pub line: u64,
-    pub snippet: String,
 }
 
 impl App {
@@ -139,7 +141,6 @@ impl App {
                 self.dashboard.sources = Default::default();
                 self.dashboard.extract = Default::default();
                 self.dashboard.check = Default::default();
-                self.dashboard.report = Default::default();
                 self.dashboard.drift = Default::default();
                 self.ensure_current_screen_loaded();
             }
@@ -158,7 +159,6 @@ impl App {
             Screen::Sources => self.ensure_sources_loaded(),
             Screen::Extract => self.ensure_extract_loaded(),
             Screen::Check => self.ensure_check_loaded(),
-            Screen::Report => self.ensure_report_loaded(),
             Screen::Drift => self.ensure_drift_loaded(),
             Screen::Dashboard | Screen::Help => {}
         }
@@ -212,17 +212,6 @@ impl App {
         self.dashboard.check = crate::tui::screens::check::load(&self.project_dir);
     }
 
-    pub fn ensure_report_loaded(&mut self) {
-        if !matches!(
-            self.dashboard.report,
-            crate::tui::screens::report::ReportView::NotComputed
-        ) {
-            return;
-        }
-        self.dashboard.report = crate::tui::screens::report::ReportView::Loading;
-        self.dashboard.report = crate::tui::screens::report::load(&self.project_dir);
-    }
-
     pub fn ensure_drift_loaded(&mut self) {
         if !matches!(
             self.dashboard.drift,
@@ -244,7 +233,7 @@ impl App {
         self.dashboard.debt = DebtView::Loading;
         let opts = crate::debt::DebtOptions {
             project_dir: self.project_dir.clone(),
-            top: 20,
+            top: usize::MAX,
             min_confidence: crate::debt::types::Confidence::Medium,
             since_days: 90,
         };
@@ -254,10 +243,14 @@ impl App {
                     .hotspots
                     .iter()
                     .map(|h| DebtHotspotRow {
+                        id: h.id.clone(),
                         rank: h.rank,
                         category: h.category.as_str().to_string(),
                         confidence: h.confidence.as_str().to_string(),
+                        rule_id: h.rule_id.clone(),
                         title: h.title.clone(),
+                        files: h.files.clone(),
+                        evidence_summary: debt_evidence_summary(&h.evidence),
                         next_action: h.next_action.clone(),
                         score: h.score,
                     })
@@ -307,14 +300,10 @@ impl App {
                 self.ensure_check_loaded();
             }
             KeyCode::Char('6') => {
-                self.screen = Screen::Report;
-                self.ensure_report_loaded();
-            }
-            KeyCode::Char('7') => {
                 self.screen = Screen::Drift;
                 self.ensure_drift_loaded();
             }
-            KeyCode::Char('8') => {
+            KeyCode::Char('7') => {
                 self.screen = Screen::Debt;
                 self.ensure_debt_loaded();
             }
@@ -346,7 +335,6 @@ impl App {
                 Screen::Extract => self.dashboard.extract.select_prev(),
                 Screen::Check => self.dashboard.check.select_prev(),
                 Screen::Drift => self.dashboard.drift.select_prev(),
-                Screen::Report => self.dashboard.report.scroll_up(1),
             }
         }
     }
@@ -354,7 +342,12 @@ impl App {
     fn select_next_on_current_screen(&mut self, steps: usize) {
         for _ in 0..steps {
             match self.screen {
-                Screen::Dashboard => self.dashboard_scroll = self.dashboard_scroll.saturating_add(1),
+                Screen::Dashboard => {
+                    let max_rows = dashboard_scroll_max(&self.dashboard);
+                    if self.dashboard_scroll < max_rows {
+                        self.dashboard_scroll += 1;
+                    }
+                }
                 Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_add(1),
                 Screen::Result => self.dashboard.result.scroll_down(1),
                 Screen::Debt => self.dashboard.debt.select_next(),
@@ -363,7 +356,6 @@ impl App {
                 Screen::Extract => self.dashboard.extract.select_next(),
                 Screen::Check => self.dashboard.check.select_next(),
                 Screen::Drift => self.dashboard.drift.select_next(),
-                Screen::Report => self.dashboard.report.scroll_down(1),
             }
         }
     }
@@ -373,7 +365,6 @@ impl App {
             Screen::Help => self.help_scroll_x = self.help_scroll_x.saturating_sub(steps),
             Screen::Result => self.dashboard.result.scroll_left(steps),
             Screen::Debt => self.dashboard.debt.scroll_left(steps),
-            Screen::Report => self.dashboard.report.scroll_left(steps),
             _ => {}
         }
     }
@@ -383,7 +374,6 @@ impl App {
             Screen::Help => self.help_scroll_x = self.help_scroll_x.saturating_add(steps),
             Screen::Result => self.dashboard.result.scroll_right(steps),
             Screen::Debt => self.dashboard.debt.scroll_right(steps),
-            Screen::Report => self.dashboard.report.scroll_right(steps),
             _ => {}
         }
     }
@@ -489,11 +479,6 @@ fn collect_dashboard(project_dir: &Path) -> DashboardState {
                         rule_id: v.get("rule_id").and_then(|s| s.as_str())?.to_string(),
                         file: v.get("file").and_then(|s| s.as_str())?.to_string(),
                         line: v.get("line").and_then(|s| s.as_u64()).unwrap_or(0),
-                        snippet: v
-                            .get("match")
-                            .and_then(|s| s.as_str())
-                            .unwrap_or("")
-                            .to_string(),
                     })
                 })
                 .collect();
@@ -501,4 +486,77 @@ fn collect_dashboard(project_dir: &Path) -> DashboardState {
     }
 
     d
+}
+
+fn dashboard_scroll_max(dashboard: &DashboardState) -> usize {
+    let violations_max = dashboard.top_violations.len().saturating_sub(3);
+    let debt_max = match &dashboard.debt {
+        DebtView::Ready(summary) => summary.hotspots.len().saturating_sub(2),
+        _ => 0,
+    };
+    violations_max.max(debt_max)
+}
+
+fn debt_evidence_summary(evidence: &crate::debt::types::Evidence) -> Vec<String> {
+    use crate::debt::types::Evidence;
+
+    match evidence {
+        Evidence::ManifestEntry {
+            snippet,
+            references,
+            locations,
+        } => vec![
+            format!("Manifest references: {references}"),
+            format!("Locations: {}", locations.len()),
+            format!("Snippet: {}", truncate_inline(snippet, 120)),
+        ],
+        Evidence::SymbolDef {
+            name,
+            symbol_kind,
+            references,
+            locations,
+        } => vec![
+            format!("Symbol: {name}"),
+            format!("Kind: {symbol_kind}"),
+            format!("References: {references}"),
+            format!("Locations: {}", locations.len()),
+        ],
+        Evidence::DuplicateCluster {
+            snippet,
+            normalized_lines,
+            occurrences,
+            locations,
+        } => vec![
+            format!("Occurrences: {occurrences}"),
+            format!("Normalized lines: {normalized_lines}"),
+            format!("Locations: {}", locations.len()),
+            format!("Snippet: {}", truncate_inline(snippet, 120)),
+        ],
+        Evidence::OrphanedFile { path, locations } => vec![
+            format!("Path: {path}"),
+            format!("Locations: {}", locations.len()),
+        ],
+        Evidence::ChurnViolationIntersection {
+            changes,
+            violations,
+            window_days,
+            locations,
+        } => vec![
+            format!("Changes: {changes}"),
+            format!("Violations: {violations}"),
+            format!("Window: {window_days}d"),
+            format!("Locations: {}", locations.len()),
+        ],
+    }
+}
+
+fn truncate_inline(text: &str, max: usize) -> String {
+    let compact = text.replace('\n', " ");
+    let mut chars = compact.chars();
+    let taken: String = chars.by_ref().take(max).collect();
+    if chars.next().is_some() {
+        format!("{taken}…")
+    } else {
+        taken
+    }
 }

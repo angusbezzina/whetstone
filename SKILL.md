@@ -29,14 +29,15 @@ wh init             # Bootstrap: detect deps, resolve docs, write extraction han
 wh extract          # Walk the dependency worklist to find the next candidate
 wh extract submit <bundle.yaml>   # Land a candidate bundle as status: candidate
 wh approve --all --confidence high  # Flip high-confidence candidates to approved
-wh actions          # Generate context + tests + lint in one chain
+wh actions all      # Generate context + tests + lint in one chain
 wh scan src/        # Verify source code against approved rules
 wh reinit           # Refresh when dependencies change
 ```
 
-These seven verbs are the complete CLI surface. There are no aliases — if
-documentation or older scripts reference `wh doctor`, `wh refresh`, `wh gen`,
-or similar, update them to the canonical names above.
+These are the core happy-path commands. Canonical grouped surfaces now live
+under `wh rules ...`, `wh sources ...`, and `wh actions ...`; compatibility
+aliases still exist for some older grouped names, but docs should prefer the
+canonical forms above.
 
 ## Mid-turn rule lookup (prefer over reloading AGENTS.md)
 

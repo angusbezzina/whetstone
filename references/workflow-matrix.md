@@ -25,7 +25,9 @@ stages:
 
 ## Command matrix
 
-There are no command aliases as of 0.3.0 — each verb has exactly one name.
+Canonical commands are listed below. Some compatibility aliases still exist
+(`wh check`, `wh rule`, `wh source`, `wh source fetch`) while the CLI settles
+on `wh scan`, `wh rules`, `wh sources`, and `wh sources verify`.
 
 | Command | Stages | Reads (state) | Writes (state) | Notes |
 |---------|--------|---------------|----------------|-------|
@@ -36,26 +38,33 @@ There are no command aliases as of 0.3.0 — each verb has exactly one name.
 | `wh extract submit <bundle.yaml>` | extract | bundle file | `whetstone/rules/<lang>/<dep>.yaml` with `status: candidate` | Refuses to overwrite an existing file or collide on any rule id. |
 | `wh approve <rule-id>` | approve | `whetstone/rules/**`, `whetstone/.personal/rules/**` | same file, mutated in place | Flips status to `approved` and `approved: true`. |
 | `wh approve --all [--dep <name>] [--confidence <level>]` | approve | project rules | same files | Batch flip every matching candidate. |
-| `wh actions` | generate | approved rules | everything under `whetstone/context/`, `whetstone/evals/`, `whetstone/lint/` | Chains context + tests + lint. |
+| `wh actions all` | generate | approved rules | everything under `whetstone/context/`, `whetstone/evals/`, `whetstone/lint/` | Chains context + tests + lint. |
+| `wh actions context` | generate | approved rules | `whetstone/context/*` or `whetstone/.personal/context/*` | Generates context only. |
+| `wh actions test` | generate | approved rules | `whetstone/evals/**` or `whetstone/.personal/evals/**` | Generates tests only. |
+| `wh actions lint` | generate | approved rules | `whetstone/lint/*` or `whetstone/.personal/lint/*` | Generates lint overlays only. |
 | `wh context` | generate | approved rules | `whetstone/context/*` or `whetstone/.personal/context/*` | `--terse` emits a one-line-per-rule bootstrap. Per-language `AGENTS.<lang>.md` sidecars are emitted automatically when rules span >1 language. |
 | `wh tests` | generate | approved rules | `whetstone/evals/**` or `whetstone/.personal/evals/**` | Signals with a `match` regex produce real checks; without, tests are TODO stubs. |
 | `wh lint` | generate | approved rules | `whetstone/lint/*` or `whetstone/.personal/lint/*` | Emits `ruff.whetstone.toml`, `biome.whetstone.json`, `clippy.whetstone.toml`. |
-| `wh check` | monitor / enforce | approved rules, source files | — | Deterministic enforcement: tree-sitter for `ast_query` / `ast_scope`, regex for `match:`, lint-config verification for `lint_proxy`. Non-zero exit on violations or config gaps unless `--no-fail`. |
+| `wh scan` | monitor / enforce | approved rules, source files | — | Deterministic enforcement: tree-sitter for `ast_query` / `ast_scope`, regex for `match:`, lint-config verification for `lint_proxy`. Non-zero exit on violations or config gaps unless `--no-fail`. |
+| `wh check` | monitor / enforce | approved rules, source files | — | Compatibility alias for `wh scan`. |
 | `wh rules query` | inspect (JIT) | approved rules | — | JIT rule lookup for agents. Filters: `--file <path>` (infers language), `--lang`, `--dep`, `--severity`, `--personal-only`, `--project-only`, `--full`. Preferred over re-reading `AGENTS.md` mid-turn. |
-| `wh rule add <id>` | author | — | one rule appended to (or creates) `whetstone/(.personal/)?rules/<lang>/<dep>.yaml` as `status: approved` | Personal-taste shortcut. Required: `--description`, `--lang`, either `--match` or a dep prefix in the id. `--project` to target the committed layer. |
-| `wh rule edit <id> \| --all [--dep] [--category]` | author | approved rule files | same file, severity/confidence mutated | Bump severity (`should → must`) or confidence without hand-editing YAML. `--dry-run` to preview. Refuses candidates. |
-| `wh source add <url>` | author (sources) | — | `whetstone/.personal/config.yaml` (default) or `whetstone/whetstone.yaml` (`--project`) | Subscribe to a blog / wiki / llms.txt / internal doc. Appears in the extraction worklist alongside detected deps. Flags: `--name`, `--lang`, `--kind`. Refuses duplicates. |
-| `wh source list` | inspect | both config layers | — | Show subscribed custom sources across personal + project layers. |
-| `wh source remove <target>` | author (sources) | same configs | same configs, entry removed | Unsubscribe by URL or name. Reports any approved rules that cite the removed URL. |
-| `wh source fetch <target>` | resolve | subscribed config | `source-cache.json` | Force re-fetch a single custom source without running full `wh reinit`. |
+| `wh rules add <id>` | author | — | one rule appended to (or creates) `whetstone/(.personal/)?rules/<lang>/<dep>.yaml` as `status: approved` | Personal-taste shortcut. Required: `--description`, `--lang`, either `--match` or a dep prefix in the id. `--project` to target the committed layer. |
+| `wh rules edit <id> \| --all [--dep] [--category]` | author | approved rule files | same file, severity/confidence mutated | Bump severity (`should → must`) or confidence without hand-editing YAML. `--dry-run` to preview. Refuses candidates. |
+| `wh rules remove <id>` | author | approved rule files | same file or file deletion when last rule removed | Removes a single rule cleanly and points generation back at `wh actions all`. |
+| `wh rules approve <id> \| --all [--dep] [--confidence]` | approve | candidate rule files | same file, mutated in place | Canonical grouped approval flow under `wh rules`. |
+| `wh sources add <url>` | author (sources) | — | `whetstone/.personal/config.yaml` (default) or `whetstone/whetstone.yaml` (`--project`) | Subscribe to a blog / wiki / llms.txt / internal doc. Appears in the extraction worklist alongside detected deps. Flags: `--name`, `--lang`, `--kind`. Refuses duplicates. |
+| `wh sources edit <target>` | author (sources) | same configs | same configs, entry mutated in place | Updates source URL, name, language, or kind without hand-editing YAML. |
+| `wh sources list` | inspect | both config layers | — | Show subscribed custom sources across personal + project layers. |
+| `wh sources remove <target>` | author (sources) | same configs | same configs, entry removed | Unsubscribe by URL or name. Reports any approved rules that cite the removed URL. |
+| `wh sources verify <target>` | resolve | subscribed config | `source-cache.json` | Force re-fetch a single custom source without running full `wh reinit`. |
 | `wh review [show <id> \| worklist]` | inspect | writable rules, handoff artifacts | — | Lists rules by lifecycle status, shows full per-rule context, or renders the extraction worklist. |
 | `wh validate` | — | `references/rule-schema.yaml` (or embedded fallback), all rule files | — | Schema + fixtures validator. CI-friendly. |
-| `wh status` | monitor | project rules, state files, metrics, source files for `wh check` | `whetstone/.metrics.jsonl` (snapshot w/ `adherence_score` + `violation_counts`) | Returns both `rule_system_score` (rule health) and `adherence_score` (code quality, hybrid formula). `--score`, `--history`, `--no-snapshot`, `--no-drift-check`. |
-| `wh report` | monitor | project rules, source files, `refresh-diff.json` | — | One-page markdown summary: rule-system + adherence scores, top 10 violations with file/line, drift, next actions. `--pr-comment` emits the PR-friendly flavor with a `<!-- whetstone-report -->` marker. `--json` for structured output. |
+| `wh status` | monitor | project rules, state files, metrics, source files for `wh scan` | `whetstone/.metrics.jsonl` (snapshot w/ `adherence_score` + `violation_counts`) | Returns both `rule_system_score` (rule health) and `adherence_score` (code quality, hybrid formula). `--score`, `--history`, `--no-snapshot`, `--no-drift-check`. |
+| `wh status --report` / `wh report` | monitor | project rules, source files, `refresh-diff.json` | `whetstone/report.md` | Builds the markdown report file under `whetstone/`. `--pr-comment` still emits the PR-friendly flavor to stdout, and `--json` returns the structured envelope plus `report_path`. |
 | `wh debt` | monitor / triage | manifests, source files, git history (for hotspots), project Beads state only when `--beads` is passed | — | Deterministic debt triage: dead code, duplicate blocks, dep hygiene, churn × violations hotspots. Output modes: human, `--json`, `--prompt`, `--beads`. Flags: `--top`, `--min-confidence`, `--since` / `--since-days`. |
 | `wh ci` | monitor (CI) | same as status | — | `--fail-on stale` or `--fail-on needs_review` gates PRs. |
 | `wh update` | — | — | replaces the binary | Self-update from GitHub Releases. Never touches rules. |
-| `wh tui` (or bare `wh` on TTY) | inspect / navigate | project rules, `.state/*`, `.metrics.jsonl` | — | Interactive dashboard (Epic 4A). `1`–`7` switch screens, `R` refresh, `?` help, `Q` quit. Current shipped screens: Dashboard + Help; Rules / Sources / Extract / Check / Report / Drift are stubbed. |
+| bare `wh` on a TTY | inspect / navigate | project rules, `.state/*`, `.metrics.jsonl` | — | Interactive dashboard. `1`–`7` switch screens, `R` refresh, `?` help, `Q` quit. Current shipped screens: Dashboard, Rules, Sources, Rule Extraction, Violations, Drift, and Debt. |
 
 > All commands accept `--json` (auto-enabled when piped). Project-scoped
 > commands accept `--project-dir` (default: `.`). Human-readable progress goes

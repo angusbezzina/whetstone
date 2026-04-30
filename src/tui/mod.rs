@@ -167,7 +167,6 @@ pub fn view(frame: &mut Frame<'_>, app: &App) {
         Screen::Sources => screens::sources::hints(),
         Screen::Extract => screens::extract::hints(),
         Screen::Check => screens::check::hints(),
-        Screen::Report => screens::report::hints(),
         Screen::Drift => screens::drift::hints(),
         Screen::Debt => screens::debt::hints(),
         Screen::Help => screens::help::hints(),
@@ -180,7 +179,6 @@ pub fn view(frame: &mut Frame<'_>, app: &App) {
         Screen::Sources => screens::sources::render(frame, body, app),
         Screen::Extract => screens::extract::render(frame, body, app),
         Screen::Check => screens::check::render(frame, body, app),
-        Screen::Report => screens::report::render(frame, body, app),
         Screen::Drift => screens::drift::render(frame, body, app),
         Screen::Debt => screens::debt::render(frame, body, app),
         Screen::Help => screens::help::render(frame, body, app),
@@ -340,43 +338,6 @@ mod tests {
         )));
         if let RulesView::Ready(d) = &app.dashboard.rules {
             assert_eq!(d.selected, 0, "Up at the top clamps to 0");
-        }
-
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn pagedown_advances_report_scroll() {
-        use crate::tui::screens::report::{ReportData, ReportView};
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-        let tmp =
-            std::env::temp_dir().join(format!("wh_tui_nav_report_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&tmp);
-        let mut app = App::new(&tmp).unwrap();
-        app.screen = Screen::Report;
-        app.dashboard.report = ReportView::Ready(Box::new(ReportData {
-            markdown: "line\n".repeat(100),
-            scroll_y: 0,
-            scroll_x: 0,
-        }));
-
-        app.update(Msg::Key(KeyEvent::new(
-            KeyCode::PageDown,
-            KeyModifiers::NONE,
-        )));
-        if let ReportView::Ready(d) = &app.dashboard.report {
-            assert_eq!(d.scroll_y, 10);
-        } else {
-            panic!("report flipped out of Ready");
-        }
-
-        app.update(Msg::Key(KeyEvent::new(
-            KeyCode::PageUp,
-            KeyModifiers::NONE,
-        )));
-        if let ReportView::Ready(d) = &app.dashboard.report {
-            assert_eq!(d.scroll_y, 0);
         }
 
         let _ = std::fs::remove_dir_all(&tmp);

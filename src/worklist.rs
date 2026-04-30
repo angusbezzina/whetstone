@@ -19,6 +19,8 @@ use std::path::Path;
 
 use crate::config::WhetstoneConfig;
 
+const MAX_USEFUL_SCORE: f64 = 140.0;
+
 /// Priority bucket for a worklist entry. Callers order by (ready_now,
 /// resolved_low, pending, failed) then by configured preference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -281,6 +283,7 @@ fn build_entry(
         "language": language,
         "priority": priority.as_str(),
         "score": score,
+        "utility_percent": utility_percent(score),
         "sections": sections,
         "existing_rules": existing_rules,
         "quota": {
@@ -326,6 +329,12 @@ fn build_entry(
     }
 
     entry
+}
+
+fn utility_percent(score: f64) -> u64 {
+    ((score / MAX_USEFUL_SCORE) * 100.0)
+        .round()
+        .clamp(0.0, 100.0) as u64
 }
 
 fn sections_view(source: &Value) -> Vec<Value> {
