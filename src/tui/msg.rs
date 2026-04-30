@@ -12,7 +12,6 @@ use crossterm::event::KeyEvent;
 pub enum Screen {
     Dashboard,
     Result,
-    Extract,
     Sources,
     Rules,
     Check,
@@ -25,8 +24,7 @@ impl Screen {
         match self {
             Screen::Dashboard => "HOME",
             Screen::Result => "RESULT",
-            Screen::Extract => "INTERNAL SOURCES",
-            Screen::Sources => "EXTERNAL SOURCES",
+            Screen::Sources => "SOURCES",
             Screen::Rules => "RULES",
             Screen::Check => "VIOLATIONS",
             Screen::Debt => "DEBT",

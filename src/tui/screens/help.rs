@@ -22,7 +22,7 @@ pub fn hints() -> &'static [footer::Hint] {
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let lines = vec![
         section("GLOBAL"),
-        kv("1–6", "Jump to a screen (Home, Internal Sources, External Sources, Rules, Violations, Debt)"),
+        kv("1–5", "Jump to a screen (Home, Sources, Rules, Violations, Debt)"),
         kv("?", "Open this help screen"),
         kv("Q / ESC", "Quit the TUI"),
         kv("Ctrl-C", "Hard quit"),
@@ -47,11 +47,12 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         kv("↑ / ↓ / j / k", "Navigate"),
         kv("PgUp / PgDn", "Move faster through longer lists"),
         kv("← / → / h / l", "Horizontal scroll on supported screens"),
+        kv("A", "Open add form on Sources or Rules"),
+        kv("Tab / Enter / T", "Move fields, save, or toggle Personal/Team while editing"),
         Line::from(""),
         section("SHIPPED SCREENS"),
         kv("Home", "overall health report card with rules, violations, reinit status, and debt"),
-        kv("Internal Sources", "core packages and source quality for the next rule targets"),
-        kv("External Sources", "custom source subscriptions across personal and project layers"),
+        kv("Sources", "internal dependency sources plus handpicked personal and team sources"),
         kv("Rules", "approved rules with file and source detail"),
         kv("Violations", "violation list + config issues"),
         kv("Debt", "ranked hotspot triage for dead/dup/dep/hotspot findings"),

@@ -15,10 +15,44 @@ pub struct App {
     pub project_dir: PathBuf,
     pub screen: Screen,
     pub quit: bool,
+    pub input_mode: InputMode,
     pub help_scroll_y: u16,
     pub help_scroll_x: u16,
     pub dashboard_scroll: usize,
     pub dashboard: DashboardState,
+    pub sources_form: SourcesFormState,
+    pub rules_form: RulesFormState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InputMode {
+    #[default]
+    Normal,
+    SourcesAdd,
+    RulesAdd,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct SourcesFormState {
+    pub active_field: usize,
+    pub team_scope: bool,
+    pub url: String,
+    pub name: String,
+    pub language: String,
+    pub kind: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct RulesFormState {
+    pub active_field: usize,
+    pub team_scope: bool,
+    pub rule_id: String,
+    pub dep: String,
+    pub language: String,
+    pub description: String,
+    pub match_regex: String,
+    pub error: Option<String>,
 }
 
 /// Cached data for the dashboard. Populated on start.
@@ -73,15 +107,16 @@ pub struct DebtSummaryView {
 #[derive(Debug, Clone)]
 pub struct DebtHotspotRow {
     pub id: String,
-    pub rank: u32,
     pub category: String,
     pub confidence: String,
     pub rule_id: String,
     pub title: String,
+    pub compact_title: String,
+    pub primary_file: String,
     pub files: Vec<String>,
     pub evidence_summary: Vec<String>,
     pub next_action: String,
-    pub score: f64,
+    pub impact_percent: u8,
 }
 
 #[derive(Default, Clone)]
@@ -105,10 +140,13 @@ impl App {
             project_dir: project_dir.clone(),
             screen: Screen::Dashboard,
             quit: false,
+            input_mode: InputMode::Normal,
             help_scroll_y: 0,
             help_scroll_x: 0,
             dashboard_scroll: 0,
             dashboard: DashboardState::default(),
+            sources_form: SourcesFormState::default(),
+            rules_form: RulesFormState::default(),
         };
         app.load_dashboard();
         Ok(app)
@@ -138,7 +176,6 @@ impl App {
         match self.screen {
             Screen::Result => {}
             Screen::Debt => self.ensure_debt_loaded(),
-            Screen::Extract => self.ensure_extract_loaded(),
             Screen::Sources => self.ensure_sources_loaded(),
             Screen::Rules => self.ensure_rules_loaded(),
             Screen::Check => self.ensure_check_loaded(),
@@ -162,6 +199,7 @@ impl App {
     }
 
     pub fn ensure_sources_loaded(&mut self) {
+        self.ensure_extract_loaded();
         if !matches!(
             self.dashboard.sources,
             crate::tui::screens::sources::SourcesView::NotComputed
@@ -210,20 +248,26 @@ impl App {
         };
         self.dashboard.debt = match crate::debt::run(&opts) {
             Ok(report) => {
+                let max_score = report
+                    .hotspots
+                    .iter()
+                    .map(|h| h.score)
+                    .fold(0.0_f64, f64::max);
                 let hotspots = report
                     .hotspots
                     .iter()
                     .map(|h| DebtHotspotRow {
                         id: h.id.clone(),
-                        rank: h.rank,
                         category: h.category.as_str().to_string(),
                         confidence: h.confidence.as_str().to_string(),
                         rule_id: h.rule_id.clone(),
                         title: h.title.clone(),
+                        compact_title: compact_hotspot_title(&h.title),
+                        primary_file: h.files.first().cloned().unwrap_or_else(|| "—".to_string()),
                         files: h.files.clone(),
                         evidence_summary: debt_evidence_summary(&h.evidence),
                         next_action: h.next_action.clone(),
-                        score: h.score,
+                        impact_percent: normalize_impact_percent(h.score, max_score),
                     })
                     .collect();
                 DebtView::Ready(Box::new(DebtSummaryView {
@@ -243,6 +287,11 @@ impl App {
     }
 
     fn handle_key(&mut self, ev: KeyEvent) {
+        if self.input_mode != InputMode::Normal {
+            self.handle_form_key(ev);
+            return;
+        }
+
         // Global keybinds — available on every screen.
         if ev.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(ev.code, KeyCode::Char('c'))
@@ -255,26 +304,27 @@ impl App {
             KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => self.quit = true,
             KeyCode::Char('1') => self.screen = Screen::Dashboard,
             KeyCode::Char('2') => {
-                self.screen = Screen::Extract;
-                self.ensure_extract_loaded();
-            }
-            KeyCode::Char('3') => {
                 self.screen = Screen::Sources;
                 self.ensure_sources_loaded();
             }
-            KeyCode::Char('4') => {
+            KeyCode::Char('3') => {
                 self.screen = Screen::Rules;
                 self.ensure_rules_loaded();
             }
-            KeyCode::Char('5') => {
+            KeyCode::Char('4') => {
                 self.screen = Screen::Check;
                 self.ensure_check_loaded();
             }
-            KeyCode::Char('6') => {
+            KeyCode::Char('5') => {
                 self.screen = Screen::Debt;
                 self.ensure_debt_loaded();
             }
             KeyCode::Char('?') => self.screen = Screen::Help,
+            KeyCode::Char('a') | KeyCode::Char('A') => match self.screen {
+                Screen::Sources => self.open_sources_form(),
+                Screen::Rules => self.open_rules_form(),
+                _ => {}
+            },
             KeyCode::Up | KeyCode::Char('k') => self.select_prev_on_current_screen(1),
             KeyCode::Down | KeyCode::Char('j') => self.select_next_on_current_screen(1),
             KeyCode::PageUp => self.select_prev_on_current_screen(10),
@@ -294,8 +344,7 @@ impl App {
                 Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_sub(1),
                 Screen::Result => self.dashboard.result.scroll_up(1),
                 Screen::Debt => self.dashboard.debt.select_prev(),
-                Screen::Extract => self.dashboard.extract.select_prev(),
-                Screen::Sources => self.dashboard.sources.select_prev(),
+                Screen::Sources => self.dashboard.extract.select_prev(),
                 Screen::Rules => self.dashboard.rules.select_prev(),
                 Screen::Check => self.dashboard.check.select_prev(),
             }
@@ -314,8 +363,7 @@ impl App {
                 Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_add(1),
                 Screen::Result => self.dashboard.result.scroll_down(1),
                 Screen::Debt => self.dashboard.debt.select_next(),
-                Screen::Extract => self.dashboard.extract.select_next(),
-                Screen::Sources => self.dashboard.sources.select_next(),
+                Screen::Sources => self.dashboard.extract.select_next(),
                 Screen::Rules => self.dashboard.rules.select_next(),
                 Screen::Check => self.dashboard.check.select_next(),
             }
@@ -337,6 +385,169 @@ impl App {
             Screen::Result => self.dashboard.result.scroll_right(steps),
             Screen::Debt => self.dashboard.debt.scroll_right(steps),
             _ => {}
+        }
+    }
+
+    fn open_sources_form(&mut self) {
+        self.sources_form = SourcesFormState::default();
+        self.input_mode = InputMode::SourcesAdd;
+    }
+
+    fn open_rules_form(&mut self) {
+        self.rules_form = RulesFormState::default();
+        self.input_mode = InputMode::RulesAdd;
+    }
+
+    fn handle_form_key(&mut self, ev: KeyEvent) {
+        match self.input_mode {
+            InputMode::Normal => {}
+            InputMode::SourcesAdd => self.handle_sources_form_key(ev),
+            InputMode::RulesAdd => self.handle_rules_form_key(ev),
+        }
+    }
+
+    fn handle_sources_form_key(&mut self, ev: KeyEvent) {
+        match ev.code {
+            KeyCode::Esc => {
+                self.input_mode = InputMode::Normal;
+                self.sources_form.error = None;
+            }
+            KeyCode::Tab => {
+                self.sources_form.active_field = (self.sources_form.active_field + 1) % 4;
+            }
+            KeyCode::BackTab => {
+                self.sources_form.active_field = self.sources_form.active_field.saturating_sub(1);
+            }
+            KeyCode::Backspace => {
+                self.current_sources_field_mut().pop();
+            }
+            KeyCode::Enter => self.submit_sources_form(),
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                self.sources_form.team_scope = !self.sources_form.team_scope;
+            }
+            KeyCode::Char(c) => {
+                self.current_sources_field_mut().push(c);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_rules_form_key(&mut self, ev: KeyEvent) {
+        match ev.code {
+            KeyCode::Esc => {
+                self.input_mode = InputMode::Normal;
+                self.rules_form.error = None;
+            }
+            KeyCode::Tab => {
+                self.rules_form.active_field = (self.rules_form.active_field + 1) % 5;
+            }
+            KeyCode::BackTab => {
+                self.rules_form.active_field = self.rules_form.active_field.saturating_sub(1);
+            }
+            KeyCode::Backspace => {
+                self.current_rules_field_mut().pop();
+            }
+            KeyCode::Enter => self.submit_rules_form(),
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                self.rules_form.team_scope = !self.rules_form.team_scope;
+            }
+            KeyCode::Char(c) => {
+                self.current_rules_field_mut().push(c);
+            }
+            _ => {}
+        }
+    }
+
+    fn current_sources_field_mut(&mut self) -> &mut String {
+        match self.sources_form.active_field {
+            0 => &mut self.sources_form.url,
+            1 => &mut self.sources_form.name,
+            2 => &mut self.sources_form.language,
+            _ => &mut self.sources_form.kind,
+        }
+    }
+
+    fn current_rules_field_mut(&mut self) -> &mut String {
+        match self.rules_form.active_field {
+            0 => &mut self.rules_form.rule_id,
+            1 => &mut self.rules_form.dep,
+            2 => &mut self.rules_form.language,
+            3 => &mut self.rules_form.description,
+            _ => &mut self.rules_form.match_regex,
+        }
+    }
+
+    fn submit_sources_form(&mut self) {
+        let language = if self.sources_form.language.trim().is_empty() {
+            None
+        } else {
+            Some(self.sources_form.language.trim())
+        };
+        let name = if self.sources_form.name.trim().is_empty() {
+            None
+        } else {
+            Some(self.sources_form.name.trim())
+        };
+        let kind = if self.sources_form.kind.trim().is_empty() {
+            None
+        } else {
+            Some(self.sources_form.kind.trim())
+        };
+
+        match crate::source_mgmt::add(
+            &self.project_dir,
+            crate::source_mgmt::AddOptions {
+                url: self.sources_form.url.trim(),
+                name,
+                language,
+                source_kind: kind,
+                personal: !self.sources_form.team_scope,
+            },
+        ) {
+            Ok(_) => {
+                self.dashboard.sources = crate::tui::screens::sources::SourcesView::NotComputed;
+                self.ensure_sources_loaded();
+                self.input_mode = InputMode::Normal;
+                self.sources_form = SourcesFormState::default();
+            }
+            Err(e) => self.sources_form.error = Some(e.to_string()),
+        }
+    }
+
+    fn submit_rules_form(&mut self) {
+        let dep = if self.rules_form.dep.trim().is_empty() {
+            None
+        } else {
+            Some(self.rules_form.dep.trim())
+        };
+        let match_regex = if self.rules_form.match_regex.trim().is_empty() {
+            None
+        } else {
+            Some(self.rules_form.match_regex.trim())
+        };
+
+        match crate::rule_authoring::add(
+            &self.project_dir,
+            crate::rule_authoring::AddOptions {
+                rule_id: self.rules_form.rule_id.trim(),
+                description: self.rules_form.description.trim(),
+                match_regex,
+                severity: "should",
+                confidence: "high",
+                category: "convention",
+                language: self.rules_form.language.trim(),
+                source_url: None,
+                dep,
+                personal: !self.rules_form.team_scope,
+            },
+        ) {
+            Ok(_) => {
+                self.dashboard.rules = crate::tui::screens::rules::RulesView::NotComputed;
+                self.ensure_rules_loaded();
+                self.input_mode = InputMode::Normal;
+                self.rules_form = RulesFormState::default();
+            }
+            Err(e) => self.rules_form.error = Some(e.to_string()),
         }
     }
 }
@@ -457,6 +668,36 @@ fn dashboard_scroll_max(dashboard: &DashboardState) -> usize {
         _ => 0,
     };
     violations_max.max(debt_max)
+}
+
+fn normalize_impact_percent(score: f64, max_score: f64) -> u8 {
+    if max_score <= 0.0 {
+        0
+    } else {
+        ((score / max_score) * 100.0).round().clamp(0.0, 100.0) as u8
+    }
+}
+
+fn compact_hotspot_title(title: &str) -> String {
+    let mut out = title
+        .split(" in ")
+        .next()
+        .unwrap_or(title)
+        .split(" across ")
+        .next()
+        .unwrap_or(title)
+        .split(" (")
+        .next()
+        .unwrap_or(title)
+        .trim()
+        .to_string();
+    if !out.is_empty() {
+        let mut chars = out.chars();
+        if let Some(first) = chars.next() {
+            out = format!("{}{}", first.to_uppercase(), chars.as_str());
+        }
+    }
+    out
 }
 
 fn debt_evidence_summary(evidence: &crate::debt::types::Evidence) -> Vec<String> {

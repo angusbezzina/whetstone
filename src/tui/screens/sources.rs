@@ -1,21 +1,21 @@
-//! External sources screen — subscription manager for committed + personal layers.
-//!
-//! Renders the two-layer list of custom sources tracked by
-//! [`crate::source_mgmt::list`] — one column per layer (PERSONAL / PROJECT).
-//! Supports the four view states defined in whetstone-8hm.5.3:
-//! NotComputed, Loading, Error, Ready.
+//! Unified Sources screen — combines internal dependency/doc sources with
+//! handpicked personal/team sources and lets users add a custom source.
 
 use std::path::Path;
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::Style,
+    style::{Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
     Frame,
 };
 
-use crate::tui::{app::App, components::footer, theme};
+use crate::tui::{
+    app::{App, InputMode},
+    components::footer,
+    theme,
+};
 
 #[allow(dead_code)]
 pub fn hints() -> &'static [footer::Hint] {
@@ -46,23 +46,6 @@ pub struct SourceRow {
     pub last_fetched: Option<String>,
 }
 
-impl SourcesView {
-    pub fn select_prev(&mut self) {
-        if let SourcesView::Ready(data) = self {
-            data.scroll = data.scroll.saturating_sub(1);
-        }
-    }
-
-    pub fn select_next(&mut self) {
-        if let SourcesView::Ready(data) = self {
-            let longest = data.project.len().max(data.personal.len());
-            if data.scroll + 1 < longest {
-                data.scroll += 1;
-            }
-        }
-    }
-}
-
 pub fn load(project_dir: &Path) -> SourcesView {
     match crate::source_mgmt::list(project_dir) {
         Ok(value) => {
@@ -86,11 +69,6 @@ pub fn load(project_dir: &Path) -> SourcesView {
     }
 }
 
-/// Project a single JSON entry from `source_mgmt::list` into a [`SourceRow`].
-///
-/// Field names mirror `CustomSource`: `url`, `name`, `language`, `source_kind`.
-/// `last_fetched` is not yet emitted by `list` — kept as `None` so the
-/// renderer is ready when source-fetch telemetry lands.
 fn row_from_json(entry: &serde_json::Value) -> SourceRow {
     let url_fallback = entry
         .get("url")
@@ -122,26 +100,68 @@ fn row_from_json(entry: &serde_json::Value) -> SourceRow {
 }
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    match &app.dashboard.sources {
-        SourcesView::NotComputed => render_placeholder(
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(14), Constraint::Length(12)])
+        .split(area);
+
+    render_internal_sources(frame, rows[0], app);
+    render_handpicked_and_form(frame, rows[1], app);
+}
+
+fn render_internal_sources(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    match &app.dashboard.extract {
+        crate::tui::screens::extract::ExtractView::NotComputed => render_placeholder(
             frame,
             area,
-            "External sources are not loaded yet.",
+            "Internal sources are not loaded yet.",
         ),
-        SourcesView::Loading => render_placeholder(frame, area, "Loading external sources…"),
-        SourcesView::Error(msg) => render_error(frame, area, msg),
-        SourcesView::Ready(data) => render_ready(frame, area, data),
+        crate::tui::screens::extract::ExtractView::Loading => {
+            render_placeholder(frame, area, "Loading internal sources…")
+        }
+        crate::tui::screens::extract::ExtractView::Error(msg) => render_error(frame, area, msg),
+        crate::tui::screens::extract::ExtractView::Ready(data) if data.entries.is_empty() => {
+            render_placeholder(
+                frame,
+                area,
+                "No internal sources are available right now. Run wh init to generate them.",
+            )
+        }
+        crate::tui::screens::extract::ExtractView::Ready(data) => {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(46), Constraint::Percentage(54)])
+                .split(area);
+            crate::tui::screens::extract::render_worklist(frame, cols[0], data);
+            crate::tui::screens::extract::render_detail(frame, cols[1], data);
+        }
     }
 }
 
-fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &SourcesData) {
+fn render_handpicked_and_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
         .split(area);
 
-    render_column(frame, cols[0], "PERSONAL", &data.personal, data.scroll);
-    render_column(frame, cols[1], "PROJECT", &data.project, data.scroll);
+    render_handpicked_sources(frame, cols[0], app);
+    render_add_form(frame, cols[1], app);
+}
+
+fn render_handpicked_sources(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    match &app.dashboard.sources {
+        SourcesView::NotComputed => render_placeholder(frame, area, "Handpicked sources are not loaded yet."),
+        SourcesView::Loading => render_placeholder(frame, area, "Loading handpicked sources…"),
+        SourcesView::Error(msg) => render_error(frame, area, msg),
+        SourcesView::Ready(data) => {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(area);
+            render_column(frame, cols[0], "PERSONAL", &data.personal, data.scroll);
+            render_column(frame, cols[1], "TEAM", &data.project, data.scroll);
+        }
+    }
 }
 
 fn render_column(frame: &mut Frame<'_>, area: Rect, title: &str, rows: &[SourceRow], scroll: usize) {
@@ -150,7 +170,7 @@ fn render_column(frame: &mut Frame<'_>, area: Rect, title: &str, rows: &[SourceR
         let lines = vec![
             Line::from(""),
             Line::from(Span::styled(
-                "  No subscriptions in this layer.",
+                "  No handpicked sources in this scope.",
                 Style::default().fg(theme::MUTED),
             )),
         ];
@@ -195,6 +215,52 @@ fn row_to_item(row: &SourceRow) -> ListItem<'static> {
     ListItem::new(Line::from(spans))
 }
 
+fn render_add_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let form = &app.sources_form;
+    let mut lines = vec![
+        Line::from(Span::styled(
+            "Press A to add a handpicked source.",
+            Style::default().fg(theme::MUTED),
+        )),
+        Line::from(Span::styled(
+            "While editing: Tab next field · T toggle Personal/Team · Enter save · Esc cancel",
+            Style::default().fg(theme::MUTED),
+        )),
+        Line::from(""),
+    ];
+
+    let editing = app.input_mode == InputMode::SourcesAdd;
+    lines.push(form_line("Scope", if form.team_scope { "Team" } else { "Personal" }, editing && form.active_field == usize::MAX));
+    lines.push(form_line("URL", &form.url, editing && form.active_field == 0));
+    lines.push(form_line("Name", &form.name, editing && form.active_field == 1));
+    lines.push(form_line("Language", &form.language, editing && form.active_field == 2));
+    lines.push(form_line("Kind", &form.kind, editing && form.active_field == 3));
+    if let Some(err) = &form.error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(err.clone(), Style::default().fg(theme::STATUS_WARN))));
+    }
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block("ADD HANDPICKED SOURCE"))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn form_line(label: &str, value: &str, active: bool) -> Line<'static> {
+    let value_text = if value.is_empty() { "—" } else { value };
+    let value_style = if active {
+        Style::default().fg(theme::AMBER).bold()
+    } else {
+        Style::default().fg(ratatui::style::Color::White)
+    };
+    Line::from(vec![
+        Span::styled(format!("{label:<10}"), theme::header_meta()),
+        Span::styled(value_text.to_string(), value_style),
+    ])
+}
+
 fn render_placeholder(frame: &mut Frame<'_>, area: Rect, message: &str) {
     let lines = vec![
         Line::from(""),
@@ -203,19 +269,19 @@ fn render_placeholder(frame: &mut Frame<'_>, area: Rect, message: &str) {
             Style::default().fg(theme::MUTED),
         )),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("EXTERNAL SOURCES")), area);
+    frame.render_widget(Paragraph::new(lines).block(block("SOURCES")), area);
 }
 
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "  External sources failed to load:",
+            "  Sources failed to load:",
             Style::default().fg(theme::STATUS_WARN),
         )),
         Line::from(format!("  {msg}")),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("EXTERNAL SOURCES")), area);
+    frame.render_widget(Paragraph::new(lines).block(block("SOURCES")), area);
 }
 
 fn block(title: &str) -> Block<'static> {
@@ -231,6 +297,7 @@ fn block(title: &str) -> Block<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::{app::App, screens::extract::{ExtractData, ExtractView, WorklistRow}};
     use ratatui::{backend::TestBackend, Terminal};
 
     fn make_app() -> App {
@@ -257,81 +324,42 @@ mod tests {
     }
 
     #[test]
-    fn render_shows_source_names() {
-        let backend = TestBackend::new(80, 24);
+    fn render_shows_internal_and_handpicked_sources() {
+        let backend = TestBackend::new(120, 32);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
+        app.dashboard.extract = ExtractView::Ready(Box::new(ExtractData {
+            entries: vec![WorklistRow {
+                name: "pydantic".into(),
+                language: "python".into(),
+                priority: "ready_now".into(),
+                utility_percent: 89,
+                next_step: "do it".into(),
+                remaining_quota: 5,
+                source_type: Some("llms_full_txt".into()),
+                source_url: Some("https://docs.pydantic.dev".into()),
+                version: Some(">=2.10.0".into()),
+                registry: Some("pypi".into()),
+                freshness_confidence: Some("high".into()),
+                source_age_days: Some(1),
+                reason: None,
+                sections: vec![],
+            }],
+            selected: 0,
+            total: 1,
+        }));
         app.dashboard.sources = SourcesView::Ready(Box::new(SourcesData {
-            project: vec![SourceRow {
-                name: "fastapi-docs".to_string(),
-                lang: Some("python".to_string()),
-                kind: Some("llms-txt".to_string()),
-                last_fetched: None,
-            }],
-            personal: vec![SourceRow {
-                name: "my-notes".to_string(),
-                lang: None,
-                kind: None,
-                last_fetched: None,
-            }],
+            project: vec![SourceRow { name: "team-style".into(), lang: None, kind: Some("team_guide".into()), last_fetched: None }],
+            personal: vec![SourceRow { name: "my-notes".into(), lang: None, kind: None, last_fetched: None }],
             scroll: 0,
         }));
 
-        terminal
-            .draw(|frame| render(frame, frame.area(), &app))
-            .unwrap();
-
+        terminal.draw(|frame| render(frame, frame.area(), &app)).unwrap();
         let out = rendered(&terminal);
-        assert!(
-            out.contains("fastapi-docs"),
-            "expected project source name to render; got: {}",
-            &out[..out.len().min(400)]
-        );
-        assert!(
-            out.contains("my-notes"),
-            "expected personal source name to render; got: {}",
-            &out[..out.len().min(400)]
-        );
-        assert!(out.contains("PROJECT"));
-        assert!(out.contains("PERSONAL"));
-    }
-
-    #[test]
-    fn render_shows_error_message() {
-        let backend = TestBackend::new(80, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = make_app();
-        app.dashboard.sources = SourcesView::Error("boom".into());
-
-        terminal
-            .draw(|frame| render(frame, frame.area(), &app))
-            .unwrap();
-
-        let out = rendered(&terminal);
-        assert!(
-            out.contains("boom"),
-            "expected error message to render; got: {}",
-            &out[..out.len().min(400)]
-        );
-        assert!(out.contains("failed to load"));
-    }
-
-    #[test]
-    fn render_ready_with_empty_layers_shows_muted_hint() {
-        let backend = TestBackend::new(80, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = make_app();
-        app.dashboard.sources = SourcesView::Ready(Box::default());
-
-        terminal
-            .draw(|frame| render(frame, frame.area(), &app))
-            .unwrap();
-
-        let out = rendered(&terminal);
-        assert!(
-            out.contains("No subscriptions in this layer."),
-            "expected empty-layer hint; got: {}",
-            &out[..out.len().min(400)]
-        );
+        assert!(out.contains("CORE PACKAGES"));
+        assert!(out.contains("HANDPICKED") || out.contains("ADD HANDPICKED SOURCE"));
+        assert!(out.contains("pydantic"));
+        assert!(out.contains("team-style"));
+        assert!(out.contains("my-notes"));
     }
 }

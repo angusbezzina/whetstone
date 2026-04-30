@@ -60,9 +60,7 @@ pub struct WorklistRow {
     pub priority: String,
     pub utility_percent: u8,
     pub next_step: String,
-    pub existing_rules: u32,
     pub remaining_quota: u32,
-    pub max_rules_per_dep: u32,
     pub source_type: Option<String>,
     pub source_url: Option<String>,
     pub version: Option<String>,
@@ -70,7 +68,15 @@ pub struct WorklistRow {
     pub freshness_confidence: Option<String>,
     pub source_age_days: Option<i64>,
     pub reason: Option<String>,
-    pub sections: Vec<String>,
+    pub sections: Vec<SectionRow>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SectionRow {
+    pub name: String,
+    pub kind: String,
+    pub url: String,
+    pub bytes: u64,
 }
 
 pub fn load(project_dir: &Path) -> ExtractView {
@@ -106,15 +112,9 @@ fn project_entries(handoff: &Value) -> Vec<WorklistRow> {
                 e.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0),
             ),
             next_step: str_field(e, "next_step"),
-            existing_rules: e.get("existing_rules").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
             remaining_quota: e
                 .get("quota")
                 .and_then(|v| v.get("remaining"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
-            max_rules_per_dep: e
-                .get("quota")
-                .and_then(|v| v.get("max_rules_per_dep"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
             source_type: opt_str_field(e, "source_type"),
@@ -134,31 +134,39 @@ fn project_entries(handoff: &Value) -> Vec<WorklistRow> {
             sections: e
                 .get("sections")
                 .and_then(|v| v.as_array())
-                .map(|sections| sections.iter().map(section_summary).collect())
+                .map(|sections| sections.iter().map(section_row).collect())
                 .unwrap_or_default(),
         })
         .collect()
 }
 
-fn section_summary(section: &Value) -> String {
-    let kind = section
+fn section_row(section: &Value) -> SectionRow {
+    let raw_name = section
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("section");
+    let raw_kind = section
         .get("source_kind")
         .and_then(|v| v.as_str())
-        .or_else(|| section.get("type").and_then(|v| v.as_str()))
-        .map(theme::humanize_token)
-        .unwrap_or_else(|| "Unknown".to_string());
+        .unwrap_or("document");
+    let mut kind = theme::humanize_token(raw_kind);
+    let name = theme::humanize_token(raw_name);
+    if kind == name {
+        kind = "Document".to_string();
+    }
     let bytes = section.get("bytes").and_then(|v| v.as_u64()).unwrap_or(0);
     let url = section
         .get("url")
         .and_then(|v| v.as_str())
-        .map(|url| truncate(url, 64))
-        .unwrap_or_else(|| "no linked section".to_string());
-    let published = section
-        .get("published_at")
-        .and_then(|v| v.as_str())
-        .map(|v| format!(" · {v}"))
-        .unwrap_or_default();
-    format!("{kind} · {bytes} bytes{published} · {url}")
+        .unwrap_or("no linked section")
+        .to_string();
+
+    SectionRow {
+        name,
+        kind,
+        url,
+        bytes,
+    }
 }
 
 fn str_field(entry: &Value, key: &str) -> String {
@@ -172,6 +180,7 @@ fn opt_str_field(entry: &Value, key: &str) -> Option<String> {
     entry.get(key).and_then(|v| v.as_str()).map(String::from)
 }
 
+#[allow(dead_code)]
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     match &app.dashboard.extract {
         ExtractView::NotComputed => render_empty(
@@ -190,6 +199,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     }
 }
 
+#[allow(dead_code)]
 fn render_empty(frame: &mut Frame<'_>, area: Rect, message: &str) {
     let lines = vec![
         Line::from(""),
@@ -198,6 +208,7 @@ fn render_empty(frame: &mut Frame<'_>, area: Rect, message: &str) {
     frame.render_widget(Paragraph::new(lines).block(block("INTERNAL SOURCES")), area);
 }
 
+#[allow(dead_code)]
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
     let mut lines: Vec<Line> = vec![
         Line::from(""),
@@ -218,6 +229,7 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
     frame.render_widget(Paragraph::new(lines).block(block("INTERNAL SOURCES")), area);
 }
 
+#[allow(dead_code)]
 fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
@@ -228,7 +240,7 @@ fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     render_detail(frame, cols[1], data);
 }
 
-fn render_worklist(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
+pub fn render_worklist(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     let width = area.width.saturating_sub(4) as usize;
     let visible = (area.height.saturating_sub(2) / 2).max(1) as usize;
     let (start, end) = window_bounds(data.selected, data.entries.len(), visible);
@@ -252,22 +264,18 @@ fn render_worklist(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
                 Span::styled(format!("{rank:>3}.  "), Style::default().fg(theme::MUTED)),
                 Span::styled(truncate(&row.name, width.saturating_sub(14)), name_style),
             ]);
-            let meta_line = Line::from(vec![
-                Span::styled(
-                    format!("{:<12}", display_language(&row.language)),
-                    Style::default().fg(theme::MUTED),
-                ),
-                Span::raw(" · "),
-                Span::styled(
-                    format!("{}% Useful", row.utility_percent),
-                    Style::default().fg(utility_color).bold(),
-                ),
-                Span::raw(" · "),
-                Span::styled(
-                    recommendation_label(&row.priority),
-                    Style::default().fg(priority_color(&row.priority)),
-                ),
-            ]);
+            let mut meta_spans = vec![Span::styled(
+                format!("{:<12}", display_language(&row.language)),
+                Style::default().fg(theme::MUTED),
+            )];
+            if let Some(source_type) = &row.source_type {
+                meta_spans.push(Span::raw(" · "));
+                meta_spans.push(Span::styled(
+                    theme::humanize_token(source_type),
+                    Style::default().fg(utility_color),
+                ));
+            }
+            let meta_line = Line::from(meta_spans);
 
             ListItem::new(vec![title_line, meta_line])
         })
@@ -277,7 +285,7 @@ fn render_worklist(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     frame.render_widget(List::new(items).block(block(&title)), area);
 }
 
-fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
+pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     let Some(row) = data.entries.get(data.selected) else {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
@@ -296,18 +304,17 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
             Span::styled(row.name.clone(), Style::default().fg(theme::AMBER).bold()),
         ]),
         detail_line("Language", &display_language(&row.language)),
-        detail_line(
-            "Utility",
-            &format!("{}% Useful", row.utility_percent),
-        ),
-        detail_line("Recommendation", recommendation_label(&row.priority)),
-        detail_line(
-            "Rules",
-            &format!(
-                "{} existing · {} remaining of {}",
-                row.existing_rules, row.remaining_quota, row.max_rules_per_dep
+        Line::from(vec![
+            Span::styled("Utility: ", theme::header_meta()),
+            Span::styled(
+                format!("{}%", row.utility_percent),
+                Style::default()
+                    .fg(theme::utility_color(row.utility_percent))
+                    .bold(),
             ),
-        ),
+        ]),
+        detail_line("Recommendation", recommendation_label(&row.priority)),
+        detail_line("Rules", &row.remaining_quota.to_string()),
         Line::from(""),
         Line::from(Span::styled("Source quality", theme::header_title())),
     ];
@@ -324,7 +331,7 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     if let Some(confidence) = &row.freshness_confidence {
         let mut value = theme::humanize_token(confidence);
         if let Some(days) = row.source_age_days {
-            value.push_str(&format!(" · {days}d old"));
+            value.push_str(&format!(" ({days}d old)"));
         }
         lines.push(detail_line("Freshness", &value));
     }
@@ -347,7 +354,13 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
         )));
     } else {
         for section in row.sections.iter().take(5) {
-            lines.push(Line::from(format!("• {}", section)));
+            lines.push(Line::from(format!(
+                "• {}/{} ({}) [{} bytes]",
+                section.name,
+                section.kind,
+                section.url,
+                section.bytes
+            )));
         }
         if row.sections.len() > 5 {
             lines.push(Line::from(Span::styled(
@@ -491,16 +504,6 @@ fn detail_line(label: &str, value: &str) -> Line<'static> {
     ])
 }
 
-fn priority_color(priority: &str) -> ratatui::style::Color {
-    match priority {
-        "ready_now" => theme::STATUS_OK,
-        "resolved_low" => theme::AMBER,
-        "pending" => theme::MUTED,
-        "failed" => theme::STATUS_WARN,
-        _ => theme::MUTED,
-    }
-}
-
 fn block(title: &str) -> Block<'static> {
     Block::default()
         .title(Span::styled(format!(" {title} "), theme::header_title()))
@@ -553,9 +556,7 @@ mod tests {
                     priority: "ready_now".into(),
                     utility_percent: 89,
                     next_step: "Read the linked source, draft up to 3 rule(s)".into(),
-                    existing_rules: 2,
                     remaining_quota: 3,
-                    max_rules_per_dep: 5,
                     source_type: Some("llms_full_txt".into()),
                     source_url: Some("https://fastapi.tiangolo.com".into()),
                     version: Some("1.0.0".into()),
@@ -563,7 +564,12 @@ mod tests {
                     freshness_confidence: Some("high".into()),
                     source_age_days: Some(12),
                     reason: None,
-                    sections: vec!["Guide · 1200 bytes · https://example.com/guide".into()],
+                    sections: vec![SectionRow {
+                        name: "Guide".into(),
+                        kind: "Document".into(),
+                        url: "https://example.com/guide".into(),
+                        bytes: 1200,
+                    }],
                 },
                 WorklistRow {
                     name: "react".into(),
@@ -571,9 +577,7 @@ mod tests {
                     priority: "resolved_low".into(),
                     utility_percent: 55,
                     next_step: "Source is llms_txt — proceed carefully".into(),
-                    existing_rules: 0,
                     remaining_quota: 5,
-                    max_rules_per_dep: 5,
                     source_type: Some("llms_txt".into()),
                     source_url: Some("https://react.dev".into()),
                     version: Some("19.0.0".into()),
@@ -599,7 +603,7 @@ mod tests {
             .collect();
 
         assert!(rendered.contains("CORE PACKAGES"));
-        assert!(rendered.contains("89% Useful"));
+        assert!(rendered.contains("Llms Full Txt") || rendered.contains("LLMS"));
         assert!(rendered.contains("fastapi"));
         assert!(rendered.contains("react"));
     }

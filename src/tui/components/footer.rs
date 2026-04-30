@@ -18,11 +18,10 @@ pub type Hint = (&'static str, &'static str);
 
 const FULL_HINTS: &[Hint] = &[
     ("1", "HOME"),
-    ("2", "INTERNAL SOURCES"),
-    ("3", "EXTERNAL SOURCES"),
-    ("4", "RULES"),
-    ("5", "VIOLATIONS"),
-    ("6", "DEBT"),
+    ("2", "SOURCES"),
+    ("3", "RULES"),
+    ("4", "VIOLATIONS"),
+    ("5", "DEBT"),
     ("?", "HELP"),
     ("ESC", "QUIT"),
     ("Q", "QUIT"),

@@ -165,7 +165,6 @@ pub fn view(frame: &mut Frame<'_>, app: &App) {
     match app.screen {
         Screen::Dashboard => screens::dashboard::render(frame, body, app),
         Screen::Result => screens::result::render(frame, body, app),
-        Screen::Extract => screens::extract::render(frame, body, app),
         Screen::Sources => screens::sources::render(frame, body, app),
         Screen::Rules => screens::rules::render(frame, body, app),
         Screen::Check => screens::check::render(frame, body, app),

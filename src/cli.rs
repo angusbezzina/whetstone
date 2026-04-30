@@ -2612,7 +2612,7 @@ fn success_screen_for_command(command: &Commands) -> Option<tui::msg::Screen> {
             hooks,
             ci,
             ..
-        } if !detect_only && !personal && !hooks && !ci => Some(Screen::Extract),
+        } if !detect_only && !personal && !hooks && !ci => Some(Screen::Sources),
         Commands::SetSources { .. } => Some(Screen::Sources),
         Commands::Status {
             report,
@@ -2627,7 +2627,7 @@ fn success_screen_for_command(command: &Commands) -> Option<tui::msg::Screen> {
                 Some(Screen::Dashboard)
             }
         }
-        Commands::Extract { action: None, .. } => Some(Screen::Extract),
+        Commands::Extract { action: None, .. } => Some(Screen::Sources),
         Commands::Scan { .. } => Some(Screen::Check),
         Commands::Reinit { .. } => Some(Screen::Dashboard),
         Commands::Report { .. } => None,
@@ -2642,13 +2642,13 @@ fn success_screen_for_command(command: &Commands) -> Option<tui::msg::Screen> {
             | RulesAction::List { .. }
             | RulesAction::Review { .. }
             | RulesAction::Show { .. } => Some(Screen::Rules),
-            RulesAction::Worklist { .. } => Some(Screen::Extract),
+            RulesAction::Worklist { .. } => Some(Screen::Sources),
             _ => None,
         },
         Commands::Review {
             action: Some(ReviewAction::Worklist { .. }),
             ..
-        } => Some(Screen::Extract),
+        } => Some(Screen::Sources),
         _ => None,
     }
 }

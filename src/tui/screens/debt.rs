@@ -161,10 +161,6 @@ fn hotspot_item(selected: bool, hotspot: &DebtHotspotRow, width: usize) -> ListI
                 Style::default().fg(if selected { theme::AMBER } else { theme::MUTED }),
             ),
             Span::styled(
-                format!("#{:<3} ", hotspot.rank),
-                Style::default().fg(theme::MUTED),
-            ),
-            Span::styled(
                 format!(
                     "[{}/{}]  ",
                     theme::humanize_token(&hotspot.category),
@@ -173,13 +169,12 @@ fn hotspot_item(selected: bool, hotspot: &DebtHotspotRow, width: usize) -> ListI
                 Style::default().fg(theme::AMBER),
             ),
             Span::styled(
-                format!("Impact {:.2}  ", hotspot.score),
+                format!("{} (Impact: {}%)", truncate(&hotspot.compact_title, title_w), hotspot.impact_percent),
                 Style::default().fg(theme::debt_label_color("moderate")).bold(),
             ),
-            Span::raw(truncate(&hotspot.title, title_w)),
         ]),
         Line::from(Span::styled(
-            format!("      Next: {}", truncate(&hotspot.next_action, width.saturating_sub(11))),
+            format!("      {}", truncate(&hotspot.primary_file, width.saturating_sub(6))),
             Style::default().fg(theme::MUTED),
         )),
     ])
@@ -207,7 +202,7 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
         detail_line("Confidence", &theme::humanize_token(&hotspot.confidence)),
         detail_line(
             "Impact Score",
-            &format!("{:.2} (higher means more urgent in this report)", hotspot.score),
+            &format!("{}% (relative to the highest-impact finding in this report)", hotspot.impact_percent),
         ),
         detail_line("File Count", &hotspot.files.len().to_string()),
         Line::from(""),

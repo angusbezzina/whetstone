@@ -20,11 +20,10 @@ use crate::tui::{
 pub fn hints() -> &'static [footer::Hint] {
     &[
         ("1", "HOME"),
-        ("2", "INTERNAL SOURCES"),
-        ("3", "EXTERNAL SOURCES"),
-        ("4", "RULES"),
-        ("5", "VIOLATIONS"),
-        ("6", "DEBT"),
+        ("2", "SOURCES"),
+        ("3", "RULES"),
+        ("4", "VIOLATIONS"),
+        ("5", "DEBT"),
         ("?", "HELP"),
         ("Q", "QUIT"),
     ]
@@ -237,7 +236,7 @@ fn render_debt_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Line::from(""),
             Line::from(vec![
                 Span::styled("Press ", Style::default().fg(theme::MUTED)),
-                Span::styled("6", theme::header_meta()),
+                Span::styled("5", theme::header_meta()),
                 Span::raw(" to open the debt screen."),
             ]),
         ],
