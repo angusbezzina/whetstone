@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-04-30
+
+### Changed
+- **Sources are now unified in the TUI.** A single Sources screen combines internal dependency/doc sources with handpicked personal and team sources, instead of forcing users to move between separate tabs.
+- **The TUI now supports lightweight authoring.** Users can add a handpicked source from the Sources screen and add a new rule from the Rules screen, with explicit Personal vs Team toggles for both flows.
+- **Internal-source and debt presentation are tighter.** Internal source lists no longer repeat utility/recommendation text on the left, detail formatting is cleaner and more structured, and debt rows now emphasize the hotspot label, impact percentage, and primary file path more clearly.
+
 ## [0.8.5] - 2026-04-30
 
 ### Changed
