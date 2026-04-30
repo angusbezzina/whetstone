@@ -15,8 +15,9 @@ use crate::tui::{
     theme,
 };
 
+#[allow(dead_code)]
 pub fn hints() -> &'static [footer::Hint] {
-    &[("1", "HOME"), ("R", "RECOMPUTE"), ("?", "HELP"), ("Q", "QUIT")]
+    &[("1", "HOME"), ("?", "HELP"), ("Q", "QUIT")]
 }
 
 impl DebtView {
@@ -50,7 +51,7 @@ impl DebtView {
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     match &app.dashboard.debt {
-        DebtView::NotComputed => render_empty(frame, area, "Debt report not computed yet. Press R to compute."),
+        DebtView::NotComputed => render_empty(frame, area, "Debt report not computed yet."),
         DebtView::Loading => render_empty(frame, area, "Computing debt…"),
         DebtView::Error(msg) => render_error(frame, area, msg),
         DebtView::Ready(summary) if summary.hotspots.is_empty() => render_empty(
@@ -80,7 +81,7 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
         Line::from(format!("  {msg}")),
         Line::from(""),
         Line::from(Span::styled(
-            "  Press R to retry.",
+            "  Exit and reopen the TUI to retry.",
             Style::default().fg(theme::MUTED),
         )),
     ];
@@ -105,7 +106,7 @@ fn render_ready(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
 
 fn render_header(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
     let lines = vec![Line::from(vec![
-        Span::styled("Debt Label  ", theme::header_meta()),
+        Span::styled("Debt  ", theme::header_meta()),
         Span::styled(
             theme::humanize_token(&summary.debt_label),
             Style::default()
@@ -119,13 +120,13 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
         Span::styled("Dead  ", theme::header_meta()),
         Span::raw(summary.by_dead.to_string()),
         Span::raw("   "),
-        Span::styled("Dup  ", theme::header_meta()),
+        Span::styled("Duplicate  ", theme::header_meta()),
         Span::raw(summary.by_dup.to_string()),
         Span::raw("   "),
-        Span::styled("Deps  ", theme::header_meta()),
+        Span::styled("Dependency  ", theme::header_meta()),
         Span::raw(summary.by_deps.to_string()),
         Span::raw("   "),
-        Span::styled("Hot  ", theme::header_meta()),
+        Span::styled("Hotspot  ", theme::header_meta()),
         Span::raw(summary.by_hotspots.to_string()),
     ])];
     frame.render_widget(Paragraph::new(lines).block(block("SUMMARY")), area);
@@ -145,23 +146,22 @@ fn render_hotspots(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView)
         .map(|(i, h)| hotspot_item(i == summary.selected, h, width))
         .collect();
 
-    let title = format!(
-        "TOP HOTSPOTS ({} shown, {} total findings)",
-        summary.hotspots.len(),
-        summary.finding_count
-    );
+    let title = format!("TOP HOTSPOTS ({} total findings)", summary.finding_count);
     frame.render_widget(List::new(items).block(block(&title)), area);
 }
 
 fn hotspot_item(selected: bool, hotspot: &DebtHotspotRow, width: usize) -> ListItem<'static> {
-    let title_w = width.saturating_sub(34).max(16);
+    let title_w = width.saturating_sub(30).max(16);
     let prefix = if selected { "▶ " } else { "  " };
 
     ListItem::new(vec![
         Line::from(vec![
-            Span::styled(prefix, Style::default().fg(if selected { theme::AMBER } else { theme::MUTED })),
             Span::styled(
-                format!("{:>2}. ", hotspot.rank),
+                prefix,
+                Style::default().fg(if selected { theme::AMBER } else { theme::MUTED }),
+            ),
+            Span::styled(
+                format!("#{:<3} ", hotspot.rank),
                 Style::default().fg(theme::MUTED),
             ),
             Span::styled(
@@ -173,13 +173,13 @@ fn hotspot_item(selected: bool, hotspot: &DebtHotspotRow, width: usize) -> ListI
                 Style::default().fg(theme::AMBER),
             ),
             Span::styled(
-                format!("Score {:.2}  ", hotspot.score),
-                Style::default().fg(theme::MUTED),
+                format!("Impact {:.2}  ", hotspot.score),
+                Style::default().fg(theme::debt_label_color("moderate")).bold(),
             ),
             Span::raw(truncate(&hotspot.title, title_w)),
         ]),
         Line::from(Span::styled(
-            format!("      → {}", truncate(&hotspot.next_action, width.saturating_sub(8))),
+            format!("      Next: {}", truncate(&hotspot.next_action, width.saturating_sub(11))),
             Style::default().fg(theme::MUTED),
         )),
     ])
@@ -201,12 +201,15 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
     let mut lines = vec![
         Line::from(Span::styled(hotspot.title.clone(), Style::default().fg(theme::AMBER).bold())),
         Line::from(""),
-        detail_line("Id", &hotspot.id),
-        detail_line("Rule", &hotspot.rule_id),
+        detail_line("Hotspot ID", &hotspot.id),
+        detail_line("Rule ID", &hotspot.rule_id),
         detail_line("Category", &theme::humanize_token(&hotspot.category)),
         detail_line("Confidence", &theme::humanize_token(&hotspot.confidence)),
-        detail_line("Score", &format!("{:.2}", hotspot.score)),
-        detail_line("Files", &hotspot.files.len().to_string()),
+        detail_line(
+            "Impact Score",
+            &format!("{:.2} (higher means more urgent in this report)", hotspot.score),
+        ),
+        detail_line("File Count", &hotspot.files.len().to_string()),
         Line::from(""),
         Line::from(Span::styled("Why this was flagged", theme::header_title())),
     ];
@@ -231,7 +234,10 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
     }
 
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled("Next action", theme::header_title())));
+    lines.push(Line::from(Span::styled(
+        "Recommended next action",
+        theme::header_title(),
+    )));
     lines.push(Line::from(hotspot.next_action.clone()));
 
     frame.render_widget(
@@ -244,7 +250,7 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
 
 fn detail_line(label: &str, value: &str) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{label:<12}"), theme::header_meta()),
+        Span::styled(format!("{label}: "), theme::header_meta()),
         Span::raw(value.to_string()),
     ])
 }
