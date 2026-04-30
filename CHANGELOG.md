@@ -6,6 +6,13 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-04-30
+
+### Changed
+- **The TUI navigation is simpler and clearer.** Drift no longer has its own screen; Home now carries the reinit signal directly, and the menu is reordered to Home, Internal Sources, External Sources, Rules, Violations, and Debt.
+- **Internal and external source views are easier to understand.** Rule extraction is now framed as **Internal Sources**, custom docs stay under **External Sources**, utility percentages now fall back correctly from source scores instead of showing false `0%` values, and package recommendations use more actionable wording.
+- **Debt formatting is clearer.** Hotspot rows now emphasize impact more clearly, detail formatting is more readable, and the TUI no longer advertises a refresh action that does not exist.
+
 ## [0.8.4] - 2026-04-29
 
 ### Changed
