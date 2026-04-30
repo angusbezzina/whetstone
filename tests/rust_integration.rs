@@ -38,14 +38,25 @@ fn fixtures_dir() -> PathBuf {
 
 fn copy_dir_recursive(src: &Path, dst: &Path) {
     std::fs::create_dir_all(dst).unwrap();
-    for entry in std::fs::read_dir(src).unwrap() {
+    let Ok(entries) = std::fs::read_dir(src) else {
+        return;
+    };
+    for entry in entries {
         let entry = entry.unwrap();
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
         if src_path.is_dir() {
             copy_dir_recursive(&src_path, &dst_path);
         } else {
-            std::fs::copy(&src_path, &dst_path).unwrap();
+            match std::fs::copy(&src_path, &dst_path) {
+                Ok(_) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => panic!(
+                    "failed to copy {} -> {}: {err}",
+                    src_path.display(),
+                    dst_path.display()
+                ),
+            }
         }
     }
 }
