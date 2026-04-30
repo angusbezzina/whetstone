@@ -6,6 +6,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-04-30
+
+### Changed
+- **Rules authoring is simpler in the TUI.** The Add Rule screen now fully replaces the normal Rules view while editing, emphasizes pressing `A` to add a custom rule, and focuses the form on scope, name, language, and freeform rule text.
+- **Debt detail and dashboard summaries are tighter.** Debt now uses High/Moderate/Low impact labels in the TUI, trims the detail view to the most useful fields, and the dashboard now concentrates on overall health, sources, rules, violations, and only significant debt.
+
 ## [0.8.7] - 2026-04-30
 
 ### Changed
