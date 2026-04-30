@@ -4,6 +4,19 @@ All notable changes to Whetstone are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.8.4] - 2026-04-29
+
+### Changed
+- **The TUI now behaves more like a living report card.** The dashboard centers on an overall health score with an explicit note about how it is calculated, and breaks the repo down into focused Rules, Violations, Drift, and Debt panels so operators can understand the current state at a glance.
+- **Debt and extraction views are far more actionable.** Debt now keeps all findings in the screen and adds a richer right-side detail pane for the selected hotspot. Extract is now **RULE EXTRACTION**, the package list is labeled **CORE PACKAGES**, and utility is presented as a meaningful percentage with clearer source-quality and next-step detail.
+- **The Report tab is gone.** Instead, `wh status --report` and `wh report` now write `whetstone/report.md`, while `--pr-comment` still emits markdown to stdout for CI and PR tooling.
+- **Violations and sources are clearer.** The Check page is now labeled **VIOLATIONS**, summary bars capitalize their labels, and the Sources screen now shows Personal on the left and Project on the right.
+
+### Docs
+- Refreshed the README, skill docs, and workflow matrix so they better match the canonical `scan` / `rules` / `sources` / `actions` CLI surface and the new report-file behavior.
+
 ## Historical notes before v0.3.0
 
 ## [0.8.3] - 2026-04-29
