@@ -46,10 +46,11 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, hints: &[Hint], show_scroll: bo
         .saturating_sub(right_text.chars().count());
     let spacer = " ".repeat(spacer_len.max(1));
 
-    let mut spans: Vec<Span> = Vec::new();
-    spans.push(Span::raw(left_text));
-    spans.push(Span::raw(spacer));
-    spans.push(Span::raw(right_text));
+    let spans: Vec<Span> = vec![
+        Span::raw(left_text),
+        Span::raw(spacer),
+        Span::raw(right_text),
+    ];
 
     let block = Block::default()
         .borders(Borders::TOP)

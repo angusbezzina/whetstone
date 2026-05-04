@@ -36,6 +36,7 @@ pub fn key_hint_accent() -> Style {
     Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
 }
 
+#[allow(dead_code)]
 /// Dim white for the descriptive label that follows the key (`HOME`, `FILTER`).
 pub fn key_hint_label() -> Style {
     Style::default()

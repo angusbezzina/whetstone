@@ -379,7 +379,7 @@ pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     lines.push(Line::from(""));
     for reason in utility_reasons(row) {
         lines.push(Line::from(Span::styled(
-            format!("{reason}"),
+            reason.to_string(),
             Style::default().fg(theme::MUTED),
         )));
     }
