@@ -286,6 +286,10 @@ pub fn render_worklist(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
 }
 
 pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
+    render_detail_scrolled(frame, area, data, 0);
+}
+
+pub fn render_detail_scrolled(frame: &mut Frame<'_>, area: Rect, data: &ExtractData, scroll_y: u16) {
     let Some(row) = data.entries.get(data.selected) else {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
@@ -300,63 +304,66 @@ pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
 
     let mut lines: Vec<Line> = vec![
         kv_line(
+            area.width,
             "Package",
             &row.name,
             Style::default().fg(theme::AMBER).bold(),
         ),
-        detail_line("Language", &display_language(&row.language)),
+        detail_line(area.width, "Language", &display_language(&row.language)),
         kv_line(
+            area.width,
             "Utility",
             utility_label(row.utility_percent),
             Style::default()
                 .fg(theme::utility_color(row.utility_percent))
                 .bold(),
         ),
-        detail_line("Recommendation", recommendation_label(&row.priority)),
-        detail_line("Rules", &row.remaining_quota.to_string()),
-        Line::from(""),
-        Line::from(Span::styled("Source quality", theme::header_title())),
-        Line::from(""),
+        detail_line(area.width, "Recommendation", recommendation_label(&row.priority)),
+        detail_line(area.width, "Rules", &row.remaining_quota.to_string()),
     ];
 
+    let mut source_quality: Vec<Line> = Vec::new();
+
     if let Some(source_type) = &row.source_type {
-        lines.push(detail_line("Source Type", &theme::humanize_token(source_type)));
+        source_quality.push(detail_line(area.width, "Source Type", &theme::humanize_token(source_type)));
     }
     if let Some(version) = &row.version {
-        lines.push(detail_line("Version", version));
+        source_quality.push(detail_line(area.width, "Version", version));
     }
     if let Some(registry) = &row.registry {
-        lines.push(detail_line("Registry", &theme::humanize_token(registry)));
+        source_quality.push(detail_line(area.width, "Registry", &theme::humanize_token(registry)));
     }
     if let Some(confidence) = &row.freshness_confidence {
         let mut value = theme::humanize_token(confidence);
         if let Some(days) = row.source_age_days {
             value.push_str(&format!(" ({days}d old)"));
         }
-        lines.push(detail_line("Freshness", &value));
+        source_quality.push(detail_line(area.width, "Freshness", &value));
     }
     if let Some(url) = &row.source_url {
-        lines.push(detail_line("Docs", &truncate(url, 88)));
+        source_quality.push(detail_line(area.width, "Docs", &truncate(url, 88)));
     }
     if let Some(reason) = &row.reason {
-        lines.push(detail_line("Constraint", reason));
+        source_quality.push(detail_line(area.width, "Constraint", reason));
+    }
+    if !source_quality.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("Source quality", theme::header_title())));
+        lines.push(Line::from(""));
+        lines.extend(source_quality);
     }
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "Available source material",
-        theme::header_title(),
-    )));
-    lines.push(Line::from(""));
     if row.sections.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "No structured sections were captured for this package in the current handoff.",
-            Style::default().fg(theme::MUTED),
-        )));
     } else {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Available source material",
+            theme::header_title(),
+        )));
+        lines.push(Line::from(""));
         for section in row.sections.iter().take(5) {
             lines.push(Line::from(format!(
-                "{:<22} {:<14} {:<36} {} bytes",
+                "{} / {} ({}) [{} bytes]",
                 section.name,
                 section.kind,
                 section.url,
@@ -371,17 +378,20 @@ pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
         }
     }
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "Why this can produce rules",
-        theme::header_title(),
-    )));
-    lines.push(Line::from(""));
-    for reason in utility_reasons(row) {
+    let reasons = utility_reasons(row);
+    if !reasons.is_empty() {
+        lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            reason.to_string(),
-            Style::default().fg(theme::MUTED),
+            "Why this can produce rules",
+            theme::header_title(),
         )));
+        lines.push(Line::from(""));
+        for reason in reasons {
+            lines.push(Line::from(Span::styled(
+                reason,
+                Style::default().fg(theme::MUTED),
+            )));
+        }
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("Next step", theme::header_title())));
@@ -391,7 +401,8 @@ pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     frame.render_widget(
         Paragraph::new(lines)
             .block(block("DETAIL"))
-            .wrap(Wrap { trim: false }),
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_y, 0)),
         area,
     );
 }
@@ -406,9 +417,17 @@ fn utility_label(percent: u8) -> &'static str {
     }
 }
 
-fn kv_line(label: &str, value: &str, value_style: Style) -> Line<'static> {
+fn kv_line(width: u16, label: &str, value: &str, value_style: Style) -> Line<'static> {
+    let label_text = format!("{label}:");
+    let available = width.saturating_sub(4) as usize;
+    let spacer_len = available
+        .saturating_sub(label_text.chars().count())
+        .saturating_sub(value.chars().count())
+        .max(1);
+    let spacer = " ".repeat(spacer_len);
     Line::from(vec![
-        Span::styled(format!("{label:<18}"), theme::header_meta()),
+        Span::styled(label_text, theme::header_meta()),
+        Span::raw(spacer),
         Span::styled(value.to_string(), value_style),
     ])
 }
@@ -517,11 +536,8 @@ fn utility_from_score(score: f64) -> u8 {
     ((score / 140.0) * 100.0).round().clamp(0.0, 100.0) as u8
 }
 
-fn detail_line(label: &str, value: &str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(format!("{label:<12}"), theme::header_meta()),
-        Span::raw(value.to_string()),
-    ])
+fn detail_line(width: u16, label: &str, value: &str) -> Line<'static> {
+    kv_line(width, label, value, Style::default().fg(ratatui::style::Color::White))
 }
 
 fn block(title: &str) -> Block<'static> {

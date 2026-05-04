@@ -239,6 +239,10 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
         Line::from(hotspot.snippet.clone()),
     ]);
 
+    let viewport_lines = area.height.saturating_sub(2) as usize;
+    let max_scroll = lines.len().saturating_sub(viewport_lines) as u16;
+    let effective_scroll = summary.detail_scroll_y.min(max_scroll);
+
     frame.render_widget(
         Paragraph::new(lines)
             .block(block(if summary.detail_selected {
@@ -247,7 +251,7 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
                 "DETAIL"
             }))
             .wrap(Wrap { trim: false })
-            .scroll((summary.detail_scroll_y, 0)),
+            .scroll((effective_scroll, 0)),
         area,
     );
 }

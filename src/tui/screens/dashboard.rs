@@ -1,8 +1,6 @@
-//! Dashboard — compact landing summary for health, sources, rules,
-//! violations, and materially significant debt.
+//! Dashboard — a single scrollable repo report card.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
     style::{Style, Stylize},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
@@ -10,7 +8,7 @@ use ratatui::{
 };
 
 use crate::tui::{
-    app::{App, DebtView},
+    app::{App, DebtView, LanguageCounts},
     components::{footer, gauge},
     theme,
 };
@@ -24,252 +22,151 @@ pub fn hints() -> &'static [footer::Hint] {
         ("4", "VIOLATIONS"),
         ("5", "DEBT"),
         ("?", "HELP"),
-        ("Q", "QUIT"),
+        ("ESC", "QUIT"),
     ]
 }
 
-pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    if area.width < 80 || area.height < 20 {
-        render_compact(frame, area, app);
-        return;
-    }
-
-    let outer = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(10), Constraint::Length(5), Constraint::Min(7)])
-        .split(area);
-
-    if debt_is_significant(app) {
-        let debt_stack = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(5), Constraint::Length(5)])
-            .split(outer[2]);
-        let lower = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(34),
-                Constraint::Percentage(33),
-                Constraint::Percentage(33),
-            ])
-            .split(debt_stack[0]);
-
-        render_overall_health(frame, outer[0], app);
-        render_headline_cards(frame, outer[1], app);
-        render_sources_panel(frame, lower[0], app);
-        render_rules_panel(frame, lower[1], app);
-        render_violations_panel(frame, lower[2], app);
-        render_debt_panel(frame, debt_stack[1], app);
-        return;
-    }
-
-    let lower = {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(34),
-                Constraint::Percentage(33),
-                Constraint::Percentage(33),
-            ])
-            .split(outer[2])
-    };
-
-    render_overall_health(frame, outer[0], app);
-    render_headline_cards(frame, outer[1], app);
-    render_sources_panel(frame, lower[0], app);
-    render_rules_panel(frame, lower[1], app);
-    render_violations_panel(frame, lower[2], app);
-}
-
-fn render_headline_cards(frame: &mut Frame<'_>, area: Rect, app: &App) {
+pub fn render(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &App) {
     let d = &app.dashboard;
-    let total_violations = d.violation_counts.must + d.violation_counts.should + d.violation_counts.may;
-    let cards = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(34),
-            Constraint::Percentage(33),
-            Constraint::Percentage(33),
-        ])
-        .split(area);
-
-    frame.render_widget(
-        Paragraph::new(vec![pair_line("Sources", &d.sources_total.to_string())]).block(panel_block("AT A GLANCE")),
-        cards[0],
-    );
-    frame.render_widget(
-        Paragraph::new(vec![pair_line("Rules", &d.rules_total.to_string())]).block(panel_block("AT A GLANCE")),
-        cards[1],
-    );
-    frame.render_widget(
-        Paragraph::new(vec![pair_line("Violations", &total_violations.to_string())])
-            .block(panel_block("AT A GLANCE")),
-        cards[2],
-    );
-}
-
-fn render_overall_health(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let overall = overall_health_score(app);
-    let label = overall_health_label(overall);
-    let bar_width = (area.width as usize).saturating_sub(28).clamp(12, 42);
-
-    let lines = vec![
-        Line::from(vec![
-            Span::styled("Overall Health  ", theme::header_meta()),
-            Span::styled(
-                overall
-                    .map(|s| format!("{s} / 100"))
-                    .unwrap_or_else(|| "N/A".to_string()),
-                Style::default().fg(theme::AMBER).bold(),
-            ),
-            Span::raw("   "),
-            Span::styled(label, Style::default().fg(theme::AMBER).bold()),
-        ]),
+    let assessment = assessment_title(app);
+    let assessment_body = assessment_description(app);
+    let bar_width = area.width.saturating_sub(10) as usize;
+    let mut lines: Vec<Line> = vec![
+        section("OVERALL HEALTH"),
+        kv_line("Overall Health", &score_text(overall), Style::default().fg(theme::AMBER).bold()),
         gauge::render(overall, bar_width),
         Line::from(""),
-        Line::from(Span::styled(
-            "Calculated as the average of Rule System and Adherence when both are available. If Adherence is unavailable, Whetstone falls back to Rule System only.",
-            Style::default().fg(theme::MUTED),
-        )),
-    ];
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("OVERALL HEALTH"))
-            .wrap(Wrap { trim: false }),
-        area,
-    );
-}
-
-fn render_sources_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let d = &app.dashboard;
-    let lines = vec![
-        pair_line("Total", &d.sources_total.to_string()),
+        section("ASSESSMENT"),
+        Line::from(Span::styled(assessment.to_string(), Style::default().fg(theme::AMBER).bold())),
+        Line::from(Span::styled(assessment_body, Style::default().fg(theme::MUTED))),
         Line::from(""),
-        Line::from(Span::styled(
-            if d.sources_total == 0 {
-                "No sources discovered yet. Run wh init to populate dependency sources or add a handpicked source."
-            } else {
-                "Includes dependency sources plus handpicked personal/team sources."
-            },
-            Style::default().fg(theme::MUTED),
-        )),
+        section("SOURCES"),
+        detail_line("Total", &d.sources_total.to_string()),
+        detail_line("Internal", &d.sources_internal.to_string()),
+        detail_line("External", &d.sources_external.to_string()),
+        Line::from(""),
+        section("RULES"),
+        detail_line("Total", &d.rules_total.to_string()),
     ];
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("SOURCES"))
-            .wrap(Wrap { trim: false }),
-        area,
-    );
-}
 
-fn render_rules_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let d = &app.dashboard;
-    let lines = vec![pair_line("Total", &d.rules_total.to_string())];
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("RULES"))
-            .wrap(Wrap { trim: false }),
-        area,
-    );
-}
+    append_language_lines(&mut lines, &d.rules_by_language, "Rules by language");
 
-fn render_violations_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let d = &app.dashboard;
-    let total = d.violation_counts.must + d.violation_counts.should + d.violation_counts.may;
-    let lines = vec![pair_line("Total", &total.to_string())];
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("VIOLATIONS"))
-            .wrap(Wrap { trim: false }),
-        area,
-    );
-}
-
-fn render_debt_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let lines: Vec<Line<'static>> = match &app.dashboard.debt {
-        DebtView::NotComputed => vec![
-            Line::from(Span::styled(
-                "Debt has not been computed yet.",
-                Style::default().fg(theme::MUTED),
-            )),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("Press ", Style::default().fg(theme::MUTED)),
-                Span::styled("5", theme::header_meta()),
-                Span::raw(" to open the debt screen."),
-            ]),
-        ],
-        DebtView::Loading => vec![Line::from(Span::styled(
-            "Computing debt…",
-            Style::default().fg(theme::MUTED),
-        ))],
-        DebtView::Error(msg) => vec![
-            Line::from(Span::styled(
-                "Debt compute failed:",
-                Style::default().fg(theme::STATUS_WARN),
-            )),
-            Line::from(truncate(msg, area.width.saturating_sub(4) as usize)),
-        ],
-        DebtView::Ready(summary) => vec![
-            Line::from(vec![
-                Span::styled("Debt Label  ", theme::header_meta()),
-                Span::styled(
-                    theme::humanize_token(&summary.debt_label),
-                    Style::default()
-                        .fg(theme::debt_label_color(&summary.debt_label))
-                        .bold(),
-                ),
-            ]),
-            Line::from(vec![
-                pair_span("Total", &summary.finding_count.to_string()),
-                Span::raw("   ·   "),
-                pair_span("Dead", &summary.by_dead.to_string()),
-                Span::raw("   ·   "),
-                pair_span("Dup", &summary.by_dup.to_string()),
-                Span::raw("   ·   "),
-                pair_span("Deps", &summary.by_deps.to_string()),
-            ]),
-        ],
-    };
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("DEBT"))
-            .wrap(Wrap { trim: false }),
-        area,
-    );
-}
-
-fn render_compact(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let d = &app.dashboard;
-    let overall = overall_health_score(app);
-    let bar_width = (area.width as usize).saturating_sub(20).clamp(6, 24);
-    let total_violations = d.violation_counts.must + d.violation_counts.should + d.violation_counts.may;
-
-    let mut lines = vec![gauge_row("Overall Health", gauge::render(overall, bar_width))];
-    lines.push(Line::from(Span::styled(
-        "Average of Rule System and Adherence when both are available.",
-        Style::default().fg(theme::MUTED),
-    )));
     lines.push(Line::from(""));
-    lines.push(pair_line("Sources", &d.sources_total.to_string()));
-    lines.push(pair_line("Rules", &d.rules_total.to_string()));
-    lines.push(pair_line("Violations", &total_violations.to_string()));
+    lines.push(section("VIOLATIONS"));
+    let total_violations = d.violation_counts.must + d.violation_counts.should + d.violation_counts.may;
+    lines.push(detail_line("Total", &total_violations.to_string()));
+    append_language_count_lines(&mut lines, &d.violations_by_language, "Violations by language");
+
     if debt_is_significant(app) {
+        lines.push(Line::from(""));
+        lines.push(section("DEBT"));
         if let DebtView::Ready(summary) = &d.debt {
-            lines.push(pair_line(
-                "Debt",
-                &format!("{} ({})", theme::humanize_token(&summary.debt_label), summary.finding_count),
+            lines.push(detail_line(
+                "Assessment",
+                &theme::humanize_token(&summary.debt_label),
             ));
+            lines.push(detail_line("Findings", &summary.finding_count.to_string()));
+            for hotspot in summary.hotspots.iter().take(5) {
+                lines.push(Line::from(Span::styled(
+                    format!("• {} ({})", hotspot.compact_title, hotspot.impact_level),
+                    Style::default().fg(theme::MUTED),
+                )));
+            }
         }
     }
 
     frame.render_widget(
         Paragraph::new(lines)
             .block(panel_block("HOME"))
-            .wrap(Wrap { trim: false }),
+            .wrap(Wrap { trim: false })
+            .scroll((app.dashboard_scroll as u16, 0)),
         area,
     );
+}
+
+fn section(title: &str) -> Line<'static> {
+    Line::from(Span::styled(title.to_string(), theme::header_title()))
+}
+
+fn kv_line(label: &str, value: &str, style: Style) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label:<18}"), theme::header_meta()),
+        Span::styled(value.to_string(), style),
+    ])
+}
+
+fn detail_line(label: &str, value: &str) -> Line<'static> {
+    kv_line(label, value, Style::default().fg(ratatui::style::Color::White))
+}
+
+fn append_language_lines(lines: &mut Vec<Line<'static>>, by_language: &[(String, usize)], title: &str) {
+    lines.push(Line::from(Span::styled(title.to_string(), theme::header_meta())));
+    let counts = map_rules_by_language(by_language);
+    lines.push(detail_line("TS", &counts.ts.to_string()));
+    lines.push(detail_line("Rust", &counts.rust.to_string()));
+    lines.push(detail_line("Python", &counts.python.to_string()));
+    lines.push(detail_line("All", &counts.all.to_string()));
+}
+
+fn append_language_count_lines(lines: &mut Vec<Line<'static>>, counts: &LanguageCounts, title: &str) {
+    lines.push(Line::from(Span::styled(title.to_string(), theme::header_meta())));
+    lines.push(detail_line("TS", &counts.ts.to_string()));
+    lines.push(detail_line("Rust", &counts.rust.to_string()));
+    lines.push(detail_line("Python", &counts.python.to_string()));
+    lines.push(detail_line("All", &counts.all.to_string()));
+}
+
+fn map_rules_by_language(by_language: &[(String, usize)]) -> LanguageCounts {
+    let mut counts = LanguageCounts::default();
+    for (lang, count) in by_language {
+        match lang.as_str() {
+            "typescript" => counts.ts += *count,
+            "rust" => counts.rust += *count,
+            "python" => counts.python += *count,
+            _ => counts.all += *count,
+        }
+    }
+    counts
+}
+
+fn assessment_title(app: &App) -> &'static str {
+    if app.dashboard.rules_total == 0 {
+        "Uninitialized"
+    } else {
+        match overall_health_score(app).unwrap_or(0) {
+            85..=100 => "Healthy",
+            70..=84 => "Good",
+            50..=69 => "Needs Work",
+            _ => "At Risk",
+        }
+    }
+}
+
+fn assessment_description(app: &App) -> String {
+    if app.dashboard.rules_total == 0 {
+        return "Whetstone has not been initialized with an approved ruleset for this repo yet. Start by initializing or authoring the first rules.".to_string();
+    }
+
+    let total_violations = app.dashboard.violation_counts.must
+        + app.dashboard.violation_counts.should
+        + app.dashboard.violation_counts.may;
+    let debt = match &app.dashboard.debt {
+        DebtView::Ready(summary) => summary.finding_count,
+        _ => 0,
+    };
+
+    if total_violations == 0 && debt == 0 {
+        "The repo is largely clean right now: there are no current violations and no material debt hotspots surfaced by Whetstone.".to_string()
+    } else if total_violations > 0 {
+        format!(
+            "Whetstone found {total_violations} active violations. Review those first, then revisit any broader debt hotspots that remain."
+        )
+    } else {
+        format!(
+            "The ruleset is active and current, but Whetstone still sees {debt} debt hotspot(s) worth triaging."
+        )
+    }
 }
 
 fn overall_health_score(app: &App) -> Option<i64> {
@@ -282,30 +179,10 @@ fn overall_health_score(app: &App) -> Option<i64> {
     }
 }
 
-fn overall_health_label(score: Option<i64>) -> &'static str {
-    match score.unwrap_or(0) {
-        85..=100 => "Healthy",
-        70..=84 => "Good",
-        50..=69 => "Needs Work",
-        _ => "At Risk",
-    }
-}
-
-fn gauge_row(label: &'static str, gauge_line: Line<'static>) -> Line<'static> {
-    let mut spans = vec![Span::styled(format!("{label} "), theme::header_meta())];
-    spans.extend(gauge_line.spans);
-    Line::from(spans)
-}
-
-fn pair_line(label: &str, value: &str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(format!("{label:<14}"), theme::header_meta()),
-        Span::raw(value.to_string()),
-    ])
-}
-
-fn pair_span(label: &str, value: &str) -> Span<'static> {
-    Span::raw(format!("{label} {value}"))
+fn score_text(score: Option<i64>) -> String {
+    score
+        .map(|s| format!("{s}/100"))
+        .unwrap_or_else(|| "N/A".to_string())
 }
 
 fn panel_block(title: &str) -> Block<'static> {
@@ -313,15 +190,6 @@ fn panel_block(title: &str) -> Block<'static> {
         .title(Span::styled(format!(" {title} "), theme::header_title()))
         .borders(Borders::ALL)
         .border_style(theme::border_inactive())
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let t: String = s.chars().take(max.saturating_sub(1)).collect();
-        format!("{t}…")
-    }
 }
 
 fn debt_is_significant(app: &App) -> bool {

@@ -148,7 +148,12 @@ fn render_internal_source_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             )
         }
         crate::tui::screens::extract::ExtractView::Ready(data) => {
-            crate::tui::screens::extract::render_detail(frame, area, data);
+            crate::tui::screens::extract::render_detail_scrolled(
+                frame,
+                area,
+                data,
+                app.sources_detail_scroll_y,
+            );
         }
     }
 }
@@ -281,18 +286,21 @@ fn render_custom_detail(frame: &mut Frame<'_>, area: Rect, app: &App, personal: 
                 render_placeholder(frame, area, "No source selected.");
                 return;
             };
-            let mut lines = vec![
-                kv_line("Name", &row.name),
-                kv_line("Language", row.lang.as_deref().unwrap_or("Any")),
-                kv_line("Type", row.kind.as_deref().unwrap_or("Custom")),
-            ];
+            let mut lines = vec![kv_line(area.width, "Name", &row.name)];
+            if let Some(lang) = row.lang.as_deref() {
+                lines.push(kv_line(area.width, "Language", lang));
+            }
+            if let Some(kind) = row.kind.as_deref() {
+                lines.push(kv_line(area.width, "Type", kind));
+            }
             if let Some(last) = &row.last_fetched {
-                lines.push(kv_line("Last fetched", last));
+                lines.push(kv_line(area.width, "Last fetched", last));
             }
             frame.render_widget(
                 Paragraph::new(lines)
                     .block(block("DETAIL"))
-                    .wrap(Wrap { trim: false }),
+                    .wrap(Wrap { trim: false })
+                    .scroll((app.sources_detail_scroll_y, 0)),
                 area,
             );
         }
@@ -345,12 +353,12 @@ fn source_row_line(selected: bool, row: &SourceListRow) -> Line<'static> {
     ));
     spans.push(Span::raw("  "));
     spans.push(Span::styled(
-        row.lang.clone(),
+        format!("({})", row.lang),
         Style::default().fg(ratatui::style::Color::White),
     ));
     spans.push(Span::raw("  "));
     spans.push(Span::styled(
-        row.source_type.clone(),
+        format!("[{}]", row.source_type),
         Style::default().fg(theme::MUTED),
     ));
     Line::from(spans)
@@ -375,9 +383,17 @@ fn source_kind_badge(kind: Option<&str>) -> String {
     }
 }
 
-fn kv_line(label: &str, value: &str) -> Line<'static> {
+fn kv_line(width: u16, label: &str, value: &str) -> Line<'static> {
+    let label_text = format!("{label}:");
+    let available = width.saturating_sub(4) as usize;
+    let spacer_len = available
+        .saturating_sub(label_text.chars().count())
+        .saturating_sub(value.chars().count())
+        .max(1);
+    let spacer = " ".repeat(spacer_len);
     Line::from(vec![
-        Span::styled(format!("{label:<18}"), theme::header_meta()),
+        Span::styled(label_text, theme::header_meta()),
+        Span::raw(spacer),
         Span::styled(value.to_string(), Style::default().fg(ratatui::style::Color::White)),
     ])
 }

@@ -290,7 +290,7 @@ fn render_placeholder(frame: &mut Frame<'_>, area: Rect, message: &str) {
 
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
     if msg.contains("No rules found") {
-        return render_placeholder(frame, area, "No rules yet. Run wh init / wh extract / wh approve to build the ruleset from sources.");
+        return render_placeholder(frame, area, "No rules yet.");
     }
     let lines = vec![
         Line::from(""),
@@ -324,11 +324,6 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
             } else {
                 Style::default().fg(ratatui::style::Color::White)
             },
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Tab next · T scope · P/R/S/A language · Enter newline in Rule Text · Ctrl-S save · Esc cancel",
-            Style::default().fg(theme::MUTED),
         )),
         Line::from(""),
         Line::from(Span::styled(

@@ -172,14 +172,45 @@ pub fn view(frame: &mut Frame<'_>, app: &App) {
         Screen::Help => screens::help::render(frame, body, app),
     }
 
-    footer::render(frame, chunks[2], hints, show_scroll_hints(app));
+    let scroll_hint = scroll_hint_text(app);
+    footer::render(frame, chunks[2], hints, scroll_hint.as_deref());
 }
 
-fn show_scroll_hints(app: &App) -> bool {
-    matches!(
-        app.screen,
-        Screen::Sources | Screen::Check | Screen::Help | Screen::Result
-    )
+fn scroll_hint_text(app: &App) -> Option<String> {
+    match app.screen {
+        Screen::Dashboard => Some(if app.dashboard_scroll > 0 {
+            "Scroll Up Scroll Down".to_string()
+        } else {
+            "Scroll Down".to_string()
+        }),
+        Screen::Help => Some(if app.help_scroll_y > 0 {
+            "Scroll Up Scroll Down".to_string()
+        } else {
+            "Scroll Down".to_string()
+        }),
+        Screen::Result => match &app.dashboard.result {
+            crate::tui::screens::result::ResultView::Ready(data) => Some(if data.scroll_y > 0 {
+                "Scroll Up Scroll Down".to_string()
+            } else {
+                "Scroll Down".to_string()
+            }),
+            _ => None,
+        },
+        Screen::Sources => Some(if app.sources_detail_selected || app.sources_selected > 0 {
+            "Scroll Up Scroll Down".to_string()
+        } else {
+            "Scroll Down".to_string()
+        }),
+        Screen::Debt => match &app.dashboard.debt {
+            crate::tui::app::DebtView::Ready(data) => Some(if data.detail_selected || data.selected > 0 {
+                "Scroll Up Scroll Down".to_string()
+            } else {
+                "Scroll Down".to_string()
+            }),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn render_too_small(frame: &mut Frame<'_>, area: Rect) {

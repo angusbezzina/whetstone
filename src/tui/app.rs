@@ -22,6 +22,8 @@ pub struct App {
     pub dashboard: DashboardState,
     pub sources_dataset: SourcesDataset,
     pub sources_selected: usize,
+    pub sources_detail_selected: bool,
+    pub sources_detail_scroll_y: u16,
     pub sources_form: SourcesFormState,
     pub rules_form: RulesFormState,
 }
@@ -86,10 +88,13 @@ pub struct DashboardState {
     pub adherence_score: Option<i64>,
     pub adherence_detail: Value,
     pub sources_total: usize,
+    pub sources_internal: usize,
+    pub sources_external: usize,
     pub rules_total: usize,
     pub rules_personal: usize,
     pub rules_by_language: Vec<(String, usize)>,
     pub violation_counts: ViolationCounts,
+    pub violations_by_language: LanguageCounts,
     pub result: crate::tui::screens::result::ResultView,
     /// Debt report. `None` = not yet computed (open the Debt screen to compute it).
     /// `Some(Err(..))` = the compute failed and the screen shows the reason.
@@ -147,6 +152,14 @@ pub struct ViolationCounts {
     pub may: usize,
 }
 
+#[derive(Default, Clone)]
+pub struct LanguageCounts {
+    pub ts: usize,
+    pub rust: usize,
+    pub python: usize,
+    pub all: usize,
+}
+
 impl App {
     pub fn new(project_dir: impl Into<PathBuf>) -> Result<Self> {
         let project_dir = project_dir.into();
@@ -161,6 +174,8 @@ impl App {
             dashboard: DashboardState::default(),
             sources_dataset: SourcesDataset::default(),
             sources_selected: 0,
+            sources_detail_selected: false,
+            sources_detail_scroll_y: 0,
             sources_form: SourcesFormState::default(),
             rules_form: RulesFormState::default(),
         };
@@ -343,29 +358,44 @@ impl App {
                 _ => {}
             },
             KeyCode::Tab if self.screen == Screen::Sources => {
-                self.sources_dataset = self.sources_dataset.next();
-                self.sources_selected = 0;
+                self.sources_detail_selected = !self.sources_detail_selected;
+            }
+            KeyCode::BackTab if self.screen == Screen::Sources => {
+                self.sources_detail_selected = !self.sources_detail_selected;
             }
             KeyCode::Tab if self.screen == Screen::Debt => {
                 if let DebtView::Ready(data) = &mut self.dashboard.debt {
                     data.detail_selected = !data.detail_selected;
                 }
             }
-            KeyCode::BackTab if self.screen == Screen::Sources => {
-                self.sources_dataset = self.sources_dataset.prev();
-                self.sources_selected = 0;
-            }
             KeyCode::Char('d') | KeyCode::Char('D') if self.screen == Screen::Sources => {
                 self.sources_dataset = SourcesDataset::Dependencies;
                 self.sources_selected = 0;
+                self.sources_detail_scroll_y = 0;
             }
             KeyCode::Char('p') | KeyCode::Char('P') if self.screen == Screen::Sources => {
                 self.sources_dataset = SourcesDataset::Personal;
                 self.sources_selected = 0;
+                self.sources_detail_scroll_y = 0;
             }
             KeyCode::Char('t') | KeyCode::Char('T') if self.screen == Screen::Sources => {
                 self.sources_dataset = SourcesDataset::Team;
                 self.sources_selected = 0;
+                self.sources_detail_scroll_y = 0;
+            }
+            KeyCode::Left | KeyCode::Char('h')
+                if self.screen == Screen::Sources && !self.sources_detail_selected =>
+            {
+                self.sources_dataset = self.sources_dataset.prev();
+                self.sources_selected = 0;
+                self.sources_detail_scroll_y = 0;
+            }
+            KeyCode::Right | KeyCode::Char('l')
+                if self.screen == Screen::Sources && !self.sources_detail_selected =>
+            {
+                self.sources_dataset = self.sources_dataset.next();
+                self.sources_selected = 0;
+                self.sources_detail_scroll_y = 0;
             }
             KeyCode::Up | KeyCode::Char('k') => self.select_prev_on_current_screen(1),
             KeyCode::Down | KeyCode::Char('j') => self.select_next_on_current_screen(1),
@@ -387,9 +417,20 @@ impl App {
                 Screen::Result => self.dashboard.result.scroll_up(1),
                 Screen::Debt => self.dashboard.debt.select_prev(),
                 Screen::Sources => match self.sources_dataset {
-                    SourcesDataset::Dependencies => self.dashboard.extract.select_prev(),
+                    SourcesDataset::Dependencies if self.sources_detail_selected => {
+                        self.sources_detail_scroll_y = self.sources_detail_scroll_y.saturating_sub(1)
+                    }
+                    SourcesDataset::Dependencies => {
+                        self.dashboard.extract.select_prev();
+                        self.sources_detail_scroll_y = 0;
+                    }
                     SourcesDataset::Personal | SourcesDataset::Team => {
-                        self.sources_selected = self.sources_selected.saturating_sub(1)
+                        if self.sources_detail_selected {
+                            self.sources_detail_scroll_y = self.sources_detail_scroll_y.saturating_sub(1);
+                        } else {
+                            self.sources_selected = self.sources_selected.saturating_sub(1);
+                            self.sources_detail_scroll_y = 0;
+                        }
                     }
                 },
                 Screen::Rules => self.dashboard.rules.select_prev(),
@@ -406,25 +447,41 @@ impl App {
                 Screen::Result => self.dashboard.result.scroll_down(1),
                 Screen::Debt => self.dashboard.debt.select_next(),
                 Screen::Sources => match self.sources_dataset {
-                    SourcesDataset::Dependencies => self.dashboard.extract.select_next(),
+                    SourcesDataset::Dependencies if self.sources_detail_selected => {
+                        self.sources_detail_scroll_y = self.sources_detail_scroll_y.saturating_add(1)
+                    }
+                    SourcesDataset::Dependencies => {
+                        self.dashboard.extract.select_next();
+                        self.sources_detail_scroll_y = 0;
+                    }
                     SourcesDataset::Personal => {
-                        let max = self
-                            .dashboard
-                            .sources
-                            .row_count_for(SourcesDataset::Personal)
-                            .saturating_sub(1);
-                        if self.sources_selected < max {
-                            self.sources_selected += 1;
+                        if self.sources_detail_selected {
+                            self.sources_detail_scroll_y = self.sources_detail_scroll_y.saturating_add(1);
+                        } else {
+                            let max = self
+                                .dashboard
+                                .sources
+                                .row_count_for(SourcesDataset::Personal)
+                                .saturating_sub(1);
+                            if self.sources_selected < max {
+                                self.sources_selected += 1;
+                            }
+                            self.sources_detail_scroll_y = 0;
                         }
                     }
                     SourcesDataset::Team => {
-                        let max = self
-                            .dashboard
-                            .sources
-                            .row_count_for(SourcesDataset::Team)
-                            .saturating_sub(1);
-                        if self.sources_selected < max {
-                            self.sources_selected += 1;
+                        if self.sources_detail_selected {
+                            self.sources_detail_scroll_y = self.sources_detail_scroll_y.saturating_add(1);
+                        } else {
+                            let max = self
+                                .dashboard
+                                .sources
+                                .row_count_for(SourcesDataset::Team)
+                                .saturating_sub(1);
+                            if self.sources_selected < max {
+                                self.sources_selected += 1;
+                            }
+                            self.sources_detail_scroll_y = 0;
                         }
                     }
                 },
@@ -702,14 +759,38 @@ fn collect_dashboard(project_dir: &Path) -> DashboardState {
     d.rules_by_language = by_lang.into_iter().collect();
 
     if let Ok(handoff) = crate::worklist::load(project_dir) {
-        d.sources_total = handoff
+        d.sources_internal = handoff
             .get("worklist")
             .and_then(|v| v.as_array())
             .map(|arr| arr.len())
             .unwrap_or(0);
     }
     if let Ok(custom) = crate::source_mgmt::list(project_dir) {
-        d.sources_total += custom.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        d.sources_external = custom.get("total").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+    }
+    d.sources_total = d.sources_internal + d.sources_external;
+
+    let scan_root = if project_dir.join("src").is_dir() {
+        project_dir.join("src")
+    } else {
+        project_dir.to_path_buf()
+    };
+    if let Ok(check) = crate::check::run(crate::check::CheckOptions {
+        project_dir,
+        scan_paths: std::slice::from_ref(&scan_root),
+        lang_filter: None,
+        rule_filter: None,
+    }) {
+        if let Some(arr) = check.get("violations").and_then(|v| v.as_array()) {
+            for v in arr {
+                match v.get("language").and_then(|s| s.as_str()).unwrap_or("") {
+                    "typescript" => d.violations_by_language.ts += 1,
+                    "rust" => d.violations_by_language.rust += 1,
+                    "python" => d.violations_by_language.python += 1,
+                    _ => d.violations_by_language.all += 1,
+                }
+            }
+        }
     }
 
     d
