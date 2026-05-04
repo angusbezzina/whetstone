@@ -6,6 +6,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.9] - 2026-04-30
+
+### Changed
+- **The TUI Home screen now reads more like a report card.** Overall health is emphasized first, then the repo rolls down into source, rule, violation, and significant-debt summaries with clearer hierarchy instead of equal-weight panels.
+- **Sources, Rules, Debt, and the footer are more readable.** Sources now has clearer dataset segmentation and detail formatting, Rules keeps a persistent add-rule affordance, Debt rows/details are cleaner and easier to scan, and the footer now separates navigation, contextual scroll hints, and help/quit actions more clearly.
+
 ## [0.8.8] - 2026-04-30
 
 ### Changed
