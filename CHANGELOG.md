@@ -6,6 +6,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.11] - 2026-05-04
+
+### Fixed
+- **The TUI now finishes the latest navigation polish.** Home scrolling works again with cleaner section spacing, Sources and Debt keep focus/scroll behavior within bounds with clearer active-pane borders, and hotspot/detail formatting is easier to scan.
+- **Rules and footer prompts are clearer.** Rules now explicitly says `Press A to Add a Rule`, Sources/Rules detail rows balance label/value spacing more cleanly, and footer scroll hints now use simple arrow affordances without the earlier border artifacts.
+
 ## [0.8.10] - 2026-05-04
 
 ### Changed

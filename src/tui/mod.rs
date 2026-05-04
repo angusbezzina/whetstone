@@ -72,14 +72,13 @@ pub fn run_with_target(project_dir: &Path, target: LaunchTarget) -> Result<()> {
         }
         LaunchTarget::Result { title, body } => {
             app.screen = Screen::Result;
-            app.dashboard.result = screens::result::ResultView::Ready(Box::new(
-                screens::result::ResultData {
+            app.dashboard.result =
+                screens::result::ResultView::Ready(Box::new(screens::result::ResultData {
                     title,
                     body,
                     scroll_y: 0,
                     scroll_x: 0,
-                },
-            ));
+                }));
         }
     }
 
@@ -99,9 +98,7 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     Ok(terminal)
 }
 
-fn restore_terminal(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-) -> Result<()> {
+fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     if is_raw_mode_enabled().unwrap_or(false) {
         let _ = disable_raw_mode();
     }
@@ -114,10 +111,7 @@ fn restore_terminal(
     Ok(())
 }
 
-fn run_loop(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut App,
-) -> Result<()> {
+fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     while !app.quit {
         terminal.draw(|frame| view(frame, app))?;
 
@@ -172,45 +166,63 @@ pub fn view(frame: &mut Frame<'_>, app: &App) {
         Screen::Help => screens::help::render(frame, body, app),
     }
 
-    let scroll_hint = scroll_hint_text(app);
-    footer::render(frame, chunks[2], hints, scroll_hint.as_deref());
+    let scroll_hint = scroll_hint_state(body, app);
+    footer::render(frame, chunks[2], hints, scroll_hint);
 }
 
-fn scroll_hint_text(app: &App) -> Option<String> {
+fn scroll_hint_state(body: Rect, app: &App) -> Option<footer::ScrollHint> {
     match app.screen {
-        Screen::Dashboard => Some(if app.dashboard_scroll > 0 {
-            "Scroll Up Scroll Down".to_string()
-        } else {
-            "Scroll Down".to_string()
-        }),
-        Screen::Help => Some(if app.help_scroll_y > 0 {
-            "Scroll Up Scroll Down".to_string()
-        } else {
-            "Scroll Down".to_string()
-        }),
+        Screen::Dashboard => hint_from_offset(
+            app.dashboard_scroll as u16,
+            screens::dashboard::max_scroll(body, app),
+        ),
+        Screen::Help => hint_from_offset(app.help_scroll_y, screens::help::max_scroll(body)),
         Screen::Result => match &app.dashboard.result {
-            crate::tui::screens::result::ResultView::Ready(data) => Some(if data.scroll_y > 0 {
-                "Scroll Up Scroll Down".to_string()
-            } else {
-                "Scroll Down".to_string()
-            }),
+            crate::tui::screens::result::ResultView::Ready(data) => {
+                hint_from_offset(data.scroll_y, screens::result::max_scroll(body, data))
+            }
             _ => None,
         },
-        Screen::Sources => Some(if app.sources_detail_selected || app.sources_selected > 0 {
-            "Scroll Up Scroll Down".to_string()
-        } else {
-            "Scroll Down".to_string()
-        }),
+        Screen::Sources => screens::sources::scroll_hint(body, app),
         Screen::Debt => match &app.dashboard.debt {
-            crate::tui::app::DebtView::Ready(data) => Some(if data.detail_selected || data.selected > 0 {
-                "Scroll Up Scroll Down".to_string()
-            } else {
-                "Scroll Down".to_string()
-            }),
+            crate::tui::app::DebtView::Ready(data) => screens::debt::scroll_hint(body, data),
             _ => None,
         },
         _ => None,
     }
+}
+
+fn hint_from_offset(offset: u16, max_offset: u16) -> Option<footer::ScrollHint> {
+    if max_offset == 0 {
+        None
+    } else {
+        Some(footer::ScrollHint {
+            up: offset > 0,
+            down: offset < max_offset,
+        })
+    }
+}
+
+pub(crate) fn paragraph_max_scroll(lines: &[Line<'_>], area: Rect) -> u16 {
+    let inner_width = area.width.saturating_sub(2) as usize;
+    let viewport_lines = area.height.saturating_sub(2) as usize;
+    if inner_width == 0 || viewport_lines == 0 {
+        return 0;
+    }
+
+    let visual_lines = lines
+        .iter()
+        .map(|line| {
+            let width = line.width();
+            if width == 0 {
+                1
+            } else {
+                width.div_ceil(inner_width)
+            }
+        })
+        .sum::<usize>();
+
+    visual_lines.saturating_sub(viewport_lines) as u16
 }
 
 fn render_too_small(frame: &mut Frame<'_>, area: Rect) {
@@ -259,8 +271,7 @@ mod tests {
     fn debt_screen_renders_not_computed_hint() {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
-        let tmp =
-            std::env::temp_dir().join(format!("wh_tui_debt_empty_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("wh_tui_debt_empty_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let mut app = App::new(&tmp).unwrap();
         app.screen = Screen::Debt; // without ensure_debt_loaded — stays NotComputed
@@ -305,11 +316,10 @@ mod tests {
 
     #[test]
     fn arrow_keys_move_selection_on_rules_screen() {
-        use crate::tui::screens::rules::{RulesData, RulesView, RuleRow};
+        use crate::tui::screens::rules::{RuleRow, RulesData, RulesView};
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        let tmp =
-            std::env::temp_dir().join(format!("wh_tui_nav_rules_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("wh_tui_nav_rules_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let mut app = App::new(&tmp).unwrap();
         app.screen = Screen::Rules;
@@ -365,6 +375,49 @@ mod tests {
         if let RulesView::Ready(d) = &app.dashboard.rules {
             assert_eq!(d.selected, 0, "Up at the top clamps to 0");
         }
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn down_key_increments_dashboard_scroll() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let tmp =
+            std::env::temp_dir().join(format!("wh_tui_dashboard_scroll_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.screen = Screen::Dashboard;
+
+        app.update(Msg::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
+        assert_eq!(app.dashboard_scroll, 1);
+
+        app.update(Msg::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)));
+        assert_eq!(app.dashboard_scroll, 0);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn footer_renders_arrow_scroll_hints() {
+        let backend = TestBackend::new(140, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let tmp = std::env::temp_dir().join(format!("wh_tui_footer_scroll_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.dashboard_scroll = 1;
+
+        terminal.draw(|frame| view(frame, &app)).unwrap();
+
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol().to_owned())
+            .collect();
+        assert!(rendered.contains("↑ Scroll Up"));
+        assert!(rendered.contains("↓ Scroll Down"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

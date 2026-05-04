@@ -325,9 +325,7 @@ impl App {
         }
 
         // Global keybinds — available on every screen.
-        if ev.modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(ev.code, KeyCode::Char('c'))
-        {
+        if ev.modifiers.contains(KeyModifiers::CONTROL) && matches!(ev.code, KeyCode::Char('c')) {
             self.quit = true;
             return;
         }
@@ -412,13 +410,16 @@ impl App {
     fn select_prev_on_current_screen(&mut self, steps: usize) {
         for _ in 0..steps {
             match self.screen {
-                Screen::Dashboard => self.dashboard_scroll = self.dashboard_scroll.saturating_sub(1),
+                Screen::Dashboard => {
+                    self.dashboard_scroll = self.dashboard_scroll.saturating_sub(1)
+                }
                 Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_sub(1),
                 Screen::Result => self.dashboard.result.scroll_up(1),
                 Screen::Debt => self.dashboard.debt.select_prev(),
                 Screen::Sources => match self.sources_dataset {
                     SourcesDataset::Dependencies if self.sources_detail_selected => {
-                        self.sources_detail_scroll_y = self.sources_detail_scroll_y.saturating_sub(1)
+                        self.sources_detail_scroll_y =
+                            self.sources_detail_scroll_y.saturating_sub(1)
                     }
                     SourcesDataset::Dependencies => {
                         self.dashboard.extract.select_prev();
@@ -426,7 +427,8 @@ impl App {
                     }
                     SourcesDataset::Personal | SourcesDataset::Team => {
                         if self.sources_detail_selected {
-                            self.sources_detail_scroll_y = self.sources_detail_scroll_y.saturating_sub(1);
+                            self.sources_detail_scroll_y =
+                                self.sources_detail_scroll_y.saturating_sub(1);
                         } else {
                             self.sources_selected = self.sources_selected.saturating_sub(1);
                             self.sources_detail_scroll_y = 0;
@@ -442,13 +444,16 @@ impl App {
     fn select_next_on_current_screen(&mut self, steps: usize) {
         for _ in 0..steps {
             match self.screen {
-                Screen::Dashboard => {}
+                Screen::Dashboard => {
+                    self.dashboard_scroll = self.dashboard_scroll.saturating_add(1)
+                }
                 Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_add(1),
                 Screen::Result => self.dashboard.result.scroll_down(1),
                 Screen::Debt => self.dashboard.debt.select_next(),
                 Screen::Sources => match self.sources_dataset {
                     SourcesDataset::Dependencies if self.sources_detail_selected => {
-                        self.sources_detail_scroll_y = self.sources_detail_scroll_y.saturating_add(1)
+                        self.sources_detail_scroll_y =
+                            self.sources_detail_scroll_y.saturating_add(1)
                     }
                     SourcesDataset::Dependencies => {
                         self.dashboard.extract.select_next();
@@ -456,7 +461,8 @@ impl App {
                     }
                     SourcesDataset::Personal => {
                         if self.sources_detail_selected {
-                            self.sources_detail_scroll_y = self.sources_detail_scroll_y.saturating_add(1);
+                            self.sources_detail_scroll_y =
+                                self.sources_detail_scroll_y.saturating_add(1);
                         } else {
                             let max = self
                                 .dashboard
@@ -471,7 +477,8 @@ impl App {
                     }
                     SourcesDataset::Team => {
                         if self.sources_detail_selected {
-                            self.sources_detail_scroll_y = self.sources_detail_scroll_y.saturating_add(1);
+                            self.sources_detail_scroll_y =
+                                self.sources_detail_scroll_y.saturating_add(1);
                         } else {
                             let max = self
                                 .dashboard
@@ -577,7 +584,9 @@ impl App {
                     self.rules_form.active_field = (self.rules_form.active_field + 1) % 3;
                 }
             }
-            KeyCode::Char('s') | KeyCode::Char('S') if ev.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('s') | KeyCode::Char('S')
+                if ev.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 self.submit_rules_form();
             }
             KeyCode::Char('t') | KeyCode::Char('T') => {
@@ -653,7 +662,8 @@ impl App {
     fn submit_rules_form(&mut self) {
         let slug = slugify_rule_name(&self.rules_form.name);
         if slug.is_empty() {
-            self.rules_form.error = Some("Rule name must contain at least one letter or number.".into());
+            self.rules_form.error =
+                Some("Rule name must contain at least one letter or number.".into());
             return;
         }
         let languages: &[&str] = match self.rules_form.language_idx {
@@ -724,10 +734,7 @@ fn collect_dashboard(project_dir: &Path) -> DashboardState {
             .and_then(|v| v.as_i64())
             .or_else(|| status.get("score").and_then(|v| v.as_i64()));
         d.adherence_score = status.get("adherence_score").and_then(|v| v.as_i64());
-        d.adherence_detail = status
-            .get("adherence")
-            .cloned()
-            .unwrap_or(Value::Null);
+        d.adherence_detail = status.get("adherence").cloned().unwrap_or(Value::Null);
 
         d.rules_total = status
             .get("dimensions")
@@ -839,13 +846,12 @@ fn debt_snippet(evidence: &crate::debt::types::Evidence) -> String {
 
     match evidence {
         Evidence::ManifestEntry { snippet, .. } => truncate_inline(snippet, 220),
-        Evidence::SymbolDef { name, symbol_kind, .. } => {
+        Evidence::SymbolDef {
+            name, symbol_kind, ..
+        } => {
             format!("{symbol_kind}: {name}")
         }
-        Evidence::DuplicateCluster {
-            snippet,
-            ..
-        } => truncate_inline(snippet, 220),
+        Evidence::DuplicateCluster { snippet, .. } => truncate_inline(snippet, 220),
         Evidence::OrphanedFile { path, .. } => path.clone(),
         Evidence::ChurnViolationIntersection {
             changes,

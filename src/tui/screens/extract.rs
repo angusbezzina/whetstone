@@ -170,7 +170,8 @@ fn section_row(section: &Value) -> SectionRow {
 }
 
 fn str_field(entry: &Value, key: &str) -> String {
-    entry.get(key)
+    entry
+        .get(key)
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string()
@@ -183,11 +184,9 @@ fn opt_str_field(entry: &Value, key: &str) -> Option<String> {
 #[allow(dead_code)]
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     match &app.dashboard.extract {
-        ExtractView::NotComputed => render_empty(
-            frame,
-            area,
-            "Internal sources are not loaded yet.",
-        ),
+        ExtractView::NotComputed => {
+            render_empty(frame, area, "Internal sources are not loaded yet.")
+        }
         ExtractView::Loading => render_empty(frame, area, "Loading internal sources…"),
         ExtractView::Error(msg) => render_error(frame, area, msg),
         ExtractView::Ready(data) if data.entries.is_empty() => render_empty(
@@ -203,9 +202,15 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
 fn render_empty(frame: &mut Frame<'_>, area: Rect, message: &str) {
     let lines = vec![
         Line::from(""),
-        Line::from(Span::styled(format!("  {message}"), Style::default().fg(theme::MUTED))),
+        Line::from(Span::styled(
+            format!("  {message}"),
+            Style::default().fg(theme::MUTED),
+        )),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("INTERNAL SOURCES")), area);
+    frame.render_widget(
+        Paragraph::new(lines).block(block("INTERNAL SOURCES", false)),
+        area,
+    );
 }
 
 #[allow(dead_code)]
@@ -226,7 +231,10 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
         Style::default().fg(theme::MUTED),
     )));
 
-    frame.render_widget(Paragraph::new(lines).block(block("INTERNAL SOURCES")), area);
+    frame.render_widget(
+        Paragraph::new(lines).block(block("INTERNAL SOURCES", false)),
+        area,
+    );
 }
 
 #[allow(dead_code)]
@@ -282,79 +290,116 @@ pub fn render_worklist(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
         .collect();
 
     let title = format!("CORE PACKAGES ({} total)", data.total);
-    frame.render_widget(List::new(items).block(block(&title)), area);
+    frame.render_widget(List::new(items).block(block(&title, false)), area);
 }
 
 pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
-    render_detail_scrolled(frame, area, data, 0);
+    render_detail_scrolled(frame, area, data, 0, false);
 }
 
-pub fn render_detail_scrolled(frame: &mut Frame<'_>, area: Rect, data: &ExtractData, scroll_y: u16) {
+pub fn detail_max_scroll(area: Rect, data: &ExtractData) -> u16 {
+    let Some(row) = data.entries.get(data.selected) else {
+        return 0;
+    };
+    crate::tui::paragraph_max_scroll(&detail_lines(area.width, row), area)
+}
+
+pub fn render_detail_scrolled(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    data: &ExtractData,
+    scroll_y: u16,
+    active: bool,
+) {
     let Some(row) = data.entries.get(data.selected) else {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "  No package selected.",
                 Style::default().fg(theme::MUTED),
             )))
-            .block(block("DETAIL")),
+            .block(block("DETAIL", active)),
             area,
         );
         return;
     };
 
+    let lines = detail_lines(area.width, row);
+
+    let effective_scroll = scroll_y.min(crate::tui::paragraph_max_scroll(&lines, area));
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block("DETAIL", active))
+            .wrap(Wrap { trim: false })
+            .scroll((effective_scroll, 0)),
+        area,
+    );
+}
+
+fn detail_lines(width: u16, row: &WorklistRow) -> Vec<Line<'static>> {
     let mut lines: Vec<Line> = vec![
         kv_line(
-            area.width,
+            width,
             "Package",
             &row.name,
             Style::default().fg(theme::AMBER).bold(),
         ),
-        detail_line(area.width, "Language", &display_language(&row.language)),
+        detail_line(width, "Language", &display_language(&row.language)),
         kv_line(
-            area.width,
+            width,
             "Utility",
             utility_label(row.utility_percent),
             Style::default()
                 .fg(theme::utility_color(row.utility_percent))
                 .bold(),
         ),
-        detail_line(area.width, "Recommendation", recommendation_label(&row.priority)),
-        detail_line(area.width, "Rules", &row.remaining_quota.to_string()),
+        detail_line(width, "Recommendation", recommendation_label(&row.priority)),
+        detail_line(width, "Rules", &row.remaining_quota.to_string()),
     ];
 
     let mut source_quality: Vec<Line> = Vec::new();
 
     if let Some(source_type) = &row.source_type {
-        source_quality.push(detail_line(area.width, "Source Type", &theme::humanize_token(source_type)));
+        source_quality.push(detail_line(
+            width,
+            "Source Type",
+            &theme::humanize_token(source_type),
+        ));
     }
     if let Some(version) = &row.version {
-        source_quality.push(detail_line(area.width, "Version", version));
+        source_quality.push(detail_line(width, "Version", version));
     }
     if let Some(registry) = &row.registry {
-        source_quality.push(detail_line(area.width, "Registry", &theme::humanize_token(registry)));
+        source_quality.push(detail_line(
+            width,
+            "Registry",
+            &theme::humanize_token(registry),
+        ));
     }
     if let Some(confidence) = &row.freshness_confidence {
         let mut value = theme::humanize_token(confidence);
         if let Some(days) = row.source_age_days {
             value.push_str(&format!(" ({days}d old)"));
         }
-        source_quality.push(detail_line(area.width, "Freshness", &value));
+        source_quality.push(detail_line(width, "Freshness", &value));
     }
     if let Some(url) = &row.source_url {
-        source_quality.push(detail_line(area.width, "Docs", &truncate(url, 88)));
+        source_quality.push(detail_line(width, "Docs", &truncate(url, 88)));
     }
     if let Some(reason) = &row.reason {
-        source_quality.push(detail_line(area.width, "Constraint", reason));
+        source_quality.push(detail_line(width, "Constraint", reason));
     }
     if !source_quality.is_empty() {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("Source quality", theme::header_title())));
+        lines.push(Line::from(Span::styled(
+            "Source quality",
+            theme::header_title(),
+        )));
         lines.push(Line::from(""));
         lines.extend(source_quality);
     }
 
-    if row.sections.is_empty() {
-    } else {
+    if !row.sections.is_empty() {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "Available source material",
@@ -364,10 +409,7 @@ pub fn render_detail_scrolled(frame: &mut Frame<'_>, area: Rect, data: &ExtractD
         for section in row.sections.iter().take(5) {
             lines.push(Line::from(format!(
                 "{} / {} ({}) [{} bytes]",
-                section.name,
-                section.kind,
-                section.url,
-                section.bytes
+                section.name, section.kind, section.url, section.bytes
             )));
         }
         if row.sections.len() > 5 {
@@ -398,13 +440,7 @@ pub fn render_detail_scrolled(frame: &mut Frame<'_>, area: Rect, data: &ExtractD
     lines.push(Line::from(""));
     lines.push(Line::from(row.next_step.clone()));
 
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block("DETAIL"))
-            .wrap(Wrap { trim: false })
-            .scroll((scroll_y, 0)),
-        area,
-    );
+    lines
 }
 
 fn utility_label(percent: u8) -> &'static str {
@@ -418,17 +454,19 @@ fn utility_label(percent: u8) -> &'static str {
 }
 
 fn kv_line(width: u16, label: &str, value: &str, value_style: Style) -> Line<'static> {
-    let label_text = format!("{label}:");
-    let available = width.saturating_sub(4) as usize;
+    let label_text = label.to_string();
+    let available = width.saturating_sub(2) as usize;
+    let max_value_width = available.saturating_sub(label_text.chars().count() + 1);
+    let value_text = truncate(value, max_value_width.max(1));
     let spacer_len = available
         .saturating_sub(label_text.chars().count())
-        .saturating_sub(value.chars().count())
+        .saturating_sub(value_text.chars().count())
         .max(1);
     let spacer = " ".repeat(spacer_len);
     Line::from(vec![
         Span::styled(label_text, theme::header_meta()),
         Span::raw(spacer),
-        Span::styled(value.to_string(), value_style),
+        Span::styled(value_text, value_style),
     ])
 }
 
@@ -522,10 +560,12 @@ fn display_language(language: &str) -> String {
 }
 
 fn parse_utility_percent(entry: &Value, score: f64) -> u8 {
-    entry.get("utility_percent")
+    entry
+        .get("utility_percent")
         .and_then(|v| v.as_u64().map(|n| n as u8))
         .or_else(|| {
-            entry.get("utility_percent")
+            entry
+                .get("utility_percent")
                 .and_then(|v| v.as_f64())
                 .map(|n| n.round().clamp(0.0, 100.0) as u8)
         })
@@ -537,14 +577,23 @@ fn utility_from_score(score: f64) -> u8 {
 }
 
 fn detail_line(width: u16, label: &str, value: &str) -> Line<'static> {
-    kv_line(width, label, value, Style::default().fg(ratatui::style::Color::White))
+    kv_line(
+        width,
+        label,
+        value,
+        Style::default().fg(ratatui::style::Color::White),
+    )
 }
 
-fn block(title: &str) -> Block<'static> {
+fn block(title: &str, active: bool) -> Block<'static> {
     Block::default()
         .title(Span::styled(format!(" {title} "), theme::header_title()))
         .borders(Borders::ALL)
-        .border_style(theme::border_inactive())
+        .border_style(if active {
+            theme::border_active()
+        } else {
+            theme::border_inactive()
+        })
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -628,7 +677,9 @@ mod tests {
             total: 2,
         }));
 
-        terminal.draw(|frame| render(frame, frame.area(), &app)).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), &app))
+            .unwrap();
 
         let rendered: String = terminal
             .backend()
@@ -651,7 +702,9 @@ mod tests {
         let mut app = synthetic_app();
         app.dashboard.extract = ExtractView::Error("boom".into());
 
-        terminal.draw(|frame| render(frame, frame.area(), &app)).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), &app))
+            .unwrap();
 
         let rendered: String = terminal
             .backend()
@@ -666,7 +719,8 @@ mod tests {
 
     #[test]
     fn load_missing_handoff_returns_error() {
-        let tmp = std::env::temp_dir().join(format!("wh_tui_extract_missing_{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("wh_tui_extract_missing_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let view = load(&tmp);
         match view {

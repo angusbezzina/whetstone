@@ -27,46 +27,93 @@ pub fn hints() -> &'static [footer::Hint] {
 }
 
 pub fn render(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &App) {
+    let lines = build_lines(area.width, app);
+
+    let effective_scroll =
+        (app.dashboard_scroll as u16).min(crate::tui::paragraph_max_scroll(&lines, area));
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(panel_block("HOME"))
+            .wrap(Wrap { trim: false })
+            .scroll((effective_scroll, 0)),
+        area,
+    );
+}
+
+pub fn max_scroll(area: ratatui::layout::Rect, app: &App) -> u16 {
+    crate::tui::paragraph_max_scroll(&build_lines(area.width, app), area)
+}
+
+fn build_lines(width: u16, app: &App) -> Vec<Line<'static>> {
     let d = &app.dashboard;
     let overall = overall_health_score(app);
     let assessment = assessment_title(app);
     let assessment_body = assessment_description(app);
-    let bar_width = area.width.saturating_sub(10) as usize;
+    let bar_width = width.saturating_sub(10) as usize;
     let mut lines: Vec<Line> = vec![
         section("OVERALL HEALTH"),
-        kv_line("Overall Health", &score_text(overall), Style::default().fg(theme::AMBER).bold()),
+        Line::from(""),
+        kv_line(
+            width,
+            "Overall Health",
+            &score_text(overall),
+            Style::default().fg(theme::AMBER).bold(),
+        ),
         gauge::render(overall, bar_width),
         Line::from(""),
         section("ASSESSMENT"),
-        Line::from(Span::styled(assessment.to_string(), Style::default().fg(theme::AMBER).bold())),
-        Line::from(Span::styled(assessment_body, Style::default().fg(theme::MUTED))),
+        Line::from(""),
+        Line::from(Span::styled(
+            assessment.to_string(),
+            Style::default().fg(theme::AMBER).bold(),
+        )),
+        Line::from(Span::styled(
+            assessment_body,
+            Style::default().fg(theme::MUTED),
+        )),
         Line::from(""),
         section("SOURCES"),
-        detail_line("Total", &d.sources_total.to_string()),
-        detail_line("Internal", &d.sources_internal.to_string()),
-        detail_line("External", &d.sources_external.to_string()),
+        Line::from(""),
+        detail_line(width, "Total", &d.sources_total.to_string()),
+        detail_line(width, "Internal", &d.sources_internal.to_string()),
+        detail_line(width, "External", &d.sources_external.to_string()),
         Line::from(""),
         section("RULES"),
-        detail_line("Total", &d.rules_total.to_string()),
+        Line::from(""),
+        detail_line(width, "Total", &d.rules_total.to_string()),
     ];
 
-    append_language_lines(&mut lines, &d.rules_by_language, "Rules by language");
+    append_language_lines(&mut lines, width, &d.rules_by_language, "Rules by language");
 
     lines.push(Line::from(""));
     lines.push(section("VIOLATIONS"));
-    let total_violations = d.violation_counts.must + d.violation_counts.should + d.violation_counts.may;
-    lines.push(detail_line("Total", &total_violations.to_string()));
-    append_language_count_lines(&mut lines, &d.violations_by_language, "Violations by language");
+    lines.push(Line::from(""));
+    let total_violations =
+        d.violation_counts.must + d.violation_counts.should + d.violation_counts.may;
+    lines.push(detail_line(width, "Total", &total_violations.to_string()));
+    append_language_count_lines(
+        &mut lines,
+        width,
+        &d.violations_by_language,
+        "Violations by language",
+    );
 
     if debt_is_significant(app) {
         lines.push(Line::from(""));
         lines.push(section("DEBT"));
+        lines.push(Line::from(""));
         if let DebtView::Ready(summary) = &d.debt {
             lines.push(detail_line(
+                width,
                 "Assessment",
                 &theme::humanize_token(&summary.debt_label),
             ));
-            lines.push(detail_line("Findings", &summary.finding_count.to_string()));
+            lines.push(detail_line(
+                width,
+                "Findings",
+                &summary.finding_count.to_string(),
+            ));
             for hotspot in summary.hotspots.iter().take(5) {
                 lines.push(Line::from(Span::styled(
                     format!("• {} ({})", hotspot.compact_title, hotspot.impact_level),
@@ -76,45 +123,71 @@ pub fn render(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &App) {
         }
     }
 
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(panel_block("HOME"))
-            .wrap(Wrap { trim: false })
-            .scroll((app.dashboard_scroll as u16, 0)),
-        area,
-    );
+    lines
 }
 
 fn section(title: &str) -> Line<'static> {
     Line::from(Span::styled(title.to_string(), theme::header_title()))
 }
 
-fn kv_line(label: &str, value: &str, style: Style) -> Line<'static> {
+fn kv_line(width: u16, label: &str, value: &str, style: Style) -> Line<'static> {
+    let label_text = label.to_string();
+    let available = width.saturating_sub(2) as usize;
+    let max_value_width = available.saturating_sub(label_text.chars().count() + 1);
+    let value_text = truncate(value, max_value_width.max(1));
+    let spacer_len = available
+        .saturating_sub(label_text.chars().count())
+        .saturating_sub(value_text.chars().count())
+        .max(1);
+    let spacer = " ".repeat(spacer_len);
+
     Line::from(vec![
-        Span::styled(format!("{label:<18}"), theme::header_meta()),
-        Span::styled(value.to_string(), style),
+        Span::styled(label_text, theme::header_meta()),
+        Span::raw(spacer),
+        Span::styled(value_text, style),
     ])
 }
 
-fn detail_line(label: &str, value: &str) -> Line<'static> {
-    kv_line(label, value, Style::default().fg(ratatui::style::Color::White))
+fn detail_line(width: u16, label: &str, value: &str) -> Line<'static> {
+    kv_line(
+        width,
+        label,
+        value,
+        Style::default().fg(ratatui::style::Color::White),
+    )
 }
 
-fn append_language_lines(lines: &mut Vec<Line<'static>>, by_language: &[(String, usize)], title: &str) {
-    lines.push(Line::from(Span::styled(title.to_string(), theme::header_meta())));
+fn append_language_lines(
+    lines: &mut Vec<Line<'static>>,
+    width: u16,
+    by_language: &[(String, usize)],
+    title: &str,
+) {
+    lines.push(Line::from(Span::styled(
+        title.to_string(),
+        theme::header_meta(),
+    )));
     let counts = map_rules_by_language(by_language);
-    lines.push(detail_line("TS", &counts.ts.to_string()));
-    lines.push(detail_line("Rust", &counts.rust.to_string()));
-    lines.push(detail_line("Python", &counts.python.to_string()));
-    lines.push(detail_line("All", &counts.all.to_string()));
+    lines.push(detail_line(width, "TS", &counts.ts.to_string()));
+    lines.push(detail_line(width, "Rust", &counts.rust.to_string()));
+    lines.push(detail_line(width, "Python", &counts.python.to_string()));
+    lines.push(detail_line(width, "All", &counts.all.to_string()));
 }
 
-fn append_language_count_lines(lines: &mut Vec<Line<'static>>, counts: &LanguageCounts, title: &str) {
-    lines.push(Line::from(Span::styled(title.to_string(), theme::header_meta())));
-    lines.push(detail_line("TS", &counts.ts.to_string()));
-    lines.push(detail_line("Rust", &counts.rust.to_string()));
-    lines.push(detail_line("Python", &counts.python.to_string()));
-    lines.push(detail_line("All", &counts.all.to_string()));
+fn append_language_count_lines(
+    lines: &mut Vec<Line<'static>>,
+    width: u16,
+    counts: &LanguageCounts,
+    title: &str,
+) {
+    lines.push(Line::from(Span::styled(
+        title.to_string(),
+        theme::header_meta(),
+    )));
+    lines.push(detail_line(width, "TS", &counts.ts.to_string()));
+    lines.push(detail_line(width, "Rust", &counts.rust.to_string()));
+    lines.push(detail_line(width, "Python", &counts.python.to_string()));
+    lines.push(detail_line(width, "All", &counts.all.to_string()));
 }
 
 fn map_rules_by_language(by_language: &[(String, usize)]) -> LanguageCounts {
@@ -199,4 +272,16 @@ fn debt_is_significant(app: &App) -> bool {
             if matches!(summary.debt_label.as_str(), "high" | "elevated")
                 || summary.finding_count >= 20
     )
+}
+
+fn truncate(value: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
+    if value.chars().count() <= max {
+        value.to_string()
+    } else {
+        let kept: String = value.chars().take(max.saturating_sub(1)).collect();
+        format!("{kept}…")
+    }
 }

@@ -73,12 +73,35 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     }
 }
 
+pub fn scroll_hint(area: Rect, summary: &DebtSummaryView) -> Option<footer::ScrollHint> {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(8)])
+        .split(area);
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
+        .split(rows[1]);
+
+    if summary.detail_selected {
+        return hint_from_offset(summary.detail_scroll_y, detail_max_scroll(cols[1], summary));
+    }
+
+    hint_from_offset(
+        summary.selected as u16,
+        summary.hotspots.len().saturating_sub(1) as u16,
+    )
+}
+
 fn render_empty(frame: &mut Frame<'_>, area: Rect, message: &str) {
     let lines = vec![
         Line::from(""),
-        Line::from(Span::styled(format!("  {message}"), Style::default().fg(theme::MUTED))),
+        Line::from(Span::styled(
+            format!("  {message}"),
+            Style::default().fg(theme::MUTED),
+        )),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("DEBT")), area);
+    frame.render_widget(Paragraph::new(lines).block(block("DEBT", false)), area);
 }
 
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
@@ -95,7 +118,7 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
             Style::default().fg(theme::MUTED),
         )),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("DEBT")), area);
+    frame.render_widget(Paragraph::new(lines).block(block("DEBT", false)), area);
 }
 
 fn render_ready(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
@@ -139,12 +162,12 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
         Span::styled("Hotspot  ", theme::header_meta()),
         Span::raw(summary.by_hotspots.to_string()),
     ])];
-    frame.render_widget(Paragraph::new(lines).block(block("SUMMARY")), area);
+    frame.render_widget(Paragraph::new(lines).block(block("SUMMARY", false)), area);
 }
 
 fn render_hotspots(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
     let width = area.width.saturating_sub(4) as usize;
-    let visible = (area.height.saturating_sub(2) / 2).max(1) as usize;
+    let visible = (area.height.saturating_sub(2) / 3).max(1) as usize;
     let (start, end) = window_bounds(summary.selected, summary.hotspots.len(), visible);
 
     let items: Vec<ListItem> = summary
@@ -156,19 +179,18 @@ fn render_hotspots(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView)
         .map(|(i, h)| hotspot_item(i == summary.selected, h, width))
         .collect();
 
-    let title = if summary.detail_selected {
-        format!("TOP HOTSPOTS ({} total findings)", summary.finding_count)
-    } else {
-        format!("TOP HOTSPOTS ({} total findings) [SELECTED]", summary.finding_count)
-    };
-    frame.render_widget(List::new(items).block(block(&title)), area);
+    let title = format!("TOP HOTSPOTS ({} total findings)", summary.finding_count);
+    frame.render_widget(
+        List::new(items).block(block(&title, !summary.detail_selected)),
+        area,
+    );
 }
 
 fn hotspot_item(selected: bool, hotspot: &DebtHotspotRow, width: usize) -> ListItem<'static> {
-    let title_w = width.saturating_sub(30).max(16);
+    let title_w = width.saturating_sub(4).max(16);
     let prefix = if selected { "▶ " } else { "  " };
     let category_tag = format!(
-        "[{} / {}]",
+        "[{}/{}]",
         theme::humanize_token(&hotspot.category),
         theme::humanize_token(&hotspot.confidence)
     );
@@ -188,7 +210,9 @@ fn hotspot_item(selected: bool, hotspot: &DebtHotspotRow, width: usize) -> ListI
                 format!("({} Impact)", hotspot.impact_level),
                 Style::default().fg(ratatui::style::Color::White),
             ),
-            Span::raw(" "),
+        ]),
+        Line::from(vec![
+            Span::raw("  "),
             Span::styled(category_tag, Style::default().fg(theme::MUTED)),
         ]),
         Line::from(vec![
@@ -208,19 +232,58 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
                 "  No hotspot selected.",
                 Style::default().fg(theme::MUTED),
             )))
-            .block(block("DETAIL")),
+            .block(block("DETAIL", summary.detail_selected)),
             area,
         );
         return;
     };
 
+    let lines = detail_lines(hotspot);
+
+    let effective_scroll = summary
+        .detail_scroll_y
+        .min(detail_max_scroll(area, summary));
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block("DETAIL", summary.detail_selected))
+            .wrap(Wrap { trim: false })
+            .scroll((effective_scroll, 0)),
+        area,
+    );
+}
+
+fn detail_line(label: &str, value: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label}: "), theme::header_meta()),
+        Span::raw(value.to_string()),
+    ])
+}
+
+fn detail_max_scroll(area: Rect, summary: &DebtSummaryView) -> u16 {
+    let Some(hotspot) = summary.hotspots.get(summary.selected) else {
+        return 0;
+    };
+
+    let lines = detail_lines(hotspot);
+    crate::tui::paragraph_max_scroll(&lines, area)
+}
+
+fn detail_lines(hotspot: &DebtHotspotRow) -> Vec<Line<'static>> {
     let mut lines = vec![
-        Line::from(Span::styled(hotspot.title.clone(), Style::default().fg(theme::AMBER).bold())),
+        Line::from(Span::styled(
+            hotspot.title.clone(),
+            Style::default().fg(theme::AMBER).bold(),
+        )),
         Line::from(""),
         detail_line("Rule ID", &hotspot.rule_id),
         detail_line(
             "Category",
-            &format!("{} ({})", theme::humanize_token(&hotspot.category), hotspot.category),
+            &format!(
+                "{} ({})",
+                theme::humanize_token(&hotspot.category),
+                hotspot.category
+            ),
         ),
         detail_line("Confidence", &theme::humanize_token(&hotspot.confidence)),
         detail_line("Impact", &hotspot.impact_level),
@@ -238,36 +301,18 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
         Line::from(Span::styled("Snippet", theme::header_title())),
         Line::from(hotspot.snippet.clone()),
     ]);
-
-    let viewport_lines = area.height.saturating_sub(2) as usize;
-    let max_scroll = lines.len().saturating_sub(viewport_lines) as u16;
-    let effective_scroll = summary.detail_scroll_y.min(max_scroll);
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block(if summary.detail_selected {
-                "DETAIL [SCROLL]"
-            } else {
-                "DETAIL"
-            }))
-            .wrap(Wrap { trim: false })
-            .scroll((effective_scroll, 0)),
-        area,
-    );
+    lines
 }
 
-fn detail_line(label: &str, value: &str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(format!("{label}: "), theme::header_meta()),
-        Span::raw(value.to_string()),
-    ])
-}
-
-fn block(title: &str) -> Block<'static> {
+fn block(title: &str, active: bool) -> Block<'static> {
     Block::default()
         .title(Span::styled(format!(" {title} "), theme::header_title()))
         .borders(Borders::ALL)
-        .border_style(theme::border_inactive())
+        .border_style(if active {
+            theme::border_active()
+        } else {
+            theme::border_inactive()
+        })
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -279,6 +324,17 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         let t: String = s.chars().take(max.saturating_sub(1)).collect();
         format!("{t}…")
+    }
+}
+
+fn hint_from_offset(offset: u16, max_offset: u16) -> Option<footer::ScrollHint> {
+    if max_offset == 0 {
+        None
+    } else {
+        Some(footer::ScrollHint {
+            up: offset > 0,
+            down: offset < max_offset,
+        })
     }
 }
 

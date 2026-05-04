@@ -64,6 +64,16 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     }
 }
 
+pub fn max_scroll(area: Rect, data: &ResultData) -> u16 {
+    let viewport_lines = area.height.saturating_sub(2) as usize;
+    if viewport_lines == 0 {
+        return 0;
+    }
+
+    let line_count = data.body.lines().count().max(1);
+    line_count.saturating_sub(viewport_lines) as u16
+}
+
 fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &ResultData) {
     let block = Block::default()
         .title(Span::styled(

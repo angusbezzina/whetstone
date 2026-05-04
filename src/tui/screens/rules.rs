@@ -92,9 +92,7 @@ pub fn load(project_dir: &Path) -> RulesView {
         if !initialized {
             let (personal_only, _) = crate::layers::load_personal_only(project_dir, None);
             if personal_only.is_empty() {
-                return RulesView::Error(
-                    "No rules found — run wh init or wh rules add".into(),
-                );
+                return RulesView::Error("No rules found — run wh init or wh rules add".into());
             }
         }
         // Initialized but no approved rules — same actionable hint.
@@ -125,8 +123,7 @@ pub fn load(project_dir: &Path) -> RulesView {
         .collect();
     rows.sort_by(|a, b| a.id.cmp(&b.id));
 
-    let mut by_lang: std::collections::BTreeMap<String, usize> =
-        std::collections::BTreeMap::new();
+    let mut by_lang: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     for row in &rows {
         *by_lang.entry(row.language.clone()).or_insert(0) += 1;
     }
@@ -145,18 +142,12 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     }
 
     match &app.dashboard.rules {
-        RulesView::NotComputed => render_placeholder(
-            frame,
-            area,
-            "Rules screen not yet loaded.",
-        ),
+        RulesView::NotComputed => render_placeholder(frame, area, "Rules screen not yet loaded."),
         RulesView::Loading => render_placeholder(frame, area, "Loading rules…"),
         RulesView::Error(msg) => render_error(frame, area, msg),
-        RulesView::Ready(data) if data.rows.is_empty() => render_placeholder(
-            frame,
-            area,
-            "No approved rules to display.",
-        ),
+        RulesView::Ready(data) if data.rows.is_empty() => {
+            render_placeholder(frame, area, "No approved rules to display.")
+        }
         RulesView::Ready(data) => render_ready(frame, area, data),
     }
 }
@@ -193,7 +184,9 @@ fn render_list(frame: &mut Frame<'_>, area: Rect, data: &RulesData) {
                 Span::styled(marker, Style::default().fg(marker_color)),
                 Span::styled(
                     format!("[{}] ", row.severity.to_uppercase()),
-                    Style::default().fg(theme::severity_color(&row.severity)).bold(),
+                    Style::default()
+                        .fg(theme::severity_color(&row.severity))
+                        .bold(),
                 ),
                 Span::raw(truncate(&row.id, id_w)),
             ]))
@@ -232,43 +225,37 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &RulesData) {
     };
 
     let lines = vec![
-        Line::from(vec![
-            Span::styled("id        ", theme::header_meta()),
-            Span::styled(row.id.clone(), Style::default().bold()),
-        ]),
-        Line::from(vec![
-            Span::styled("severity  ", theme::header_meta()),
-            Span::styled(
-                row.severity.to_uppercase(),
-                Style::default().fg(theme::severity_color(&row.severity)).bold(),
-            ),
-            Span::raw("   "),
-            Span::styled("confidence ", theme::header_meta()),
-            Span::raw(row.confidence.clone()),
-        ]),
-        Line::from(vec![
-            Span::styled("language  ", theme::header_meta()),
-            Span::raw(row.language.clone()),
-            Span::raw("   "),
-            Span::styled("dep ", theme::header_meta()),
-            Span::raw(row.dep.clone()),
-        ]),
-        Line::from(vec![
-            Span::styled("layer     ", theme::header_meta()),
-            Span::styled(row.layer.clone(), Style::default().fg(layer_color).bold()),
-        ]),
+        kv_line(area.width, "ID", &row.id, Style::default().bold()),
+        kv_line(
+            area.width,
+            "Severity",
+            &row.severity.to_uppercase(),
+            Style::default()
+                .fg(theme::severity_color(&row.severity))
+                .bold(),
+        ),
+        kv_line(area.width, "Confidence", &row.confidence, Style::default()),
+        kv_line(area.width, "Language", &row.language, Style::default()),
+        kv_line(area.width, "Dependency", &row.dep, Style::default()),
+        kv_line(
+            area.width,
+            "Layer",
+            &row.layer,
+            Style::default().fg(layer_color).bold(),
+        ),
+        kv_line(
+            area.width,
+            "Source",
+            &row.source_url,
+            Style::default().fg(theme::AMBER),
+        ),
         Line::from(""),
         Line::from(Span::styled(
-            "description",
+            "Description",
             Style::default().fg(theme::MUTED),
         )),
-        Line::from(row.description.clone()),
         Line::from(""),
-        Line::from(Span::styled("source", Style::default().fg(theme::MUTED))),
-        Line::from(Span::styled(
-            row.source_url.clone(),
-            Style::default().fg(theme::AMBER),
-        )),
+        Line::from(row.description.clone()),
     ];
 
     let paragraph = Paragraph::new(lines)
@@ -312,13 +299,21 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
         _ => "All",
     };
     let lines = vec![
-        form_line("Scope", if form.team_scope { "Team" } else { "Personal" }, false),
+        form_line(
+            "Scope",
+            if form.team_scope { "Team" } else { "Personal" },
+            false,
+        ),
         form_line("Name", &form.name, form.active_field == 0),
         form_line("Language", lang, form.active_field == 1),
         Line::from(""),
         Line::from(Span::styled("Rule Text", theme::header_meta())),
         Line::from(Span::styled(
-            if form.rule_text.is_empty() { "—" } else { &form.rule_text },
+            if form.rule_text.is_empty() {
+                "—"
+            } else {
+                &form.rule_text
+            },
             if form.active_field == 2 {
                 Style::default().fg(theme::AMBER).bold()
             } else {
@@ -355,22 +350,37 @@ fn form_line(label: &str, value: &str, active: bool) -> Line<'static> {
 
 fn block(title: &str, show_add_cta: bool) -> Block<'static> {
     let mut block = Block::default()
-        .title(Span::styled(
-            format!(" {title} "),
-            theme::header_title(),
-        ))
+        .title(Span::styled(format!(" {title} "), theme::header_title()))
         .borders(Borders::ALL)
         .border_style(theme::border_inactive());
     if show_add_cta {
         block = block.title_top(
             Line::from(Span::styled(
-                " A ADD RULE ",
+                " Press A to Add a Rule ",
                 Style::default().fg(theme::AMBER).bold(),
             ))
             .right_aligned(),
         );
     }
     block
+}
+
+fn kv_line(width: u16, label: &str, value: &str, value_style: Style) -> Line<'static> {
+    let label_text = label.to_string();
+    let available = width.saturating_sub(2) as usize;
+    let max_value_width = available.saturating_sub(label_text.chars().count() + 1);
+    let value_text = truncate(value, max_value_width.max(1));
+    let spacer_len = available
+        .saturating_sub(label_text.chars().count())
+        .saturating_sub(value_text.chars().count())
+        .max(1);
+    let spacer = " ".repeat(spacer_len);
+
+    Line::from(vec![
+        Span::styled(label_text, theme::header_meta()),
+        Span::raw(spacer),
+        Span::styled(value_text, value_style),
+    ])
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -405,7 +415,10 @@ mod tests {
             severity: severity.to_string(),
             confidence: "high".to_string(),
             language: "python".to_string(),
-            dep: id.split_once('.').map(|(p, _)| p.to_string()).unwrap_or_default(),
+            dep: id
+                .split_once('.')
+                .map(|(p, _)| p.to_string())
+                .unwrap_or_default(),
             layer: layer.to_string(),
             source_url: format!("https://example.com/{id}"),
             description: format!("A sample rule called {id}."),
@@ -430,8 +443,7 @@ mod tests {
 
     #[test]
     fn render_shows_ready_rule_ids() {
-        let tmp = std::env::temp_dir()
-            .join(format!("wh_tui_rules_ready_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("wh_tui_rules_ready_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let mut app = App::new(&tmp).unwrap();
 
@@ -447,7 +459,7 @@ mod tests {
             selected: 0,
         }));
 
-        let backend = TestBackend::new(80, 24);
+        let backend = TestBackend::new(140, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| render(frame, frame.area(), &app))
@@ -464,14 +476,18 @@ mod tests {
             "expected second rule id in buffer; got: {}",
             preview(&rendered, 400)
         );
+        assert!(
+            rendered.contains("Press A to Add a Rule"),
+            "expected add-rule CTA in buffer; got: {}",
+            preview(&rendered, 400)
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn render_shows_error_message() {
-        let tmp = std::env::temp_dir()
-            .join(format!("wh_tui_rules_error_{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("wh_tui_rules_error_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let mut app = App::new(&tmp).unwrap();
 
