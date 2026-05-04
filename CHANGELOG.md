@@ -6,6 +6,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.12] - 2026-05-04
+
+### Fixed
+- **Debt and dashboard summaries are more consistent.** The Debt screen now uses the requested Issues wording and category labels, simplifies the summary bar to the key counters, and the Home dashboard now separates sections more clearly while ending each metric block with an emphasized aggregate row.
+- **Small TUI tone fixes landed.** The Violations empty state now matches the rest of the muted empty-state styling, and the Home Debt section mirrors the same summary metrics surfaced on the dedicated Debt page.
+
 ## [0.8.11] - 2026-05-04
 
 ### Fixed

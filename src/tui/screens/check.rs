@@ -152,11 +152,9 @@ pub fn load(project_dir: &Path) -> CheckView {
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     match &app.dashboard.check {
-        CheckView::NotComputed => render_placeholder(
-            frame,
-            area,
-            "Violations screen not yet loaded.",
-        ),
+        CheckView::NotComputed => {
+            render_placeholder(frame, area, "Violations screen not yet loaded.")
+        }
         CheckView::Loading => render_placeholder(frame, area, "Scanning for violations…"),
         CheckView::Error(msg) => render_error(frame, area, msg),
         CheckView::Ready(data) => render_ready(frame, area, data),
@@ -206,7 +204,7 @@ fn render_violations(frame: &mut Frame<'_>, area: Rect, data: &CheckData) {
     let items: Vec<ListItem> = if data.violations.is_empty() {
         vec![ListItem::new(Line::from(Span::styled(
             "No violations. Nice.",
-            Style::default().fg(ratatui::style::Color::White),
+            Style::default().fg(theme::MUTED),
         )))]
     } else {
         data.violations
@@ -219,13 +217,15 @@ fn render_violations(frame: &mut Frame<'_>, area: Rect, data: &CheckData) {
                 let location = format!("{}:{}", v.file, v.line);
                 // Mirror dashboard's render_violations_panel column widths,
                 // but adapt snippet width to the area we actually have.
-                let snippet_w = width
-                    .saturating_sub(7 + 30 + 28 + 3)
-                    .max(10);
+                let snippet_w = width.saturating_sub(7 + 30 + 28 + 3).max(10);
                 ListItem::new(Line::from(vec![
                     Span::styled(
                         if i == data.selected { "▶" } else { " " },
-                        Style::default().fg(if i == data.selected { theme::AMBER } else { theme::MUTED }),
+                        Style::default().fg(if i == data.selected {
+                            theme::AMBER
+                        } else {
+                            theme::MUTED
+                        }),
                     ),
                     Span::styled(
                         format!("{:<7}", v.severity.to_uppercase()),
@@ -279,10 +279,7 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
 
 fn block(title: &str) -> Block<'static> {
     Block::default()
-        .title(Span::styled(
-            format!(" {title} "),
-            theme::header_title(),
-        ))
+        .title(Span::styled(format!(" {title} "), theme::header_title()))
         .borders(Borders::ALL)
         .border_style(theme::border_inactive())
 }
@@ -342,8 +339,20 @@ mod tests {
         app.screen = crate::tui::msg::Screen::Check;
         app.dashboard.check = CheckView::Ready(Box::new(CheckData {
             violations: vec![
-                row("fastapi.async-routes", "must", "src/app.py", 10, "def foo():"),
-                row("fastapi.response-model", "should", "src/routes.py", 42, "return {}"),
+                row(
+                    "fastapi.async-routes",
+                    "must",
+                    "src/app.py",
+                    10,
+                    "def foo():",
+                ),
+                row(
+                    "fastapi.response-model",
+                    "should",
+                    "src/routes.py",
+                    42,
+                    "return {}",
+                ),
             ],
             counts: ViolationCounts {
                 must: 1,

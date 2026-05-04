@@ -85,14 +85,6 @@ pub fn severity_color(severity: &str) -> Color {
     }
 }
 
-pub fn debt_label_color(label: &str) -> Color {
-    match label {
-        "low" | "Low" => STATUS_OK,
-        "moderate" | "Moderate" => AMBER,
-        _ => STATUS_WARN,
-    }
-}
-
 pub fn utility_color(percent: u8) -> Color {
     if percent >= 80 {
         STATUS_OK

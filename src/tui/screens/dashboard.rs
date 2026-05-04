@@ -28,7 +28,6 @@ pub fn hints() -> &'static [footer::Hint] {
 
 pub fn render(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &App) {
     let lines = build_lines(area.width, app);
-
     let effective_scroll =
         (app.dashboard_scroll as u16).min(crate::tui::paragraph_max_scroll(&lines, area));
 
@@ -51,6 +50,8 @@ fn build_lines(width: u16, app: &App) -> Vec<Line<'static>> {
     let assessment = assessment_title(app);
     let assessment_body = assessment_description(app);
     let bar_width = width.saturating_sub(10) as usize;
+    let counts = map_rules_by_language(&d.rules_by_language);
+
     let mut lines: Vec<Line> = vec![
         section("OVERALL HEALTH"),
         Line::from(""),
@@ -61,65 +62,104 @@ fn build_lines(width: u16, app: &App) -> Vec<Line<'static>> {
             Style::default().fg(theme::AMBER).bold(),
         ),
         gauge::render(overall, bar_width),
-        Line::from(""),
-        section("ASSESSMENT"),
-        Line::from(""),
-        Line::from(Span::styled(
-            assessment.to_string(),
-            Style::default().fg(theme::AMBER).bold(),
-        )),
-        Line::from(Span::styled(
-            assessment_body,
-            Style::default().fg(theme::MUTED),
-        )),
-        Line::from(""),
-        section("SOURCES"),
-        Line::from(""),
-        detail_line(width, "Total", &d.sources_total.to_string()),
-        detail_line(width, "Internal", &d.sources_internal.to_string()),
-        detail_line(width, "External", &d.sources_external.to_string()),
-        Line::from(""),
-        section("RULES"),
-        Line::from(""),
-        detail_line(width, "Total", &d.rules_total.to_string()),
     ];
 
-    append_language_lines(&mut lines, width, &d.rules_by_language, "Rules by language");
+    push_separator(&mut lines, width);
 
+    lines.push(section("ASSESSMENT"));
     lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        assessment.to_string(),
+        Style::default().fg(theme::AMBER).bold(),
+    )));
+    lines.push(Line::from(Span::styled(
+        assessment_body,
+        Style::default().fg(theme::MUTED),
+    )));
+
+    push_separator(&mut lines, width);
+
+    lines.push(section("SOURCES"));
+    lines.push(Line::from(""));
+    lines.push(detail_line(
+        width,
+        "Internal",
+        &d.sources_internal.to_string(),
+    ));
+    lines.push(detail_line(
+        width,
+        "External",
+        &d.sources_external.to_string(),
+    ));
+    lines.push(accent_detail_line(
+        width,
+        "Total",
+        &d.sources_total.to_string(),
+    ));
+
+    push_separator(&mut lines, width);
+
+    lines.push(section("RULES"));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Rules by language",
+        theme::header_meta(),
+    )));
+    lines.push(detail_line(width, "TS", &counts.ts.to_string()));
+    lines.push(detail_line(width, "Rust", &counts.rust.to_string()));
+    lines.push(detail_line(width, "Python", &counts.python.to_string()));
+    lines.push(accent_detail_line(width, "All", &counts.all.to_string()));
+
+    push_separator(&mut lines, width);
+
     lines.push(section("VIOLATIONS"));
     lines.push(Line::from(""));
-    let total_violations =
-        d.violation_counts.must + d.violation_counts.should + d.violation_counts.may;
-    lines.push(detail_line(width, "Total", &total_violations.to_string()));
-    append_language_count_lines(
-        &mut lines,
-        width,
-        &d.violations_by_language,
+    lines.push(Line::from(Span::styled(
         "Violations by language",
-    );
+        theme::header_meta(),
+    )));
+    lines.push(detail_line(
+        width,
+        "TS",
+        &d.violations_by_language.ts.to_string(),
+    ));
+    lines.push(detail_line(
+        width,
+        "Rust",
+        &d.violations_by_language.rust.to_string(),
+    ));
+    lines.push(detail_line(
+        width,
+        "Python",
+        &d.violations_by_language.python.to_string(),
+    ));
+    lines.push(accent_detail_line(
+        width,
+        "All",
+        &d.violations_by_language.all.to_string(),
+    ));
 
     if debt_is_significant(app) {
-        lines.push(Line::from(""));
+        push_separator(&mut lines, width);
         lines.push(section("DEBT"));
         lines.push(Line::from(""));
         if let DebtView::Ready(summary) = &d.debt {
+            lines.push(Line::from(Span::styled(
+                format!("Debt {}", theme::humanize_token(&summary.debt_label)),
+                Style::default().fg(theme::AMBER).bold(),
+            )));
+            lines.push(detail_line(width, "Dead", &summary.by_dead.to_string()));
+            lines.push(detail_line(width, "Duplicate", &summary.by_dup.to_string()));
             lines.push(detail_line(
                 width,
-                "Assessment",
-                &theme::humanize_token(&summary.debt_label),
+                "Dependency",
+                &summary.by_deps.to_string(),
             ));
-            lines.push(detail_line(
+            lines.push(accent_detail_line(
                 width,
-                "Findings",
+                "Total",
                 &summary.finding_count.to_string(),
             ));
-            for hotspot in summary.hotspots.iter().take(5) {
-                lines.push(Line::from(Span::styled(
-                    format!("• {} ({})", hotspot.compact_title, hotspot.impact_level),
-                    Style::default().fg(theme::MUTED),
-                )));
-            }
         }
     }
 
@@ -157,37 +197,31 @@ fn detail_line(width: u16, label: &str, value: &str) -> Line<'static> {
     )
 }
 
-fn append_language_lines(
-    lines: &mut Vec<Line<'static>>,
-    width: u16,
-    by_language: &[(String, usize)],
-    title: &str,
-) {
-    lines.push(Line::from(Span::styled(
-        title.to_string(),
-        theme::header_meta(),
-    )));
-    let counts = map_rules_by_language(by_language);
-    lines.push(detail_line(width, "TS", &counts.ts.to_string()));
-    lines.push(detail_line(width, "Rust", &counts.rust.to_string()));
-    lines.push(detail_line(width, "Python", &counts.python.to_string()));
-    lines.push(detail_line(width, "All", &counts.all.to_string()));
+fn accent_detail_line(width: u16, label: &str, value: &str) -> Line<'static> {
+    let label_text = label.to_string();
+    let available = width.saturating_sub(2) as usize;
+    let max_value_width = available.saturating_sub(label_text.chars().count() + 1);
+    let value_text = truncate(value, max_value_width.max(1));
+    let spacer_len = available
+        .saturating_sub(label_text.chars().count())
+        .saturating_sub(value_text.chars().count())
+        .max(1);
+    let spacer = " ".repeat(spacer_len);
+
+    Line::from(vec![
+        Span::styled(label_text, Style::default().fg(theme::AMBER).bold()),
+        Span::raw(spacer),
+        Span::styled(value_text, Style::default().fg(theme::AMBER).bold()),
+    ])
 }
 
-fn append_language_count_lines(
-    lines: &mut Vec<Line<'static>>,
-    width: u16,
-    counts: &LanguageCounts,
-    title: &str,
-) {
+fn push_separator(lines: &mut Vec<Line<'static>>, width: u16) {
+    lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        title.to_string(),
-        theme::header_meta(),
+        "─".repeat(width.saturating_sub(4) as usize),
+        Style::default().fg(theme::MUTED),
     )));
-    lines.push(detail_line(width, "TS", &counts.ts.to_string()));
-    lines.push(detail_line(width, "Rust", &counts.rust.to_string()));
-    lines.push(detail_line(width, "Python", &counts.python.to_string()));
-    lines.push(detail_line(width, "All", &counts.all.to_string()));
+    lines.push(Line::from(""));
 }
 
 fn map_rules_by_language(by_language: &[(String, usize)]) -> LanguageCounts {
@@ -200,6 +234,7 @@ fn map_rules_by_language(by_language: &[(String, usize)]) -> LanguageCounts {
             _ => counts.all += *count,
         }
     }
+    counts.all += counts.ts + counts.rust + counts.python;
     counts
 }
 

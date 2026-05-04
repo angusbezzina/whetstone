@@ -76,7 +76,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
 pub fn scroll_hint(area: Rect, summary: &DebtSummaryView) -> Option<footer::ScrollHint> {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(8)])
+        .constraints([Constraint::Length(4), Constraint::Min(8)])
         .split(area);
     let cols = Layout::default()
         .direction(Direction::Horizontal)
@@ -124,7 +124,7 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
 fn render_ready(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(8)])
+        .constraints([Constraint::Length(4), Constraint::Min(8)])
         .split(area);
 
     let cols = Layout::default()
@@ -133,39 +133,37 @@ fn render_ready(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
         .split(rows[1]);
 
     render_header(frame, rows[0], summary);
-    render_hotspots(frame, cols[0], summary);
+    render_issues(frame, cols[0], summary);
     render_detail(frame, cols[1], summary);
 }
 
 fn render_header(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
-    let lines = vec![Line::from(vec![
-        Span::styled("Debt  ", theme::header_meta()),
-        Span::styled(
-            theme::humanize_token(&summary.debt_label),
-            Style::default()
-                .fg(theme::debt_label_color(&summary.debt_label))
-                .bold(),
-        ),
-        Span::raw("   "),
-        Span::styled("Total  ", theme::header_meta()),
-        Span::raw(summary.finding_count.to_string()),
-        Span::raw("   "),
-        Span::styled("Dead  ", theme::header_meta()),
-        Span::raw(summary.by_dead.to_string()),
-        Span::raw("   "),
-        Span::styled("Duplicate  ", theme::header_meta()),
-        Span::raw(summary.by_dup.to_string()),
-        Span::raw("   "),
-        Span::styled("Dependency  ", theme::header_meta()),
-        Span::raw(summary.by_deps.to_string()),
-        Span::raw("   "),
-        Span::styled("Hotspot  ", theme::header_meta()),
-        Span::raw(summary.by_hotspots.to_string()),
-    ])];
+    let lines = vec![
+        Line::from(vec![Span::styled(
+            format!("Debt {}", theme::humanize_token(&summary.debt_label)),
+            Style::default().fg(theme::AMBER).bold(),
+        )]),
+        Line::from(vec![
+            Span::styled("Total ", Style::default().fg(theme::AMBER).bold()),
+            Span::styled(
+                summary.finding_count.to_string(),
+                Style::default().fg(theme::AMBER).bold(),
+            ),
+            Span::raw("   "),
+            Span::styled("Dead ", theme::header_meta()),
+            Span::raw(summary.by_dead.to_string()),
+            Span::raw("   "),
+            Span::styled("Duplicate ", theme::header_meta()),
+            Span::raw(summary.by_dup.to_string()),
+            Span::raw("   "),
+            Span::styled("Dependency ", theme::header_meta()),
+            Span::raw(summary.by_deps.to_string()),
+        ]),
+    ];
     frame.render_widget(Paragraph::new(lines).block(block("SUMMARY", false)), area);
 }
 
-fn render_hotspots(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
+fn render_issues(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
     let width = area.width.saturating_sub(4) as usize;
     let visible = (area.height.saturating_sub(2) / 3).max(1) as usize;
     let (start, end) = window_bounds(summary.selected, summary.hotspots.len(), visible);
@@ -176,22 +174,23 @@ fn render_hotspots(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView)
         .enumerate()
         .skip(start)
         .take(end.saturating_sub(start))
-        .map(|(i, h)| hotspot_item(i == summary.selected, h, width))
+        .map(|(i, h)| issue_item(i == summary.selected, h, width))
         .collect();
 
-    let title = format!("TOP HOTSPOTS ({} total findings)", summary.finding_count);
+    let title = format!("ISSUES ({} total findings)", summary.finding_count);
     frame.render_widget(
         List::new(items).block(block(&title, !summary.detail_selected)),
         area,
     );
 }
 
-fn hotspot_item(selected: bool, hotspot: &DebtHotspotRow, width: usize) -> ListItem<'static> {
+fn issue_item(selected: bool, hotspot: &DebtHotspotRow, width: usize) -> ListItem<'static> {
     let title_w = width.saturating_sub(4).max(16);
     let prefix = if selected { "▶ " } else { "  " };
+    let category = display_category(&hotspot.category);
     let category_tag = format!(
         "[{}/{}]",
-        theme::humanize_token(&hotspot.category),
+        category,
         theme::humanize_token(&hotspot.confidence)
     );
 
@@ -213,7 +212,10 @@ fn hotspot_item(selected: bool, hotspot: &DebtHotspotRow, width: usize) -> ListI
         ]),
         Line::from(vec![
             Span::raw("  "),
-            Span::styled(category_tag, Style::default().fg(theme::MUTED)),
+            Span::styled(
+                category_tag,
+                Style::default().fg(ratatui::style::Color::White),
+            ),
         ]),
         Line::from(vec![
             Span::raw("  "),
@@ -239,7 +241,6 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
     };
 
     let lines = detail_lines(hotspot);
-
     let effective_scroll = summary
         .detail_scroll_y
         .min(detail_max_scroll(area, summary));
@@ -265,11 +266,11 @@ fn detail_max_scroll(area: Rect, summary: &DebtSummaryView) -> u16 {
         return 0;
     };
 
-    let lines = detail_lines(hotspot);
-    crate::tui::paragraph_max_scroll(&lines, area)
+    crate::tui::paragraph_max_scroll(&detail_lines(hotspot), area)
 }
 
 fn detail_lines(hotspot: &DebtHotspotRow) -> Vec<Line<'static>> {
+    let category = display_category(&hotspot.category);
     let mut lines = vec![
         Line::from(Span::styled(
             hotspot.title.clone(),
@@ -277,14 +278,7 @@ fn detail_lines(hotspot: &DebtHotspotRow) -> Vec<Line<'static>> {
         )),
         Line::from(""),
         detail_line("Rule ID", &hotspot.rule_id),
-        detail_line(
-            "Category",
-            &format!(
-                "{} ({})",
-                theme::humanize_token(&hotspot.category),
-                hotspot.category
-            ),
-        ),
+        detail_line("Category", &category),
         detail_line("Confidence", &theme::humanize_token(&hotspot.confidence)),
         detail_line("Impact", &hotspot.impact_level),
         Line::from(""),
@@ -335,6 +329,15 @@ fn hint_from_offset(offset: u16, max_offset: u16) -> Option<footer::ScrollHint> 
             up: offset > 0,
             down: offset < max_offset,
         })
+    }
+}
+
+fn display_category(category: &str) -> String {
+    match category {
+        "dead" => "Dead".to_string(),
+        "dup" => "Duplicate".to_string(),
+        "deps" => "Dependency".to_string(),
+        other => theme::humanize_token(other),
     }
 }
 
