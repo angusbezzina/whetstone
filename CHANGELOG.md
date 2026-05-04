@@ -6,6 +6,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.10] - 2026-05-04
+
+### Changed
+- **The TUI now matches the latest report-card UX.** Home is a single scrollable summary block with clearer ordered metrics, Sources has improved detail alignment and scroll behavior, Debt layout stays within bounds while surfacing the most useful details, and footer/menu styling now better matches the requested interaction model.
+
 ## [0.8.9] - 2026-04-30
 
 ### Changed
