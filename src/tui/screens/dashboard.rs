@@ -36,20 +36,33 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
     let outer = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(8), Constraint::Min(8)])
+        .constraints([Constraint::Length(10), Constraint::Length(5), Constraint::Min(7)])
         .split(area);
 
-    let bottom = if debt_is_significant(app) {
-        Layout::default()
+    if debt_is_significant(app) {
+        let debt_stack = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(5), Constraint::Length(5)])
+            .split(outer[2]);
+        let lower = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
-                Constraint::Percentage(25),
+                Constraint::Percentage(34),
+                Constraint::Percentage(33),
+                Constraint::Percentage(33),
             ])
-            .split(outer[1])
-    } else {
+            .split(debt_stack[0]);
+
+        render_overall_health(frame, outer[0], app);
+        render_headline_cards(frame, outer[1], app);
+        render_sources_panel(frame, lower[0], app);
+        render_rules_panel(frame, lower[1], app);
+        render_violations_panel(frame, lower[2], app);
+        render_debt_panel(frame, debt_stack[1], app);
+        return;
+    }
+
+    let lower = {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -57,16 +70,41 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 Constraint::Percentage(33),
                 Constraint::Percentage(33),
             ])
-            .split(outer[1])
+            .split(outer[2])
     };
 
     render_overall_health(frame, outer[0], app);
-    render_sources_panel(frame, bottom[0], app);
-    render_rules_panel(frame, bottom[1], app);
-    render_violations_panel(frame, bottom[2], app);
-    if debt_is_significant(app) {
-        render_debt_panel(frame, bottom[3], app);
-    }
+    render_headline_cards(frame, outer[1], app);
+    render_sources_panel(frame, lower[0], app);
+    render_rules_panel(frame, lower[1], app);
+    render_violations_panel(frame, lower[2], app);
+}
+
+fn render_headline_cards(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let d = &app.dashboard;
+    let total_violations = d.violation_counts.must + d.violation_counts.should + d.violation_counts.may;
+    let cards = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+        ])
+        .split(area);
+
+    frame.render_widget(
+        Paragraph::new(vec![pair_line("Sources", &d.sources_total.to_string())]).block(panel_block("AT A GLANCE")),
+        cards[0],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![pair_line("Rules", &d.rules_total.to_string())]).block(panel_block("AT A GLANCE")),
+        cards[1],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![pair_line("Violations", &total_violations.to_string())])
+            .block(panel_block("AT A GLANCE")),
+        cards[2],
+    );
 }
 
 fn render_overall_health(frame: &mut Frame<'_>, area: Rect, app: &App) {

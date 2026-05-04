@@ -172,7 +172,14 @@ pub fn view(frame: &mut Frame<'_>, app: &App) {
         Screen::Help => screens::help::render(frame, body, app),
     }
 
-    footer::render(frame, chunks[2], hints);
+    footer::render(frame, chunks[2], hints, show_scroll_hints(app));
+}
+
+fn show_scroll_hints(app: &App) -> bool {
+    matches!(
+        app.screen,
+        Screen::Sources | Screen::Check | Screen::Help | Screen::Result
+    )
 }
 
 fn render_too_small(frame: &mut Frame<'_>, area: Rect) {

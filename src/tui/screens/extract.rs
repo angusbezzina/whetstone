@@ -316,6 +316,7 @@ pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
         detail_line("Rules", &row.remaining_quota.to_string()),
         Line::from(""),
         Line::from(Span::styled("Source quality", theme::header_title())),
+        Line::from(""),
     ];
 
     if let Some(source_type) = &row.source_type {
@@ -346,6 +347,7 @@ pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
         "Available source material",
         theme::header_title(),
     )));
+    lines.push(Line::from(""));
     if row.sections.is_empty() {
         lines.push(Line::from(Span::styled(
             "No structured sections were captured for this package in the current handoff.",
@@ -354,7 +356,7 @@ pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
     } else {
         for section in row.sections.iter().take(5) {
             lines.push(Line::from(format!(
-                "• {}/{} ({}) [{} bytes]",
+                "{:<22} {:<14} {:<36} {} bytes",
                 section.name,
                 section.kind,
                 section.url,
@@ -363,7 +365,7 @@ pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
         }
         if row.sections.len() > 5 {
             lines.push(Line::from(Span::styled(
-                format!("• … +{} more sections", row.sections.len() - 5),
+                format!("… +{} more sections", row.sections.len() - 5),
                 Style::default().fg(theme::MUTED),
             )));
         }
@@ -374,14 +376,16 @@ pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
         "Why this can produce rules",
         theme::header_title(),
     )));
+    lines.push(Line::from(""));
     for reason in utility_reasons(row) {
         lines.push(Line::from(Span::styled(
-            format!("• {reason}"),
+            format!("{reason}"),
             Style::default().fg(theme::MUTED),
         )));
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("Next step", theme::header_title())));
+    lines.push(Line::from(""));
     lines.push(Line::from(row.next_step.clone()));
 
     frame.render_widget(
@@ -404,7 +408,7 @@ fn utility_label(percent: u8) -> &'static str {
 
 fn kv_line(label: &str, value: &str, value_style: Style) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{label:<14}"), theme::header_meta()),
+        Span::styled(format!("{label:<18}"), theme::header_meta()),
         Span::styled(value.to_string(), value_style),
     ])
 }

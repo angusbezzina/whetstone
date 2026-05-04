@@ -24,23 +24,32 @@ const FULL_HINTS: &[Hint] = &[
     ("5", "DEBT"),
     ("?", "HELP"),
     ("ESC", "QUIT"),
-    ("Q", "QUIT"),
 ];
 
 pub fn global_hints() -> &'static [Hint] {
     FULL_HINTS
 }
 
-pub fn render(frame: &mut Frame<'_>, area: Rect, hints: &[Hint]) {
-    let mut spans: Vec<Span> = Vec::with_capacity(hints.len() * 3);
-    for (i, (key, label)) in hints.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled(" ", Style::default()));
-        }
-        spans.push(Span::styled(*key, theme::key_hint_accent()));
-        spans.push(Span::styled(" ", Style::default()));
-        spans.push(Span::styled(*label, theme::key_hint_label()));
-    }
+pub fn render(frame: &mut Frame<'_>, area: Rect, hints: &[Hint], show_scroll: bool) {
+    let nav_text = render_hints_text(&hints[..hints.len().min(5)]);
+    let right_text = render_hints_text(&hints[hints.len().saturating_sub(2)..]);
+    let scroll_text = if show_scroll {
+        "  Scroll Up Scroll Down"
+    } else {
+        ""
+    };
+    let left_text = format!("{nav_text}{scroll_text}");
+
+    let total_width = area.width.saturating_sub(2) as usize;
+    let spacer_len = total_width
+        .saturating_sub(left_text.chars().count())
+        .saturating_sub(right_text.chars().count());
+    let spacer = " ".repeat(spacer_len.max(1));
+
+    let mut spans: Vec<Span> = Vec::new();
+    spans.push(Span::raw(left_text));
+    spans.push(Span::raw(spacer));
+    spans.push(Span::raw(right_text));
 
     let block = Block::default()
         .borders(Borders::TOP)
@@ -48,4 +57,12 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, hints: &[Hint]) {
 
     let paragraph = Paragraph::new(Line::from(spans)).block(block);
     frame.render_widget(paragraph, area);
+}
+
+fn render_hints_text(hints: &[Hint]) -> String {
+    hints
+        .iter()
+        .map(|(key, label)| format!("{key}: {label}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }

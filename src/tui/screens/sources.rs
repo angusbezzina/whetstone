@@ -45,6 +45,13 @@ pub struct SourceRow {
     pub last_fetched: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct SourceListRow {
+    name: String,
+    lang: String,
+    source_type: String,
+}
+
 pub fn load(project_dir: &Path) -> SourcesView {
     match crate::source_mgmt::list(project_dir) {
         Ok(value) => {
@@ -159,21 +166,29 @@ fn render_sources_list(frame: &mut Frame<'_>, area: Rect, app: &App) {
         },
         SourcesDataset::Personal | SourcesDataset::Team => app.sources_selected,
     };
+    let panes = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+
+    frame.render_widget(
+        Paragraph::new(dataset_tabs_line(app.sources_dataset)).block(block("DATASET")),
+        panes[0],
+    );
+
     let block = block("SOURCE LIST");
     if rows.is_empty() {
         let lines = vec![
-            dataset_tabs_line(app.sources_dataset),
-            Line::from(""),
             Line::from(Span::styled(
                 "  No sources in this dataset.",
                 Style::default().fg(theme::MUTED),
             )),
         ];
-        frame.render_widget(Paragraph::new(lines).block(block), area);
+        frame.render_widget(Paragraph::new(lines).block(block), panes[1]);
         return;
     }
 
-    let visible = area.height.saturating_sub(3) as usize;
+    let visible = panes[1].height.saturating_sub(2) as usize;
     let start = selected
         .saturating_sub(visible.saturating_sub(1) / 2)
         .min(rows.len().saturating_sub(visible));
@@ -183,18 +198,7 @@ fn render_sources_list(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .skip(start)
         .take(visible)
         .map(|(i, row)| {
-            let mut line = row.clone();
-            if i == selected {
-                line = format!("> {line}");
-            } else {
-                line = format!("  {line}");
-            }
-            let style = if i == selected {
-                Style::default().fg(theme::AMBER).bold()
-            } else {
-                Style::default()
-            };
-            ListItem::new(Line::from(Span::styled(line, style)))
+            ListItem::new(source_row_line(i == selected, row))
         })
         .collect();
 
@@ -202,10 +206,8 @@ fn render_sources_list(frame: &mut Frame<'_>, area: Rect, app: &App) {
         List::new(items)
             .block(block)
             .highlight_style(Style::default().fg(theme::AMBER)),
-        area,
+        panes[1],
     );
-    let tab_area = Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), 1);
-    frame.render_widget(Paragraph::new(dataset_tabs_line(app.sources_dataset)), tab_area);
 }
 
 fn dataset_tabs_line(active: SourcesDataset) -> Line<'static> {
@@ -297,45 +299,61 @@ fn render_custom_detail(frame: &mut Frame<'_>, area: Rect, app: &App, personal: 
     }
 }
 
-fn dependency_rows(app: &App) -> Vec<String> {
+fn dependency_rows(app: &App) -> Vec<SourceListRow> {
     match &app.dashboard.extract {
         crate::tui::screens::extract::ExtractView::Ready(data) => data
             .entries
             .iter()
-            .map(|row| {
-                format!(
-                    "{} ({}) [{}]",
-                    row.name,
-                    language_short(Some(&row.language)),
-                    source_kind_badge(row.source_type.as_deref())
-                )
+            .map(|row| SourceListRow {
+                name: row.name.clone(),
+                lang: language_short(Some(&row.language)).to_string(),
+                source_type: source_kind_badge(row.source_type.as_deref()),
             })
             .collect(),
         _ => Vec::new(),
     }
 }
 
-fn personal_rows(app: &App) -> Vec<String> {
+fn personal_rows(app: &App) -> Vec<SourceListRow> {
     match &app.dashboard.sources {
         SourcesView::Ready(data) => data.personal.iter().map(format_source_row).collect(),
         _ => Vec::new(),
     }
 }
 
-fn team_rows(app: &App) -> Vec<String> {
+fn team_rows(app: &App) -> Vec<SourceListRow> {
     match &app.dashboard.sources {
         SourcesView::Ready(data) => data.project.iter().map(format_source_row).collect(),
         _ => Vec::new(),
     }
 }
 
-fn format_source_row(row: &SourceRow) -> String {
-    format!(
-        "{} ({}) [{}]",
-        row.name,
-        language_short(row.lang.as_deref()),
-        source_kind_badge(row.kind.as_deref())
-    )
+fn format_source_row(row: &SourceRow) -> SourceListRow {
+    SourceListRow {
+        name: row.name.clone(),
+        lang: language_short(row.lang.as_deref()).to_string(),
+        source_type: source_kind_badge(row.kind.as_deref()),
+    }
+}
+
+fn source_row_line(selected: bool, row: &SourceListRow) -> Line<'static> {
+    let prefix = if selected { "> " } else { "  " };
+    let mut spans = vec![Span::styled(prefix, Style::default().fg(theme::MUTED))];
+    spans.push(Span::styled(
+        row.name.clone(),
+        Style::default().fg(theme::AMBER).bold(),
+    ));
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled(
+        row.lang.clone(),
+        Style::default().fg(ratatui::style::Color::White),
+    ));
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled(
+        row.source_type.clone(),
+        Style::default().fg(theme::MUTED),
+    ));
+    Line::from(spans)
 }
 
 fn language_short(lang: Option<&str>) -> &'static str {
@@ -359,7 +377,7 @@ fn source_kind_badge(kind: Option<&str>) -> String {
 
 fn kv_line(label: &str, value: &str) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("{label:<14}"), theme::header_meta()),
+        Span::styled(format!("{label:<18}"), theme::header_meta()),
         Span::styled(value.to_string(), Style::default().fg(ratatui::style::Color::White)),
     ])
 }

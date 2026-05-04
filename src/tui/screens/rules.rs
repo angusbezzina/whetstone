@@ -201,13 +201,13 @@ fn render_list(frame: &mut Frame<'_>, area: Rect, data: &RulesData) {
         .collect();
 
     let title = rules_title(data);
-    let list = List::new(items).block(block(&title));
+    let list = List::new(items).block(block(&title, true));
     frame.render_widget(list, area);
 }
 
 fn rules_title(data: &RulesData) -> String {
     if data.by_language.is_empty() {
-        format!("RULES ({}  ·  A add rule)", data.rows.len())
+        format!("RULES ({})", data.rows.len())
     } else {
         let breakdown = data
             .by_language
@@ -215,7 +215,7 @@ fn rules_title(data: &RulesData) -> String {
             .map(|(lang, n)| format!("{lang} {n}"))
             .collect::<Vec<_>>()
             .join("  ");
-        format!("RULES ({}  ·  {breakdown}  ·  A add rule)", data.rows.len())
+        format!("RULES ({}  ·  {breakdown})", data.rows.len())
     }
 }
 
@@ -273,7 +273,7 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &RulesData) {
 
     let paragraph = Paragraph::new(lines)
         .wrap(Wrap { trim: false })
-        .block(block("DETAIL"));
+        .block(block("DETAIL", false));
     frame.render_widget(paragraph, area);
 }
 
@@ -285,16 +285,12 @@ fn render_placeholder(frame: &mut Frame<'_>, area: Rect, message: &str) {
             Style::default().fg(theme::MUTED),
         )),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("RULES")), area);
+    frame.render_widget(Paragraph::new(lines).block(block("RULES", true)), area);
 }
 
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
     if msg.contains("No rules found") {
-        return render_placeholder(
-            frame,
-            area,
-            "No rules yet. Press A to add a custom rule, or run wh init / wh extract / wh approve to build the ruleset from sources.",
-        );
+        return render_placeholder(frame, area, "No rules yet. Run wh init / wh extract / wh approve to build the ruleset from sources.");
     }
     let lines = vec![
         Line::from(""),
@@ -304,7 +300,7 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
         )),
         Line::from(format!("  {msg}")),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("RULES")), area);
+    frame.render_widget(Paragraph::new(lines).block(block("RULES", true)), area);
 }
 
 fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -343,7 +339,7 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
     frame.render_widget(
         Paragraph::new(lines)
-            .block(block("ADD RULE"))
+            .block(block("ADD RULE", false))
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -362,14 +358,24 @@ fn form_line(label: &str, value: &str, active: bool) -> Line<'static> {
     ])
 }
 
-fn block(title: &str) -> Block<'static> {
-    Block::default()
+fn block(title: &str, show_add_cta: bool) -> Block<'static> {
+    let mut block = Block::default()
         .title(Span::styled(
             format!(" {title} "),
             theme::header_title(),
         ))
         .borders(Borders::ALL)
-        .border_style(theme::border_inactive())
+        .border_style(theme::border_inactive());
+    if show_add_cta {
+        block = block.title_top(
+            Line::from(Span::styled(
+                " A ADD RULE ",
+                Style::default().fg(theme::AMBER).bold(),
+            ))
+            .right_aligned(),
+        );
+    }
+    block
 }
 
 fn truncate(s: &str, max: usize) -> String {

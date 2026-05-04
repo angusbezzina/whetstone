@@ -121,6 +121,8 @@ pub struct DebtSummaryView {
     pub by_deps: u32,
     pub by_hotspots: u32,
     pub selected: usize,
+    pub detail_selected: bool,
+    pub detail_scroll_y: u16,
     pub scroll_x: u16,
     pub hotspots: Vec<DebtHotspotRow>,
 }
@@ -291,6 +293,8 @@ impl App {
                     by_deps: report.summary.by_category.deps,
                     by_hotspots: report.summary.by_category.hotspots,
                     selected: 0,
+                    detail_selected: false,
+                    detail_scroll_y: 0,
                     scroll_x: 0,
                     hotspots,
                 }))
@@ -341,6 +345,11 @@ impl App {
             KeyCode::Tab if self.screen == Screen::Sources => {
                 self.sources_dataset = self.sources_dataset.next();
                 self.sources_selected = 0;
+            }
+            KeyCode::Tab if self.screen == Screen::Debt => {
+                if let DebtView::Ready(data) = &mut self.dashboard.debt {
+                    data.detail_selected = !data.detail_selected;
+                }
             }
             KeyCode::BackTab if self.screen == Screen::Sources => {
                 self.sources_dataset = self.sources_dataset.prev();

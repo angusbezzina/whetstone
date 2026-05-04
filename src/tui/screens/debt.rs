@@ -23,15 +23,25 @@ pub fn hints() -> &'static [footer::Hint] {
 impl DebtView {
     pub fn select_prev(&mut self) {
         if let DebtView::Ready(data) = self {
-            data.selected = data.selected.saturating_sub(1);
+            if data.detail_selected {
+                data.detail_scroll_y = data.detail_scroll_y.saturating_sub(1);
+            } else {
+                data.selected = data.selected.saturating_sub(1);
+                data.detail_scroll_y = 0;
+            }
         }
     }
 
     pub fn select_next(&mut self) {
         if let DebtView::Ready(data) = self {
-            let len = data.hotspots.len();
-            if len > 0 && data.selected + 1 < len {
-                data.selected += 1;
+            if data.detail_selected {
+                data.detail_scroll_y = data.detail_scroll_y.saturating_add(1);
+            } else {
+                let len = data.hotspots.len();
+                if len > 0 && data.selected + 1 < len {
+                    data.selected += 1;
+                    data.detail_scroll_y = 0;
+                }
             }
         }
     }
@@ -146,13 +156,22 @@ fn render_hotspots(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView)
         .map(|(i, h)| hotspot_item(i == summary.selected, h, width))
         .collect();
 
-    let title = format!("TOP HOTSPOTS ({} total findings)", summary.finding_count);
+    let title = if summary.detail_selected {
+        format!("TOP HOTSPOTS ({} total findings)", summary.finding_count)
+    } else {
+        format!("TOP HOTSPOTS ({} total findings) [SELECTED]", summary.finding_count)
+    };
     frame.render_widget(List::new(items).block(block(&title)), area);
 }
 
 fn hotspot_item(selected: bool, hotspot: &DebtHotspotRow, width: usize) -> ListItem<'static> {
     let title_w = width.saturating_sub(30).max(16);
     let prefix = if selected { "▶ " } else { "  " };
+    let category_tag = format!(
+        "[{} / {}]",
+        theme::humanize_token(&hotspot.category),
+        theme::humanize_token(&hotspot.confidence)
+    );
 
     ListItem::new(vec![
         Line::from(vec![
@@ -161,26 +180,24 @@ fn hotspot_item(selected: bool, hotspot: &DebtHotspotRow, width: usize) -> ListI
                 Style::default().fg(if selected { theme::AMBER } else { theme::MUTED }),
             ),
             Span::styled(
-                format!(
-                    "[{}/{}]  ",
-                    theme::humanize_token(&hotspot.category),
-                    theme::humanize_token(&hotspot.confidence)
-                ),
-                Style::default().fg(theme::AMBER),
+                truncate(&hotspot.compact_title, title_w),
+                Style::default().fg(theme::AMBER).bold(),
             ),
+            Span::raw(" "),
             Span::styled(
-                format!(
-                    "{} (Impact: {})",
-                    truncate(&hotspot.compact_title, title_w),
-                    hotspot.impact_level
-                ),
-                Style::default().fg(theme::debt_label_color("moderate")).bold(),
+                format!("({} Impact)", hotspot.impact_level),
+                Style::default().fg(ratatui::style::Color::White),
+            ),
+            Span::raw(" "),
+            Span::styled(category_tag, Style::default().fg(theme::MUTED)),
+        ]),
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                truncate(&hotspot.primary_file, width.saturating_sub(2)),
+                Style::default().fg(theme::MUTED),
             ),
         ]),
-        Line::from(Span::styled(
-            format!("      {}", truncate(&hotspot.primary_file, width.saturating_sub(6))),
-            Style::default().fg(theme::MUTED),
-        )),
     ])
 }
 
@@ -197,7 +214,7 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
         return;
     };
 
-    let lines = vec![
+    let mut lines = vec![
         Line::from(Span::styled(hotspot.title.clone(), Style::default().fg(theme::AMBER).bold())),
         Line::from(""),
         detail_line("Rule ID", &hotspot.rule_id),
@@ -207,16 +224,30 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
         ),
         detail_line("Confidence", &theme::humanize_token(&hotspot.confidence)),
         detail_line("Impact", &hotspot.impact_level),
-        detail_line("Files", &hotspot.files.join(", ")),
+        Line::from(""),
+        Line::from(Span::styled("Affected files", theme::header_title())),
+    ];
+    lines.extend(
+        hotspot
+            .files
+            .iter()
+            .map(|file| Line::from(vec![Span::raw("- "), Span::raw(file.clone())])),
+    );
+    lines.extend([
         Line::from(""),
         Line::from(Span::styled("Snippet", theme::header_title())),
         Line::from(hotspot.snippet.clone()),
-    ];
+    ]);
 
     frame.render_widget(
         Paragraph::new(lines)
-            .block(block("DETAIL"))
-            .wrap(Wrap { trim: false }),
+            .block(block(if summary.detail_selected {
+                "DETAIL [SCROLL]"
+            } else {
+                "DETAIL"
+            }))
+            .wrap(Wrap { trim: false })
+            .scroll((summary.detail_scroll_y, 0)),
         area,
     );
 }
