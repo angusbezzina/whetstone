@@ -299,13 +299,18 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
         _ => "All",
     };
     let lines = vec![
+        Line::from(Span::styled(
+            "Tab next field · ←/→ change scope/language · Enter submit · Esc cancel",
+            Style::default().fg(theme::MUTED),
+        )),
+        Line::from(""),
         form_line(
             "Scope",
             if form.team_scope { "Team" } else { "Personal" },
-            false,
+            form.active_field == 0,
         ),
-        form_line("Name", &form.name, form.active_field == 0),
-        form_line("Language", lang, form.active_field == 1),
+        form_line("Name", &form.name, form.active_field == 1),
+        form_line("Language", lang, form.active_field == 2),
         Line::from(""),
         Line::from(Span::styled("Rule Text", theme::header_meta())),
         Line::from(Span::styled(
@@ -314,7 +319,7 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
             } else {
                 &form.rule_text
             },
-            if form.active_field == 2 {
+            if form.active_field == 3 {
                 Style::default().fg(theme::AMBER).bold()
             } else {
                 Style::default().fg(ratatui::style::Color::White)

@@ -112,18 +112,17 @@ fn row_from_json(entry: &serde_json::Value) -> SourceRow {
 }
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    if app.input_mode == InputMode::SourcesAdd {
-        render_add_form(frame, area, app);
-        return;
-    }
-
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
         .split(area);
 
     render_sources_list(frame, cols[0], app);
-    render_selected_detail(frame, cols[1], app);
+    if app.input_mode == InputMode::SourcesAdd {
+        render_add_form(frame, cols[1], app);
+    } else {
+        render_selected_detail(frame, cols[1], app);
+    }
 }
 
 pub fn scroll_hint(area: Rect, app: &App) -> Option<footer::ScrollHint> {
@@ -277,45 +276,30 @@ fn dataset_tabs_line(active: SourcesDataset) -> Line<'static> {
 
 fn render_add_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let form = &app.sources_form;
-    let mut lines = vec![
+    let scope = if form.team_scope { "Team" } else { "Personal" };
+    let language = source_form_language_label(form.language_idx);
+    let lines = vec![
         Line::from(Span::styled(
-            "Press A to add a handpicked source.",
+            format!("Adding to the {scope} source list."),
             Style::default().fg(theme::MUTED),
         )),
         Line::from(Span::styled(
-            "Tab next field · T toggle Personal/Team · Enter save · Esc cancel",
+            "Tab next field · ←/→ change language · Enter submit · Esc cancel",
             Style::default().fg(theme::MUTED),
         )),
         Line::from(""),
-    ];
-
-    let editing = true;
-    lines.push(form_line(
-        "Scope",
-        if form.team_scope { "Team" } else { "Personal" },
-        false,
-    ));
-    lines.push(form_line(
-        "URL/Path",
-        &form.url,
-        editing && form.active_field == 0,
-    ));
-    lines.push(form_line(
-        "Name",
-        &form.name,
-        editing && form.active_field == 1,
-    ));
-    if let Some(err) = &form.error {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            err.clone(),
+        form_line("URL", &form.url, form.active_field == 0),
+        form_line("Language", language, form.active_field == 1),
+        Line::from(""),
+        Line::from(Span::styled(
+            form.error.clone().unwrap_or_default(),
             Style::default().fg(theme::STATUS_WARN),
-        )));
-    }
+        )),
+    ];
 
     frame.render_widget(
         Paragraph::new(lines)
-            .block(block("ADD SOURCE", true))
+            .block(block("DETAIL", true))
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -331,11 +315,23 @@ fn render_selected_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
 fn render_custom_detail(frame: &mut Frame<'_>, area: Rect, app: &App, personal: bool) {
     match &app.dashboard.sources {
-        SourcesView::NotComputed => {
-            render_placeholder(frame, area, "Handpicked sources are not loaded yet.")
+        SourcesView::NotComputed => render_custom_detail_message(
+            frame,
+            area,
+            "Handpicked sources are not loaded yet.",
+            personal,
+            app.sources_detail_selected,
+        ),
+        SourcesView::Loading => render_custom_detail_message(
+            frame,
+            area,
+            "Loading handpicked sources…",
+            personal,
+            app.sources_detail_selected,
+        ),
+        SourcesView::Error(msg) => {
+            render_custom_detail_message(frame, area, msg, personal, app.sources_detail_selected)
         }
-        SourcesView::Loading => render_placeholder(frame, area, "Loading handpicked sources…"),
-        SourcesView::Error(msg) => render_error(frame, area, msg),
         SourcesView::Ready(data) => {
             let rows = if personal {
                 &data.personal
@@ -343,7 +339,13 @@ fn render_custom_detail(frame: &mut Frame<'_>, area: Rect, app: &App, personal: 
                 &data.project
             };
             let Some(row) = rows.get(app.sources_selected) else {
-                render_placeholder(frame, area, "No source selected.");
+                render_custom_detail_message(
+                    frame,
+                    area,
+                    "No source selected.",
+                    personal,
+                    app.sources_detail_selected,
+                );
                 return;
             };
             let mut lines = vec![kv_line(area.width, "Name", &row.name)];
@@ -356,6 +358,11 @@ fn render_custom_detail(frame: &mut Frame<'_>, area: Rect, app: &App, personal: 
             if let Some(last) = &row.last_fetched {
                 lines.push(kv_line(area.width, "Last fetched", last));
             }
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                add_source_note(personal),
+                Style::default().fg(theme::MUTED),
+            )));
             let effective_scroll = app
                 .sources_detail_scroll_y
                 .min(crate::tui::paragraph_max_scroll(&lines, area));
@@ -490,6 +497,28 @@ fn render_placeholder(frame: &mut Frame<'_>, area: Rect, message: &str) {
     frame.render_widget(Paragraph::new(lines).block(block("SOURCES", false)), area);
 }
 
+fn render_custom_detail_message(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    message: &str,
+    personal: bool,
+    active: bool,
+) {
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  {message}"),
+            Style::default().fg(theme::MUTED),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  {}", add_source_note(personal)),
+            Style::default().fg(theme::MUTED),
+        )),
+    ];
+    frame.render_widget(Paragraph::new(lines).block(block("DETAIL", active)), area);
+}
+
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
     let lines = vec![
         Line::from(""),
@@ -548,8 +577,30 @@ fn custom_detail_max_scroll(area: Rect, app: &App, personal: bool) -> u16 {
     if let Some(last) = &row.last_fetched {
         lines.push(kv_line(area.width, "Last fetched", last));
     }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        add_source_note(personal),
+        Style::default().fg(theme::MUTED),
+    )));
 
     crate::tui::paragraph_max_scroll(&lines, area)
+}
+
+fn add_source_note(personal: bool) -> &'static str {
+    if personal {
+        "Press A to add a new source to the Personal list."
+    } else {
+        "Press A to add a new source to the Team list."
+    }
+}
+
+fn source_form_language_label(idx: usize) -> &'static str {
+    match idx {
+        0 => "TS",
+        1 => "Python",
+        2 => "Rust",
+        _ => "All",
+    }
 }
 
 fn hint_from_offset(offset: u16, max_offset: u16) -> Option<footer::ScrollHint> {

@@ -166,8 +166,12 @@ pub fn view(frame: &mut Frame<'_>, app: &App) {
         Screen::Help => screens::help::render(frame, body, app),
     }
 
-    let scroll_hint = scroll_hint_state(body, app);
-    footer::render(frame, chunks[2], hints, scroll_hint);
+    if app.input_mode == app::InputMode::Normal {
+        let scroll_hint = scroll_hint_state(body, app);
+        footer::render(frame, chunks[2], hints, scroll_hint);
+    } else {
+        footer::render_form(frame, chunks[2], hints);
+    }
 }
 
 fn scroll_hint_state(body: Rect, app: &App) -> Option<footer::ScrollHint> {
@@ -248,6 +252,10 @@ mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
 
+    fn preview(s: &str, max: usize) -> String {
+        s.chars().take(max).collect()
+    }
+
     #[test]
     fn view_renders_dashboard_at_minimum_size() {
         let backend = TestBackend::new(80, 24);
@@ -269,12 +277,14 @@ mod tests {
 
     #[test]
     fn debt_screen_renders_not_computed_hint() {
+        use crate::tui::app::DebtView;
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let tmp = std::env::temp_dir().join(format!("wh_tui_debt_empty_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let mut app = App::new(&tmp).unwrap();
-        app.screen = Screen::Debt; // without ensure_debt_loaded — stays NotComputed
+        app.screen = Screen::Debt;
+        app.dashboard.debt = DebtView::NotComputed;
         terminal.draw(|frame| view(frame, &app)).unwrap();
         let rendered: String = terminal
             .backend()
@@ -286,7 +296,7 @@ mod tests {
         assert!(
             rendered.contains("not computed"),
             "debt empty-state should show a hint; got: {}",
-            &rendered[..rendered.len().min(400)]
+            preview(&rendered, 400)
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -416,8 +426,33 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol().to_owned())
             .collect();
-        assert!(rendered.contains("↑ Scroll Up"));
-        assert!(rendered.contains("↓ Scroll Down"));
+        assert!(rendered.contains("↑ Up"));
+        assert!(rendered.contains("↓ Down"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn footer_renders_form_submit_hints() {
+        let backend = TestBackend::new(140, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let tmp = std::env::temp_dir().join(format!("wh_tui_footer_form_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.screen = Screen::Rules;
+        app.input_mode = app::InputMode::RulesAdd;
+
+        terminal.draw(|frame| view(frame, &app)).unwrap();
+
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol().to_owned())
+            .collect();
+        assert!(rendered.contains("ENTER: Submit"));
+        assert!(rendered.contains("ESC: Cancel"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

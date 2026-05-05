@@ -6,6 +6,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.13] - 2026-05-04
+
+### Fixed
+- **The Home, Sources, Rules, Debt, and footer flows now line up with the latest operator UX.** Home always shows the debt summary block, Personal/Team sources can add a URL plus language directly from the right pane, rule authoring now uses arrow-driven selectors with Enter-to-submit behavior, Debt gives more space to detail content, and footer hints are shorter while teaching form submission.
+
 ## [0.8.12] - 2026-05-04
 
 ### Fixed

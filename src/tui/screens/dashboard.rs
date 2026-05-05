@@ -139,11 +139,11 @@ fn build_lines(width: u16, app: &App) -> Vec<Line<'static>> {
         &d.violations_by_language.all.to_string(),
     ));
 
-    if debt_is_significant(app) {
-        push_separator(&mut lines, width);
-        lines.push(section("DEBT"));
-        lines.push(Line::from(""));
-        if let DebtView::Ready(summary) = &d.debt {
+    push_separator(&mut lines, width);
+    lines.push(section("DEBT"));
+    lines.push(Line::from(""));
+    match &d.debt {
+        DebtView::Ready(summary) => {
             lines.push(Line::from(Span::styled(
                 format!("Debt {}", theme::humanize_token(&summary.debt_label)),
                 Style::default().fg(theme::AMBER).bold(),
@@ -160,6 +160,12 @@ fn build_lines(width: u16, app: &App) -> Vec<Line<'static>> {
                 "Total",
                 &summary.finding_count.to_string(),
             ));
+        }
+        DebtView::Error(_) | DebtView::Loading | DebtView::NotComputed => {
+            lines.push(Line::from(Span::styled(
+                "Debt summary unavailable.",
+                Style::default().fg(theme::MUTED),
+            )))
         }
     }
 
@@ -298,15 +304,6 @@ fn panel_block(title: &str) -> Block<'static> {
         .title(Span::styled(format!(" {title} "), theme::header_title()))
         .borders(Borders::ALL)
         .border_style(theme::border_inactive())
-}
-
-fn debt_is_significant(app: &App) -> bool {
-    matches!(
-        &app.dashboard.debt,
-        DebtView::Ready(summary)
-            if matches!(summary.debt_label.as_str(), "high" | "elevated")
-                || summary.finding_count >= 20
-    )
 }
 
 fn truncate(value: &str, max: usize) -> String {

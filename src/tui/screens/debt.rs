@@ -80,7 +80,7 @@ pub fn scroll_hint(area: Rect, summary: &DebtSummaryView) -> Option<footer::Scro
         .split(area);
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
+        .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
         .split(rows[1]);
 
     if summary.detail_selected {
@@ -129,7 +129,7 @@ fn render_ready(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
+        .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
         .split(rows[1]);
 
     render_header(frame, rows[0], summary);
@@ -144,12 +144,6 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
             Style::default().fg(theme::AMBER).bold(),
         )]),
         Line::from(vec![
-            Span::styled("Total ", Style::default().fg(theme::AMBER).bold()),
-            Span::styled(
-                summary.finding_count.to_string(),
-                Style::default().fg(theme::AMBER).bold(),
-            ),
-            Span::raw("   "),
             Span::styled("Dead ", theme::header_meta()),
             Span::raw(summary.by_dead.to_string()),
             Span::raw("   "),
@@ -158,6 +152,12 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, summary: &DebtSummaryView) {
             Span::raw("   "),
             Span::styled("Dependency ", theme::header_meta()),
             Span::raw(summary.by_deps.to_string()),
+            Span::raw("   "),
+            Span::styled("Total ", Style::default().fg(theme::AMBER).bold()),
+            Span::styled(
+                summary.finding_count.to_string(),
+                Style::default().fg(theme::AMBER).bold(),
+            ),
         ]),
     ];
     frame.render_widget(Paragraph::new(lines).block(block("SUMMARY", false)), area);
@@ -283,16 +283,18 @@ fn detail_lines(hotspot: &DebtHotspotRow) -> Vec<Line<'static>> {
         detail_line("Impact", &hotspot.impact_level),
         Line::from(""),
         Line::from(Span::styled("Affected files", theme::header_title())),
+        Line::from(""),
     ];
-    lines.extend(
-        hotspot
-            .files
-            .iter()
-            .map(|file| Line::from(vec![Span::raw("- "), Span::raw(file.clone())])),
-    );
+    lines.extend(hotspot.files.iter().map(|file| {
+        Line::from(vec![
+            Span::styled("- ", Style::default().fg(theme::AMBER).bold()),
+            Span::raw(file.clone()),
+        ])
+    }));
     lines.extend([
         Line::from(""),
         Line::from(Span::styled("Snippet", theme::header_title())),
+        Line::from(""),
         Line::from(hotspot.snippet.clone()),
     ]);
     lines

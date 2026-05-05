@@ -67,7 +67,7 @@ pub struct SourcesFormState {
     pub active_field: usize,
     pub team_scope: bool,
     pub url: String,
-    pub name: String,
+    pub language_idx: usize,
     pub error: Option<String>,
 }
 
@@ -270,50 +270,7 @@ impl App {
             return;
         }
         self.dashboard.debt = DebtView::Loading;
-        let opts = crate::debt::DebtOptions {
-            project_dir: self.project_dir.clone(),
-            top: usize::MAX,
-            min_confidence: crate::debt::types::Confidence::Medium,
-            since_days: 90,
-        };
-        self.dashboard.debt = match crate::debt::run(&opts) {
-            Ok(report) => {
-                let max_score = report
-                    .hotspots
-                    .iter()
-                    .map(|h| h.score)
-                    .fold(0.0_f64, f64::max);
-                let hotspots = report
-                    .hotspots
-                    .iter()
-                    .map(|h| DebtHotspotRow {
-                        category: h.category.as_str().to_string(),
-                        confidence: h.confidence.as_str().to_string(),
-                        rule_id: h.rule_id.clone(),
-                        title: h.title.clone(),
-                        compact_title: compact_hotspot_title(&h.title),
-                        primary_file: h.files.first().cloned().unwrap_or_else(|| "—".to_string()),
-                        files: h.files.clone(),
-                        snippet: debt_snippet(&h.evidence),
-                        impact_level: impact_level(normalize_impact_percent(h.score, max_score))
-                            .to_string(),
-                    })
-                    .collect();
-                DebtView::Ready(Box::new(DebtSummaryView {
-                    debt_label: report.summary.debt_label.as_str().to_string(),
-                    finding_count: report.summary.finding_count,
-                    by_dead: report.summary.by_category.dead,
-                    by_dup: report.summary.by_category.dup,
-                    by_deps: report.summary.by_category.deps,
-                    selected: 0,
-                    detail_selected: false,
-                    detail_scroll_y: 0,
-                    scroll_x: 0,
-                    hotspots,
-                }))
-            }
-            Err(e) => DebtView::Error(e.to_string()),
-        };
+        self.dashboard.debt = load_debt_view(&self.project_dir);
     }
 
     fn handle_key(&mut self, ev: KeyEvent) {
@@ -349,7 +306,14 @@ impl App {
             }
             KeyCode::Char('?') => self.screen = Screen::Help,
             KeyCode::Char('a') | KeyCode::Char('A') => match self.screen {
-                Screen::Sources => self.open_sources_form(),
+                Screen::Sources
+                    if matches!(
+                        self.sources_dataset,
+                        SourcesDataset::Personal | SourcesDataset::Team
+                    ) =>
+                {
+                    self.open_sources_form()
+                }
                 Screen::Rules => self.open_rules_form(),
                 _ => {}
             },
@@ -515,12 +479,22 @@ impl App {
     }
 
     fn open_sources_form(&mut self) {
-        self.sources_form = SourcesFormState::default();
+        self.sources_form = SourcesFormState {
+            active_field: 0,
+            team_scope: self.sources_dataset == SourcesDataset::Team,
+            url: String::new(),
+            language_idx: 3,
+            error: None,
+        };
+        self.sources_detail_selected = true;
         self.input_mode = InputMode::SourcesAdd;
     }
 
     fn open_rules_form(&mut self) {
-        self.rules_form = RulesFormState::default();
+        self.rules_form = RulesFormState {
+            active_field: 1,
+            ..RulesFormState::default()
+        };
         self.input_mode = InputMode::RulesAdd;
     }
 
@@ -537,6 +511,7 @@ impl App {
             KeyCode::Esc => {
                 self.input_mode = InputMode::Normal;
                 self.sources_form.error = None;
+                self.sources_detail_selected = false;
             }
             KeyCode::Tab => {
                 self.sources_form.active_field = (self.sources_form.active_field + 1) % 2;
@@ -544,14 +519,17 @@ impl App {
             KeyCode::BackTab => {
                 self.sources_form.active_field = self.sources_form.active_field.saturating_sub(1);
             }
-            KeyCode::Backspace => {
+            KeyCode::Backspace if self.sources_form.active_field == 0 => {
                 self.current_sources_field_mut().pop();
             }
             KeyCode::Enter => self.submit_sources_form(),
-            KeyCode::Char('t') | KeyCode::Char('T') => {
-                self.sources_form.team_scope = !self.sources_form.team_scope;
+            KeyCode::Left | KeyCode::Char('h') if self.sources_form.active_field == 1 => {
+                self.sources_form.language_idx = self.sources_form.language_idx.saturating_sub(1);
             }
-            KeyCode::Char(c) => {
+            KeyCode::Right | KeyCode::Char('l') if self.sources_form.active_field == 1 => {
+                self.sources_form.language_idx = (self.sources_form.language_idx + 1).min(3);
+            }
+            KeyCode::Char(c) if self.sources_form.active_field == 0 => {
                 self.current_sources_field_mut().push(c);
             }
             _ => {}
@@ -565,50 +543,35 @@ impl App {
                 self.rules_form.error = None;
             }
             KeyCode::Tab => {
-                self.rules_form.active_field = (self.rules_form.active_field + 1) % 3;
+                self.rules_form.active_field = (self.rules_form.active_field + 1) % 4;
             }
             KeyCode::BackTab => {
                 self.rules_form.active_field = self.rules_form.active_field.saturating_sub(1);
             }
             KeyCode::Backspace => {
-                if self.rules_form.active_field != 1 {
+                if matches!(self.rules_form.active_field, 1 | 3) {
                     self.current_rules_field_mut().pop();
                 }
             }
-            KeyCode::Enter => {
-                if self.rules_form.active_field == 2 {
-                    self.current_rules_field_mut().push('\n');
-                } else {
-                    self.rules_form.active_field = (self.rules_form.active_field + 1) % 3;
-                }
-            }
+            KeyCode::Enter => self.submit_rules_form(),
             KeyCode::Char('s') | KeyCode::Char('S')
                 if ev.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 self.submit_rules_form();
             }
-            KeyCode::Char('t') | KeyCode::Char('T') => {
+            KeyCode::Left | KeyCode::Char('h') if self.rules_form.active_field == 0 => {
                 self.rules_form.team_scope = !self.rules_form.team_scope;
             }
-            KeyCode::Left | KeyCode::Char('h') if self.rules_form.active_field == 1 => {
+            KeyCode::Right | KeyCode::Char('l') if self.rules_form.active_field == 0 => {
+                self.rules_form.team_scope = !self.rules_form.team_scope;
+            }
+            KeyCode::Left | KeyCode::Char('h') if self.rules_form.active_field == 2 => {
                 self.rules_form.language_idx = self.rules_form.language_idx.saturating_sub(1);
             }
-            KeyCode::Right | KeyCode::Char('l') if self.rules_form.active_field == 1 => {
+            KeyCode::Right | KeyCode::Char('l') if self.rules_form.active_field == 2 => {
                 self.rules_form.language_idx = (self.rules_form.language_idx + 1).min(3);
             }
-            KeyCode::Char('p') | KeyCode::Char('P') if self.rules_form.active_field == 1 => {
-                self.rules_form.language_idx = 2;
-            }
-            KeyCode::Char('r') | KeyCode::Char('R') if self.rules_form.active_field == 1 => {
-                self.rules_form.language_idx = 1;
-            }
-            KeyCode::Char('s') | KeyCode::Char('S') if self.rules_form.active_field == 1 => {
-                self.rules_form.language_idx = 0;
-            }
-            KeyCode::Char('a') | KeyCode::Char('A') if self.rules_form.active_field == 1 => {
-                self.rules_form.language_idx = 3;
-            }
-            KeyCode::Char(c) if self.rules_form.active_field != 1 => {
+            KeyCode::Char(c) if matches!(self.rules_form.active_field, 1 | 3) => {
                 self.current_rules_field_mut().push(c);
             }
             _ => {}
@@ -616,33 +579,24 @@ impl App {
     }
 
     fn current_sources_field_mut(&mut self) -> &mut String {
-        match self.sources_form.active_field {
-            0 => &mut self.sources_form.url,
-            _ => &mut self.sources_form.name,
-        }
+        &mut self.sources_form.url
     }
 
     fn current_rules_field_mut(&mut self) -> &mut String {
         match self.rules_form.active_field {
-            0 => &mut self.rules_form.name,
             1 => &mut self.rules_form.name,
+            3 => &mut self.rules_form.rule_text,
             _ => &mut self.rules_form.rule_text,
         }
     }
 
     fn submit_sources_form(&mut self) {
-        let name = if self.sources_form.name.trim().is_empty() {
-            None
-        } else {
-            Some(self.sources_form.name.trim())
-        };
-
         match crate::source_mgmt::add(
             &self.project_dir,
             crate::source_mgmt::AddOptions {
                 url: self.sources_form.url.trim(),
-                name,
-                language: None,
+                name: None,
+                language: Some(source_form_language(self.sources_form.language_idx)),
                 source_kind: None,
                 personal: !self.sources_form.team_scope,
             },
@@ -652,6 +606,7 @@ impl App {
                 self.ensure_sources_loaded();
                 self.input_mode = InputMode::Normal;
                 self.sources_form = SourcesFormState::default();
+                self.sources_detail_selected = false;
             }
             Err(e) => self.sources_form.error = Some(e.to_string()),
         }
@@ -662,6 +617,10 @@ impl App {
         if slug.is_empty() {
             self.rules_form.error =
                 Some("Rule name must contain at least one letter or number.".into());
+            return;
+        }
+        if self.rules_form.rule_text.trim().is_empty() {
+            self.rules_form.error = Some("Rule text must be non-empty.".into());
             return;
         }
         let languages: &[&str] = match self.rules_form.language_idx {
@@ -798,7 +757,58 @@ fn collect_dashboard(project_dir: &Path) -> DashboardState {
         }
     }
 
+    d.debt = load_debt_view(project_dir);
+
     d
+}
+
+fn load_debt_view(project_dir: &Path) -> DebtView {
+    let opts = crate::debt::DebtOptions {
+        project_dir: project_dir.to_path_buf(),
+        top: usize::MAX,
+        min_confidence: crate::debt::types::Confidence::Medium,
+        since_days: 90,
+    };
+    match crate::debt::run(&opts) {
+        Ok(report) => build_debt_view(report),
+        Err(e) => DebtView::Error(e.to_string()),
+    }
+}
+
+fn build_debt_view(report: crate::debt::types::DebtReport) -> DebtView {
+    let max_score = report
+        .hotspots
+        .iter()
+        .map(|h| h.score)
+        .fold(0.0_f64, f64::max);
+    let hotspots = report
+        .hotspots
+        .iter()
+        .map(|h| DebtHotspotRow {
+            category: h.category.as_str().to_string(),
+            confidence: h.confidence.as_str().to_string(),
+            rule_id: h.rule_id.clone(),
+            title: h.title.clone(),
+            compact_title: compact_hotspot_title(&h.title),
+            primary_file: h.files.first().cloned().unwrap_or_else(|| "—".to_string()),
+            files: h.files.clone(),
+            snippet: debt_snippet(&h.evidence),
+            impact_level: impact_level(normalize_impact_percent(h.score, max_score)).to_string(),
+        })
+        .collect();
+
+    DebtView::Ready(Box::new(DebtSummaryView {
+        debt_label: report.summary.debt_label.as_str().to_string(),
+        finding_count: report.summary.finding_count,
+        by_dead: report.summary.by_category.dead,
+        by_dup: report.summary.by_category.dup,
+        by_deps: report.summary.by_category.deps,
+        selected: 0,
+        detail_selected: false,
+        detail_scroll_y: 0,
+        scroll_x: 0,
+        hotspots,
+    }))
 }
 
 fn normalize_impact_percent(score: f64, max_score: f64) -> u8 {
@@ -885,6 +895,15 @@ fn slugify_rule_name(input: &str) -> String {
         }
     }
     out.trim_matches('-').to_string()
+}
+
+fn source_form_language(idx: usize) -> &'static str {
+    match idx {
+        0 => "typescript",
+        1 => "python",
+        2 => "rust",
+        _ => "any",
+    }
 }
 
 fn first_existing_rule_id(project_dir: &Path, planned: &[String]) -> Option<String> {
