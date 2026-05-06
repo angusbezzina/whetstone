@@ -262,6 +262,10 @@ enforcing CI-parity gates locally.
 - local MCP wrapper around `wh rules query` / `wh scan`
 - shared registries / publishing ecosystem
 
+See [`planning/platform-registry.md`](./platform-registry.md) and
+[`references/platform-registry-api.md`](../references/platform-registry-api.md)
+for the current platform/registry design.
+
 ---
 
 ## Design principles
@@ -298,6 +302,8 @@ enforcing CI-parity gates locally.
 | `planning/whetstone-logic-flow.mmd` | Visual flow chart |
 | `planning/shared-config-packs.md` | Canonical shareability + pack design |
 | `planning/formatter-enforcement.md` | Formatter-backed enforcement contract |
+| `planning/platform-registry.md` | Epic 4 platform + registry design |
+| `references/platform-registry-api.md` | Future registry API / publish contract sketch |
 
 ---
 
