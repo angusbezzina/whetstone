@@ -2,84 +2,86 @@
 flowchart TD
     %% ═══════════════════════════════════════════════════════════════════
     %% WHETSTONE — logic flow
-    %% Last updated: 2026-04-21  (state of `main` with [Unreleased] → 0.4.0)
-    %%
-    %% Legend:
-    %%   Amber  = entry point
-    %%   Green  = Binary  (shipped deterministic commands)
-    %%   Orange = Agent   (judgment via SKILL.md)
-    %%   Blue   = User    (approval / preference decisions)
-    %%   Purple = Authoring shortcut / source subscription / JIT lookup
-    %%   Grey   = Deferred / future
+    %% Last updated: 2026-05-06  (taste = trusted sources → approved rules)
     %% ═══════════════════════════════════════════════════════════════════
 
-    START([User: run whetstone])
+    START([User: run whetstone<br/>set project taste])
 
     %% ─── Source subscriptions (optional, before bootstrap) ──────────────
-    SOURCE_ADD["wh source add &lt;url&gt;<br/>--name / --lang / --kind<br/>--personal (default) | --project"]
-    SOURCE_OPS["wh source list<br/>wh source fetch &lt;name&gt;<br/>wh source remove &lt;target&gt;"]
-    START -.->|subscribe a blog / wiki /<br/>llms.txt / internal doc| SOURCE_ADD
+    SOURCE_ADD["wh sources add &lt;url&gt;<br/>--name / --lang / --kind<br/>--personal (default) | --project"]
+    SOURCE_OPS["wh sources list<br/>wh sources verify &lt;name&gt;<br/>wh sources remove &lt;target&gt;"]
+    CONFIG_SHOW["wh config show<br/>wh config validate"]
+    PACKS_NEXT["Canonical shareability:<br/>copy whetstone/whetstone.yaml<br/>optional extends/import packs underneath"]
+    START -.->|subscribe a trusted blog / wiki /<br/>llms.txt / internal doc| SOURCE_ADD
     SOURCE_ADD --> INIT
     SOURCE_OPS -.-> INIT
+    SOURCE_OPS -.-> CONFIG_SHOW
+    CONFIG_SHOW -.-> PACKS_NEXT
 
-    %% ─── Personal-taste authoring shortcut (bypasses extract/submit/approve) ──
-    AUTHOR_SHORT["wh rule add &lt;id&gt;<br/>--description / --match / --lang<br/>Writes .personal/rules/ as APPROVED"]
+    %% ─── Personal-taste authoring shortcut ─────────────────────────────
+    AUTHOR_SHORT["wh rules add &lt;id&gt;<br/>--description / --match / --lang<br/>Writes .personal/rules/ as APPROVED"]
     START -.->|I already know the rule| AUTHOR_SHORT
     AUTHOR_SHORT --> ACTIONS
 
-    %% ─── Primary loop: bootstrap → extract → approve → generate → verify → monitor → maintain ──
-    START --> INIT["wh init<br/>Detect manifests<br/>Resolve dep docs + changelogs<br/>Fetch subscribed sources<br/>Write extraction-handoff.json"]
+    %% ─── Primary loop ──────────────────────────────────────────────────
+    START --> INIT["wh init<br/>Detect manifests<br/>Resolve dep docs + changelogs<br/>Fetch subscribed trusted sources<br/>Write extraction-handoff.json"]
 
-    INIT --> EXTRACT["wh extract<br/>Walk worklist<br/>Next dep or custom source<br/>Ranked sections + quota"]
-    EXTRACT --> AGENT_EXTRACT["Agent reads the handoff<br/>Reads the dep's docs<br/>Drafts a candidate bundle YAML"]
+    INIT --> REVIEW["Review init handoff<br/>wh sources list for weak/missing sources<br/>wh rules worklist for extraction order"]
+    REVIEW --> EXTRACT["wh extract<br/>Walk worklist<br/>Next dep or trusted source<br/>Ranked sections + quota"]
+    EXTRACT --> AGENT_EXTRACT["Agent reads the handoff<br/>Reads the source material<br/>Drafts a candidate bundle YAML"]
     AGENT_EXTRACT --> SUBMIT["wh extract submit &lt;bundle.yaml&gt;<br/>Validate ids, write status: candidate<br/>whetstone/rules/&lt;lang&gt;/&lt;dep&gt;.yaml"]
 
     SUBMIT --> USER{"User reviews<br/>candidate set"}
-    USER -->|wh approve --all<br/>or wh approve &lt;id&gt;| APPROVE["wh approve<br/>candidate → approved<br/>Single id or batch filter"]
+    USER -->|wh rules approve --all<br/>or wh rules approve &lt;id&gt;| APPROVE["wh rules approve<br/>candidate → approved<br/>Single id or batch filter"]
     USER -->|edit and resubmit| AGENT_EDIT["Agent edits bundle"]
     AGENT_EDIT --> SUBMIT
-    USER -.->|already approved —<br/>bump severity| RULE_EDIT["wh rule edit &lt;id&gt; --severity must<br/>or --all --dep X --category Y<br/>--dry-run supported"]
+    USER -.->|already approved —<br/>bump severity| RULE_EDIT["wh rules edit &lt;id&gt; --severity must<br/>or --all --dep X --category Y<br/>--dry-run supported"]
     RULE_EDIT --> APPROVE
 
     APPROVE --> VALIDATE["wh validate<br/>Schema + fixture checks"]
     VALIDATE -->|fix issues| AGENT_FIX["Agent fixes YAML"]
     AGENT_FIX --> VALIDATE
-    VALIDATE --> ACTIONS["wh actions [--terse]<br/>wh context → AGENTS.md + AGENTS.&lt;lang&gt;.md sidecars<br/>wh tests   → pytest / vitest / cargo test<br/>wh lint    → ruff / biome / clippy overlays"]
+    VALIDATE --> ACTIONS["wh actions all [--terse]<br/>wh actions context / test / lint<br/>Write agent context + test + lint artifacts"]
+    FORMAT_NEXT["Formatter-backed overlays<br/>only for source-backed rules that<br/>map to safe mechanical rewrites"]
+    ACTIONS -.-> FORMAT_NEXT
 
-    ACTIONS --> CHECK["wh check src/<br/>Tree-sitter AST queries<br/>AST-scoped regex<br/>lint_proxy verification"]
-    CHECK --> STATUS["wh status<br/>rule_system_score + adherence_score<br/>Violation trend in .metrics.jsonl"]
-    STATUS --> REPORT["wh report [--pr-comment] [--json]<br/>One-page markdown narrative<br/>Top 10 violations + next actions"]
+    ACTIONS --> SCAN["wh scan src/<br/>Tree-sitter AST queries<br/>AST-scoped regex<br/>lint_proxy verification"]
+    SCAN --> STATUS["wh status<br/>rule_system_score + adherence_score<br/>Violation trend in .metrics.jsonl"]
+    STATUS --> DEBT["wh debt<br/>Dead code / duplicates / dep hygiene<br/>Hotspots worth fixing next"]
+    DEBT --> REPORT["wh report [--pr-comment] [--json]<br/>One-page markdown narrative<br/>Top violations + debt + next actions"]
     REPORT --> DONE([Done: rules enforced, agents informed, repo scored])
 
-    %% ─── JIT side-channel (any time — especially during AGENT_EXTRACT) ──
+    %% ─── JIT side-channel ───────────────────────────────────────────────
     RULES_QUERY["wh rules query --file &lt;path&gt;<br/>Filters: --lang / --dep / --severity / --full<br/>JSON envelope: { total, filters, rules[] }"]
     AGENT_EXTRACT -.->|what rules apply here?| RULES_QUERY
     RULES_QUERY -.->|filtered rule set| AGENT_EXTRACT
 
     %% ─── Maintenance loop ──────────────────────────────────────────────
-    STATUS -.->|version or content-hash drift| REINIT["wh reinit<br/>Re-resolve changed deps<br/>Detect VERSION + CONTENT-HASH drift<br/>Write refresh-diff.json with<br/>re_extraction_candidates + extraction_prompt"]
-    REINIT --> EXTRACT
+    STATUS -.->|version or content-hash drift| REINIT["wh reinit<br/>Re-resolve changed deps and sources<br/>Detect VERSION + CONTENT-HASH drift<br/>Write refresh-diff.json with<br/>re_extraction_candidates + extraction_prompt"]
+    REINIT --> REVIEW
 
     %% ─── CI path ───────────────────────────────────────────────────────
     CI_START([CI pipeline])
     CI_START --> CI["wh ci --fail-on stale<br/>Freshness gate<br/>Optional PR comment"]
-    CI --> CHECK
+    CI --> SCAN
     CI_START -.->|per-PR summary| REPORT
 
     %% ─── Deferred / future ─────────────────────────────────────────────
-    DONE -.-> FUTURE["Deferred in 0.3.0 lean refactor:<br/>• wh bench / wh eval / wh patterns<br/>• wh propose / wh apply (→ extract submit + approve)<br/>• wh promote / wh layers (2-layer merge instead)<br/>• wh config show / validate (inspector deferred)<br/>• Team extends:, built-in rules layer<br/>• MCP server, shared rule registry (Epic 4)"]
+    DONE -.-> FUTURE["Deferred beyond near-term:<br/>• Local MCP wrapper around wh rules query / wh scan<br/>• Shared registries + publishing ecosystem<br/>• wh bench / wh eval / wh patterns revival if justified<br/>• broadenings after packs + formatter surfaces stabilize"]
 
     %% ─── Styling ───────────────────────────────────────────────────────
     classDef binary fill:#2d6a4f,color:#fff,stroke:#1b4332
     classDef agent fill:#e76f51,color:#fff,stroke:#c1440e
     classDef user fill:#264653,color:#fff,stroke:#f1faee
     classDef jit fill:#7952b3,color:#fff,stroke:#4c2a85
+    classDef planned fill:#8ecae6,color:#023047,stroke:#219ebc
     classDef future fill:#7d8597,color:#fff,stroke:#5c677d
     classDef start fill:#f4a261,color:#000,stroke:#e76f51
 
-    class INIT,EXTRACT,SUBMIT,APPROVE,VALIDATE,ACTIONS,CHECK,STATUS,REPORT,REINIT,CI binary
+    class INIT,REVIEW,EXTRACT,SUBMIT,APPROVE,VALIDATE,ACTIONS,SCAN,STATUS,DEBT,REPORT,REINIT,CI,CONFIG_SHOW binary
     class AGENT_EXTRACT,AGENT_EDIT,AGENT_FIX agent
     class USER user
     class SOURCE_ADD,SOURCE_OPS,AUTHOR_SHORT,RULE_EDIT,RULES_QUERY jit
+    class PACKS_NEXT,FORMAT_NEXT planned
     class FUTURE future
     class START,CI_START,DONE start

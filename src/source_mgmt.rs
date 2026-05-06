@@ -13,6 +13,7 @@
 //! Epic 3E follow-up (`whetstone-gpe`).
 
 use std::fs;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
@@ -69,14 +70,24 @@ pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
         .or_insert_with(|| YamlValue::Mapping(Mapping::new()));
     let sources_map = match sources {
         YamlValue::Mapping(m) => m,
-        _ => return Err(anyhow!("{} has a non-mapping `sources` key", path.display())),
+        _ => {
+            return Err(anyhow!(
+                "{} has a non-mapping `sources` key",
+                path.display()
+            ))
+        }
     };
     let custom = sources_map
         .entry(ystr("custom"))
         .or_insert_with(|| YamlValue::Sequence(Vec::new()));
     let custom_seq = match custom {
         YamlValue::Sequence(s) => s,
-        _ => return Err(anyhow!("{} has a non-sequence `sources.custom`", path.display())),
+        _ => {
+            return Err(anyhow!(
+                "{} has a non-sequence `sources.custom`",
+                path.display()
+            ))
+        }
     };
 
     // Refuse duplicates by URL.
@@ -127,18 +138,19 @@ pub fn list(project_dir: &Path) -> Result<Value> {
     let project_cfg = WhetstoneConfig::load_project_only(project_dir);
     let paths = crate::layers::LayerPaths::for_project(project_dir);
     let personal_cfg = PersonalConfig::load(&paths.personal_config);
+    let status_by_key = custom_source_statuses(project_dir);
 
     let project_entries: Vec<Value> = project_cfg
         .sources
         .custom
         .iter()
-        .map(|s| entry_json(s, "project"))
+        .map(|s| entry_json(s, "project", status_by_key.get(&source_status_key(s))))
         .collect();
     let personal_entries: Vec<Value> = personal_cfg
         .sources
         .custom
         .iter()
-        .map(|s| entry_json(s, "personal"))
+        .map(|s| entry_json(s, "personal", status_by_key.get(&source_status_key(s))))
         .collect();
 
     let total = project_entries.len() + personal_entries.len();
@@ -154,8 +166,7 @@ pub fn list(project_dir: &Path) -> Result<Value> {
 pub fn format_list_human(result: &Value) -> String {
     let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
     if total == 0 {
-        return "No custom sources subscribed. Add one with `wh sources add <url>`.\n"
-            .to_string();
+        return "No custom sources subscribed. Add one with `wh sources add <url>`.\n".to_string();
     }
     let mut out = format!("{total} custom source(s):\n\n");
     for layer_key in ["project", "personal"] {
@@ -179,20 +190,33 @@ pub fn format_list_human(result: &Value) -> String {
                 .get("source_kind")
                 .and_then(|v| v.as_str())
                 .unwrap_or("custom");
-            out.push_str(&format!("  {name}  [{lang} · {kind}]\n    {url}\n"));
+            let fetch_state = e
+                .get("fetch_state")
+                .and_then(|v| v.as_str())
+                .unwrap_or("never_fetched");
+            let fetched = e
+                .get("last_fetched")
+                .and_then(|v| v.as_str())
+                .unwrap_or("never");
+            out.push_str(&format!(
+                "  {name}  [{lang} · {kind} · {fetch_state}]\n    {url}\n    last fetched: {fetched}\n"
+            ));
         }
         out.push('\n');
     }
     out
 }
 
-fn entry_json(s: &CustomSource, layer: &str) -> Value {
+fn entry_json(s: &CustomSource, layer: &str, status: Option<&SourceStatus>) -> Value {
     json!({
         "url": s.url,
         "name": s.name,
         "language": s.language,
         "source_kind": s.source_kind,
         "layer": layer,
+        "fetch_state": status.map(|s| s.fetch_state.clone()).unwrap_or_else(|| "never_fetched".to_string()),
+        "last_fetched": status.and_then(|s| s.last_fetched.clone()),
+        "last_source_type": status.and_then(|s| s.last_source_type.clone()),
     })
 }
 
@@ -251,7 +275,10 @@ pub fn edit(project_dir: &Path, opts: EditOptions<'_>) -> Result<Value> {
         .enumerate()
         .filter_map(|(idx, entry)| {
             let m = entry.as_mapping()?;
-            let url = m.get(ystr("url")).and_then(|v| v.as_str()).unwrap_or_default();
+            let url = m
+                .get(ystr("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             let name = m
                 .get(ystr("name"))
                 .and_then(|v| v.as_str())
@@ -477,6 +504,10 @@ pub fn fetch(project_dir: &Path, target: &str) -> Result<Value> {
     }
 
     let timeout = project_cfg.resolve.timeout_seconds.unwrap_or(15);
+    let ttl = project_cfg.resolve.cache_ttl_seconds.unwrap_or(crate::state::cache::DEFAULT_TTL);
+    let mut sm = crate::state::StateManager::new(project_dir);
+    sm.ensure_dir();
+    sm.load_all();
     let mut results = Vec::new();
     for (src, layer) in matched {
         let fetched = crate::resolve::resolve_custom_sources(std::slice::from_ref(src), timeout);
@@ -484,10 +515,17 @@ pub fn fetch(project_dir: &Path, target: &str) -> Result<Value> {
             let mut with_layer = item;
             if let Value::Object(ref mut m) = with_layer {
                 m.insert("layer".to_string(), Value::String(layer.to_string()));
+                m.insert(
+                    "fetch_timestamp".to_string(),
+                    Value::String(crate::state::now_iso()),
+                );
+                m.insert("ttl_seconds".to_string(), Value::from(ttl));
             }
+            sm.cache.upsert(with_layer.clone());
             results.push(with_layer);
         }
     }
+    sm.cache.save();
 
     if results.is_empty() {
         return Err(anyhow!(
@@ -518,8 +556,8 @@ fn read_yaml_mapping_or_empty(path: &Path) -> Result<Mapping> {
     if !path.exists() {
         return Ok(Mapping::new());
     }
-    let text = fs::read_to_string(path)
-        .map_err(|e| anyhow!("failed to read {}: {e}", path.display()))?;
+    let text =
+        fs::read_to_string(path).map_err(|e| anyhow!("failed to read {}: {e}", path.display()))?;
     if text.trim().is_empty() {
         return Ok(Mapping::new());
     }
@@ -555,6 +593,57 @@ fn validate_source_reference(project_dir: &Path, url: &str) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+struct SourceStatus {
+    fetch_state: String,
+    last_fetched: Option<String>,
+    last_source_type: Option<String>,
+}
+
+fn source_status_key(source: &CustomSource) -> String {
+    let language = source.language.as_deref().unwrap_or("any");
+    let name = source.name.as_deref().unwrap_or(source.url.as_str());
+    format!("{language}:{name}:custom")
+}
+
+fn custom_source_statuses(project_dir: &Path) -> BTreeMap<String, SourceStatus> {
+    let mut sm = crate::state::StateManager::new(project_dir);
+    sm.load_all();
+    let mut out = BTreeMap::new();
+    for entry in sm.cache.all_entries() {
+        let version = entry.get("version").and_then(|v| v.as_str()).unwrap_or("");
+        if version != "custom" {
+            continue;
+        }
+        let language = entry.get("language").and_then(|v| v.as_str()).unwrap_or("any");
+        let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        if name.is_empty() {
+            continue;
+        }
+        let key = format!("{language}:{name}:custom");
+        out.insert(
+            key,
+            SourceStatus {
+                fetch_state: if sm.cache.is_fresh(language, name, version, None) {
+                    "fresh".to_string()
+                } else {
+                    "stale".to_string()
+                },
+                last_fetched: entry
+                    .get("fetch_timestamp")
+                    .or_else(|| entry.get("fetched_at"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                last_source_type: entry
+                    .get("source_type")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+            },
+        );
+    }
+    out
+}
+
 fn is_repo_relative_path(project_dir: &Path, input: &str) -> bool {
     if input.trim().is_empty() {
         return false;
@@ -568,7 +657,7 @@ fn is_repo_relative_path(project_dir: &Path, input: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_source_reference;
+    use super::{list, validate_source_reference};
     use std::path::Path;
 
     #[test]
@@ -589,6 +678,49 @@ mod tests {
         assert!(validate_source_reference(Path::new(&tmp), "ftp://example.com").is_err());
         assert!(validate_source_reference(Path::new(&tmp), "example.com").is_err());
         assert!(validate_source_reference(Path::new(&tmp), "/tmp/source.md").is_err());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn list_surfaces_custom_source_fetch_state() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wh_source_state_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("whetstone/.state")).unwrap();
+        std::fs::write(
+            tmp.join("whetstone/whetstone.yaml"),
+            "sources:\n  custom:\n    - url: https://example.com/style\n      name: team-style\n      language: python\n      source_kind: team_guide\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("whetstone/.state/source-cache.json"),
+            r#"{
+  "version": 1,
+  "entries": {
+    "python:team-style:custom": {
+      "name": "team-style",
+      "language": "python",
+      "version": "custom",
+      "source_type": "llms_txt",
+      "fetch_timestamp": "2099-01-01T00:00:00Z"
+    }
+  }
+}"#,
+        )
+        .unwrap();
+
+        let result = list(&tmp).unwrap();
+        let project = result["project"].as_array().unwrap();
+        assert_eq!(project.len(), 1);
+        assert_eq!(project[0]["fetch_state"], "fresh");
+        assert_eq!(project[0]["last_source_type"], "llms_txt");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

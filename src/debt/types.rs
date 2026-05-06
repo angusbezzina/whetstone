@@ -117,7 +117,6 @@ pub enum Evidence {
     },
 }
 
-
 /// A single detector finding before ranking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {

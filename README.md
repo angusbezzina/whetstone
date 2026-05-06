@@ -102,7 +102,7 @@ wh extract submit path/to/bundle.yaml
 # → writes whetstone/rules/<lang>/<dep>.yaml with status: candidate
 
 # 4. Approve candidates (single or batch)
-wh approve --all --confidence high
+wh rules approve --all --confidence high
 
 # 5. Generate context, tests, and lint configs
 wh actions     # chains wh context, wh tests, wh lint
@@ -180,7 +180,7 @@ Whetstone follows a seven-step lifecycle. `wh init` handles steps 1 + 2 in one g
 | **2. Resolve** | `wh init` | Resolve docs URLs from registries, probe for llms.txt |
 | **3. Extract** | `wh extract` + agent | Agent reads docs, drafts a candidate bundle |
 | **4. Submit** | `wh extract submit <bundle>` | Writes the bundle as `status: candidate` |
-| **5. Approve** | `wh approve <id>` or `wh approve --all` | Flip candidates to approved |
+| **5. Approve** | `wh rules approve <id>` or `wh rules approve --all` | Flip candidates to approved |
 | **6. Generate** | `wh actions` | Run `wh context`, `wh tests`, `wh lint` |
 | **7. Monitor** | `wh status` / `wh ci` / `wh scan` / `wh debt` | Track freshness, drift, enforce rules, and triage deterministic debt hotspots |
 
@@ -244,10 +244,11 @@ Shipped commands (canonical surface first):
 | `reinit` | Re-resolve changed dependencies/docs and emit refresh diff | `--check`, `--project-dir` |
 | `status` | Project health summary, adherence, drift, and report generation | `--json`, `--score`, `--history`, `--no-drift-check`, `--report` |
 | `scan` | Scan source files for rule violations and linter-config gaps | `<paths>`, `--lang`, `--rule`, `--no-fail` |
-| `actions all` | Generate context, tests, and lint overlays in one chain | `--dry-run`, `--lang`, `--personal`, `--terse` |
-| `actions context\|test\|lint` | Run one generator explicitly | `--dry-run`, `--lang`, `--personal` |
+| `actions all` | Generate context, tests, and lint/formatter overlays in one chain | `--dry-run`, `--lang`, `--personal`, `--terse` |
+| `actions context\|test\|lint` | Run one generator explicitly (`lint` also emits formatter-backed overlays when configured) | `--dry-run`, `--lang`, `--personal` |
 | `rules ...` | Manage rules, approvals, and JIT rule lookup | `list`, `show`, `query`, `add`, `edit`, `remove`, `approve`, `worklist` |
 | `sources ...` | Manage custom rule sources | `list`, `add`, `edit`, `remove`, `verify` |
+| `config ...` | Inspect and validate the effective config stack and imported packs | `show`, `validate` |
 | `extract` | Walk the extraction worklist or submit a candidate bundle | `submit <bundle.yaml>`, `--dep`, `--lang` |
 | `approve` | Compatibility top-level approval entrypoint | `<rule-id>`, `--all`, `--dep`, `--confidence` |
 | `debt` | Deterministic debt triage across dead code, dupes, deps, hotspots | `--json`, `--prompt`, `--beads`, `--top`, `--since` |
@@ -255,6 +256,16 @@ Shipped commands (canonical surface first):
 | `update` | Update the `whetstone` binary to the latest release | `--check`, `--force` |
 
 Project-scoped commands accept `--project-dir` (default: `.`), and all commands support `--json` (auto-enabled when piped). Human-readable progress goes to stderr. JSON responses include a `next_command` field suggesting what to run next.
+
+For existing users migrating older scripts and habits to the canonical surface,
+see [`references/cli-vnext-migration.md`](references/cli-vnext-migration.md).
+
+### Canonical shareability story
+
+The default shareable artifact is a committed **`whetstone/whetstone.yaml`**.
+Teams should be able to copy that file into another repo, run Whetstone, and
+get the same trusted-source setup and taste policy. Optional `extends:` pack refs
+compose underneath that file; they do not replace it as the primary UX.
 
 > **Python is not a runtime dependency.** Every user-facing command ships from the Rust binary. Archived Python reference implementations live under `scripts/legacy/` solely so `tests/test_script_contracts.py` can parity-test the Rust ports.
 
@@ -279,9 +290,13 @@ rules:
       Route handlers MUST use async def.
     source_url: https://fastapi.tiangolo.com/async/
     approved: true
+    formatter:
+      tool: ruff
+      options:
+        quote-style: single
     signals:
       - id: is-sync-function
-        strategy: ast         # ast | pattern | lint_proxy | ai
+        strategy: ast         # ast | pattern | lint_proxy
         weight: required
 ```
 
@@ -292,7 +307,7 @@ See [`references/rule-schema.yaml`](references/rule-schema.yaml) for the full sc
 | Output | Location | Purpose |
 |--------|----------|---------|
 | Tests | `whetstone/evals/` | Native test files (pytest/vitest/cargo) |
-| Lint configs | `whetstone/lint/` | Ruff/biome/clippy configuration fragments |
+| Lint / formatter configs | `whetstone/lint/` | Ruff/biome/clippy plus formatter-backed configuration fragments where rules opt into them |
 | Agent context | `whetstone/context/` | Generated AGENTS.md / CLAUDE.md / .cursorrules / Copilot / Windsurf / Codex instructions |
 
 ### Status output
@@ -515,7 +530,7 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - Changelog fetching with 18-month recency filtering
 - Custom source URLs in `whetstone.yaml` (blogs, team guides, any public URL)
 - Agent-mediated rule extraction via `wh extract` + bundle submission (`wh extract submit`)
-- Bulk approval via `wh approve --all [--dep] [--confidence]`
+- Bulk approval via `wh rules approve --all [--dep] [--confidence]`
 - Tree-sitter-backed `wh scan` across Python, TypeScript, and Rust, including AST-query and AST-scoped regex enforcement
 - Rule listing and per-rule context via `wh review` / `wh review show`
 - Test generation with real regex checks (via `match` field on signals) for Python, TypeScript, and Rust

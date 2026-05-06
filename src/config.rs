@@ -2,7 +2,8 @@
 //! Whetstone configuration: global, project, personal.
 //!
 //! Precedence (later wins): built-in defaults < global (~/.whetstone/config.yaml)
-//! < project (whetstone/whetstone.yaml or whetstone.yaml) < personal
+//! < project (canonical: whetstone/whetstone.yaml; compatibility: whetstone.yaml)
+//! < personal
 //! (whetstone/.personal/config.yaml). Lists generally **append** across
 //! layers (deny, sources.custom, extractions includes/excludes) so the
 //! layering composes rather than clobbers. Scalar knobs (timeouts, TTLs,
@@ -16,12 +17,16 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use crate::config_packs::{self, ResolvedConfigPack};
+
 // ── Known-key registry ──
 
 /// Every supported config key, expressed as dotted paths. `wh config show`
 /// compares a loaded file's keys against this list to warn on unknown
 /// fields (typos, stale docs, surprises).
 const SUPPORTED_KEYS: &[&str] = &[
+    "version",
+    "extends",
     "discovery.exclude",
     "discovery.include",
     "generate.formats",
@@ -84,6 +89,10 @@ const MAX_RULES_PER_DEP_HARD_LIMIT: u32 = 5;
 #[derive(Debug, Default, Clone, Deserialize)]
 pub struct WhetstoneConfig {
     #[serde(default)]
+    pub version: Option<u32>,
+    #[serde(default)]
+    pub extends: Vec<ConfigPackRef>,
+    #[serde(default)]
     pub discovery: DiscoveryConfig,
     #[serde(default)]
     pub generate: GenerateConfig,
@@ -97,6 +106,16 @@ pub struct WhetstoneConfig {
     pub resolve: ResolveConfig,
     #[serde(default)]
     pub check: CheckConfig,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct ConfigPackRef {
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(rename = "ref")]
+    pub ref_: String,
+    #[serde(default)]
+    pub commit: Option<bool>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -461,6 +480,17 @@ fn validate_whetstone_values(
     path: &Path,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    if let Some(version) = cfg.version {
+        if version != 1 {
+            diagnostics.push(Diagnostic::warning(
+                layer,
+                path.to_path_buf(),
+                format!(
+                    "unsupported config `version: {version}`; only `version: 1` is recognized in this build"
+                ),
+            ));
+        }
+    }
     validate_format_list(
         &mut cfg.generate.formats,
         layer,
@@ -576,7 +606,6 @@ fn validate_section_values(
             check.fail_on = None;
         }
     }
-
 }
 
 fn validate_format_list(
@@ -801,6 +830,8 @@ fn global_config_path() -> Option<PathBuf> {
 }
 
 fn project_config_candidates(project_dir: &Path) -> [PathBuf; 2] {
+    // Canonical committed entrypoint first; bare `whetstone.yaml` remains a
+    // compatibility fallback while older setups migrate.
     [
         project_dir.join("whetstone").join("whetstone.yaml"),
         project_dir.join("whetstone.yaml"),
@@ -849,6 +880,7 @@ pub struct ConfigSnapshot {
     pub diagnostics: Vec<Diagnostic>,
     /// Which config files were actually read (skipping non-existent paths).
     pub loaded_files: Vec<LoadedFile>,
+    pub active_packs: Vec<ResolvedConfigPack>,
 }
 
 #[derive(Debug, Clone)]
@@ -860,7 +892,7 @@ pub struct LoadedFile {
 /// Which layer set each key on the effective config.
 /// `Default` means nothing in the config files touched the key — the
 /// struct default is in force.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProvenanceSource {
     /// No file in the stack touched this key; struct default is in force.
     /// Kept so `wh config show` can note "default" explicitly when we
@@ -870,26 +902,62 @@ pub enum ProvenanceSource {
     Global,
     Project,
     Personal,
+    Pack {
+        scope: String,
+        name: String,
+        ref_spec: String,
+    },
 }
 
 impl ProvenanceSource {
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             ProvenanceSource::Default => "default",
             ProvenanceSource::Global => "global",
             ProvenanceSource::Project => "project",
             ProvenanceSource::Personal => "personal",
+            ProvenanceSource::Pack { .. } => "pack",
+        }
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            ProvenanceSource::Default => serde_json::json!({ "kind": "default" }),
+            ProvenanceSource::Global => serde_json::json!({ "kind": "global" }),
+            ProvenanceSource::Project => serde_json::json!({ "kind": "project" }),
+            ProvenanceSource::Personal => serde_json::json!({ "kind": "personal" }),
+            ProvenanceSource::Pack {
+                scope,
+                name,
+                ref_spec,
+            } => serde_json::json!({
+                "kind": "pack",
+                "scope": scope,
+                "pack": name,
+                "ref": ref_spec,
+            }),
         }
     }
 }
 
 impl ConfigSnapshot {
+    pub(crate) fn load_project_snapshot(project_dir: &Path) -> Self {
+        Self::load(project_dir, true, false)
+    }
+
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics
+            .iter()
+            .any(|d| d.level == DiagnosticLevel::Error)
+    }
+
     fn load(project_dir: &Path, include_global: bool, include_personal: bool) -> Self {
         let mut snap = ConfigSnapshot {
             effective: WhetstoneConfig::default(),
             sources: BTreeMap::new(),
             diagnostics: Vec::new(),
             loaded_files: Vec::new(),
+            active_packs: Vec::new(),
         };
 
         // --- Global layer ---
@@ -947,6 +1015,7 @@ impl ConfigSnapshot {
 
         // --- Project layer ---
         let mut project_cfg: Option<WhetstoneConfig> = None;
+        let mut project_cfg_path: Option<PathBuf> = None;
         for path in project_config_candidates(project_dir) {
             if !path.exists() {
                 continue;
@@ -981,6 +1050,7 @@ impl ConfigSnapshot {
                         &path,
                         &mut snap.diagnostics,
                     );
+                    project_cfg_path = Some(path.clone());
                     project_cfg = Some(cfg);
                 }
                 Err(e) => {
@@ -995,6 +1065,35 @@ impl ConfigSnapshot {
         }
 
         if let Some(cfg) = project_cfg {
+            let project_cfg_path = project_cfg_path.unwrap_or_else(|| project_config_candidates(project_dir)[0].clone());
+            if !cfg.extends.is_empty() {
+                let resolved = config_packs::resolve_project_packs(
+                    project_dir,
+                    &cfg.extends,
+                    &global_cfg,
+                    cfg.resolve.timeout_seconds,
+                    cfg.resolve.cache_ttl_seconds,
+                );
+                for warning in resolved.warnings {
+                    snap.diagnostics.push(Diagnostic::warning(
+                        ConfigLayer::Project,
+                        project_cfg_path.clone(),
+                        warning,
+                    ));
+                }
+                for error in resolved.errors {
+                    snap.diagnostics.push(Diagnostic::error(
+                        ConfigLayer::Project,
+                        project_cfg_path.clone(),
+                        error,
+                    ));
+                }
+                for pack in &resolved.packs {
+                    apply_pack_config(&mut snap, pack);
+                }
+                snap.active_packs = resolved.packs;
+            }
+
             if !cfg.generate.formats.is_empty() {
                 snap.effective.generate.formats = cfg.generate.formats;
                 snap.sources
@@ -1110,7 +1209,7 @@ impl ConfigSnapshot {
     pub fn to_json(&self) -> serde_json::Value {
         let mut source_map = serde_json::Map::new();
         for (k, v) in &self.sources {
-            source_map.insert(k.clone(), serde_json::Value::String(v.as_str().into()));
+            source_map.insert(k.clone(), v.to_json());
         }
         let diags: Vec<serde_json::Value> = self
             .diagnostics
@@ -1134,8 +1233,14 @@ impl ConfigSnapshot {
                 })
             })
             .collect();
+        let canonical_project = self
+            .loaded_files
+            .iter()
+            .find(|f| f.layer == ConfigLayer::Project)
+            .map(|f| f.path.display().to_string())
+            .unwrap_or_else(|| "whetstone/whetstone.yaml".to_string());
         serde_json::json!({
-            "status": if self.diagnostics.iter().any(|d| d.level == DiagnosticLevel::Error) {
+            "status": if self.has_errors() {
                 "error"
             } else {
                 "ok"
@@ -1144,10 +1249,76 @@ impl ConfigSnapshot {
             "sources": serde_json::Value::Object(source_map),
             "diagnostics": diags,
             "loaded_files": loaded,
+            "active_packs": config_packs::packs_to_json(&self.active_packs),
+            "canonical_project_config": canonical_project,
             "supported_keys": SUPPORTED_KEYS,
-            "precedence": ["default", "global", "project", "personal"],
+            "precedence": ["default", "global", "extends", "project", "personal"],
         })
     }
+}
+
+pub fn format_snapshot_human(snapshot: &ConfigSnapshot) -> String {
+    let mut out = String::new();
+    out.push_str("Whetstone config\n\n");
+    out.push_str(&format!(
+        "Status: {}\n",
+        if snapshot.has_errors() { "error" } else { "ok" }
+    ));
+    out.push_str("Precedence: default < global < extends < project < personal\n");
+
+    if let Some(project_file) = snapshot.loaded_files.iter().find(|f| f.layer == ConfigLayer::Project) {
+        out.push_str(&format!("Project config: {}\n", project_file.path.display()));
+    } else {
+        out.push_str("Project config: whetstone/whetstone.yaml (not found)\n");
+    }
+
+    out.push_str(&format!("Loaded files: {}\n", snapshot.loaded_files.len()));
+    out.push_str(&format!("Active packs: {}\n", snapshot.active_packs.len()));
+    if !snapshot.active_packs.is_empty() {
+        out.push('\n');
+        out.push_str("Packs:\n");
+        for pack in &snapshot.active_packs {
+            out.push_str(&format!(
+                "  - [{}] {} ({})\n    ref: {}\n    cache: {}  rules: {}  overrides: {}  deny: {}\n",
+                pack.scope,
+                config_packs::pack_display_name(pack),
+                pack.resolved_ref,
+                pack.ref_spec,
+                pack.cache_status,
+                pack.pack.rules.iter().filter(|r| r.approved).count(),
+                pack.pack.overrides.len(),
+                pack.pack.deny.len(),
+            ));
+        }
+    }
+
+    if !snapshot.sources.is_empty() {
+        out.push('\n');
+        out.push_str("Effective key provenance:\n");
+        for (key, source) in &snapshot.sources {
+            match source {
+                ProvenanceSource::Pack { scope, name, .. } => {
+                    out.push_str(&format!("  - {key}: pack [{scope}] {name}\n"));
+                }
+                _ => out.push_str(&format!("  - {key}: {}\n", source.as_str())),
+            }
+        }
+    }
+
+    if !snapshot.diagnostics.is_empty() {
+        out.push('\n');
+        out.push_str("Diagnostics:\n");
+        for d in &snapshot.diagnostics {
+            out.push_str(&format!(
+                "  - [{}] {}: {}\n",
+                d.level.as_str(),
+                d.path.display(),
+                d.message
+            ));
+        }
+    }
+
+    out
 }
 
 fn effective_to_json(cfg: &WhetstoneConfig) -> serde_json::Value {
@@ -1191,6 +1362,79 @@ fn effective_to_json(cfg: &WhetstoneConfig) -> serde_json::Value {
     })
 }
 
+fn apply_pack_config(snapshot: &mut ConfigSnapshot, pack: &ResolvedConfigPack) {
+    let mut overlay = WhetstoneConfig {
+        version: None,
+        extends: Vec::new(),
+        discovery: pack.pack.discovery.clone(),
+        generate: pack.pack.generate.clone(),
+        sources: pack.pack.sources.clone(),
+        deny: Vec::new(),
+        extraction: pack.pack.extraction.clone(),
+        resolve: pack.pack.resolve.clone(),
+        check: pack.pack.check.clone(),
+    };
+    validate_whetstone_values(
+        &mut overlay,
+        ConfigLayer::Project,
+        Path::new(&pack.resolved_ref),
+        &mut snapshot.diagnostics,
+    );
+
+    let provenance = ProvenanceSource::Pack {
+        scope: pack.scope.clone(),
+        name: config_packs::pack_display_name(pack),
+        ref_spec: pack.ref_spec.clone(),
+    };
+
+    if !overlay.generate.formats.is_empty() {
+        snapshot.effective.generate.formats = overlay.generate.formats.clone();
+        snapshot
+            .sources
+            .insert("generate.formats".into(), provenance.clone());
+    }
+    if !overlay.discovery.exclude.is_empty() {
+        snapshot.effective.discovery.exclude = overlay.discovery.exclude.clone();
+        snapshot
+            .sources
+            .insert("discovery.exclude".into(), provenance.clone());
+    }
+    if !overlay.discovery.include.is_empty() {
+        snapshot.effective.discovery.include = overlay.discovery.include.clone();
+        snapshot
+            .sources
+            .insert("discovery.include".into(), provenance.clone());
+    }
+    if !overlay.sources.custom.is_empty() {
+        snapshot
+            .effective
+            .sources
+            .custom
+            .extend(overlay.sources.custom.clone());
+        snapshot
+            .sources
+            .insert("sources.custom".into(), provenance.clone());
+    }
+    apply_extraction(
+        &mut snapshot.effective.extraction,
+        &overlay.extraction,
+        provenance.clone(),
+        &mut snapshot.sources,
+    );
+    apply_resolve(
+        &mut snapshot.effective.resolve,
+        &overlay.resolve,
+        provenance.clone(),
+        &mut snapshot.sources,
+    );
+    apply_check(
+        &mut snapshot.effective.check,
+        &overlay.check,
+        provenance,
+        &mut snapshot.sources,
+    );
+}
+
 fn apply_extraction(
     into: &mut ExtractionConfig,
     from: &ExtractionConfig,
@@ -1199,27 +1443,27 @@ fn apply_extraction(
 ) {
     if !from.include.is_empty() {
         into.include = from.include.clone();
-        sources.insert("extraction.include".into(), layer);
+        sources.insert("extraction.include".into(), layer.clone());
     }
     if !from.exclude.is_empty() {
         into.exclude = from.exclude.clone();
-        sources.insert("extraction.exclude".into(), layer);
+        sources.insert("extraction.exclude".into(), layer.clone());
     }
     if let Some(v) = from.max_rules_per_dep {
         into.max_rules_per_dep = Some(v);
-        sources.insert("extraction.max_rules_per_dep".into(), layer);
+        sources.insert("extraction.max_rules_per_dep".into(), layer.clone());
     }
     if !from.allowed_categories.is_empty() {
         into.allowed_categories = from.allowed_categories.clone();
-        sources.insert("extraction.allowed_categories".into(), layer);
+        sources.insert("extraction.allowed_categories".into(), layer.clone());
     }
     if let Some(ref v) = from.min_confidence {
         into.min_confidence = Some(v.clone());
-        sources.insert("extraction.min_confidence".into(), layer);
+        sources.insert("extraction.min_confidence".into(), layer.clone());
     }
     if !from.preferred_source_kinds.is_empty() {
         into.preferred_source_kinds = from.preferred_source_kinds.clone();
-        sources.insert("extraction.preferred_source_kinds".into(), layer);
+        sources.insert("extraction.preferred_source_kinds".into(), layer.clone());
     }
     if let Some(v) = from.recency_window_days {
         into.recency_window_days = Some(v);
@@ -1235,11 +1479,11 @@ fn apply_resolve(
 ) {
     if let Some(v) = from.cache_ttl_seconds {
         into.cache_ttl_seconds = Some(v);
-        sources.insert("resolve.cache_ttl_seconds".into(), layer);
+        sources.insert("resolve.cache_ttl_seconds".into(), layer.clone());
     }
     if let Some(v) = from.timeout_seconds {
         into.timeout_seconds = Some(v);
-        sources.insert("resolve.timeout_seconds".into(), layer);
+        sources.insert("resolve.timeout_seconds".into(), layer.clone());
     }
     if let Some(v) = from.workers {
         into.workers = Some(v);
@@ -1255,7 +1499,7 @@ fn apply_check(
 ) {
     if !from.paths.is_empty() {
         into.paths = from.paths.clone();
-        sources.insert("check.paths".into(), layer);
+        sources.insert("check.paths".into(), layer.clone());
     }
     if let Some(ref v) = from.fail_on {
         into.fail_on = Some(v.clone());
@@ -1324,10 +1568,32 @@ mod tests {
         assert_eq!(
             snap.sources
                 .get("extraction.max_rules_per_dep")
-                .copied()
+                .cloned()
                 .unwrap(),
             ProvenanceSource::Project
         );
+    }
+
+    #[test]
+    fn canonical_project_config_path_wins_over_root_fallback() {
+        let td = tempdir();
+        let wh = td.path().join("whetstone");
+        fs::create_dir_all(&wh).unwrap();
+        fs::write(
+            td.path().join("whetstone.yaml"),
+            "resolve:\n  timeout_seconds: 15\n",
+        )
+        .unwrap();
+        fs::write(
+            wh.join("whetstone.yaml"),
+            "resolve:\n  timeout_seconds: 45\n",
+        )
+        .unwrap();
+
+        let snap = ConfigSnapshot::load(td.path(), false, false);
+        assert_eq!(snap.effective.resolve.timeout_seconds, Some(45));
+        assert_eq!(snap.loaded_files.len(), 1);
+        assert_eq!(snap.loaded_files[0].path, wh.join("whetstone.yaml"));
     }
 
     #[test]
@@ -1350,7 +1616,7 @@ mod tests {
         assert_eq!(
             snap.sources
                 .get("resolve.timeout_seconds")
-                .copied()
+                .cloned()
                 .unwrap(),
             ProvenanceSource::Personal
         );
@@ -1447,5 +1713,114 @@ check:
         assert_eq!(snap.effective.extraction.min_confidence, None);
         assert_eq!(snap.effective.resolve.timeout_seconds, None);
         assert_eq!(snap.effective.check.fail_on, None);
+    }
+
+    #[test]
+    fn version_and_extends_are_recognized_in_project_config() {
+        let td = tempdir();
+        let wh = td.path().join("whetstone");
+        fs::create_dir_all(&wh).unwrap();
+        let packs = wh.join("packs");
+        fs::create_dir_all(&packs).unwrap();
+        fs::write(
+            packs.join("base.yaml"),
+            r#"apiVersion: whetstone/v1alpha1
+kind: RulePack
+metadata:
+  name: acme.base
+  scope: org
+sources:
+  custom:
+    - url: https://example.com/style
+      name: example-style
+      language: python
+      source_kind: team_guide
+"#,
+        )
+        .unwrap();
+        fs::write(
+            wh.join("whetstone.yaml"),
+            r#"version: 1
+extends:
+  - scope: org
+    ref: path:./whetstone/packs/base.yaml
+"#,
+        )
+        .unwrap();
+
+        let snap = ConfigSnapshot::load(td.path(), false, false);
+        let msgs: Vec<&str> = snap
+            .diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .collect();
+
+        assert!(
+            !msgs
+                .iter()
+                .any(|m| m.contains("unknown config key `version`")),
+            "did not expect version unknown-key warning: {msgs:?}"
+        );
+        assert!(
+            !msgs
+                .iter()
+                .any(|m| m.contains("unknown config key `extends`")),
+            "did not expect extends unknown-key warning: {msgs:?}"
+        );
+        assert_eq!(snap.active_packs.len(), 1);
+    }
+
+    #[test]
+    fn imported_pack_config_applies_before_inline_project_overrides() {
+        let td = tempdir();
+        let wh = td.path().join("whetstone");
+        let packs = wh.join("packs");
+        fs::create_dir_all(&packs).unwrap();
+        fs::write(
+            packs.join("base.yaml"),
+            r#"apiVersion: whetstone/v1alpha1
+kind: RulePack
+metadata:
+  name: acme.base
+  scope: org
+sources:
+  custom:
+    - url: https://example.com/style
+      name: example-style
+      language: python
+      source_kind: team_guide
+resolve:
+  timeout_seconds: 45
+"#,
+        )
+        .unwrap();
+        fs::write(
+            wh.join("whetstone.yaml"),
+            r#"version: 1
+extends:
+  - scope: org
+    ref: path:./whetstone/packs/base.yaml
+resolve:
+  timeout_seconds: 90
+"#,
+        )
+        .unwrap();
+
+        let snap = WhetstoneConfig::load_full(td.path());
+        assert_eq!(snap.active_packs.len(), 1);
+        assert_eq!(snap.effective.resolve.timeout_seconds, Some(90));
+        assert_eq!(snap.effective.sources.custom.len(), 1);
+        assert_eq!(
+            snap.sources.get("sources.custom").cloned().unwrap(),
+            ProvenanceSource::Pack {
+                scope: "org".into(),
+                name: "acme.base".into(),
+                ref_spec: "path:./whetstone/packs/base.yaml".into(),
+            }
+        );
+        assert_eq!(
+            snap.sources.get("resolve.timeout_seconds").cloned().unwrap(),
+            ProvenanceSource::Project
+        );
     }
 }

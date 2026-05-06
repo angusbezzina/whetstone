@@ -1,3 +1,12 @@
 # Whetstone ruff overlay — extend your ruff.toml with these rules
+{% if codes | length > 0 %}
 [lint]
 select = [{% for code in codes %}"{{ code }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+{% endif %}
+{% if format_options | length > 0 %}
+
+[format]
+{% for opt in format_options %}
+{{ opt.key }} = {{ opt.value }}
+{% endfor %}
+{% endif %}

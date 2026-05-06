@@ -179,6 +179,12 @@ fn rule_to_json(lr: &LayeredRule, detail: Detail) -> Value {
             })
             .collect::<Vec<_>>()
             .into();
+        if let Some(formatter) = &r.formatter {
+            v["formatter"] = json!({
+                "tool": formatter.tool,
+                "options": formatter.options,
+            });
+        }
         v["golden_examples"] = r
             .golden_examples
             .iter()

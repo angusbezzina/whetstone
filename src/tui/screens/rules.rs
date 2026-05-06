@@ -1,4 +1,4 @@
-//! Rules screen — list + detail of merged approved rules.
+//! Rules screen — list + detail of merged approved rules derived from trusted sources.
 //!
 //! First slice for whetstone-69jb.1: static two-pane layout driven by the
 //! four-state `RulesView` enum. The left pane lists merged rule ids with a

@@ -73,11 +73,12 @@ pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
     rule.insert(ystr("description"), ystr(opts.description));
     rule.insert(
         ystr("source_url"),
-        ystr(opts
-            .source_url
-            .map(String::from)
-            .unwrap_or_else(|| format!("personal://{dep}/{full_id}"))
-            .as_str()),
+        ystr(
+            opts.source_url
+                .map(String::from)
+                .unwrap_or_else(|| format!("personal://{dep}/{full_id}"))
+                .as_str(),
+        ),
     );
     rule.insert(ystr("approved"), YamlValue::Bool(true));
     rule.insert(ystr("status"), ystr("approved"));
@@ -110,16 +111,25 @@ pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
     // Two golden examples: a pass+fail. The user can edit them later; this keeps
     // `wh validate` happy (it requires at least one example).
     let mut pass_ex = Mapping::new();
-    pass_ex.insert(ystr("code"), ystr("// TODO: a code snippet that PASSES this rule"));
+    pass_ex.insert(
+        ystr("code"),
+        ystr("// TODO: a code snippet that PASSES this rule"),
+    );
     pass_ex.insert(ystr("verdict"), ystr("pass"));
     pass_ex.insert(ystr("reason"), ystr("Adheres to the authored rule"));
     let mut fail_ex = Mapping::new();
-    fail_ex.insert(ystr("code"), ystr("// TODO: a code snippet that FAILS this rule"));
+    fail_ex.insert(
+        ystr("code"),
+        ystr("// TODO: a code snippet that FAILS this rule"),
+    );
     fail_ex.insert(ystr("verdict"), ystr("fail"));
     fail_ex.insert(ystr("reason"), ystr("Violates the authored rule"));
     rule.insert(
         ystr("golden_examples"),
-        YamlValue::Sequence(vec![YamlValue::Mapping(pass_ex), YamlValue::Mapping(fail_ex)]),
+        YamlValue::Sequence(vec![
+            YamlValue::Mapping(pass_ex),
+            YamlValue::Mapping(fail_ex),
+        ]),
     );
 
     // Append to the existing dep file when present, otherwise create it.
@@ -474,8 +484,8 @@ fn destination_path(project_dir: &Path, personal: bool, language: &str, dep: &st
 }
 
 fn read_yaml_mapping(path: &Path) -> Result<Mapping> {
-    let text = fs::read_to_string(path)
-        .map_err(|e| anyhow!("failed to read {}: {e}", path.display()))?;
+    let text =
+        fs::read_to_string(path).map_err(|e| anyhow!("failed to read {}: {e}", path.display()))?;
     let value: YamlValue = serde_yaml::from_str(&text)
         .map_err(|e| anyhow!("failed to parse {} as YAML: {e}", path.display()))?;
     match value {

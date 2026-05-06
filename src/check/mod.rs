@@ -563,6 +563,7 @@ mod tests {
                 ast_query: None,
                 ast_scope: None,
             }],
+            formatter: None,
             golden_examples: Vec::new(),
             deterministic_pass_threshold: None,
             deterministic_fail_threshold: None,

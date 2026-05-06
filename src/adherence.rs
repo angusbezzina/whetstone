@@ -94,10 +94,7 @@ pub fn compute(project_dir: &Path, rule_count_hint: usize) -> Result<Option<Adhe
     let mut weighted_viols = 0.0_f64;
 
     for v in &violations {
-        let sev = v
-            .get("severity")
-            .and_then(|s| s.as_str())
-            .unwrap_or("may");
+        let sev = v.get("severity").and_then(|s| s.as_str()).unwrap_or("may");
         let weight = match sev {
             "must" => 1.0,
             "should" => 0.5,
@@ -231,6 +228,10 @@ mod tests {
         let may_case = make(10, 0, 0, 0, 10, 1);
         let must_case = make(10, 0, 10, 0, 0, 1);
         assert!(may_case.score > must_case.score);
-        assert!(may_case.score < 50, "may violations must penalize: {}", may_case.score);
+        assert!(
+            may_case.score < 50,
+            "may violations must penalize: {}",
+            may_case.score
+        );
     }
 }

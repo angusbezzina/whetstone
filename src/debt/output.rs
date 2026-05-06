@@ -67,7 +67,9 @@ pub fn format_prompt(report: &DebtReport) -> String {
         report.summary.by_category.deps,
         report.summary.by_category.hotspots,
     ));
-    s.push_str("Work the hotspots below in order. Each entry is deterministic and backed by evidence.\n\n");
+    s.push_str(
+        "Work the hotspots below in order. Each entry is deterministic and backed by evidence.\n\n",
+    );
 
     if report.hotspots.is_empty() {
         s.push_str("No hotspots. Nothing to do.\n");
@@ -89,7 +91,10 @@ pub fn format_prompt(report: &DebtReport) -> String {
         if !h.files.is_empty() {
             s.push_str(&format!("- files: {}\n", h.files.join(", ")));
         }
-        s.push_str(&format!("- evidence: {}\n", evidence_one_liner(&h.evidence)));
+        s.push_str(&format!(
+            "- evidence: {}\n",
+            evidence_one_liner(&h.evidence)
+        ));
         s.push_str(&format!("- action: {}\n\n", h.next_action));
     }
 
@@ -179,9 +184,7 @@ pub(crate) fn evidence_one_liner(e: &Evidence) -> String {
             violations,
             window_days,
             ..
-        } => format!(
-            "{changes} changes in {window_days}d × {violations} outstanding violations",
-        ),
+        } => format!("{changes} changes in {window_days}d × {violations} outstanding violations",),
     }
 }
 
@@ -210,11 +213,7 @@ fn preview_files(files: &[String], max: usize) -> String {
         let taken: Vec<&String> = files.iter().take(max).collect();
         format!(
             "{}, ... +{}",
-            taken
-                .into_iter()
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", "),
+            taken.into_iter().cloned().collect::<Vec<_>>().join(", "),
             files.len() - max
         )
     }

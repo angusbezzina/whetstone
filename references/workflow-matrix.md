@@ -26,8 +26,8 @@ stages:
 ## Command matrix
 
 Canonical commands are listed below. Some compatibility aliases still exist
-(`wh check`, `wh rule`, `wh source`, `wh source fetch`) while the CLI settles
-on `wh scan`, `wh rules`, `wh sources`, and `wh sources verify`.
+(`wh check`, `wh rule`, `wh source`, `wh source fetch`, and top-level `wh approve`)
+while the CLI settles on `wh scan`, `wh rules`, `wh sources`, and `wh sources verify`.
 
 | Command | Stages | Reads (state) | Writes (state) | Notes |
 |---------|--------|---------------|----------------|-------|
@@ -36,15 +36,15 @@ on `wh scan`, `wh rules`, `wh sources`, and `wh sources verify`.
 | `wh set-sources` | resolve | stdin or `--input` JSON, `source-cache.json` | `source-cache.json` | Lower-level slice of init. |
 | `wh extract` | extract | `extraction-handoff.json` | — | Default mode renders the dependency worklist (ranked sources, quota, next step). |
 | `wh extract submit <bundle.yaml>` | extract | bundle file | `whetstone/rules/<lang>/<dep>.yaml` with `status: candidate` | Refuses to overwrite an existing file or collide on any rule id. |
-| `wh approve <rule-id>` | approve | `whetstone/rules/**`, `whetstone/.personal/rules/**` | same file, mutated in place | Flips status to `approved` and `approved: true`. |
-| `wh approve --all [--dep <name>] [--confidence <level>]` | approve | project rules | same files | Batch flip every matching candidate. |
-| `wh actions all` | generate | approved rules | everything under `whetstone/context/`, `whetstone/evals/`, `whetstone/lint/` | Chains context + tests + lint. |
+| `wh approve <rule-id>` | approve | `whetstone/rules/**`, `whetstone/.personal/rules/**` | same file, mutated in place | Compatibility approval alias. Prefer `wh rules approve`. |
+| `wh approve --all [--dep <name>] [--confidence <level>]` | approve | project rules | same files | Compatibility batch approval alias. Prefer `wh rules approve --all`. |
+| `wh actions all` | generate | approved rules | everything under `whetstone/context/`, `whetstone/evals/`, `whetstone/lint/` | Chains context + tests + lint/formatter overlays. |
 | `wh actions context` | generate | approved rules | `whetstone/context/*` or `whetstone/.personal/context/*` | Generates context only. |
 | `wh actions test` | generate | approved rules | `whetstone/evals/**` or `whetstone/.personal/evals/**` | Generates tests only. |
-| `wh actions lint` | generate | approved rules | `whetstone/lint/*` or `whetstone/.personal/lint/*` | Generates lint overlays only. |
+| `wh actions lint` | generate | approved rules | `whetstone/lint/*` or `whetstone/.personal/lint/*` | Generates lint overlays and formatter-backed overlays when approved rules declare safe formatter directives. |
 | `wh context` | generate | approved rules | `whetstone/context/*` or `whetstone/.personal/context/*` | `--terse` emits a one-line-per-rule bootstrap. Per-language `AGENTS.<lang>.md` sidecars are emitted automatically when rules span >1 language. |
 | `wh tests` | generate | approved rules | `whetstone/evals/**` or `whetstone/.personal/evals/**` | Signals with a `match` regex produce real checks; without, tests are TODO stubs. |
-| `wh lint` | generate | approved rules | `whetstone/lint/*` or `whetstone/.personal/lint/*` | Emits `ruff.whetstone.toml`, `biome.whetstone.json`, `clippy.whetstone.toml`. |
+| `wh lint` | generate | approved rules | `whetstone/lint/*` or `whetstone/.personal/lint/*` | Emits `ruff.whetstone.toml`, `biome.whetstone.json`, `clippy.whetstone.toml`, and formatter-backed overlays such as `rustfmt.whetstone.toml` when rules opt in. |
 | `wh scan` | monitor / enforce | approved rules, source files | — | Deterministic enforcement: tree-sitter for `ast_query` / `ast_scope`, regex for `match:`, lint-config verification for `lint_proxy`. Non-zero exit on violations or config gaps unless `--no-fail`. |
 | `wh check` | monitor / enforce | approved rules, source files | — | Compatibility alias for `wh scan`. |
 | `wh rules query` | inspect (JIT) | approved rules | — | JIT rule lookup for agents. Filters: `--file <path>` (infers language), `--lang`, `--dep`, `--severity`, `--personal-only`, `--project-only`, `--full`. Preferred over re-reading `AGENTS.md` mid-turn. |
@@ -57,6 +57,8 @@ on `wh scan`, `wh rules`, `wh sources`, and `wh sources verify`.
 | `wh sources list` | inspect | both config layers | — | Show subscribed custom sources across personal + project layers. |
 | `wh sources remove <target>` | author (sources) | same configs | same configs, entry removed | Unsubscribe by URL or name. Reports any approved rules that cite the removed URL. |
 | `wh sources verify <target>` | resolve | subscribed config | `source-cache.json` | Force re-fetch a single custom source without running full `wh reinit`. |
+| `wh config show` | inspect | config layers, imported packs, pack cache | — | Show the effective config stack, active imported packs, and per-key provenance. Canonical project entrypoint is `whetstone/whetstone.yaml`; repo-root `whetstone.yaml` is a compatibility fallback. |
+| `wh config validate` | inspect / validate | same as `wh config show` | — | Validate config files and imported packs. Exits non-zero on config or pack-resolution errors. |
 | `wh review [show <id> \| worklist]` | inspect | writable rules, handoff artifacts | — | Lists rules by lifecycle status, shows full per-rule context, or renders the extraction worklist. |
 | `wh validate` | — | `references/rule-schema.yaml` (or embedded fallback), all rule files | — | Schema + fixtures validator. CI-friendly. |
 | `wh status` | monitor | project rules, state files, metrics, source files for `wh scan` | `whetstone/.metrics.jsonl` (snapshot w/ `adherence_score` + `violation_counts`) | Returns both `rule_system_score` (rule health) and `adherence_score` (code quality, hybrid formula). `--score`, `--history`, `--no-snapshot`, `--no-drift-check`. |
@@ -81,6 +83,7 @@ on `wh scan`, `wh rules`, `wh sources`, and `wh sources verify`.
 | `whetstone/.state/manifests.json` | `wh init`, `wh reinit` | `wh init --incremental` | Manifest fingerprints |
 | `whetstone/.state/inventory.json` | same | `wh init`, `wh set-sources` | Last-seen deps |
 | `whetstone/.state/source-cache.json` | `wh set-sources` | same | Content cache + hashes |
+| `whetstone/.state/config-pack-cache.json` | `wh config show`, pack resolution inside config/rule loading | same | Imported pack cache + resolved-ref metadata |
 | `whetstone/.metrics.jsonl` | `wh status` | `wh status --history` | Append-only score snapshots |
 
 ---
@@ -92,10 +95,8 @@ Features intentionally removed in 0.3.0:
 - `wh promote`, `wh layers` — the four-layer merge collapsed to personal +
   project, so promotion and per-layer inspection are no longer needed.
 - `wh propose`, `wh apply`, `wh review queue`, `wh review diff` — replaced by
-  the simpler `wh extract submit` + `wh approve` pair.
+  the simpler `wh extract submit` + `wh rules approve` pair.
 - `wh bench`, `wh eval`, `wh patterns` — trust/AI-eval/pattern-mining work is
   parked until the core loop stabilizes.
-- `wh config` — config still works at the YAML level; the inspector UI is
-  deferred.
 - Built-in rules and team extends — gone. The personal layer carries
   local-only overrides; everything else lives in `whetstone/rules/`.

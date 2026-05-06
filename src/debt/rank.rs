@@ -124,9 +124,7 @@ pub fn build_report(project_dir: &Path, findings: Vec<Finding>, top: usize) -> D
 }
 
 fn now_iso() -> String {
-    chrono::Utc::now()
-        .format("%Y-%m-%dT%H:%M:%SZ")
-        .to_string()
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 #[cfg(test)]

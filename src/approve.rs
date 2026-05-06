@@ -148,8 +148,8 @@ fn is_already_approved(found: &FoundRule, rule_id: &str) -> bool {
 /// Returns true if the file content changed, false otherwise.
 fn rewrite_rule_to_approved(path: &Path, rule_id: &str) -> Result<bool> {
     // Silent check that the file still parses before we mutate.
-    let text = fs::read_to_string(path)
-        .map_err(|e| anyhow!("cannot read {}: {e}", path.display()))?;
+    let text =
+        fs::read_to_string(path).map_err(|e| anyhow!("cannot read {}: {e}", path.display()))?;
     let _ = serde_yaml::from_str::<serde_yaml::Value>(&text)
         .map_err(|e| anyhow!("failed to parse {}: {e}", path.display()))?;
 
@@ -168,7 +168,14 @@ fn rewrite_rule_to_approved(path: &Path, rule_id: &str) -> Result<bool> {
     let mut changed = false;
     for (key, value) in [("status", "approved"), ("approved", "true")] {
         let current_end = mut_block_end(&lines, block_start);
-        if replace_field_in_block(&mut lines, block_start, current_end, field_indent, key, value) {
+        if replace_field_in_block(
+            &mut lines,
+            block_start,
+            current_end,
+            field_indent,
+            key,
+            value,
+        ) {
             changed = true;
         } else {
             let insert_at = skip_trailing_blank_lines(&lines, current_end);

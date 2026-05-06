@@ -104,6 +104,11 @@ pub fn build_tera() -> Tera {
         "clippy_config.tera",
         include_str!("templates/clippy_config.tera"),
     );
+    register(
+        &mut tera,
+        "rustfmt_config.tera",
+        include_str!("templates/rustfmt_config.tera"),
+    );
 
     tera.register_filter("re_escape_py", re_escape_py);
     tera.register_filter("re_escape_ts", re_escape_ts);
@@ -192,6 +197,7 @@ mod tests {
             "ruff_config.tera",
             "biome_config.tera",
             "clippy_config.tera",
+            "rustfmt_config.tera",
             "_context_body.tera",
             "python_conftest.py.tera",
             "typescript_setup.ts.tera",

@@ -116,4 +116,3 @@ fn ensure_gitignore_entries(project_dir: &Path) -> Result<Value> {
 fn gitignore_contains(content: &str, rule: &str) -> bool {
     content.lines().any(|line| line.trim() == rule)
 }
-

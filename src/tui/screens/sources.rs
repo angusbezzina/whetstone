@@ -1,5 +1,5 @@
 //! Unified Sources screen — combines internal dependency/doc sources with
-//! handpicked personal/team sources and lets users add a custom source.
+//! handpicked trusted personal/team sources and lets users shape project taste.
 
 use std::path::Path;
 

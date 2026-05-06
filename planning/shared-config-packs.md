@@ -1,12 +1,35 @@
 # Shared Config Packs vNext
 
-> **Status:** design draft · 2026-04-28
+> **Status:** design draft · 2026-05-06
 > **Tracking:** whetstone-ng9g.4, whetstone-ng9g.4.1, whetstone-ng9g.4.2
 
 ## Goal
 
 Make Whetstone configuration and rules easy to share across personal, project,
 team, and org scopes using YAML packs with explicit provenance and precedence.
+
+## Canonical shareability story
+
+The **default shareable artifact** should be a single committed project file:
+
+```text
+whetstone/whetstone.yaml
+```
+
+That file is the copy/paste entrypoint. A team should be able to hand someone a
+`whetstone/whetstone.yaml`, drop it into another repo, run Whetstone, and get
+the same source-driven taste model.
+
+Packs exist to make that file reusable and composable — not to replace it as the
+primary UX. In other words:
+
+- **copy/paste first**
+- **extends/import second**
+- **registry/publishing later**
+
+The repo-root `whetstone.yaml` path may remain as a compatibility fallback while
+the CLI settles, but docs and generation should treat `whetstone/whetstone.yaml`
+as canonical.
 
 ## Scope model
 
@@ -22,7 +45,7 @@ org < team < project < personal
 |---|---|---:|---|
 | org | remote or checked-in pack reference | yes | Broadest standards |
 | team | remote or checked-in pack reference | yes | Team/domain standards |
-| project | `whetstone/` | yes | Repo-specific rules |
+| project | `whetstone/whetstone.yaml` | yes | Canonical copy/paste entrypoint |
 | personal | `whetstone/.personal/` | no | Local by default; commit is opt-in |
 
 ## Important product rule
@@ -36,8 +59,44 @@ If a user wants to share a personal pack, they must opt in explicitly by either:
 
 ## Repository config shape
 
+The canonical project file is both:
+
+1. the repo's **copy/pasteable shareability entrypoint**, and
+2. the place where optional shared packs are imported.
+
+Minimal starter shape:
+
 ```yaml
 version: 1
+
+sources:
+  custom:
+    - url: https://internal.acme.dev/style
+      name: acme-style
+      language: python
+      source_kind: team_guide
+
+extraction:
+  min_confidence: high
+
+generate:
+  formats: [agents.md, claude.md]
+```
+
+Extended shape with imported packs:
+
+```yaml
+version: 1
+
+sources:
+  custom:
+    - url: https://internal.acme.dev/style
+      name: acme-style
+      language: python
+      source_kind: team_guide
+
+extraction:
+  min_confidence: high
 
 extends:
   - scope: org
@@ -59,6 +118,7 @@ extends:
 ```yaml
 apiVersion: whetstone/v1alpha1
 kind: RulePack
+language: python   # required when `rules:` is non-empty
 
 metadata:
   name: acme.payments
@@ -100,13 +160,15 @@ overrides:
 
 1. Start from the broadest imported pack.
 2. Apply later packs in declared `extends` order.
-3. Apply local project rules.
-4. Apply personal rules last.
-5. `deny` removes a rule from broader scopes.
-6. `overrides` may change severity/confidence/description/source metadata
+3. Apply inline project config from `whetstone/whetstone.yaml`.
+4. Apply local project rules.
+5. Apply personal rules last.
+6. `deny` removes a rule from broader scopes.
+7. `overrides` may change severity/confidence/description/source metadata
    without redefining the full rule.
-7. Every effective rule should retain provenance:
+8. Every effective rule should retain provenance:
    - source pack
+   - canonical project file
    - scope
    - original rule id
    - override chain
@@ -129,7 +191,7 @@ Each resolved pack should be cached with:
 
 ## CLI implications
 
-The CLI should gain a first-class inspection surface:
+The CLI now has a first-class inspection surface:
 
 ```bash
 wh config show
@@ -138,6 +200,7 @@ wh config validate
 
 These commands should explain:
 
+- whether `whetstone/whetstone.yaml` exists and is canonical
 - active scopes and packs
 - effective precedence
 - ignored or shadowed fields
@@ -151,3 +214,9 @@ These commands should explain:
 - signatures/trust model
 - automatic org/team pack publishing
 - background update daemons
+
+## Near-term product rule
+
+If we have to choose between a smarter pack system and a simpler copy/paste
+story, prefer the simpler copy/paste story first. Shared packs should make the
+canonical `whetstone/whetstone.yaml` more powerful, but never harder to adopt.

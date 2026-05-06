@@ -452,9 +452,20 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
     let config = crate::config::WhetstoneConfig::load(project_dir);
     if !config.sources.custom.is_empty() {
         let custom_timeout = config.resolve.timeout_seconds.unwrap_or(15);
+        let custom_ttl = config
+            .resolve
+            .cache_ttl_seconds
+            .unwrap_or(crate::state::cache::DEFAULT_TTL);
         let custom = crate::resolve::resolve_custom_sources(&config.sources.custom, custom_timeout);
         if !custom.is_empty() {
             eprintln!("  Resolved {} custom source(s)", custom.len());
+            for item in &custom {
+                let mut cache_entry = item.clone();
+                cache_entry["fetch_timestamp"] = serde_json::json!(crate::state::now_iso());
+                cache_entry["ttl_seconds"] = serde_json::json!(custom_ttl);
+                sm.cache.upsert(cache_entry);
+            }
+            sm.cache.save();
             extraction_sources.extend(custom);
         }
     }
@@ -485,10 +496,14 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
         remaining_count,
     );
 
+    let review_flow = build_review_flow(!extraction_sources.is_empty(), !errors.is_empty(), auto_limited);
+
     let next_command = if auto_limited {
         "wh init --resume"
     } else if !extraction_sources.is_empty() {
-        "For each ready dep, draft a bundle YAML → `wh extract submit <bundle>` → `wh approve --all --confidence high`"
+        "wh rules worklist"
+    } else if !errors.is_empty() {
+        "wh sources list"
     } else if !sources.is_empty() {
         "wh status"
     } else {
@@ -509,6 +524,7 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
         },
         "source_details": source_details,
         "recommendations": recommendations,
+        "review_flow": review_flow,
         "extraction_context": extraction_context,
         "scan": scan_info,
         "resolution_buckets": resolution_buckets,
@@ -705,6 +721,7 @@ fn build_recommendations(
             "priority": "high",
             "action": "extract",
             "message": format!("Extract rules for {} dependencies with resolved docs", sources.len()),
+            "command": "wh rules worklist",
         }));
     }
 
@@ -713,6 +730,7 @@ fn build_recommendations(
             "priority": "high",
             "action": "prioritize",
             "message": format!("{} deps have llms.txt \u{2014} these will produce highest quality rules", llms_txt_count),
+            "command": "wh extract",
         }));
     }
 
@@ -721,6 +739,7 @@ fn build_recommendations(
             "priority": "medium",
             "action": "resolve",
             "message": format!("Consider providing manual docs URLs for {} unresolved dependencies", errors.len()),
+            "command": "wh sources list",
         }));
     }
 
@@ -729,6 +748,7 @@ fn build_recommendations(
             "priority": "low",
             "action": "review",
             "message": format!("{} existing rules found \u{2014} doctor will update them", existing_rules),
+            "command": "wh rules list --status approved",
         }));
     }
 
@@ -750,6 +770,46 @@ fn build_recommendations(
     }
 
     recs
+}
+
+fn build_review_flow(has_ready_sources: bool, has_errors: bool, auto_limited: bool) -> Value {
+    let mut steps = vec![];
+
+    if auto_limited {
+        steps.push(serde_json::json!({
+            "step": 1,
+            "title": "Resume the fast-first bootstrap",
+            "command": "wh init --resume",
+        }));
+    }
+
+    if has_errors {
+        steps.push(serde_json::json!({
+            "step": steps.len() + 1,
+            "title": "Review trusted sources and unresolved gaps",
+            "command": "wh sources list",
+        }));
+    }
+
+    if has_ready_sources {
+        steps.push(serde_json::json!({
+            "step": steps.len() + 1,
+            "title": "Review the extraction worklist",
+            "command": "wh rules worklist",
+        }));
+        steps.push(serde_json::json!({
+            "step": steps.len() + 1,
+            "title": "Draft or submit candidate bundles",
+            "command": "wh extract",
+        }));
+        steps.push(serde_json::json!({
+            "step": steps.len() + 1,
+            "title": "Approve candidate rules explicitly",
+            "command": "wh rules approve --all --confidence high",
+        }));
+    }
+
+    serde_json::json!({"steps": steps})
 }
 
 fn format_report(result: &Value, project_dir: &Path, verbose: bool) -> String {
@@ -879,6 +939,27 @@ fn format_report(result: &Value, project_dir: &Path, verbose: bool) -> String {
         }
     }
 
+    if let Some(flow) = result
+        .get("review_flow")
+        .and_then(|v| v.get("steps"))
+        .and_then(|v| v.as_array())
+    {
+        if !flow.is_empty() {
+            r.section_header("Next Steps");
+            r.empty_line();
+            for step in flow {
+                let title = step.get("title").and_then(|v| v.as_str()).unwrap_or("Next");
+                let command = step.get("command").and_then(|v| v.as_str()).unwrap_or("");
+                if command.is_empty() {
+                    r.line(&format!("- {title}"));
+                } else {
+                    r.line(&format!("- {title}: {command}"));
+                }
+            }
+            r.empty_line();
+        }
+    }
+
     // Timing
     r.section_header("Timing");
     r.empty_line();
@@ -915,5 +996,26 @@ fn format_report(result: &Value, project_dir: &Path, verbose: bool) -> String {
 fn log(msg: &str, json_mode: bool) {
     if !json_mode {
         output::log(msg);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_review_flow;
+
+    #[test]
+    fn review_flow_prefers_rules_worklist_for_ready_sources() {
+        let flow = build_review_flow(true, false, false);
+        let steps = flow["steps"].as_array().unwrap();
+        assert_eq!(steps[0]["command"], "wh rules worklist");
+        assert_eq!(steps[2]["command"], "wh rules approve --all --confidence high");
+    }
+
+    #[test]
+    fn review_flow_surfaces_sources_list_for_resolution_gaps() {
+        let flow = build_review_flow(false, true, false);
+        let steps = flow["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0]["command"], "wh sources list");
     }
 }

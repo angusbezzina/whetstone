@@ -121,9 +121,9 @@ pub fn run(project_dir: &Path, sources: &SourceInventory) -> Result<Vec<Finding>
             .iter()
             .map(|i| python_import_to_pkg(i))
             .collect();
-        let referenced = mapped
-            .iter()
-            .any(|m| m.eq_ignore_ascii_case(name) || m.replace('_', "-").eq_ignore_ascii_case(name));
+        let referenced = mapped.iter().any(|m| {
+            m.eq_ignore_ascii_case(name) || m.replace('_', "-").eq_ignore_ascii_case(name)
+        });
         if !referenced {
             findings.push(Finding {
                 category: Category::Dead,
@@ -154,7 +154,9 @@ pub fn run(project_dir: &Path, sources: &SourceInventory) -> Result<Vec<Finding>
         if name.starts_with("@types/") {
             continue; // type-only; consumed implicitly by tsc
         }
-        let referenced = imported_ts.iter().any(|i| i == name || i.starts_with(&format!("{name}/")));
+        let referenced = imported_ts
+            .iter()
+            .any(|i| i == name || i.starts_with(&format!("{name}/")));
         if !referenced {
             findings.push(Finding {
                 category: Category::Dead,
@@ -258,7 +260,8 @@ fn dedup_findings(items: Vec<Finding>) -> Vec<Finding> {
 }
 
 fn scan_python_imports(sources: &SourceInventory) -> HashSet<String> {
-    let import_re = Regex::new(r"(?m)^\s*(?:from\s+([a-zA-Z_][\w.]*)|import\s+([a-zA-Z_][\w.]*))").unwrap();
+    let import_re =
+        Regex::new(r"(?m)^\s*(?:from\s+([a-zA-Z_][\w.]*)|import\s+([a-zA-Z_][\w.]*))").unwrap();
     let mut out = HashSet::new();
     for path in &sources.python {
         let text = match std::fs::read_to_string(path) {
@@ -321,7 +324,8 @@ fn scan_ts_imports(sources: &SourceInventory) -> HashSet<String> {
 
 fn scan_rust_uses(sources: &SourceInventory) -> HashSet<String> {
     // For rust we want the top-level crate name per `use` / `extern crate`.
-    let use_re = Regex::new(r"(?m)^\s*(?:pub\s+)?(?:use|extern\s+crate)\s+([a-zA-Z_][\w]*)").unwrap();
+    let use_re =
+        Regex::new(r"(?m)^\s*(?:pub\s+)?(?:use|extern\s+crate)\s+([a-zA-Z_][\w]*)").unwrap();
     let mut out = HashSet::new();
     for path in &sources.rust {
         let text = match std::fs::read_to_string(path) {
@@ -513,7 +517,11 @@ dependencies = ["requests", "neverused"]
         )
         .unwrap();
         fs::create_dir_all(root.join("src")).unwrap();
-        fs::write(root.join("src/app.py"), "import requests\nrequests.get('/')\n").unwrap();
+        fs::write(
+            root.join("src/app.py"),
+            "import requests\nrequests.get('/')\n",
+        )
+        .unwrap();
 
         let inv = source_walk::collect(root);
         let findings = run(root, &inv).unwrap();

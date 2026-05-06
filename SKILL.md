@@ -1,8 +1,9 @@
 ---
 name: whetstone
 description: >-
-  Derives coding rules from dependency documentation, submits candidate rules,
-  approves them in bulk, and generates native context, tests, and lint configs.
+  Derives coding rules from trusted sources and dependency documentation,
+  submits candidate rules, approves them in bulk, and generates native
+  context, tests, and lint/formatter configs.
   Use when the user asks to extract rules, update standards, or run whetstone
   commands.
 license: MIT
@@ -16,9 +17,10 @@ metadata:
 
 > Sharpen the tools that write your code.
 
-Whetstone derives coding rules from the documentation of your actual
-dependencies, decomposes them into deterministic checks, and generates native
-tests, lint configs, and agent context files.
+Whetstone turns **trusted sources → approved rules → generated enforcement**.
+It derives coding rules from the documentation of your actual dependencies,
+your subscribed trusted sources, decomposes them into deterministic checks,
+and generates native tests, lint/formatter configs, and agent context files.
 
 ## Happy Path
 
@@ -28,7 +30,7 @@ Six commands, in this order:
 wh init             # Bootstrap: detect deps, resolve docs, write extraction handoff
 wh extract          # Walk the dependency worklist to find the next candidate
 wh extract submit <bundle.yaml>   # Land a candidate bundle as status: candidate
-wh approve --all --confidence high  # Flip high-confidence candidates to approved
+wh rules approve --all --confidence high  # Flip high-confidence candidates to approved
 wh actions all      # Generate context + tests + lint in one chain
 wh scan src/        # Verify source code against approved rules
 wh reinit           # Refresh when dependencies change
@@ -97,7 +99,7 @@ wh rules edit --all --dep fastapi --category convention --severity must --dry-ru
 
 ## Subscribe to custom sources (blogs, wikis, llms.txt, internal docs)
 
-`wh extract` normally walks dependencies detected from manifests. To extract rules from a blog post, a wiki page, an internal style guide, or a custom `llms.txt` endpoint, subscribe it as a **custom source** — it appears in the extraction worklist alongside detected deps.
+`wh extract` normally walks dependencies detected from manifests. To extract rules from a blog post, a wiki page, an internal style guide, or a custom `llms.txt` endpoint, subscribe it as a **trusted source** — it appears in the extraction worklist alongside detected deps.
 
 ```bash
 # Personal subscriptions (gitignored — don't leak to teammates)
@@ -116,7 +118,21 @@ wh sources verify py-tips
 wh sources remove py-tips
 ```
 
-`--kind` is free-form but conventionally one of `blog`, `official_docs`, `team_guide`, `community`, `custom`. `--lang any` (or omitting `--lang`) scopes the source to all languages. After adding, run `wh init` (or `wh sources verify <name>`) to pull the content, then follow the normal `wh extract` → `wh approve` flow. `wh reinit` re-fetches subscribed sources and flags content-hash drift just like it does for detected deps.
+`--kind` is free-form but conventionally one of `blog`, `official_docs`, `team_guide`, `community`, `custom`. `--lang any` (or omitting `--lang`) scopes the source to all languages. After adding, run `wh init` (or `wh sources verify <name>`) to pull the content, then follow the normal `wh extract` → `wh rules approve` flow. `wh reinit` re-fetches subscribed sources and flags content-hash drift just like it does for detected deps.
+
+## Canonical shareability story
+
+The default shareable entrypoint is a committed `whetstone/whetstone.yaml`.
+Teams should be able to copy that file into another repo and keep the same
+trusted-source setup. Optional `extends:` pack refs live underneath that file;
+they are a composition mechanism, not the primary UX.
+
+Use these commands when inspecting that stack:
+
+```bash
+wh config show
+wh config validate
+```
 
 ## Roles
 
@@ -127,7 +143,7 @@ has the final say.
 |------|-----------|-----|
 | Dependency detection, source resolution, content fetching | Binary | Deterministic |
 | Reading docs + drafting candidate rules | Agent | Requires judgment |
-| Approving candidates | User (via `wh approve`) | Policy decision |
+| Approving candidates | User (via `wh rules approve`) | Policy decision |
 | Writing generated tests / lint / context / signal checks | Binary | Deterministic |
 
 ## Core Philosophy: High Confidence or Silence
@@ -149,8 +165,8 @@ Five rules you trust completely beats fifty you have to review.
 wh extract submit  ───▶  status: candidate
                               │
                               ▼
-              wh approve <id>      status: approved
-              wh approve --all
+              wh rules approve <id>      status: approved
+              wh rules approve --all
 ```
 
 Only `candidate` and `approved` exist. To retire a rule, delete the file or
@@ -194,7 +210,9 @@ colliding file or rename the new candidate, then resubmit.
 
 - `wh context` — writes `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.
 - `wh tests` — writes pytest / vitest / cargo test scaffolds under `whetstone/evals/`
-- `wh lint` — writes `ruff.whetstone.toml` / `biome.whetstone.json` / `clippy.whetstone.toml`
+- `wh lint` — writes `ruff.whetstone.toml` / `biome.whetstone.json` /
+  `clippy.whetstone.toml` plus formatter-backed overlays like
+  `rustfmt.whetstone.toml` when rules opt into safe mechanical formatting
   under `whetstone/lint/`
 
 Run them individually for finer control, or chain them with `wh actions`.

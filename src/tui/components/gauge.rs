@@ -20,14 +20,16 @@ pub fn render(score: Option<i64>, width: usize) -> Line<'static> {
             let pct = s.clamp(0, 100) as f64 / 100.0;
             let filled = ((bar_width as f64) * pct).round() as usize;
             let empty = bar_width.saturating_sub(filled);
-            let bar: String =
-                std::iter::repeat(FILLED).take(filled).collect::<String>()
-                    + &std::iter::repeat(EMPTY).take(empty).collect::<String>();
+            let bar: String = std::iter::repeat(FILLED).take(filled).collect::<String>()
+                + &std::iter::repeat(EMPTY).take(empty).collect::<String>();
             Line::from(vec![
                 Span::styled(bar, Style::default().fg(theme::AMBER)),
                 Span::raw(format!(" {:>3}", s)),
             ])
         }
-        None => Line::from(Span::styled("N/A", Style::default().fg(theme::MUTED).bold())),
+        None => Line::from(Span::styled(
+            "N/A",
+            Style::default().fg(theme::MUTED).bold(),
+        )),
     }
 }

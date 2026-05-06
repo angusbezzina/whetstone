@@ -1,5 +1,13 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.0/schema.json",
+{%- if format_options | length > 0 %}
+  "formatter": {
+{%- for opt in format_options %}
+    "{{ opt.key }}": {{ opt.value }}{% if not loop.last %},{% endif %}
+{%- endfor %}
+  }{% if groups | length > 0 %},{% endif %}
+{%- endif %}
+{%- if groups | length > 0 %}
   "linter": {
     "rules": {
 {%- for category, rules in groups %}
@@ -11,4 +19,5 @@
 {%- endfor %}
     }
   }
+{%- endif %}
 }

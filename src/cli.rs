@@ -18,6 +18,7 @@ const TAXONOMY_HELP: &str = "Core workflow:
 Management:
   whetstone rules ...        list | show | query | add | edit | remove | approve | worklist
   whetstone sources ...      list | add | edit | remove | verify
+  whetstone config ...       show | validate
 
 Maintenance:
   whetstone extract          Draft or submit candidate rules
@@ -232,6 +233,22 @@ enum SourceAction {
         /// URL or name of the source to verify
         target: String,
 
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Show the effective config stack, active packs, and per-key provenance
+    Show {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Validate config files and imported packs
+    Validate {
         /// Project root directory
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
@@ -826,6 +843,13 @@ enum Commands {
         action: SourceAction,
     },
 
+    /// Inspect and validate the effective config stack and imported packs
+    #[command(name = "config")]
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+
     /// One-page report: adherence score, top violations, drift, next actions
     #[command(name = "report", hide = true)]
     Report {
@@ -881,9 +905,8 @@ enum Commands {
 
 pub fn run() -> i32 {
     let cli = Cli::parse();
-    let human_tui_mode = !cli.json
-        && tui::stdout_is_tty()
-        && std::env::var_os("WHETSTONE_NO_TUI").is_none();
+    let human_tui_mode =
+        !cli.json && tui::stdout_is_tty() && std::env::var_os("WHETSTONE_NO_TUI").is_none();
     let json_mode = cli.json || (!human_tui_mode && output::is_piped());
 
     // Bare `wh` on a TTY → launch the interactive TUI dashboard.
@@ -1409,7 +1432,7 @@ pub fn run() -> i32 {
                     if json_mode {
                         output::print_json(&result);
                     } else {
-                        println!("wh actions lint: generated lint overlays");
+                        println!("wh actions lint: generated lint/formatter overlays");
                     }
                     0
                 }
@@ -1435,6 +1458,14 @@ pub fn run() -> i32 {
                 } else if let Some(gen) = result.get("generated") {
                     if let Some(lints) = gen.get("lint_configs").and_then(|v| v.as_array()) {
                         for f in lints {
+                            let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                            println!("  + {path}");
+                        }
+                    }
+                    if let Some(formatters) =
+                        gen.get("formatter_configs").and_then(|v| v.as_array())
+                    {
+                        for f in formatters {
                             let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
                             println!("  + {path}");
                         }
@@ -1545,10 +1576,7 @@ pub fn run() -> i32 {
                     if json_mode {
                         output::print_json(&value);
                     } else if value.get("wrote").is_some() {
-                        let wrote = value
-                            .get("wrote")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("?");
+                        let wrote = value.get("wrote").and_then(|v| v.as_str()).unwrap_or("?");
                         println!("wh extract submit: wrote {wrote}");
                         if let Some(next) = value.get("next_command").and_then(|v| v.as_str()) {
                             println!("Next: {next}");
@@ -1748,9 +1776,8 @@ pub fn run() -> i32 {
                             .join("refresh-diff.json");
                         if let Ok(text) = std::fs::read_to_string(&diff_path) {
                             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                                if let Some(cands) = v
-                                    .get("re_extraction_candidates")
-                                    .and_then(|c| c.as_array())
+                                if let Some(cands) =
+                                    v.get("re_extraction_candidates").and_then(|c| c.as_array())
                                 {
                                     if !cands.is_empty() {
                                         println!(
@@ -1996,10 +2023,8 @@ pub fn run() -> i32 {
                             println!("{word} {count} rule(s)");
                             if let Some(items) = v.get("changed").and_then(|a| a.as_array()) {
                                 for item in items {
-                                    let id = item
-                                        .get("rule_id")
-                                        .and_then(|s| s.as_str())
-                                        .unwrap_or("?");
+                                    let id =
+                                        item.get("rule_id").and_then(|s| s.as_str()).unwrap_or("?");
                                     let file =
                                         item.get("file").and_then(|s| s.as_str()).unwrap_or("?");
                                     println!("  {id}  ({file})");
@@ -2114,18 +2139,23 @@ pub fn run() -> i32 {
                     Ok(value) => {
                         if json_mode {
                             output::print_json(&value);
-                        } else if let Some(count) = value.get("approved_count").and_then(|v| v.as_i64())
+                        } else if let Some(count) =
+                            value.get("approved_count").and_then(|v| v.as_i64())
                         {
                             println!("wh rules approve: {count} candidate(s) approved");
                         } else {
                             let id = value.get("rule_id").and_then(|v| v.as_str()).unwrap_or("?");
-                            let action = value.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+                            let action =
+                                value.get("action").and_then(|v| v.as_str()).unwrap_or("?");
                             println!("wh rules approve: {id} -> {action}");
                         }
                         0
                     }
                     Err(e) => {
-                        output::print_json(&output::error_json(&e.to_string(), "wh rules approve --help"));
+                        output::print_json(&output::error_json(
+                            &e.to_string(),
+                            "wh rules approve --help",
+                        ));
                         1
                     }
                 }
@@ -2158,7 +2188,10 @@ pub fn run() -> i32 {
                     0
                 }
                 Err(e) => {
-                    output::print_json(&output::error_json(&e.to_string(), "wh rules worklist --help"));
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "wh rules worklist --help",
+                    ));
                     1
                 }
             },
@@ -2281,10 +2314,7 @@ pub fn run() -> i32 {
                                 v.get("citing_rule_ids").and_then(|a| a.as_array())
                             {
                                 if !citers.is_empty() {
-                                    println!(
-                                        "{} approved rule(s) cite this source:",
-                                        citers.len()
-                                    );
+                                    println!("{} approved rule(s) cite this source:", citers.len());
                                     for c in citers.iter().take(10) {
                                         let id = c
                                             .get("rule_id")
@@ -2321,10 +2351,7 @@ pub fn run() -> i32 {
                         println!("Verified {fetched} source(s)");
                         if let Some(arr) = v.get("sources").and_then(|a| a.as_array()) {
                             for s in arr {
-                                let name = s
-                                    .get("name")
-                                    .and_then(|x| x.as_str())
-                                    .unwrap_or("?");
+                                let name = s.get("name").and_then(|x| x.as_str()).unwrap_or("?");
                                 let bytes = s
                                     .get("content")
                                     .and_then(|x| x.as_str())
@@ -2344,6 +2371,38 @@ pub fn run() -> i32 {
                     1
                 }
             },
+        },
+
+        Commands::Config { action } => match action {
+            ConfigAction::Show { project_dir } => {
+                let snapshot = config::WhetstoneConfig::load_full(&project_dir);
+                if json_mode {
+                    output::print_json(&snapshot.to_json());
+                } else {
+                    print!("{}", config::format_snapshot_human(&snapshot));
+                }
+                if snapshot.has_errors() {
+                    1
+                } else {
+                    0
+                }
+            }
+            ConfigAction::Validate { project_dir } => {
+                let snapshot = config::WhetstoneConfig::load_full(&project_dir);
+                if json_mode {
+                    let mut data = snapshot.to_json();
+                    data["valid"] = serde_json::Value::Bool(!snapshot.has_errors());
+                    output::print_json(&data);
+                } else {
+                    print!("{}", config::format_snapshot_human(&snapshot));
+                    if snapshot.has_errors() {
+                        println!("Config validation failed.");
+                    } else {
+                        println!("Config validation passed.");
+                    }
+                }
+                if snapshot.has_errors() { 1 } else { 0 }
+            }
         },
 
         Commands::Report {
@@ -2597,6 +2656,7 @@ fn command_title(command: &Commands) -> &'static str {
         Commands::Review { .. } => "REVIEW",
         Commands::Rules { .. } => "RULES",
         Commands::Sources { .. } => "SOURCES",
+        Commands::Config { .. } => "CONFIG",
         Commands::Report { .. } => "REPORT",
         Commands::Debt { .. } => "DEBT",
         Commands::Update { .. } => "UPDATE",
@@ -2633,6 +2693,7 @@ fn success_screen_for_command(command: &Commands) -> Option<tui::msg::Screen> {
         Commands::Report { .. } => None,
         Commands::Debt { prompt, beads, .. } if !prompt && !beads => Some(Screen::Debt),
         Commands::Sources { .. } => Some(Screen::Sources),
+        Commands::Config { .. } => None,
         Commands::Approve { .. } => Some(Screen::Rules),
         Commands::Rules { action } => match action {
             RulesAction::Add { .. }
@@ -2690,6 +2751,11 @@ fn project_dir_for_command(command: &Commands) -> PathBuf {
             | SourceAction::List { project_dir }
             | SourceAction::Remove { project_dir, .. }
             | SourceAction::Verify { project_dir, .. } => project_dir.clone(),
+        },
+        Commands::Config { action } => match action {
+            ConfigAction::Show { project_dir } | ConfigAction::Validate { project_dir } => {
+                project_dir.clone()
+            }
         },
         Commands::Reinit { project_dir, .. } => PathBuf::from(project_dir),
         Commands::Update { .. } => PathBuf::from("."),

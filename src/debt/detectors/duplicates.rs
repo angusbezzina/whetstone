@@ -104,8 +104,8 @@ pub fn run(_project_dir: &Path, sources: &SourceInventory) -> Result<Vec<Finding
         for o in &cluster.occurrences {
             // Consider a window "already covered" if any line inside its
             // span has been claimed by a larger earlier finding.
-            let overlap = (o.start_line..=o.end_line)
-                .any(|line| claimed.contains(&(o.file.clone(), line)));
+            let overlap =
+                (o.start_line..=o.end_line).any(|line| claimed.contains(&(o.file.clone(), line)));
             if !overlap {
                 fresh_occs.push(o);
             }
@@ -129,11 +129,7 @@ pub fn run(_project_dir: &Path, sources: &SourceInventory) -> Result<Vec<Finding
                 line: Some(o.start_line),
             })
             .collect();
-        locations.sort_by(|a, b| {
-            a.file
-                .cmp(&b.file)
-                .then_with(|| a.line.cmp(&b.line))
-        });
+        locations.sort_by(|a, b| a.file.cmp(&b.file).then_with(|| a.line.cmp(&b.line)));
         locations.dedup_by(|a, b| a.file == b.file && a.line == b.line);
 
         let files: Vec<String> = {
@@ -148,10 +144,7 @@ pub fn run(_project_dir: &Path, sources: &SourceInventory) -> Result<Vec<Finding
         let evidence_strength = ((occurrences as f64) / 2.0).min(1.5);
 
         let title = if files.len() == 1 {
-            format!(
-                "Duplicate block ({occurrences} copies) in {}",
-                files[0]
-            )
+            format!("Duplicate block ({occurrences} copies) in {}", files[0])
         } else {
             format!(
                 "Duplicate block ({occurrences} copies) across {} files",
@@ -172,12 +165,19 @@ pub fn run(_project_dir: &Path, sources: &SourceInventory) -> Result<Vec<Finding
                 occurrences,
                 locations,
             },
-            next_action: "Extract a shared helper for the duplicated block and call it from each site.".into(),
+            next_action:
+                "Extract a shared helper for the duplicated block and call it from each site."
+                    .into(),
         });
     }
 
     // Stable order for test snapshots.
-    findings.sort_by(|a, b| b.evidence_strength.partial_cmp(&a.evidence_strength).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.title.cmp(&b.title)));
+    findings.sort_by(|a, b| {
+        b.evidence_strength
+            .partial_cmp(&a.evidence_strength)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.title.cmp(&b.title))
+    });
 
     Ok(findings)
 }
@@ -272,7 +272,9 @@ fn tokenize(source: &str) -> Vec<(u32, String)> {
                 out.push((line, "STR".to_string()));
             }
             c if c.is_ascii_digit() => {
-                while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.' || bytes[i] == b'_') {
+                while i < bytes.len()
+                    && (bytes[i].is_ascii_digit() || bytes[i] == b'.' || bytes[i] == b'_')
+                {
                     i += 1;
                 }
                 out.push((line, "NUM".to_string()));

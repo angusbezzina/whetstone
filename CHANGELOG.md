@@ -6,6 +6,15 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Trusted sources now have a clearer shareability model.** `whetstone/whetstone.yaml` is now the canonical copy/paste entrypoint for sharing project taste across repositories, while optional imported packs layer underneath it instead of replacing it as the primary UX.
+- **Imported config packs now load through the shipped CLI.** `wh config show` and `wh config validate` expose the effective config stack, imported pack provenance, and validation failures, and imported pack rules now participate in the effective project ruleset.
+- **Formatter-backed enforcement is now a narrow fourth surface.** Approved, source-backed rules can emit safe formatter overlays alongside context, tests, and lints. Current overlays include Ruff/Biome formatting options and a dedicated `rustfmt.whetstone.toml` path.
+- **The onboarding and migration story are more explicit.** `wh init` now points users toward `wh sources list` and `wh rules worklist` as the supported post-bootstrap flow, and the CLI vNext migration guide now lives at `references/cli-vnext-migration.md`.
+
+### Docs
+- Refreshed the README, skill docs, workflow matrix, handoff schema, TUI help copy, and planning references so they consistently teach `scan`, `rules`, `sources`, `actions`, `config`, canonical `whetstone/whetstone.yaml` sharing, and deferred MCP.
+
 ## [0.8.13] - 2026-05-04
 
 ### Fixed

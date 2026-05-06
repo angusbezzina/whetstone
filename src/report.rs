@@ -88,7 +88,10 @@ pub fn to_markdown(data: &Value) -> String {
 
     let adherence = data.get("adherence_score");
     let rule_sys = data.get("rule_system_score");
-    let label = data.get("label").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let label = data
+        .get("label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
     let rules = data
         .get("rules_count")
         .and_then(|v| v.as_i64())
@@ -119,14 +122,20 @@ pub fn to_markdown(data: &Value) -> String {
             .get("files_eligible")
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
-        let clean_files = ad
-            .get("files_clean")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
+        let clean_files = ad.get("files_clean").and_then(|v| v.as_i64()).unwrap_or(0);
         let v = ad.get("violations");
-        let must = v.and_then(|o| o.get("must")).and_then(|x| x.as_i64()).unwrap_or(0);
-        let should = v.and_then(|o| o.get("should")).and_then(|x| x.as_i64()).unwrap_or(0);
-        let may = v.and_then(|o| o.get("may")).and_then(|x| x.as_i64()).unwrap_or(0);
+        let must = v
+            .and_then(|o| o.get("must"))
+            .and_then(|x| x.as_i64())
+            .unwrap_or(0);
+        let should = v
+            .and_then(|o| o.get("should"))
+            .and_then(|x| x.as_i64())
+            .unwrap_or(0);
+        let may = v
+            .and_then(|o| o.get("may"))
+            .and_then(|x| x.as_i64())
+            .unwrap_or(0);
         out.push_str(&format!(
             "- Clean files: **{clean_files} / {eligible}** ({clean}%)\n"
         ));
@@ -138,7 +147,10 @@ pub fn to_markdown(data: &Value) -> String {
 
     // Top violations.
     let vi = data.get("violations");
-    let total = vi.and_then(|v| v.get("total")).and_then(|x| x.as_i64()).unwrap_or(0);
+    let total = vi
+        .and_then(|v| v.get("total"))
+        .and_then(|x| x.as_i64())
+        .unwrap_or(0);
     if total > 0 {
         out.push_str(&format!(
             "## Top {} violations (of {total})\n\n",
@@ -149,18 +161,10 @@ pub fn to_markdown(data: &Value) -> String {
             out.push_str("|---|---|---|---|\n");
             for item in top {
                 let sev = item.get("severity").and_then(|s| s.as_str()).unwrap_or("");
-                let rule = item
-                    .get("rule_id")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("");
+                let rule = item.get("rule_id").and_then(|s| s.as_str()).unwrap_or("");
                 let file = item.get("file").and_then(|s| s.as_str()).unwrap_or("");
-                let line = item
-                    .get("line")
-                    .and_then(|s| s.as_u64())
-                    .unwrap_or(0);
-                out.push_str(&format!(
-                    "| {sev} | `{rule}` | `{file}` | {line} |\n"
-                ));
+                let line = item.get("line").and_then(|s| s.as_u64()).unwrap_or(0);
+                out.push_str(&format!("| {sev} | `{rule}` | `{file}` | {line} |\n"));
             }
             out.push('\n');
         }
@@ -170,10 +174,7 @@ pub fn to_markdown(data: &Value) -> String {
 
     // Drift.
     if let Some(d) = data.get("drift").filter(|v| !v.is_null()) {
-        let drifted = d
-            .get("drift_count")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
+        let drifted = d.get("drift_count").and_then(|v| v.as_i64()).unwrap_or(0);
         if drifted > 0 {
             out.push_str(&format!(
                 "## Dependency drift\n\n{drifted} dep(s) have changed since the last refresh. \
@@ -190,10 +191,7 @@ pub fn to_markdown(data: &Value) -> String {
         if !actions.is_empty() {
             out.push_str("## Next actions\n\n");
             for a in actions {
-                let text = a
-                    .get("message")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("");
+                let text = a.get("message").and_then(|s| s.as_str()).unwrap_or("");
                 let cmd = a.get("command").and_then(|s| s.as_str()).unwrap_or("");
                 if cmd.is_empty() {
                     out.push_str(&format!("- {text}\n"));
@@ -261,11 +259,7 @@ fn read_refresh_diff(project_dir: &Path) -> Value {
     }
 }
 
-fn build_next_actions(
-    status: &Value,
-    violations_total: usize,
-    _pr_comment: bool,
-) -> Vec<Value> {
+fn build_next_actions(status: &Value, violations_total: usize, _pr_comment: bool) -> Vec<Value> {
     let mut out = Vec::new();
     let adherence = status.get("adherence_score").and_then(|v| v.as_i64());
     match adherence {

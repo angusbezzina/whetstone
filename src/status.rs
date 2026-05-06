@@ -407,7 +407,9 @@ pub fn compute_status(
     // Adherence score — "is my code in good shape?" (Epic 3E whetstone-90m).
     // Best-effort: we swallow errors so wh status stays snappy and non-blocking
     // when tree-sitter/check internals regress.
-    let adherence = crate::adherence::compute(project_dir, total_rules).ok().flatten();
+    let adherence = crate::adherence::compute(project_dir, total_rules)
+        .ok()
+        .flatten();
     let adherence_json = match &adherence {
         Some(a) => crate::adherence::to_json(a),
         None => serde_json::Value::Null,
@@ -824,9 +826,18 @@ pub fn format_human_output(result: &Value) -> String {
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
             let v = ad.get("violations");
-            let must = v.and_then(|o| o.get("must")).and_then(|x| x.as_i64()).unwrap_or(0);
-            let should = v.and_then(|o| o.get("should")).and_then(|x| x.as_i64()).unwrap_or(0);
-            let may = v.and_then(|o| o.get("may")).and_then(|x| x.as_i64()).unwrap_or(0);
+            let must = v
+                .and_then(|o| o.get("must"))
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0);
+            let should = v
+                .and_then(|o| o.get("should"))
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0);
+            let may = v
+                .and_then(|o| o.get("may"))
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0);
             r.line(&format!(
                 "                (clean {}% \u{00b7} severity-weighted {} \u{00b7} violations: {} must, {} should, {} may)",
                 clean, sev, must, should, may
@@ -923,7 +934,10 @@ pub fn snapshot_metrics(project_dir: &Path, result: &Value) {
     // score AND violation counts per-severity forward so `wh status --history`
     // can compute deltas over time.
     let adherence = result.get("adherence").cloned().unwrap_or(Value::Null);
-    let adherence_score = result.get("adherence_score").cloned().unwrap_or(Value::Null);
+    let adherence_score = result
+        .get("adherence_score")
+        .cloned()
+        .unwrap_or(Value::Null);
     let violation_counts = adherence
         .get("violations")
         .cloned()

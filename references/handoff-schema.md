@@ -158,7 +158,7 @@ against the delta instead of re-reading every source.
   "failed": [
     { "name": "obscurelib", "language": "python", "error": "HTTP 404" }
   ],
-  "next_action": "Read re_extraction_candidates, then for each entry decide: keep / `wh rule edit` severity / delete rule YAML / `wh extract submit <bundle>` a re-authored version. Finish with `wh actions`."
+  "next_action": "Read re_extraction_candidates, then for each entry decide: keep / `wh rules edit` severity / delete rule YAML / `wh extract submit <bundle>` a re-authored version. Finish with `wh actions all`."
 }
 ```
 
@@ -176,7 +176,7 @@ against the delta instead of re-reading every source.
   Agents should iterate this list rather than re-deriving it from `changed`.
 - `extraction_prompt` (added 0.4.0) is a canned agent-facing instruction that
   lists the affected rule ids and tells the agent the workflow:
-  `wh rule edit` for severity bumps, delete for deprecation, `wh extract submit`
+  `wh rules edit` for severity bumps, delete for deprecation, `wh extract submit`
   for a fresh re-authoring. Use it as a drop-in prompt.
 - `previous_version` and `previous_content_hash` are **optional** — the
   shipped writer leaves them `null` because the cache is overwritten during

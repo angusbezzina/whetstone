@@ -91,7 +91,17 @@ pub struct Rule {
     #[serde(default)]
     pub signals: Vec<Signal>,
     #[serde(default)]
+    pub formatter: Option<FormatterDirective>,
+    #[serde(default)]
     pub golden_examples: Vec<GoldenExample>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FormatterDirective {
+    #[serde(default)]
+    pub tool: String,
+    #[serde(default)]
+    pub options: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -241,6 +251,21 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
                 warnings.push(ValidationWarning {
                     file: file_path.to_string(),
                     message: format!("{rule_ctx}: signal has invalid strategy '{}'", sig.strategy),
+                });
+            }
+        }
+
+        if let Some(formatter) = &rule.formatter {
+            if formatter.tool.trim().is_empty() {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!("{rule_ctx}: formatter.tool is empty"),
+                });
+            }
+            if formatter.options.is_empty() {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!("{rule_ctx}: formatter.options is empty"),
                 });
             }
         }
@@ -638,6 +663,10 @@ pub fn load_approved_rules(
                         ast_scope: s.ast_scope.clone(),
                     })
                     .collect(),
+                formatter: rule.formatter.as_ref().map(|f| ApprovedFormatterDirective {
+                    tool: f.tool.clone(),
+                    options: f.options.clone(),
+                }),
                 golden_examples: rule
                     .golden_examples
                     .iter()
@@ -699,6 +728,10 @@ pub fn approved_from_loaded(
                         ast_scope: s.ast_scope.clone(),
                     })
                     .collect(),
+                formatter: rule.formatter.as_ref().map(|f| ApprovedFormatterDirective {
+                    tool: f.tool.clone(),
+                    options: f.options.clone(),
+                }),
                 golden_examples: rule
                     .golden_examples
                     .iter()
@@ -730,9 +763,17 @@ pub struct ApprovedRule {
     pub source_name: String,
     pub language: String,
     pub signals: Vec<ApprovedSignal>,
+    pub formatter: Option<ApprovedFormatterDirective>,
     pub golden_examples: Vec<ApprovedExample>,
     pub deterministic_pass_threshold: Option<u32>,
     pub deterministic_fail_threshold: Option<u32>,
+}
+
+#[derive(Clone)]
+#[allow(dead_code)]
+pub struct ApprovedFormatterDirective {
+    pub tool: String,
+    pub options: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone)]

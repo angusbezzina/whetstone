@@ -168,11 +168,8 @@ pub fn generate_context(
                 let (lang_use, lang_avoid) = split_rules(&lang_rules);
                 let lang_deps = dedup_sorted_deps(&lang_rules);
 
-                let siblings: Vec<String> = languages
-                    .iter()
-                    .filter(|l| *l != lang)
-                    .cloned()
-                    .collect();
+                let siblings: Vec<String> =
+                    languages.iter().filter(|l| *l != lang).cloned().collect();
 
                 let mut lang_ctx = Context::new();
                 lang_ctx.insert("use_rules", &lang_use);
@@ -211,10 +208,7 @@ pub fn generate_context(
                         }));
                     }
                     Err(e) => {
-                        skipped.push(format!(
-                            "Failed to write {}: {e}",
-                            output_path.display()
-                        ));
+                        skipped.push(format!("Failed to write {}: {e}", output_path.display()));
                     }
                 }
             }
@@ -264,10 +258,7 @@ struct ContentRule {
 /// boundary (falls back to hard truncation if no space fits).
 /// Used by the terse template to emit one-line rule summaries.
 fn short_description(desc: &str, max: usize) -> String {
-    let flat: String = desc
-        .split_whitespace()
-        .collect::<Vec<&str>>()
-        .join(" ");
+    let flat: String = desc.split_whitespace().collect::<Vec<&str>>().join(" ");
     if flat.chars().count() <= max {
         return flat;
     }
@@ -275,9 +266,7 @@ fn short_description(desc: &str, max: usize) -> String {
     let budget = max.saturating_sub(1);
     // Find the last whitespace at or before the budget; truncate there.
     let truncated: String = flat.chars().take(budget).collect();
-    let cut_at = truncated
-        .rfind(' ')
-        .filter(|idx| *idx > budget / 2); // avoid chopping off half the sentence
+    let cut_at = truncated.rfind(' ').filter(|idx| *idx > budget / 2); // avoid chopping off half the sentence
     let base = match cut_at {
         Some(idx) => truncated[..idx].trim_end().to_string(),
         None => truncated,

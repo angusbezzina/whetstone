@@ -17,7 +17,8 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::config::{PersonalConfig, WhetstoneConfig};
+use crate::config::{ConfigSnapshot, PersonalConfig, WhetstoneConfig};
+use crate::config_packs;
 use crate::rules::{load_approved_rules, load_rule_files, ApprovedRule};
 use serde_json::Value;
 
@@ -97,8 +98,17 @@ impl LayerSet {
         let paths = LayerPaths::for_project(project_dir);
         let mut warnings = Vec::new();
 
-        let (project, mut pw) = load_approved_rules(&paths.project_rules_dir, lang_filter);
+        let (project_local, mut pw) = load_approved_rules(&paths.project_rules_dir, lang_filter);
         warnings.append(&mut pw);
+
+        let (mut imported, mut import_warnings) = load_imported_pack_rules(project_dir, lang_filter);
+        warnings.append(&mut import_warnings);
+
+        let local_ids: HashSet<&str> = project_local.iter().map(|r| r.id.as_str()).collect();
+        imported.retain(|r| !local_ids.contains(r.id.as_str()));
+
+        let mut project = project_local;
+        project.extend(imported);
 
         let (personal, mut person_w) = load_approved_rules(&paths.personal_rules_dir, lang_filter);
         warnings.append(&mut person_w);
@@ -140,6 +150,22 @@ impl LayerSet {
         }
         merged
     }
+}
+
+fn load_imported_pack_rules(
+    project_dir: &Path,
+    lang_filter: Option<&str>,
+) -> (Vec<ApprovedRule>, Vec<String>) {
+    let snapshot = ConfigSnapshot::load_project_snapshot(project_dir);
+    let mut warnings: Vec<String> = snapshot
+        .diagnostics
+        .iter()
+        .filter(|d| d.layer == crate::config::ConfigLayer::Project)
+        .map(|d| format!("{}: {}", d.path.display(), d.message))
+        .collect();
+    let (rules, mut pack_warnings) = config_packs::merge_pack_rules(&snapshot.active_packs, lang_filter);
+    warnings.append(&mut pack_warnings);
+    (rules, warnings)
 }
 
 /// Summary keyed by `Layer::as_str()` plus a `"total"` entry.
@@ -248,3 +274,66 @@ pub fn find_rule_file(rules_dir: &Path, rule_id: &str) -> Option<PathBuf> {
 // Suppress unused warning on Value import if no call site needs it.
 #[allow(dead_code)]
 fn _value_marker(_v: Value) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn imported_pack_rules_join_project_layer() {
+        let td = tempfile::tempdir().unwrap();
+        let wh = td.path().join("whetstone");
+        let packs = wh.join("packs");
+        fs::create_dir_all(&packs).unwrap();
+        fs::write(
+            packs.join("base.yaml"),
+            r#"apiVersion: whetstone/v1alpha1
+kind: RulePack
+metadata:
+  name: acme.base
+  scope: org
+language: python
+rules:
+  - id: fastapi.async-routes
+    severity: must
+    confidence: high
+    category: convention
+    description: Route handlers must use async def.
+    source_url: https://example.com/async
+    approved: true
+    status: approved
+    signals:
+      - id: sync-def
+        strategy: pattern
+        description: Detect sync route handlers
+        weight: required
+        match: '@app\\.(get|post).*\\ndef '
+    golden_examples:
+      - code: |
+          @app.get("/")
+          async def index(): ...
+        verdict: pass
+        reason: async route
+"#,
+        )
+        .unwrap();
+        fs::write(
+            wh.join("whetstone.yaml"),
+            r#"version: 1
+extends:
+  - scope: org
+    ref: path:./whetstone/packs/base.yaml
+"#,
+        )
+        .unwrap();
+
+        let resolved = resolve_merged(td.path(), Some("python"), true, true, false);
+        assert!(
+            resolved
+                .merged
+                .iter()
+                .any(|lr| lr.rule.id == "fastapi.async-routes" && lr.layer == Layer::Project)
+        );
+    }
+}

@@ -9,8 +9,8 @@
 use anyhow::Result;
 use std::path::Path;
 
-pub mod detectors;
 pub mod beads;
+pub mod detectors;
 pub mod output;
 pub mod rank;
 pub mod source_walk;

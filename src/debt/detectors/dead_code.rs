@@ -51,10 +51,9 @@ fn rust_unreferenced_private_symbols(sources: &SourceInventory) -> Vec<Finding> 
 
     let test_mod_re =
         Regex::new(r"(?ms)#\[cfg\(test\)\]\s*(?:pub\s+)?mod\s+[A-Za-z_][\w]*\s*\{").unwrap();
-    let test_attr_re = Regex::new(
-        r"#\[(?:test|cfg\s*\(\s*test\s*\)|tokio::test|async_std::test|rstest)\b",
-    )
-    .unwrap();
+    let test_attr_re =
+        Regex::new(r"#\[(?:test|cfg\s*\(\s*test\s*\)|tokio::test|async_std::test|rstest)\b")
+            .unwrap();
 
     for path in &sources.rust {
         // Helpers in top-level `tests/` are fixtures for integration test
@@ -111,8 +110,8 @@ fn rust_unreferenced_private_symbols(sources: &SourceInventory) -> Vec<Finding> 
                 if inside_any(&test_mod_ranges, def_start) {
                     continue;
                 }
-                let public = m.text.trim_start().starts_with("pub ")
-                    || m.text.contains("pub(crate)");
+                let public =
+                    m.text.trim_start().starts_with("pub ") || m.text.contains("pub(crate)");
                 defs.push(Definition {
                     name,
                     kind: "type".into(),
@@ -411,7 +410,10 @@ fn rust_orphaned_modules(sources: &SourceInventory) -> Vec<Finding> {
         }
         // A `bin/*.rs` and `examples/*.rs` are entry points: skip.
         let display = path.display().to_string();
-        if display.contains("/bin/") || display.contains("/examples/") || display.contains("/tests/") {
+        if display.contains("/bin/")
+            || display.contains("/examples/")
+            || display.contains("/tests/")
+        {
             continue;
         }
         // Only flag if no `mod <file_name>` appears anywhere.
@@ -487,11 +489,7 @@ fn never_called() -> i32 { 99 }
         let tmp = tempdir().unwrap();
         let root = tmp.path();
         fs::create_dir_all(root.join("src")).unwrap();
-        fs::write(
-            root.join("src/lib.rs"),
-            "mod wired;\npub fn entry() {}",
-        )
-        .unwrap();
+        fs::write(root.join("src/lib.rs"), "mod wired;\npub fn entry() {}").unwrap();
         fs::write(root.join("src/wired.rs"), "pub fn x() {}").unwrap();
         fs::write(root.join("src/orphan.rs"), "pub fn y() {}").unwrap();
 

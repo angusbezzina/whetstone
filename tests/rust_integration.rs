@@ -157,7 +157,8 @@ fn assert_json_has_keys(actual: &serde_json::Value, expected_keys: &[&str], cont
 #[test]
 fn test_detect_deps_fixtures() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, success) = run_whetstone(&["init", "--detect-only"], dir.to_str().unwrap());
+    let (stdout, _stderr, success) =
+        run_whetstone(&["init", "--detect-only"], dir.to_str().unwrap());
     assert!(success, "detect-deps should succeed");
 
     let result = parse_json(&stdout);
@@ -173,7 +174,8 @@ fn test_detect_deps_fixtures() {
 #[test]
 fn test_detect_deps_typescript_fixture() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, success) = run_whetstone(&["init", "--detect-only"], dir.to_str().unwrap());
+    let (stdout, _stderr, success) =
+        run_whetstone(&["init", "--detect-only"], dir.to_str().unwrap());
     assert!(success);
 
     let result = parse_json(&stdout);
@@ -282,10 +284,8 @@ fn test_status_not_initialized() {
 #[test]
 fn test_generate_context_dry_run() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, success) = run_whetstone(
-        &["context", "--dry-run", "--json"],
-        dir.to_str().unwrap(),
-    );
+    let (stdout, _stderr, success) =
+        run_whetstone(&["context", "--dry-run", "--json"], dir.to_str().unwrap());
     assert!(success);
 
     let result = parse_json(&stdout);
@@ -307,10 +307,8 @@ fn test_generate_context_dry_run() {
 #[test]
 fn test_generate_tests_dry_run() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, success) = run_whetstone(
-        &["tests", "--dry-run", "--json"],
-        dir.to_str().unwrap(),
-    );
+    let (stdout, _stderr, success) =
+        run_whetstone(&["tests", "--dry-run", "--json"], dir.to_str().unwrap());
     assert!(success);
 
     let result = parse_json(&stdout);
@@ -328,10 +326,8 @@ fn test_generate_context_parity_snapshot() {
         return;
     }
     let dir = fixtures_dir();
-    let (rust_stdout, _rust_stderr, rust_success) = run_whetstone(
-        &["context", "--dry-run", "--json"],
-        dir.to_str().unwrap(),
-    );
+    let (rust_stdout, _rust_stderr, rust_success) =
+        run_whetstone(&["context", "--dry-run", "--json"], dir.to_str().unwrap());
     assert!(rust_success);
     let rust_result = parse_json(&rust_stdout);
 
@@ -364,10 +360,8 @@ fn test_generate_tests_parity_snapshot() {
         return;
     }
     let dir = fixtures_dir();
-    let (rust_stdout, _rust_stderr, rust_success) = run_whetstone(
-        &["tests", "--dry-run", "--json"],
-        dir.to_str().unwrap(),
-    );
+    let (rust_stdout, _rust_stderr, rust_success) =
+        run_whetstone(&["tests", "--dry-run", "--json"], dir.to_str().unwrap());
     assert!(rust_success);
     let rust_result = parse_json(&rust_stdout);
 
@@ -409,10 +403,8 @@ fn test_ci_check_json() {
 #[test]
 fn test_ci_check_parity_snapshot() {
     let dir = fixtures_dir();
-    let (rust_stdout, _rust_stderr, rust_success) = run_whetstone(
-        &["ci", "--json", "--no-drift-check"],
-        dir.to_str().unwrap(),
-    );
+    let (rust_stdout, _rust_stderr, rust_success) =
+        run_whetstone(&["ci", "--json", "--no-drift-check"], dir.to_str().unwrap());
     assert!(rust_success);
     let rust_result = parse_json(&rust_stdout);
 
@@ -455,17 +447,30 @@ fn test_help_output() {
     assert!(stdout.contains("debt"), "help should contain 'debt'");
     assert!(stdout.contains("rules"), "help should contain 'rules'");
     assert!(stdout.contains("sources"), "help should contain 'sources'");
+    assert!(stdout.contains("config"), "help should contain 'config'");
     assert!(
         stdout.contains("validate"),
         "help should contain 'validate'"
     );
-    assert!(stdout.contains("Core workflow:"), "help should contain taxonomy guidance");
+    assert!(
+        stdout.contains("Core workflow:"),
+        "help should contain taxonomy guidance"
+    );
     assert!(stdout.contains("whetstone actions all"));
-    assert!(!stdout.contains("\n  tui"), "tui should not be a separate command");
+    assert!(
+        !stdout.contains("\n  tui"),
+        "tui should not be a separate command"
+    );
     // Aliases were removed in 0.3.0 — these legacy spellings must NOT appear.
     assert!(!stdout.contains("doctor"), "'doctor' alias should be gone");
-    assert!(!stdout.contains("generate-context"), "'generate-context' alias should be gone");
-    assert!(!stdout.contains("generate-tests"), "'generate-tests' alias should be gone");
+    assert!(
+        !stdout.contains("generate-context"),
+        "'generate-context' alias should be gone"
+    );
+    assert!(
+        !stdout.contains("generate-tests"),
+        "'generate-tests' alias should be gone"
+    );
 }
 
 #[test]
@@ -844,12 +849,7 @@ fn test_report_json_includes_required_keys() {
     let report_path = dir.join("whetstone/report.md");
     let _ = std::fs::remove_file(&report_path);
     let (stdout, _, ok) = run_whetstone(
-        &[
-            "report",
-            "--json",
-            "--project-dir",
-            dir.to_str().unwrap(),
-        ],
+        &["report", "--json", "--project-dir", dir.to_str().unwrap()],
         dir.to_str().unwrap(),
     );
     assert!(ok);
@@ -862,10 +862,16 @@ fn test_report_json_includes_required_keys() {
         "next_actions",
         "report_path",
     ] {
-        assert!(result.get(key).is_some(), "key `{key}` missing from wh report output");
+        assert!(
+            result.get(key).is_some(),
+            "key `{key}` missing from wh report output"
+        );
     }
     let report_path = result["report_path"].as_str().unwrap();
-    assert!(Path::new(report_path).exists(), "report file path must exist");
+    assert!(
+        Path::new(report_path).exists(),
+        "report file path must exist"
+    );
     let _ = std::fs::remove_file(report_path);
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -876,12 +882,7 @@ fn test_status_report_writes_markdown_file() {
     let report_path = dir.join("whetstone/report.md");
     let _ = std::fs::remove_file(&report_path);
     let (stdout, _, ok) = run_whetstone(
-        &[
-            "status",
-            "--report",
-            "--project-dir",
-            dir.to_str().unwrap(),
-        ],
+        &["status", "--report", "--project-dir", dir.to_str().unwrap()],
         dir.to_str().unwrap(),
     );
     assert!(ok);
@@ -1012,14 +1013,12 @@ fn test_context_emits_all_six_formats_with_required_markers() {
     let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let generated = result["generated"].as_array().expect("generated array");
     let path_of = |suffix: &str| -> Option<String> {
-        generated
-            .iter()
-            .find_map(|g| {
-                g.get("path")
-                    .and_then(|p| p.as_str())
-                    .filter(|p| p.ends_with(suffix))
-                    .map(String::from)
-            })
+        generated.iter().find_map(|g| {
+            g.get("path")
+                .and_then(|p| p.as_str())
+                .filter(|p| p.ends_with(suffix))
+                .map(String::from)
+        })
     };
 
     // Per-tool required markers. These encode the minimum surface each target
@@ -1036,8 +1035,8 @@ fn test_context_emits_all_six_formats_with_required_markers() {
 
     for (suffix, markers) in expectations {
         let path = path_of(suffix).unwrap_or_else(|| panic!("missing generated file: {suffix}"));
-        let body = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("failed reading {path}: {e}"));
+        let body =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed reading {path}: {e}"));
         for marker in *markers {
             assert!(
                 body.contains(marker),
@@ -1119,7 +1118,11 @@ fn test_rule_add_writes_personal_yaml() {
     assert_eq!(result["status"], "ok");
     assert_eq!(result["layer"], "personal");
     let target = tmp.join("whetstone/.personal/rules/python/acme.yaml");
-    assert!(target.exists(), "target file must exist at {}", target.display());
+    assert!(
+        target.exists(),
+        "target file must exist at {}",
+        target.display()
+    );
     let text = std::fs::read_to_string(&target).unwrap();
     assert!(text.contains("acme.snake-case"));
     assert!(text.contains("status: approved"));
@@ -1289,7 +1292,327 @@ fn test_rule_remove_deletes_rule_yaml() {
     let result: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(result["rule_id"], "acme.delete-me");
     assert_eq!(result["deleted_file"], true);
-    assert!(!target.exists(), "single-rule file should be deleted after remove");
+    assert!(
+        !target.exists(),
+        "single-rule file should be deleted after remove"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_config_show_reports_active_pack() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wh_config_show_pack_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone/packs")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/packs/base.yaml"),
+        r#"apiVersion: whetstone/v1alpha1
+kind: RulePack
+metadata:
+  name: acme.base
+  scope: org
+sources:
+  custom:
+    - url: https://example.com/style
+      name: example-style
+      language: python
+      source_kind: team_guide
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        r#"version: 1
+extends:
+  - scope: org
+    ref: path:./whetstone/packs/base.yaml
+"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone(
+        &["config", "show", "--json", "--project-dir", tmp.to_str().unwrap()],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok, "wh config show should succeed: {stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["active_packs"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        result["active_packs"][0]["name"].as_str().unwrap(),
+        "acme.base"
+    );
+    assert_eq!(
+        result["effective"]["sources"]["custom"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_config_validate_fails_on_missing_pack() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wh_config_validate_missing_pack_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        r#"version: 1
+extends:
+  - scope: org
+    ref: path:./whetstone/packs/missing.yaml
+"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone(
+        &[
+            "config",
+            "validate",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(!ok, "wh config validate should fail for a missing pack");
+    let result = parse_json(&stdout);
+    assert_eq!(result["valid"], false);
+    assert!(
+        result["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["message"].as_str().unwrap_or("").contains("failed to load pack"))
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_rules_query_includes_imported_pack_rules() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wh_rules_query_pack_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone/packs")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/packs/base.yaml"),
+        r#"apiVersion: whetstone/v1alpha1
+kind: RulePack
+metadata:
+  name: acme.base
+  scope: org
+language: python
+rules:
+  - id: fastapi.async-routes
+    severity: must
+    confidence: high
+    category: convention
+    description: Route handlers must use async def.
+    source_url: https://example.com/async
+    approved: true
+    status: approved
+    signals:
+      - id: sync-def
+        strategy: pattern
+        description: Detect sync route handlers
+        weight: required
+        match: '@app\\.(get|post).*\\ndef '
+    golden_examples:
+      - code: |
+          @app.get("/")
+          async def index(): ...
+        verdict: pass
+        reason: async route
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        r#"version: 1
+extends:
+  - scope: org
+    ref: path:./whetstone/packs/base.yaml
+"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone(
+        &[
+            "rules",
+            "query",
+            "--dep",
+            "fastapi",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok, "wh rules query should succeed: {stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(result["total"], 1);
+    assert_eq!(result["rules"][0]["id"], "fastapi.async-routes");
+    assert_eq!(result["rules"][0]["layer"], "project");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_lint_generation_emits_ruff_formatter_overlay() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wh_ruff_formatter_overlay_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone/rules/python")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/rules/python/fastapi.yaml"),
+        r#"source:
+  name: fastapi
+rules:
+  - id: fastapi.quote-style
+    severity: should
+    confidence: high
+    category: convention
+    description: Use single quotes in Python source.
+    source_url: https://example.com/python-style
+    approved: true
+    status: approved
+    formatter:
+      tool: ruff
+      options:
+        quote-style: single
+        docstring-code-format: true
+    signals:
+      - id: single-quotes
+        strategy: pattern
+        description: Detect double quotes
+        weight: required
+        match: '"'
+    golden_examples:
+      - code: "print('ok')"
+        verdict: pass
+        reason: single quotes
+"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone(
+        &["lint", "--json", "--project-dir", tmp.to_str().unwrap()],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok, "wh lint should succeed: {stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(
+        result["generated"]["formatter_configs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let path = result["generated"]["formatter_configs"][0]["path"]
+        .as_str()
+        .unwrap();
+    let body = std::fs::read_to_string(path).unwrap();
+    assert!(body.contains("[format]"));
+    assert!(body.contains("quote-style = \"single\""));
+    assert!(body.contains("docstring-code-format = true"));
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_lint_generation_emits_rustfmt_overlay() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wh_rustfmt_overlay_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone/rules/rust")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/rules/rust/clap.yaml"),
+        r#"source:
+  name: clap
+rules:
+  - id: clap.width
+    severity: should
+    confidence: high
+    category: convention
+    description: Keep line widths consistent.
+    source_url: https://example.com/rust-style
+    approved: true
+    status: approved
+    formatter:
+      tool: rustfmt
+      options:
+        max_width: 100
+        hard_tabs: false
+    signals:
+      - id: width
+        strategy: pattern
+        description: Detect overly long builder chains
+        weight: required
+        match: '\.arg\('
+    golden_examples:
+      - code: "fn demo() {}"
+        verdict: pass
+        reason: formatted
+"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone(
+        &["lint", "--json", "--project-dir", tmp.to_str().unwrap()],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok, "wh lint should succeed: {stdout}");
+    let result = parse_json(&stdout);
+    assert_eq!(
+        result["generated"]["formatter_configs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let path = result["generated"]["formatter_configs"][0]["path"]
+        .as_str()
+        .unwrap();
+    let body = std::fs::read_to_string(path).unwrap();
+    assert!(body.contains("max_width = 100"));
+    assert!(body.contains("hard_tabs = false"));
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -1504,7 +1827,8 @@ fn test_unapproved_rules_not_counted() {
 #[test]
 fn test_detect_deps_contract() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, success) = run_whetstone(&["init", "--detect-only"], dir.to_str().unwrap());
+    let (stdout, _stderr, success) =
+        run_whetstone(&["init", "--detect-only"], dir.to_str().unwrap());
     assert!(success);
 
     let result = parse_json(&stdout);
@@ -1642,7 +1966,8 @@ dependencies = ["requests>=2.31.0", "click>=8.0"]
     )
     .unwrap();
 
-    let (stdout, _stderr, success) = run_whetstone(&["init", "--detect-only", "--incremental"], project_dir);
+    let (stdout, _stderr, success) =
+        run_whetstone(&["init", "--detect-only", "--incremental"], project_dir);
     assert!(success, "First run detect-deps should succeed");
     let first_run = parse_json(&stdout);
 
@@ -1807,7 +2132,8 @@ fn test_removed_dependency_cleanup_not_reflected_in_status() {
 #[test]
 fn test_detect_deps_parity_snapshot() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, success) = run_whetstone(&["init", "--detect-only"], dir.to_str().unwrap());
+    let (stdout, _stderr, success) =
+        run_whetstone(&["init", "--detect-only"], dir.to_str().unwrap());
     assert!(success);
     let result = parse_json(&stdout);
 
@@ -3247,10 +3573,15 @@ dependencies = ["definitely-unused"]
 
     let (_bd_init_out, bd_init_err, bd_ok) =
         run_bd(&["init", "--skip-agents", "--skip-hooks", "-q"], &tmp);
-    assert!(bd_ok, "bd init should succeed for debt integration test: {bd_init_err}");
+    assert!(
+        bd_ok,
+        "bd init should succeed for debt integration test: {bd_init_err}"
+    );
 
-    let (stdout, _stderr, ok) =
-        run_whetstone(&["--json", "debt", "--beads", "--top=3"], tmp.to_str().unwrap());
+    let (stdout, _stderr, ok) = run_whetstone(
+        &["--json", "debt", "--beads", "--top=3"],
+        tmp.to_str().unwrap(),
+    );
     assert!(ok);
     let result = parse_json(&stdout);
     let epic_id = result["epic_id"]
