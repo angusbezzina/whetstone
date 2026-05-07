@@ -101,7 +101,8 @@ impl LayerSet {
         let (project_local, mut pw) = load_approved_rules(&paths.project_rules_dir, lang_filter);
         warnings.append(&mut pw);
 
-        let (mut imported, mut import_warnings) = load_imported_pack_rules(project_dir, lang_filter);
+        let (mut imported, mut import_warnings) =
+            load_imported_pack_rules(project_dir, lang_filter);
         warnings.append(&mut import_warnings);
 
         let local_ids: HashSet<&str> = project_local.iter().map(|r| r.id.as_str()).collect();
@@ -163,7 +164,8 @@ fn load_imported_pack_rules(
         .filter(|d| d.layer == crate::config::ConfigLayer::Project)
         .map(|d| format!("{}: {}", d.path.display(), d.message))
         .collect();
-    let (rules, mut pack_warnings) = config_packs::merge_pack_rules(&snapshot.active_packs, lang_filter);
+    let (rules, mut pack_warnings) =
+        config_packs::merge_pack_rules(&snapshot.active_packs, lang_filter);
     warnings.append(&mut pack_warnings);
     (rules, warnings)
 }
@@ -329,11 +331,9 @@ extends:
         .unwrap();
 
         let resolved = resolve_merged(td.path(), Some("python"), true, true, false);
-        assert!(
-            resolved
-                .merged
-                .iter()
-                .any(|lr| lr.rule.id == "fastapi.async-routes" && lr.layer == Layer::Project)
-        );
+        assert!(resolved
+            .merged
+            .iter()
+            .any(|lr| lr.rule.id == "fastapi.async-routes" && lr.layer == Layer::Project));
     }
 }

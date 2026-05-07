@@ -8,8 +8,6 @@ mod config;
 mod config_packs;
 mod debt;
 mod detect;
-// Temporarily disabled — see whetstone-aww
-// mod detect_patterns;
 mod doctor;
 mod extract;
 mod gen;

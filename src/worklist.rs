@@ -219,7 +219,7 @@ pub fn build_from_doctor(
     entries
 }
 
-/// Lightweight loader for `wh review worklist`: reads the existing
+/// Lightweight loader for `wh rules worklist`: reads the existing
 /// extraction-handoff artifact and returns the `worklist` array (or
 /// a helpful error if the artifact has not been generated yet).
 pub fn load(project_dir: &Path) -> Result<Value> {
@@ -256,7 +256,13 @@ pub fn filter(worklist: &[Value], dep: Option<&str>, lang: Option<&str>) -> Vec<
             }
             true
         })
-        .cloned()
+        .map(|entry| {
+            let mut cloned = entry.clone();
+            if let Some(next_step) = cloned.get("next_step").and_then(|v| v.as_str()) {
+                cloned["next_step"] = Value::String(canonicalize_next_step_hint(next_step));
+            }
+            cloned
+        })
         .collect()
 }
 
@@ -291,6 +297,7 @@ fn build_entry(
             "remaining": remaining_quota,
         },
         "next_step": next_step,
+        "workflow_stage": workflow_stage(priority),
     });
 
     if let Some(src) = source {
@@ -312,6 +319,11 @@ fn build_entry(
         if let Some(f) = src.get("freshness") {
             entry["freshness"] = f.clone();
         }
+        if let Some(conf) = source_confidence(src) {
+            entry["source_confidence"] = Value::String(conf.to_string());
+            entry["confidence_guidance"] = Value::String(confidence_guidance(conf).to_string());
+        }
+        entry["fetch_health"] = Value::String(fetch_health(src).to_string());
     }
 
     if !config.extraction.allowed_categories.is_empty() {
@@ -447,7 +459,7 @@ fn next_step_hint(priority: Priority, remaining_quota: u32, source: Option<&Valu
             )
         }
         Priority::Pending => {
-            "Resolve with `wh set-sources --deps=<name>` or `wh init --resume`".into()
+            "Resolve with `wh init --resume` or add a stronger trusted source via `wh sources add`".into()
         }
         Priority::Failed => {
             "Add a manual entry under `sources.custom` in whetstone.yaml and re-run".into()
@@ -455,6 +467,52 @@ fn next_step_hint(priority: Priority, remaining_quota: u32, source: Option<&Valu
         Priority::Skipped => {
             "Dependency filtered out by config — adjust extraction.include / exclude if this was unintended".into()
         }
+    }
+}
+
+fn canonicalize_next_step_hint(input: &str) -> String {
+    input
+        .replace("wh set-sources --deps=<name>", "wh init --resume")
+        .replace("wh set-sources --retry-failed", "wh reinit")
+        .replace("wh set-sources", "wh reinit")
+        .replace("wh review worklist", "wh rules worklist")
+        .replace("wh approve", "wh rules approve")
+}
+
+fn workflow_stage(priority: Priority) -> &'static str {
+    match priority {
+        Priority::ReadyNow | Priority::ResolvedLow => "rules",
+        Priority::Pending | Priority::Failed | Priority::Skipped => "sources",
+    }
+}
+
+fn source_confidence(source: &Value) -> Option<&'static str> {
+    let source_type = source.get("source_type").and_then(|v| v.as_str())?;
+    Some(match source_type {
+        "llms_txt" | "llms_full_txt" => "high",
+        "docs_url" | "readme" => "medium",
+        _ => "low",
+    })
+}
+
+fn confidence_guidance(confidence: &str) -> &'static str {
+    match confidence {
+        "high" => "High-confidence source; normal extraction flow is safe.",
+        "medium" => "Medium-confidence source; keep citations strict and prioritize migration/default rules.",
+        _ => "Low-confidence source; limit candidates to clearly documented, directly cited rules.",
+    }
+}
+
+fn fetch_health(source: &Value) -> &'static str {
+    match source
+        .get("freshness")
+        .and_then(|f| f.get("confidence"))
+        .and_then(|v| v.as_str())
+    {
+        Some("high") => "fresh",
+        Some("medium") => "aging",
+        Some("low") => "stale",
+        _ => "unknown",
     }
 }
 

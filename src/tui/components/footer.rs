@@ -18,16 +18,8 @@ pub struct ScrollHint {
     pub down: bool,
 }
 
-const MENU_HINTS: &[Hint] = &[
-    ("1", "HOME"),
-    ("2", "SOURCES"),
-    ("3", "RULES"),
-    ("4", "VIOLATIONS"),
-    ("5", "DEBT"),
-];
-
 pub fn global_hints() -> &'static [Hint] {
-    MENU_HINTS
+    crate::tui::msg::Screen::nav_hints()
 }
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, hints: &[Hint], scroll_hint: Option<ScrollHint>) {

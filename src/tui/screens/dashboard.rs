@@ -29,7 +29,7 @@ pub fn hints() -> &'static [footer::Hint] {
 pub fn render(frame: &mut Frame<'_>, area: ratatui::layout::Rect, app: &App) {
     let lines = build_lines(area.width, app);
     let effective_scroll =
-        (app.dashboard_scroll as u16).min(crate::tui::paragraph_max_scroll(&lines, area));
+        (app.dashboard_ui.scroll as u16).min(crate::tui::paragraph_max_scroll(&lines, area));
 
     frame.render_widget(
         Paragraph::new(lines)

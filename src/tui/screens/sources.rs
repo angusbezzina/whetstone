@@ -14,6 +14,7 @@ use ratatui::{
 use crate::tui::{
     app::{App, InputMode, SourcesDataset},
     components::footer,
+    screens::LoadState,
     theme,
 };
 
@@ -22,17 +23,12 @@ pub fn hints() -> &'static [footer::Hint] {
     &[("1", "HOME"), ("?", "HELP"), ("Q", "QUIT")]
 }
 
-#[derive(Default, Clone)]
-pub enum SourcesView {
-    #[default]
-    NotComputed,
-    Loading,
-    Ready(Box<SourcesData>),
-    Error(String),
-}
+pub type SourcesView = LoadState<SourcesData>;
 
 #[derive(Debug, Default, Clone)]
 pub struct SourcesData {
+    pub dependencies: Vec<crate::tui::screens::extract::WorklistRow>,
+    pub dependency_error: Option<String>,
     pub project: Vec<SourceRow>,
     pub personal: Vec<SourceRow>,
 }
@@ -43,6 +39,9 @@ pub struct SourceRow {
     pub lang: Option<String>,
     pub kind: Option<String>,
     pub last_fetched: Option<String>,
+    pub fetch_state: Option<String>,
+    pub source_confidence: Option<String>,
+    pub confidence_guidance: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +54,11 @@ struct SourceListRow {
 pub fn load(project_dir: &Path) -> SourcesView {
     match crate::source_mgmt::list(project_dir) {
         Ok(value) => {
+            let (dependencies, dependency_error) =
+                match crate::tui::screens::extract::load_data(project_dir) {
+                    Ok(data) => (data.entries, None),
+                    Err(e) => (Vec::new(), Some(e.to_string())),
+                };
             let project = value
                 .get("project")
                 .and_then(|v| v.as_array())
@@ -65,7 +69,12 @@ pub fn load(project_dir: &Path) -> SourcesView {
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().map(row_from_json).collect())
                 .unwrap_or_default();
-            SourcesView::Ready(Box::new(SourcesData { project, personal }))
+            SourcesView::Ready(Box::new(SourcesData {
+                dependencies,
+                dependency_error,
+                project,
+                personal,
+            }))
         }
         Err(e) => SourcesView::Error(e.to_string()),
     }
@@ -74,6 +83,7 @@ pub fn load(project_dir: &Path) -> SourcesView {
 impl SourcesView {
     pub fn row_count_for(&self, dataset: SourcesDataset) -> usize {
         match (self, dataset) {
+            (Self::Ready(data), SourcesDataset::Dependencies) => data.dependencies.len(),
             (Self::Ready(data), SourcesDataset::Personal) => data.personal.len(),
             (Self::Ready(data), SourcesDataset::Team) => data.project.len(),
             _ => 0,
@@ -103,11 +113,26 @@ fn row_from_json(entry: &serde_json::Value) -> SourceRow {
         .get("last_fetched")
         .and_then(|v| v.as_str())
         .map(str::to_string);
+    let fetch_state = entry
+        .get("fetch_state")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let source_confidence = entry
+        .get("source_confidence")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let confidence_guidance = entry
+        .get("confidence_guidance")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     SourceRow {
         name,
         lang,
         kind,
         last_fetched,
+        fetch_state,
+        source_confidence,
+        confidence_guidance,
     }
 }
 
@@ -131,37 +156,32 @@ pub fn scroll_hint(area: Rect, app: &App) -> Option<footer::ScrollHint> {
         .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
         .split(area);
 
-    if app.sources_detail_selected {
-        let max_scroll = match app.sources_dataset {
-            SourcesDataset::Dependencies => match &app.dashboard.extract {
-                crate::tui::screens::extract::ExtractView::Ready(data) => {
-                    crate::tui::screens::extract::detail_max_scroll(cols[1], data)
-                }
-                _ => 0,
-            },
+    if app.sources_ui.detail_selected {
+        let max_scroll = match app.sources_ui.dataset {
+            SourcesDataset::Dependencies => dependency_detail_max_scroll(cols[1], app),
             SourcesDataset::Personal => custom_detail_max_scroll(cols[1], app, true),
             SourcesDataset::Team => custom_detail_max_scroll(cols[1], app, false),
         };
-        return hint_from_offset(app.sources_detail_scroll_y, max_scroll);
+        return hint_from_offset(app.sources_ui.detail_scroll_y, max_scroll);
     }
 
-    let (selected, max_selected) = match app.sources_dataset {
-        SourcesDataset::Dependencies => match &app.dashboard.extract {
-            crate::tui::screens::extract::ExtractView::Ready(data) => (
-                data.selected as u16,
-                data.entries.len().saturating_sub(1) as u16,
-            ),
-            _ => (0, 0),
-        },
+    let (selected, max_selected) = match app.sources_ui.dataset {
+        SourcesDataset::Dependencies => (
+            app.sources_ui.selected as u16,
+            app.dashboard
+                .sources
+                .row_count_for(SourcesDataset::Dependencies)
+                .saturating_sub(1) as u16,
+        ),
         SourcesDataset::Personal => (
-            app.sources_selected as u16,
+            app.sources_ui.selected as u16,
             app.dashboard
                 .sources
                 .row_count_for(SourcesDataset::Personal)
                 .saturating_sub(1) as u16,
         ),
         SourcesDataset::Team => (
-            app.sources_selected as u16,
+            app.sources_ui.selected as u16,
             app.dashboard
                 .sources
                 .row_count_for(SourcesDataset::Team)
@@ -173,58 +193,61 @@ pub fn scroll_hint(area: Rect, app: &App) -> Option<footer::ScrollHint> {
 }
 
 fn render_internal_source_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    match &app.dashboard.extract {
-        crate::tui::screens::extract::ExtractView::NotComputed => {
-            render_placeholder(frame, area, "Internal sources are not loaded yet.")
+    match &app.dashboard.sources {
+        SourcesView::NotComputed => render_placeholder(
+            frame,
+            area,
+            "Dependency source->rule worklist is not loaded yet.",
+        ),
+        SourcesView::Loading => {
+            render_placeholder(frame, area, "Loading source->rule worklist…")
         }
-        crate::tui::screens::extract::ExtractView::Loading => {
-            render_placeholder(frame, area, "Loading internal sources…")
-        }
-        crate::tui::screens::extract::ExtractView::Error(msg) => render_error(frame, area, msg),
-        crate::tui::screens::extract::ExtractView::Ready(data) if data.entries.is_empty() => {
-            render_placeholder(
-                frame,
-                area,
-                "No internal sources are available right now. Run wh init to generate them.",
-            )
-        }
-        crate::tui::screens::extract::ExtractView::Ready(data) => {
-            crate::tui::screens::extract::render_detail_scrolled(
-                frame,
-                area,
-                data,
-                app.sources_detail_scroll_y,
-                app.sources_detail_selected,
-            );
+        SourcesView::Error(msg) => render_error(frame, area, msg),
+        SourcesView::Ready(data) => {
+            if let Some(msg) = &data.dependency_error {
+                render_error(frame, area, msg);
+            } else if data.dependencies.is_empty() {
+                render_placeholder(
+                    frame,
+                    area,
+                    "No source->rule worklist entries are available. Run wh init to generate them.",
+                );
+            } else {
+                let extract_data = crate::tui::screens::extract::ExtractData {
+                    entries: data.dependencies.clone(),
+                    selected: app.sources_ui.selected,
+                };
+                crate::tui::screens::extract::render_detail_scrolled(
+                    frame,
+                    area,
+                    &extract_data,
+                    app.sources_ui.detail_scroll_y,
+                    app.sources_ui.detail_selected,
+                );
+            }
         }
     }
 }
 
 fn render_sources_list(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let rows = match app.sources_dataset {
+    let rows = match app.sources_ui.dataset {
         SourcesDataset::Dependencies => dependency_rows(app),
         SourcesDataset::Personal => personal_rows(app),
         SourcesDataset::Team => team_rows(app),
     };
-    let selected = match app.sources_dataset {
-        SourcesDataset::Dependencies => match &app.dashboard.extract {
-            crate::tui::screens::extract::ExtractView::Ready(data) => data.selected,
-            _ => 0,
-        },
-        SourcesDataset::Personal | SourcesDataset::Team => app.sources_selected,
-    };
+    let selected = app.sources_ui.selected;
     let panes = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(area);
 
     frame.render_widget(
-        Paragraph::new(dataset_tabs_line(app.sources_dataset))
-            .block(block("DATASET", !app.sources_detail_selected)),
+        Paragraph::new(dataset_tabs_line(app.sources_ui.dataset))
+            .block(block("DATASET", !app.sources_ui.detail_selected)),
         panes[0],
     );
 
-    let block = block("SOURCE LIST", !app.sources_detail_selected);
+    let block = block("SOURCE LIST", !app.sources_ui.detail_selected);
     if rows.is_empty() {
         let lines = vec![Line::from(Span::styled(
             "  No sources in this dataset.",
@@ -275,7 +298,7 @@ fn dataset_tabs_line(active: SourcesDataset) -> Line<'static> {
 }
 
 fn render_add_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let form = &app.sources_form;
+    let form = &app.sources_ui.form;
     let scope = if form.team_scope { "Team" } else { "Personal" };
     let language = source_form_language_label(form.language_idx);
     let lines = vec![
@@ -306,7 +329,7 @@ fn render_add_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn render_selected_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    match app.sources_dataset {
+    match app.sources_ui.dataset {
         SourcesDataset::Dependencies => render_internal_source_detail(frame, area, app),
         SourcesDataset::Personal => render_custom_detail(frame, area, app, true),
         SourcesDataset::Team => render_custom_detail(frame, area, app, false),
@@ -320,17 +343,17 @@ fn render_custom_detail(frame: &mut Frame<'_>, area: Rect, app: &App, personal: 
             area,
             "Handpicked sources are not loaded yet.",
             personal,
-            app.sources_detail_selected,
+            app.sources_ui.detail_selected,
         ),
         SourcesView::Loading => render_custom_detail_message(
             frame,
             area,
             "Loading handpicked sources…",
             personal,
-            app.sources_detail_selected,
+            app.sources_ui.detail_selected,
         ),
         SourcesView::Error(msg) => {
-            render_custom_detail_message(frame, area, msg, personal, app.sources_detail_selected)
+            render_custom_detail_message(frame, area, msg, personal, app.sources_ui.detail_selected)
         }
         SourcesView::Ready(data) => {
             let rows = if personal {
@@ -338,13 +361,13 @@ fn render_custom_detail(frame: &mut Frame<'_>, area: Rect, app: &App, personal: 
             } else {
                 &data.project
             };
-            let Some(row) = rows.get(app.sources_selected) else {
+            let Some(row) = rows.get(app.sources_ui.selected) else {
                 render_custom_detail_message(
                     frame,
                     area,
                     "No source selected.",
                     personal,
-                    app.sources_detail_selected,
+                    app.sources_ui.detail_selected,
                 );
                 return;
             };
@@ -358,17 +381,31 @@ fn render_custom_detail(frame: &mut Frame<'_>, area: Rect, app: &App, personal: 
             if let Some(last) = &row.last_fetched {
                 lines.push(kv_line(area.width, "Last fetched", last));
             }
+            if let Some(fetch_state) = row.fetch_state.as_deref() {
+                lines.push(kv_line(area.width, "Fetch health", fetch_state));
+            }
+            if let Some(conf) = row.source_confidence.as_deref() {
+                lines.push(kv_line(area.width, "Source confidence", conf));
+            }
+            if let Some(guidance) = row.confidence_guidance.as_deref() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    truncate(guidance, area.width.saturating_sub(4) as usize),
+                    Style::default().fg(theme::MUTED),
+                )));
+            }
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 add_source_note(personal),
                 Style::default().fg(theme::MUTED),
             )));
             let effective_scroll = app
-                .sources_detail_scroll_y
+                .sources_ui
+                .detail_scroll_y
                 .min(crate::tui::paragraph_max_scroll(&lines, area));
             frame.render_widget(
                 Paragraph::new(lines)
-                    .block(block("DETAIL", app.sources_detail_selected))
+                    .block(block("DETAIL", app.sources_ui.detail_selected))
                     .wrap(Wrap { trim: false })
                     .scroll((effective_scroll, 0)),
                 area,
@@ -378,9 +415,9 @@ fn render_custom_detail(frame: &mut Frame<'_>, area: Rect, app: &App, personal: 
 }
 
 fn dependency_rows(app: &App) -> Vec<SourceListRow> {
-    match &app.dashboard.extract {
-        crate::tui::screens::extract::ExtractView::Ready(data) => data
-            .entries
+    match &app.dashboard.sources {
+        SourcesView::Ready(data) => data
+            .dependencies
             .iter()
             .map(|row| SourceListRow {
                 name: row.name.clone(),
@@ -563,7 +600,7 @@ fn custom_detail_max_scroll(area: Rect, app: &App, personal: bool) -> u16 {
     } else {
         &data.project
     };
-    let Some(row) = rows.get(app.sources_selected) else {
+    let Some(row) = rows.get(app.sources_ui.selected) else {
         return 0;
     };
 
@@ -577,6 +614,19 @@ fn custom_detail_max_scroll(area: Rect, app: &App, personal: bool) -> u16 {
     if let Some(last) = &row.last_fetched {
         lines.push(kv_line(area.width, "Last fetched", last));
     }
+    if let Some(fetch_state) = row.fetch_state.as_deref() {
+        lines.push(kv_line(area.width, "Fetch health", fetch_state));
+    }
+    if let Some(conf) = row.source_confidence.as_deref() {
+        lines.push(kv_line(area.width, "Source confidence", conf));
+    }
+    if let Some(guidance) = row.confidence_guidance.as_deref() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            truncate(guidance, area.width.saturating_sub(4) as usize),
+            Style::default().fg(theme::MUTED),
+        )));
+    }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         add_source_note(personal),
@@ -584,6 +634,19 @@ fn custom_detail_max_scroll(area: Rect, app: &App, personal: bool) -> u16 {
     )));
 
     crate::tui::paragraph_max_scroll(&lines, area)
+}
+
+fn dependency_detail_max_scroll(area: Rect, app: &App) -> u16 {
+    match &app.dashboard.sources {
+        SourcesView::Ready(data) if data.dependency_error.is_none() && !data.dependencies.is_empty() => {
+            let extract_data = crate::tui::screens::extract::ExtractData {
+                entries: data.dependencies.clone(),
+                selected: app.sources_ui.selected,
+            };
+            crate::tui::screens::extract::detail_max_scroll(area, &extract_data)
+        }
+        _ => 0,
+    }
 }
 
 fn add_source_note(personal: bool) -> &'static str {
@@ -617,10 +680,7 @@ fn hint_from_offset(offset: u16, max_offset: u16) -> Option<footer::ScrollHint> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::{
-        app::App,
-        screens::extract::{ExtractData, ExtractView, WorklistRow},
-    };
+    use crate::tui::{app::App, screens::extract::WorklistRow};
     use ratatui::{backend::TestBackend, Terminal};
 
     fn make_app() -> App {
@@ -651,8 +711,8 @@ mod tests {
         let backend = TestBackend::new(120, 32);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.dashboard.extract = ExtractView::Ready(Box::new(ExtractData {
-            entries: vec![WorklistRow {
+        app.dashboard.sources = SourcesView::Ready(Box::new(SourcesData {
+            dependencies: vec![WorklistRow {
                 name: "pydantic".into(),
                 language: "python".into(),
                 priority: "ready_now".into(),
@@ -664,25 +724,33 @@ mod tests {
                 version: Some(">=2.10.0".into()),
                 registry: Some("pypi".into()),
                 freshness_confidence: Some("high".into()),
+                source_confidence: Some("high".into()),
+                confidence_guidance: Some(
+                    "High-confidence source; normal extraction flow is safe.".into(),
+                ),
+                fetch_health: Some("fresh".into()),
                 source_age_days: Some(1),
                 reason: None,
                 sections: vec![],
             }],
-            selected: 0,
-            total: 1,
-        }));
-        app.dashboard.sources = SourcesView::Ready(Box::new(SourcesData {
+            dependency_error: None,
             project: vec![SourceRow {
                 name: "team-style".into(),
                 lang: None,
                 kind: Some("team_guide".into()),
                 last_fetched: None,
+                fetch_state: Some("fresh".into()),
+                source_confidence: Some("high".into()),
+                confidence_guidance: Some("High-confidence source; normal extraction flow is safe.".into()),
             }],
             personal: vec![SourceRow {
                 name: "my-notes".into(),
                 lang: None,
                 kind: None,
                 last_fetched: None,
+                fetch_state: Some("stale".into()),
+                source_confidence: Some("low".into()),
+                confidence_guidance: Some("Low-confidence source; limit candidates to clearly documented, directly cited rules.".into()),
             }],
         }));
 

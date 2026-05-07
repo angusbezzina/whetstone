@@ -105,7 +105,7 @@ wh extract submit path/to/bundle.yaml
 wh rules approve --all --confidence high
 
 # 5. Generate context, tests, and lint configs
-wh actions     # chains wh context, wh tests, wh lint
+wh actions all # chains wh actions context, test, and lint
 # → whetstone/context/*, whetstone/evals/**, whetstone/lint/*
 
 # 6. Verify source code against approved rules
@@ -152,8 +152,8 @@ Then generate outputs:
 
 ```bash
 $ wh validate     # ✓ All schema checks passed
-$ wh context      # → whetstone/context/AGENTS.md (11 rules, 302 lines)
-$ wh tests        # → whetstone/evals/rust/test_reqwest.rs (real regex checks)
+$ wh actions context   # → whetstone/context/AGENTS.md (11 rules, 302 lines)
+$ wh actions test      # → whetstone/evals/rust/test_reqwest.rs (real regex checks)
 $ wh status       # → Score: 95 | Label: Healthy
 ```
 
@@ -181,7 +181,7 @@ Whetstone follows a seven-step lifecycle. `wh init` handles steps 1 + 2 in one g
 | **3. Extract** | `wh extract` + agent | Agent reads docs, drafts a candidate bundle |
 | **4. Submit** | `wh extract submit <bundle>` | Writes the bundle as `status: candidate` |
 | **5. Approve** | `wh rules approve <id>` or `wh rules approve --all` | Flip candidates to approved |
-| **6. Generate** | `wh actions` | Run `wh context`, `wh tests`, `wh lint` |
+| **6. Generate** | `wh actions all` | Run `wh actions context`, `wh actions test`, `wh actions lint` |
 | **7. Monitor** | `wh status` / `wh ci` / `wh scan` / `wh debt` | Track freshness, drift, enforce rules, and triage deterministic debt hotspots |
 
 When dependencies update, run `wh reinit` to re-resolve changed sources, then re-extract rules for what changed. `wh reinit --check` exits non-zero if drift was detected (useful in CI).
@@ -432,22 +432,17 @@ Action outputs: `freshness_status`, `changed_sources_count`, `recommended_rules_
 
 ## Privacy
 
-Pattern mining from agent transcripts was available via `wh patterns` in prior releases. That workflow is deferred in 0.3.0 and will return alongside a reworked signal-promotion pipeline.
+Pattern mining from agent transcripts was available in earlier planning and may
+return later alongside a signal-promotion pipeline, but it is **not part of the
+current shipped local flow**.
 
-This means Whetstone will NOT read conversations from unrelated projects unless you explicitly opt in with `--global-transcripts`.
+Today, Whetstone's shipped workflow is driven by:
 
-| Mode | Behavior | Flag |
-|------|----------|------|
-| **Default (scoped)** | Only reads transcripts whose path contains the current project name | None needed |
-| **Global** | Reads all agent transcripts across `$HOME` | `--global-transcripts` |
+- dependency manifests
+- trusted subscribed sources
+- approved local rules
 
-**What is read:** Only `user`/`human` role messages from JSONL transcript files. Agent responses are ignored. No transcript content is sent to any external service — all processing is local.
-
-**What is stored:** Nothing from transcripts is persisted. Pattern results are ephemeral JSON output. The only file `detect-patterns` writes is `whetstone/.last-run` (a timestamp used by `--since-last-run`).
-
-**Directories scanned:** `~/.claude/projects`, `~/.cursor/projects`, `~/.cline/projects`, `~/.continue/sessions`, `~/.codex/sessions`, `~/.goose/sessions`, `~/.roo/projects`, `~/.agents/sessions`, `~/.config/opencode/sessions`, `~/.windsurf/sessions`.
-
-If you're concerned about privacy, omit `detect-patterns` from your workflow (it is not run by `doctor` unless you explicitly pass `--sources`) or drop the `transcript` source with `--sources git,pr`.
+No transcript-mining pass is part of the default runtime.
 
 ## How Whetstone Fits with Existing Tools
 
@@ -480,7 +475,7 @@ No. Whetstone is an Agent Skill — the agent running it (Claude, Cursor, etc.) 
 That's correct behavior. If the documentation doesn't clearly state practices worth enforcing, Whetstone stays silent. You can always add rules manually.
 
 **Can I add custom sources beyond dependency docs?**
-Yes. Add any URL to `whetstone.yaml` and Whetstone fetches it alongside registry sources:
+Yes. Add any URL to `whetstone/whetstone.yaml` and Whetstone fetches it alongside registry sources:
 
 ```yaml
 sources:
@@ -493,7 +488,7 @@ sources:
       source_kind: blog
 ```
 
-Custom sources appear in the doctor output for extraction. Each rule you extract from them gets tagged with `source_kind` for filtering.
+Custom sources appear in `wh init`, `wh sources list`, and the extraction worklist. Each rule you extract from them keeps source provenance for filtering and review.
 
 **What happens if I don't install Whetstone?**
 Nothing breaks. The generated tests, lint configs, and agent context files are standard files in your repo. They run with your existing CI, and the generated agent context lives under `whetstone/context/` (or `whetstone/.personal/context/` for personal-only output).
@@ -502,22 +497,22 @@ Nothing breaks. The generated tests, lint configs, and agent context files are s
 Run `wh status` or `wh ci` to see which dependencies have drifted. Then run `wh reinit` (or `wh init --changed-only`) to re-resolve only what changed, and re-extract rules against the new content. Use `wh reinit --check` in CI to fail a build when drift is detected.
 
 **What's the `next_command` field in every output?**
-Every script suggests what to do next. Agent clients can use this to chain commands automatically without reading documentation.
+Every command suggests what to do next. Agent clients can use this to chain canonical commands automatically without rereading documentation.
 
 ## Self-Hosting (Dogfooding)
 
 Whetstone can be used on itself. The `tests/fixtures/` directory contains sample manifests that demonstrate the full workflow. To run the self-hosting workflow:
 
 ```bash
-# Run doctor against the test fixtures
+# Bootstrap against the test fixtures
 wh init --project-dir tests/fixtures --json
 
 # Check status of existing rules
 wh status --project-dir tests/fixtures
 
-# Generate test artifacts from the sample rules
-wh tests --project-dir tests/fixtures --dry-run
-wh context --project-dir tests/fixtures --dry-run
+# Generate sample outputs from the rules
+wh actions test --project-dir tests/fixtures --dry-run
+wh actions context --project-dir tests/fixtures --dry-run
 ```
 
 The test fixtures include rule files for fastapi and react that demonstrate the full rule schema with lifecycle fields, provenance metadata, and golden examples. This serves as a reference for the quality bar Whetstone expects.
@@ -535,7 +530,7 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - Rule listing and per-rule context via `wh review` / `wh review show`
 - Test generation with real regex checks (via `match` field on signals) for Python, TypeScript, and Rust
 - Lint overlay generation (ruff, biome, clippy) via `wh lint`
-- One-shot generation chain via `wh actions` (context + tests + lint)
+- One-shot generation chain via `wh actions all` (context + tests + lint)
 - Agent context generation under `whetstone/context/` (AGENTS.md, CLAUDE.md, .cursorrules, copilot, windsurf, codex)
 - Health monitoring with drift detection, freshness scoring, and metric history
 - CI integration via GitHub Action with PR comments

@@ -388,7 +388,7 @@ pub fn compute_status(
         .unwrap_or(0)
         > 0
     {
-        "wh set-sources --retry-failed"
+        "wh reinit"
     } else if pipeline_state
         .get("extraction_ready")
         .and_then(|v| v.as_i64())
@@ -401,7 +401,7 @@ pub fn compute_status(
     } else if freshness_days.map(|d| d > 30.0).unwrap_or(false) {
         "wh init --refresh"
     } else {
-        "wh context && wh tests"
+        "wh actions all"
     };
 
     // Adherence score — "is my code in good shape?" (Epic 3E whetstone-90m).

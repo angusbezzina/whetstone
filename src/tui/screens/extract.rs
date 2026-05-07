@@ -1,56 +1,23 @@
-//! Dedicated rule extraction screen — per-package extraction utility view with
-//! a detailed explanation of why a dependency is or is not a strong next rule
-//! extraction target.
+//! Shared source->rule worklist helpers used by the Sources screen and related
+//! command-result flows.
 
 use std::path::Path;
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::{Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
 use serde_json::Value;
 
-use crate::tui::{app::App, components::footer, theme};
-
-#[allow(dead_code)]
-pub fn hints() -> &'static [footer::Hint] {
-    &[("1", "HOME"), ("?", "HELP"), ("Q", "QUIT")]
-}
-
-#[derive(Default, Clone)]
-pub enum ExtractView {
-    #[default]
-    NotComputed,
-    Loading,
-    Ready(Box<ExtractData>),
-    Error(String),
-}
+use crate::tui::theme;
 
 #[derive(Debug, Clone, Default)]
 pub struct ExtractData {
     pub entries: Vec<WorklistRow>,
     pub selected: usize,
-    pub total: u32,
-}
-
-impl ExtractView {
-    pub fn select_prev(&mut self) {
-        if let ExtractView::Ready(data) = self {
-            data.selected = data.selected.saturating_sub(1);
-        }
-    }
-
-    pub fn select_next(&mut self) {
-        if let ExtractView::Ready(data) = self {
-            let len = data.entries.len();
-            if len > 0 && data.selected + 1 < len {
-                data.selected += 1;
-            }
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +33,9 @@ pub struct WorklistRow {
     pub version: Option<String>,
     pub registry: Option<String>,
     pub freshness_confidence: Option<String>,
+    pub source_confidence: Option<String>,
+    pub confidence_guidance: Option<String>,
+    pub fetch_health: Option<String>,
     pub source_age_days: Option<i64>,
     pub reason: Option<String>,
     pub sections: Vec<SectionRow>,
@@ -79,21 +49,15 @@ pub struct SectionRow {
     pub bytes: u64,
 }
 
-pub fn load(project_dir: &Path) -> ExtractView {
-    match crate::worklist::load(project_dir) {
-        Err(e) => ExtractView::Error(format!(
-            "{e}\nRun `wh init` (or `wh reinit`) to generate a worklist."
-        )),
-        Ok(value) => {
-            let entries = project_entries(&value);
-            let total = entries.len() as u32;
-            ExtractView::Ready(Box::new(ExtractData {
-                entries,
-                selected: 0,
-                total,
-            }))
-        }
-    }
+pub fn load_data(project_dir: &Path) -> anyhow::Result<ExtractData> {
+    let value = crate::worklist::load(project_dir).map_err(|e| {
+        anyhow::anyhow!("{e}\nRun `wh init` (or `wh reinit`) to generate a worklist.")
+    })?;
+    let entries = project_entries(&value);
+    Ok(ExtractData {
+        entries,
+        selected: 0,
+    })
 }
 
 fn project_entries(handoff: &Value) -> Vec<WorklistRow> {
@@ -126,6 +90,9 @@ fn project_entries(handoff: &Value) -> Vec<WorklistRow> {
                 .and_then(|v| v.get("confidence"))
                 .and_then(|v| v.as_str())
                 .map(String::from),
+            source_confidence: opt_str_field(e, "source_confidence"),
+            confidence_guidance: opt_str_field(e, "confidence_guidance"),
+            fetch_health: opt_str_field(e, "fetch_health"),
             source_age_days: e
                 .get("freshness")
                 .and_then(|v| v.get("source_age_days"))
@@ -179,122 +146,6 @@ fn str_field(entry: &Value, key: &str) -> String {
 
 fn opt_str_field(entry: &Value, key: &str) -> Option<String> {
     entry.get(key).and_then(|v| v.as_str()).map(String::from)
-}
-
-#[allow(dead_code)]
-pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    match &app.dashboard.extract {
-        ExtractView::NotComputed => {
-            render_empty(frame, area, "Internal sources are not loaded yet.")
-        }
-        ExtractView::Loading => render_empty(frame, area, "Loading internal sources…"),
-        ExtractView::Error(msg) => render_error(frame, area, msg),
-        ExtractView::Ready(data) if data.entries.is_empty() => render_empty(
-            frame,
-            area,
-            "No internal sources are available right now. Run wh init to generate them.",
-        ),
-        ExtractView::Ready(data) => render_ready(frame, area, data),
-    }
-}
-
-#[allow(dead_code)]
-fn render_empty(frame: &mut Frame<'_>, area: Rect, message: &str) {
-    let lines = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            format!("  {message}"),
-            Style::default().fg(theme::MUTED),
-        )),
-    ];
-    frame.render_widget(
-        Paragraph::new(lines).block(block("INTERNAL SOURCES", false)),
-        area,
-    );
-}
-
-#[allow(dead_code)]
-fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
-    let mut lines: Vec<Line> = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "  Internal sources failed to load:",
-            Style::default().fg(theme::STATUS_WARN),
-        )),
-    ];
-    for part in msg.lines() {
-        lines.push(Line::from(format!("  {part}")));
-    }
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "  Exit and reopen the TUI to retry.",
-        Style::default().fg(theme::MUTED),
-    )));
-
-    frame.render_widget(
-        Paragraph::new(lines).block(block("INTERNAL SOURCES", false)),
-        area,
-    );
-}
-
-#[allow(dead_code)]
-fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(46), Constraint::Percentage(54)])
-        .split(area);
-
-    render_worklist(frame, cols[0], data);
-    render_detail(frame, cols[1], data);
-}
-
-pub fn render_worklist(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
-    let width = area.width.saturating_sub(4) as usize;
-    let visible = (area.height.saturating_sub(2) / 2).max(1) as usize;
-    let (start, end) = window_bounds(data.selected, data.entries.len(), visible);
-    let items: Vec<ListItem> = data
-        .entries
-        .iter()
-        .enumerate()
-        .skip(start)
-        .take(end.saturating_sub(start))
-        .map(|(i, row)| {
-            let rank = i + 1;
-            let is_selected = i == data.selected;
-            let utility_color = theme::utility_color(row.utility_percent);
-            let name_style = if is_selected {
-                Style::default().fg(theme::AMBER).bold()
-            } else {
-                Style::default()
-            };
-
-            let title_line = Line::from(vec![
-                Span::styled(format!("{rank:>3}.  "), Style::default().fg(theme::MUTED)),
-                Span::styled(truncate(&row.name, width.saturating_sub(14)), name_style),
-            ]);
-            let mut meta_spans = vec![Span::styled(
-                format!("{:<12}", display_language(&row.language)),
-                Style::default().fg(theme::MUTED),
-            )];
-            if let Some(source_type) = &row.source_type {
-                meta_spans.push(Span::raw(" · "));
-                meta_spans.push(Span::styled(
-                    theme::humanize_token(source_type),
-                    Style::default().fg(utility_color),
-                ));
-            }
-            let meta_line = Line::from(meta_spans);
-
-            ListItem::new(vec![title_line, meta_line])
-        })
-        .collect();
-
-    let title = format!("CORE PACKAGES ({} total)", data.total);
-    frame.render_widget(List::new(items).block(block(&title, false)), area);
-}
-
-pub fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &ExtractData) {
-    render_detail_scrolled(frame, area, data, 0, false);
 }
 
 pub fn detail_max_scroll(area: Rect, data: &ExtractData) -> u16 {
@@ -383,6 +234,20 @@ fn detail_lines(width: u16, row: &WorklistRow) -> Vec<Line<'static>> {
         }
         source_quality.push(detail_line(width, "Freshness", &value));
     }
+    if let Some(fetch_health) = &row.fetch_health {
+        source_quality.push(detail_line(
+            width,
+            "Fetch health",
+            &theme::humanize_token(fetch_health),
+        ));
+    }
+    if let Some(conf) = &row.source_confidence {
+        source_quality.push(detail_line(
+            width,
+            "Source confidence",
+            &theme::humanize_token(conf),
+        ));
+    }
     if let Some(url) = &row.source_url {
         source_quality.push(detail_line(width, "Docs", &truncate(url, 88)));
     }
@@ -397,6 +262,19 @@ fn detail_lines(width: u16, row: &WorklistRow) -> Vec<Line<'static>> {
         )));
         lines.push(Line::from(""));
         lines.extend(source_quality);
+    }
+
+    if let Some(guidance) = &row.confidence_guidance {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Confidence guidance",
+            theme::header_title(),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            guidance.clone(),
+            Style::default().fg(theme::MUTED),
+        )));
     }
 
     if !row.sections.is_empty() {
@@ -608,32 +486,13 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-fn window_bounds(selected: usize, len: usize, visible: usize) -> (usize, usize) {
-    if visible == 0 || len <= visible {
-        return (0, len);
-    }
-    let start = selected.saturating_sub(visible / 2).min(len - visible);
-    (start, (start + visible).min(len))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::app::App;
     use ratatui::{backend::TestBackend, Terminal};
 
-    fn synthetic_app() -> App {
-        let tmp = std::env::temp_dir().join(format!("wh_tui_extract_test_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&tmp);
-        App::new(&tmp).expect("App::new")
-    }
-
-    #[test]
-    fn render_shows_worklist_entries() {
-        let backend = TestBackend::new(100, 28);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = synthetic_app();
-        app.dashboard.extract = ExtractView::Ready(Box::new(ExtractData {
+    fn sample_extract_data() -> ExtractData {
+        ExtractData {
             entries: vec![
                 WorklistRow {
                     name: "fastapi".into(),
@@ -647,6 +506,11 @@ mod tests {
                     version: Some("1.0.0".into()),
                     registry: Some("pypi".into()),
                     freshness_confidence: Some("high".into()),
+                    source_confidence: Some("high".into()),
+                    confidence_guidance: Some(
+                        "High-confidence source; normal extraction flow is safe.".into(),
+                    ),
+                    fetch_health: Some("fresh".into()),
                     source_age_days: Some(12),
                     reason: None,
                     sections: vec![SectionRow {
@@ -668,42 +532,28 @@ mod tests {
                     version: Some("19.0.0".into()),
                     registry: Some("npm".into()),
                     freshness_confidence: Some("medium".into()),
+                    source_confidence: Some("medium".into()),
+                    confidence_guidance: Some(
+                        "Medium-confidence source; keep citations strict and prioritize migration/default rules.".into(),
+                    ),
+                    fetch_health: Some("aging".into()),
                     source_age_days: Some(48),
                     reason: None,
                     sections: vec![],
                 },
             ],
             selected: 0,
-            total: 2,
-        }));
-
-        terminal
-            .draw(|frame| render(frame, frame.area(), &app))
-            .unwrap();
-
-        let rendered: String = terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|c| c.symbol().to_owned())
-            .collect();
-
-        assert!(rendered.contains("CORE PACKAGES"));
-        assert!(rendered.contains("Llms Full Txt") || rendered.contains("LLMS"));
-        assert!(rendered.contains("fastapi"));
-        assert!(rendered.contains("react"));
+        }
     }
 
     #[test]
     fn render_shows_error_message() {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = synthetic_app();
-        app.dashboard.extract = ExtractView::Error("boom".into());
+        let data = sample_extract_data();
 
         terminal
-            .draw(|frame| render(frame, frame.area(), &app))
+            .draw(|frame| render_detail_scrolled(frame, frame.area(), &data, 0, false))
             .unwrap();
 
         let rendered: String = terminal
@@ -714,7 +564,8 @@ mod tests {
             .map(|c| c.symbol().to_owned())
             .collect();
 
-        assert!(rendered.contains("boom"));
+        assert!(rendered.contains("fastapi"));
+        assert!(rendered.contains("High-confidence source") || rendered.contains("High confidence source"));
     }
 
     #[test]
@@ -722,13 +573,8 @@ mod tests {
         let tmp =
             std::env::temp_dir().join(format!("wh_tui_extract_missing_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
-        let view = load(&tmp);
-        match view {
-            ExtractView::Error(msg) => {
-                assert!(msg.contains("wh init") || msg.contains("wh reinit"));
-            }
-            _ => panic!("expected ExtractView::Error when handoff is missing"),
-        }
+        let err = load_data(&tmp).unwrap_err().to_string();
+        assert!(err.contains("wh init") || err.contains("wh reinit"));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

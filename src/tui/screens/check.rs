@@ -13,21 +13,14 @@ use ratatui::{
     Frame,
 };
 
-use crate::tui::{app::App, components::footer, theme};
+use crate::tui::{app::App, components::footer, screens::LoadState, theme};
 
 #[allow(dead_code)]
 pub fn hints() -> &'static [footer::Hint] {
     &[("1", "HOME"), ("?", "HELP"), ("Q", "QUIT")]
 }
 
-#[derive(Default, Clone)]
-pub enum CheckView {
-    #[default]
-    NotComputed,
-    Loading,
-    Ready(Box<CheckData>),
-    Error(String),
-}
+pub type CheckView = LoadState<CheckData>;
 
 #[derive(Debug, Default, Clone)]
 pub struct CheckData {

@@ -1065,7 +1065,8 @@ impl ConfigSnapshot {
         }
 
         if let Some(cfg) = project_cfg {
-            let project_cfg_path = project_cfg_path.unwrap_or_else(|| project_config_candidates(project_dir)[0].clone());
+            let project_cfg_path = project_cfg_path
+                .unwrap_or_else(|| project_config_candidates(project_dir)[0].clone());
             if !cfg.extends.is_empty() {
                 let resolved = config_packs::resolve_project_packs(
                     project_dir,
@@ -1266,8 +1267,15 @@ pub fn format_snapshot_human(snapshot: &ConfigSnapshot) -> String {
     ));
     out.push_str("Precedence: default < global < extends < project < personal\n");
 
-    if let Some(project_file) = snapshot.loaded_files.iter().find(|f| f.layer == ConfigLayer::Project) {
-        out.push_str(&format!("Project config: {}\n", project_file.path.display()));
+    if let Some(project_file) = snapshot
+        .loaded_files
+        .iter()
+        .find(|f| f.layer == ConfigLayer::Project)
+    {
+        out.push_str(&format!(
+            "Project config: {}\n",
+            project_file.path.display()
+        ));
     } else {
         out.push_str("Project config: whetstone/whetstone.yaml (not found)\n");
     }
@@ -1819,7 +1827,10 @@ resolve:
             }
         );
         assert_eq!(
-            snap.sources.get("resolve.timeout_seconds").cloned().unwrap(),
+            snap.sources
+                .get("resolve.timeout_seconds")
+                .cloned()
+                .unwrap(),
             ProvenanceSource::Project
         );
     }

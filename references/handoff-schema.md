@@ -17,7 +17,7 @@ than re-doing the work.
 **Writer:** `wh init`, `wh reinit` (always rewrite on run)
 **Reader:** agent (extraction), user (review)
 
-Produced whenever a doctor or refresh run finishes resolving sources and has
+Produced whenever an `init` or `reinit` run finishes resolving sources and has
 dependencies that still need rule extraction.
 
 ### Shape
@@ -26,7 +26,7 @@ dependencies that still need rule extraction.
 {
   "version": 1,
   "generated_at": "2026-04-13T12:34:56Z",
-  "trigger": "doctor | refresh",
+  "trigger": "init | reinit",
   "project_dir": "/path/to/project",
   "languages": ["python", "rust", "typescript"],
   "candidates": [
@@ -49,7 +49,7 @@ dependencies that still need rule extraction.
   "skipped": [
     { "name": "foo", "reason": "already has approved rules; source unchanged" }
   ],
-  "next_action": "Apply extraction prompt to each candidate; approve or deny; then wh validate && wh context && wh tests"
+  "next_action": "Apply extraction prompt to each candidate; submit a bundle; `wh rules approve`; then `wh actions all` and `wh scan`."
 }
 ```
 
@@ -60,8 +60,8 @@ dependencies that still need rule extraction.
 - `priority: resolved_low` — source is readme / html_converted / docs_url_only.
 - `priority: pending` — source hasn't been resolved yet (missing from cache).
 - `priority: failed` — resolution failed this run; `reason` explains why.
-- The agent MUST re-read `extraction-handoff.json` on resume, not the doctor
-  output (the doctor output is ephemeral but this file is durable).
+- The agent MUST re-read `extraction-handoff.json` on resume, not the raw init
+  output (the CLI output is ephemeral but this file is durable).
 
 ### `worklist` (since 3D.1.2)
 
@@ -96,8 +96,28 @@ by a configuration-aware score (`preferred_source_kinds`, `recency_window_days`)
 ]
 ```
 
-Access via `wh review worklist [--dep=<name>] [--lang=<python|typescript|rust>]`.
-Older readers that don't know the key ignore it; the field is fully additive.
+Access via `wh rules worklist [--dep=<name>] [--lang=<python|typescript|rust>]`
+or legacy `wh review worklist ...`.
+
+The CLI response wrapper for worklist reads includes provenance + bounded output
+metadata:
+
+```json
+{
+  "status": "ok",
+  "generated_at": "...",
+  "trigger": "init",
+  "handoff_path": ".../whetstone/.state/extraction-handoff.json",
+  "total": 314,
+  "returned": 200,
+  "truncated": true,
+  "max_entries": 200,
+  "entries": ["..."],
+  "next_command": "Pick the first `ready_now` entry, extract rules, and `wh extract submit <bundle>`"
+}
+```
+
+Older readers that don't know these additive fields may ignore them.
 
 ---
 
@@ -184,6 +204,12 @@ against the delta instead of re-reading every source.
   pre-refresh cache; readers MUST tolerate `null` in these fields.
 
 ---
+
+## Historical / archived eval artifacts
+
+The following shapes describe artifacts from an older eval pipeline. They are
+**not part of the current shipped workflow** and remain here only as historical
+reference while archived material is cleaned up.
 
 ## Eval requests
 

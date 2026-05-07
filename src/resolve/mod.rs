@@ -297,7 +297,14 @@ pub fn resolve_sources(options: ResolveOptions<'_>) -> Result<Value> {
     pb.finish_and_clear();
 
     // Collect results
-    let all_results = Arc::try_unwrap(results).unwrap().into_inner().unwrap();
+    let mut all_results = Arc::try_unwrap(results).unwrap().into_inner().unwrap();
+    all_results.sort_by(|(a, _), (b, _)| {
+        let a_lang = a.get("language").and_then(|v| v.as_str()).unwrap_or("");
+        let b_lang = b.get("language").and_then(|v| v.as_str()).unwrap_or("");
+        let a_name = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let b_name = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        a_lang.cmp(b_lang).then_with(|| a_name.cmp(b_name))
+    });
     for (result, _elapsed) in all_results {
         if changed_only {
             if let Some(hash) = result.get("content_hash").and_then(|v| v.as_str()) {
@@ -327,6 +334,21 @@ pub fn resolve_sources(options: ResolveOptions<'_>) -> Result<Value> {
         }
     }
 
+    errors.sort_by(|a, b| {
+        let a_lang = a.get("language").and_then(|v| v.as_str()).unwrap_or("");
+        let b_lang = b.get("language").and_then(|v| v.as_str()).unwrap_or("");
+        let a_name = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let b_name = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        a_lang.cmp(b_lang).then_with(|| a_name.cmp(b_name))
+    });
+    sources.sort_by(|a, b| {
+        let a_lang = a.get("language").and_then(|v| v.as_str()).unwrap_or("");
+        let b_lang = b.get("language").and_then(|v| v.as_str()).unwrap_or("");
+        let a_name = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let b_name = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        a_lang.cmp(b_lang).then_with(|| a_name.cmp(b_name))
+    });
+
     // Save final state
     {
         let sm = sm_mutex.lock().unwrap();
@@ -334,9 +356,9 @@ pub fn resolve_sources(options: ResolveOptions<'_>) -> Result<Value> {
     }
 
     let next_command = if !sources.is_empty() {
-        "Extract rules: agent applies extraction prompt to each source"
+        "wh rules worklist"
     } else {
-        "No sources resolved. Provide manual docs URLs or check errors above."
+        "wh sources list"
     };
 
     let wall_seconds = start_time.elapsed().as_secs_f64();
@@ -593,7 +615,7 @@ pub fn format_human_output(result: &Value) -> String {
 /// Resolve custom sources from config. Each custom URL is fetched directly
 /// (llms.txt probe first, then HTML conversion fallback).
 pub fn resolve_custom_sources(custom: &[crate::config::CustomSource], timeout: u64) -> Vec<Value> {
-    custom
+    let mut resolved = custom
         .iter()
         .filter_map(|src| {
             let url = &src.url;
@@ -653,10 +675,17 @@ pub fn resolve_custom_sources(custom: &[crate::config::CustomSource], timeout: u
                 }
             }
 
-            eprintln!("  warning: could not fetch custom source: {url}");
             None
         })
-        .collect()
+        .collect::<Vec<_>>();
+    resolved.sort_by(|a, b| {
+        let a_lang = a.get("language").and_then(|v| v.as_str()).unwrap_or("");
+        let b_lang = b.get("language").and_then(|v| v.as_str()).unwrap_or("");
+        let a_name = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let b_name = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        a_lang.cmp(b_lang).then_with(|| a_name.cmp(b_name))
+    });
+    resolved
 }
 
 pub fn content_hash(content: &str) -> String {

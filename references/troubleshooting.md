@@ -1,77 +1,102 @@
 # Whetstone Troubleshooting
 
-## Binary Not Found
+## Binary not found
 
-**Symptom**: `whetstone: command not found`
+**Symptom:** `whetstone: command not found`
 
-**Fix**:
-- If built from source: `cargo install --path .` or add `target/release/` to PATH
-- If downloaded: ensure the binary is executable (`chmod +x whetstone`) and in PATH
+**Fix**
+- If built from source: `cargo install --path .`
+- If downloaded: ensure the binary is executable and on your `PATH`
 - Verify: `which whetstone` or `whetstone --help`
 
-## No Manifests Detected
+## No manifests detected
 
-**Symptom**: `whetstone detect-deps` returns 0 dependencies
+**Symptom:** `wh init --detect-only` returns 0 dependencies
 
-**Fix**:
-- Verify project has `pyproject.toml`, `package.json`, or `Cargo.toml`
-- Check `--project-dir` points to the right directory
-- Check `--exclude` isn't filtering out your manifests
-- Note: `node_modules/`, `.venv/`, `target/`, and test fixtures are skipped by default
+**Fix**
+- Verify the project has `pyproject.toml`, `package.json`, or `Cargo.toml`
+- Check `--project-dir` points to the correct repo
+- Check discovery include/exclude settings in `whetstone/whetstone.yaml`
 
-## Network Errors During resolve-sources
+## Network or source resolution errors
 
-**Symptom**: Sources fail to resolve, timeout errors
+**Symptom:** `wh init` or `wh reinit` cannot resolve documentation/sources
 
-**Fix**:
+**Fix**
 - Check internet connectivity
-- Retry failed deps: `whetstone resolve-sources --retry-failed`
-- Increase timeout: `--timeout 30`
-- For rate-limited registries, reduce workers: `--workers 1`
+- Retry with a larger timeout via config (`resolve.timeout_seconds`) or CLI flag
+- For weak custom sources, inspect them with:
 
-## Stale Cache
+```bash
+wh sources list
+wh sources verify <name-or-url>
+```
 
-**Symptom**: Whetstone returns outdated source content
+- For stale dependency sources, resume the bootstrap flow:
 
-**Fix**:
-- Force refresh: `whetstone doctor --refresh` or `whetstone resolve-sources --force-refresh`
-- Check cache age: `whetstone status --json` (look at `cache_stats`)
-- Adjust TTL: `--ttl 86400` (1 day instead of default 7)
+```bash
+wh init --resume
+```
 
-## No Rules After Doctor
+## Stale cache or stale source content
 
-**Symptom**: Doctor completes but no rules exist
+**Symptom:** Whetstone appears to use outdated source material
 
-**Cause**: Doctor detects dependencies and resolves docs, but rule extraction requires agent judgment. This is by design.
+**Fix**
+- Run `wh reinit`
+- Force a custom source refresh with `wh sources verify <name-or-url>`
+- Inspect cache-related health via `wh status --json`
 
-**Fix**:
-1. Read the `extraction_context` from doctor output
-2. Apply the Extraction Prompt for each source
-3. Present proposed rules for approval
-4. Save approved rules to `whetstone/rules/{language}/{dep}.yaml`
+## No rules after init
 
-## State Corruption
+**Symptom:** Bootstrap succeeds, but no rules appear
 
-**Symptom**: Unexpected errors referencing `.state/` files
+**Cause:** Whetstone prepares source material and worklists; extraction and
+approval still require agent/user judgment.
 
-**Fix**:
-- Delete `whetstone/.state/` and re-run `whetstone doctor`
-- State files are gitignored caches — safe to delete and regenerate
+**Fix**
+```bash
+wh sources list
+wh rules worklist
+wh extract
+wh extract submit <bundle.yaml>
+wh rules approve --all --confidence high
+wh actions all
+wh scan src/
+```
 
-## CI Check Failing
+## Config validation fails
 
-**Symptom**: `whetstone ci-check` exits non-zero
+**Symptom:** `wh config validate` exits non-zero
 
-**Cause**: Rules are stale or dependencies have version drift
+**Fix**
+- Run `wh config show` to inspect the effective config stack
+- Check imported pack refs under `extends:`
+- Prefer canonical project config at `whetstone/whetstone.yaml`
+- Keep repo-root `whetstone.yaml` only as a temporary compatibility fallback
 
-**Fix**:
-- Run `whetstone status` locally to see what drifted
-- Run `whetstone doctor --changed-only` to update
-- If intentional: adjust `--fail-on` threshold (e.g., `--fail-on none`)
+## Unexpected `.state/` issues
 
-## Inventory Shows Phantom Dependencies
+**Symptom:** Errors mention files under `whetstone/.state/`
 
-**Symptom**: `pipeline_state` counts include deps no longer in manifests
+**Fix**
+- These are cache/state artifacts and are generally safe to regenerate
+- Remove `whetstone/.state/` and rerun `wh init` or `wh reinit`
 
-**Fix**: Run `whetstone detect-deps --incremental` — this triggers stale-entry cleanup.
-Dependencies with approved rules are protected from removal; others are cleaned up automatically.
+## CI check failing
+
+**Symptom:** `wh ci` exits non-zero
+
+**Fix**
+- Run `wh status` to inspect freshness/adherence
+- Run `wh reinit` if drift exists
+- Run `wh scan` to inspect violations
+- Adjust `--fail-on` only if the failure policy itself is incorrect
+
+## Inventory shows stale dependencies
+
+**Symptom:** Status still mentions dependencies no longer present in manifests
+
+**Fix**
+- Run `wh init --detect-only --incremental`
+- Then rerun `wh init` or `wh reinit` to refresh the stored state

@@ -9,9 +9,9 @@ use crate::config::{
     CheckConfig, ConfigPackRef, DiscoveryConfig, ExtractionConfig, GenerateConfig, GlobalConfig,
     ResolveConfig, SourcesConfig,
 };
+use crate::resolve;
 use crate::rules::{ApprovedExample, ApprovedRule, ApprovedSignal, Rule};
 use crate::state::{atomic_write, load_json, now_iso};
-use crate::resolve;
 
 const PACK_CACHE_VERSION: i64 = 1;
 const VALID_SCOPES: &[&str] = &["org", "team", "project", "personal"];
@@ -154,14 +154,15 @@ pub fn resolve_project_packs(
             }
         };
 
-        let fetched = match fetch_pack_content(&mut cache, &scope, &pack_ref.ref_, &target, timeout, ttl)
-        {
-            Ok(fetched) => fetched,
-            Err(e) => {
-                out.errors.push(format!("failed to load pack `{}`: {e}", pack_ref.ref_));
-                continue;
-            }
-        };
+        let fetched =
+            match fetch_pack_content(&mut cache, &scope, &pack_ref.ref_, &target, timeout, ttl) {
+                Ok(fetched) => fetched,
+                Err(e) => {
+                    out.errors
+                        .push(format!("failed to load pack `{}`: {e}", pack_ref.ref_));
+                    continue;
+                }
+            };
         if let Some(w) = fetched.warning.clone() {
             out.warnings.push(w);
         }
@@ -169,7 +170,8 @@ pub fn resolve_project_packs(
         let pack: RulePackFile = match serde_yaml::from_str(&fetched.content) {
             Ok(pack) => pack,
             Err(e) => {
-                out.errors.push(format!("pack `{}` parse error: {e}", pack_ref.ref_));
+                out.errors
+                    .push(format!("pack `{}` parse error: {e}", pack_ref.ref_));
                 continue;
             }
         };
@@ -312,7 +314,8 @@ pub fn merge_pack_rules(
 
 pub fn packs_to_json(packs: &[ResolvedConfigPack]) -> Value {
     Value::Array(
-        packs.iter()
+        packs
+            .iter()
             .map(|pack| {
                 json!({
                     "scope": pack.scope,
@@ -511,9 +514,9 @@ fn resolve_pack_target(project_dir: &Path, ref_spec: &str) -> Result<PackTarget>
     }
 
     if let Some(rest) = ref_spec.strip_prefix("github://") {
-        let (repo, path_and_ref) = rest
-            .split_once("//")
-            .ok_or_else(|| anyhow!("invalid github ref `{ref_spec}` — expected github://owner/repo//path@ref"))?;
+        let (repo, path_and_ref) = rest.split_once("//").ok_or_else(|| {
+            anyhow!("invalid github ref `{ref_spec}` — expected github://owner/repo//path@ref")
+        })?;
         let (path, git_ref) = path_and_ref
             .rsplit_once('@')
             .ok_or_else(|| anyhow!("invalid github ref `{ref_spec}` — missing @ref"))?;
@@ -571,10 +574,7 @@ fn fetch_pack_content(
             source_kind,
         } => {
             let key = cache_key(scope, ref_spec);
-            let cached = cache
-                .get("entries")
-                .and_then(|v| v.get(&key))
-                .cloned();
+            let cached = cache.get("entries").and_then(|v| v.get(&key)).cloned();
 
             if let Some(entry) = cached.as_ref() {
                 if cache_entry_fresh(entry, ttl)

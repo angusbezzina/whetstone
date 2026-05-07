@@ -496,7 +496,11 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
         remaining_count,
     );
 
-    let review_flow = build_review_flow(!extraction_sources.is_empty(), !errors.is_empty(), auto_limited);
+    let review_flow = build_review_flow(
+        !extraction_sources.is_empty(),
+        !errors.is_empty(),
+        auto_limited,
+    );
 
     let next_command = if auto_limited {
         "wh init --resume"
@@ -783,10 +787,10 @@ fn build_review_flow(has_ready_sources: bool, has_errors: bool, auto_limited: bo
         }));
     }
 
-    if has_errors {
+    if has_errors || has_ready_sources {
         steps.push(serde_json::json!({
             "step": steps.len() + 1,
-            "title": "Review trusted sources and unresolved gaps",
+            "title": "Review trusted sources and fetch health",
             "command": "wh sources list",
         }));
     }
@@ -806,6 +810,11 @@ fn build_review_flow(has_ready_sources: bool, has_errors: bool, auto_limited: bo
             "step": steps.len() + 1,
             "title": "Approve candidate rules explicitly",
             "command": "wh rules approve --all --confidence high",
+        }));
+        steps.push(serde_json::json!({
+            "step": steps.len() + 1,
+            "title": "Scan for violations against approved rules",
+            "command": "wh scan",
         }));
     }
 
@@ -1007,8 +1016,13 @@ mod tests {
     fn review_flow_prefers_rules_worklist_for_ready_sources() {
         let flow = build_review_flow(true, false, false);
         let steps = flow["steps"].as_array().unwrap();
-        assert_eq!(steps[0]["command"], "wh rules worklist");
-        assert_eq!(steps[2]["command"], "wh rules approve --all --confidence high");
+        assert_eq!(steps[0]["command"], "wh sources list");
+        assert_eq!(steps[1]["command"], "wh rules worklist");
+        assert_eq!(
+            steps[3]["command"],
+            "wh rules approve --all --confidence high"
+        );
+        assert_eq!(steps[4]["command"], "wh scan");
     }
 
     #[test]

@@ -12,12 +12,12 @@ Whetstone is an Agent Skill (agentskills.io format) with a Rust CLI binary. The 
 |------|---------------|---------|
 | 1. Bootstrap | Binary | `wh init` — detect deps, resolve docs, write extraction handoff |
 | 2. Extract | Agent | `wh extract` → read docs → `wh extract submit <bundle.yaml>` |
-| 3. Approve | Agent + User | `wh approve <rule-id>` or `wh approve --all [--dep] [--confidence]` |
+| 3. Approve | Agent + User | `wh rules approve <rule-id>` or `wh rules approve --all [--dep] [--confidence]` |
 | 4. Generate | Binary | `wh actions all` (chains context + tests + lint) or `wh actions context|lint|test` |
 | 5. Verify | Binary | `wh scan <path>` — deterministic scan, agent's "am I done?" gate |
 | 6. Maintain | Binary | `wh reinit` when deps change; `wh status` for health |
 
-There are no command aliases. Use the canonical names above — if older scripts or memories reference `wh doctor`, `wh refresh`, `wh gen`, `wh propose`, `wh apply`, `wh promote`, `wh bench`, `wh patterns`, or `wh eval`, those are gone as of 0.3.0. Rules have exactly two statuses: `candidate` and `approved`. Denial = delete the rule from YAML.
+Prefer the canonical names above. A small compatibility surface still exists for migration (`wh approve`, `wh check`, `wh rule`, `wh source`, `wh source fetch`), but docs, handoffs, and new automation should use the canonical forms. Older names like `wh doctor`, `wh refresh`, `wh gen`, `wh propose`, `wh apply`, `wh promote`, `wh bench`, `wh patterns`, and `wh eval` are gone from the shipped workflow. Rules have exactly two statuses: `candidate` and `approved`. Denial = delete the rule from YAML.
 
 Agents MAY hand-author rule YAML only through `wh extract submit <bundle>`, which refuses id collisions. Do NOT edit `whetstone/rules/**/*.yaml` directly.
 

@@ -73,7 +73,8 @@ pub fn show_worklist(project_dir: &Path, dep: Option<&str>, lang: Option<&str>) 
         "trigger": handoff.get("trigger"),
         "total": filtered.len(),
         "entries": filtered,
-        "next_command": "Pick the first `ready_now` entry, extract rules, and `wh extract submit <bundle.yaml>`",
+        "flow": "sources -> rules -> violations",
+        "next_command": "Pick the first `ready_now` entry, `wh extract submit <bundle.yaml>`, `wh rules approve --all --confidence high`, then run `wh scan`",
     }))
 }
 
@@ -172,7 +173,7 @@ pub fn submit(project_dir: &Path, bundle_path: &Path) -> Result<Value> {
         "bundle": bundle_path.display().to_string(),
         "wrote": dest.display().to_string(),
         "candidate_ids": candidate_ids,
-        "next_command": "wh approve --all --confidence high",
+        "next_command": "wh rules approve --all --confidence high",
     }))
 }
 

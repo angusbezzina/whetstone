@@ -94,10 +94,10 @@ pub fn detect_deps(
         .collect();
     let is_monorepo = manifest_dirs.len() > 1;
     if is_monorepo {
-        eprintln!(
+        warnings.push(format!(
             "Monorepo detected: {} workspaces found",
             manifest_dirs.len()
-        );
+        ));
     }
 
     let effective_excluded = effective_excluded_list(&merged_excludes);
@@ -220,14 +220,13 @@ pub fn detect_deps(
         let drift = check_drift(&unique_deps, project_dir);
         let drift_count = drift.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
         if drift_count > 0 {
-            result["next_command"] =
-                serde_json::json!("Resolve changed sources: wh set-sources --changed-only");
+            result["next_command"] = serde_json::json!("wh reinit");
         } else {
-            result["next_command"] = serde_json::json!("No drift detected. Rules are current.");
+            result["next_command"] = serde_json::json!("wh status");
         }
         result["drift"] = drift;
     } else {
-        result["next_command"] = serde_json::json!("Resolve docs: wh init");
+        result["next_command"] = serde_json::json!("wh init");
     }
 
     Ok(result)

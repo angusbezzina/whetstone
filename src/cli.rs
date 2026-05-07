@@ -7,11 +7,15 @@ use crate::{
     rules, rules_query, source_mgmt, status, triggers, tui, update, worklist,
 };
 
+const WORKLIST_MAX_ENTRIES: usize = 200;
+
 const TAXONOMY_HELP: &str = "Core workflow:
   whetstone init             Bootstrap from zero
+  whetstone sources list     Review source fetch health + confidence
+  whetstone rules worklist   Move source findings into candidate rules
+  whetstone scan             Validate approved rules against violations
   whetstone reinit           Refresh changed dependencies/docs
   whetstone status           Health + adherence summary
-  whetstone scan             Scan code for rule violations
   whetstone debt             Deterministic debt hotspots
   whetstone actions all      Generate context + tests + lint
 
@@ -22,7 +26,7 @@ Management:
 
 Maintenance:
   whetstone extract          Draft or submit candidate rules
-  whetstone approve          Approve candidate rules
+  whetstone rules approve    Approve candidate rules
   whetstone validate         Validate rule files
   whetstone update           Update whetstone
 
@@ -37,9 +41,6 @@ Compatibility notes:
 
 Agent mode:
   Pass --json for machine-readable output. Bare interactive TTY runs default to the TUI.";
-
-// TODO(whetstone-aww): reinstate patterns
-// use crate::detect_patterns;
 
 #[derive(Parser)]
 #[command(
@@ -748,9 +749,6 @@ enum Commands {
         project_dir: PathBuf,
     },
 
-    // TODO(whetstone-aww): reinstate patterns
-    // /// Mine style patterns from transcripts, git history, and PR comments
-    // Patterns { ... }
     /// Scan source files for rule violations using tree-sitter and regex signals
     #[command(name = "scan", alias = "check")]
     Scan {
@@ -1061,7 +1059,7 @@ pub fn run() -> i32 {
                                         }
                                     }
                                     result["next_command"] = serde_json::json!(
-                                        "Resolve changed sources: wh set-sources --changed-only"
+                                        "Resolve changed sources: wh reinit"
                                     );
                                 } else {
                                     result["dependencies"] = serde_json::json!([]);
@@ -1124,10 +1122,10 @@ pub fn run() -> i32 {
                     }
                 }
                 Err(e) => {
-                    output::print_json(&serde_json::json!({
-                        "error": e.to_string(),
-                        "recommendations": [],
-                    }));
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "Check project directory and source resolution settings",
+                    ));
                     1
                 }
             }
@@ -1207,46 +1205,12 @@ pub fn run() -> i32 {
             extraction_ready,
         } => {
             if status_report {
-                let opts = report::ReportOptions {
-                    project_dir: &project_dir,
+                return run_report_command(
+                    &project_dir,
                     pr_comment,
-                };
-                match report::build(&opts) {
-                    Ok(mut data) => {
-                        let markdown = report::to_markdown(&data);
-                        let path = match report::write_markdown_report(&project_dir, &markdown) {
-                            Ok(path) => path,
-                            Err(e) => {
-                                output::print_json(&output::error_json(
-                                    &e.to_string(),
-                                    "Whetstone could not write whetstone/report.md; check filesystem permissions and retry",
-                                ));
-                                return 1;
-                            }
-                        };
-                        if let Some(obj) = data.as_object_mut() {
-                            obj.insert(
-                                "report_path".to_string(),
-                                serde_json::Value::String(path.display().to_string()),
-                            );
-                        }
-                        if pr_comment {
-                            print!("{}", markdown);
-                        } else if json_mode {
-                            output::print_json(&data);
-                        } else {
-                            println!("Report written to {}", path.display());
-                        }
-                        return 0;
-                    }
-                    Err(e) => {
-                        output::print_json(&output::error_json(
-                            &e.to_string(),
-                            "wh status --report composes wh status + wh scan; fix the underlying failure and retry",
-                        ));
-                        return 1;
-                    }
-                }
+                    json_mode,
+                    "wh status --report composes wh status + wh scan; fix the underlying failure and retry",
+                );
             }
 
             if extraction_ready {
@@ -1306,48 +1270,15 @@ pub fn run() -> i32 {
             dry_run,
             personal,
             terse,
-        } => {
-            match generate_context::generate_context(
-                &project_dir,
-                formats.as_deref(),
-                lang.as_deref(),
-                dry_run,
-                personal,
-                terse,
-            ) {
-                Ok(result) => {
-                    if json_mode {
-                        output::print_json(&result);
-                    } else {
-                        let gen = result.get("generated").and_then(|v| v.as_array());
-                        if let Some(files) = gen {
-                            for f in files {
-                                let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                                let lines = f.get("lines").and_then(|v| v.as_i64()).unwrap_or(0);
-                                let dry = if f
-                                    .get("dry_run")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false)
-                                {
-                                    " (dry run)"
-                                } else {
-                                    ""
-                                };
-                                println!("  + {path} ({lines} lines){dry}");
-                            }
-                        }
-                    }
-                    0
-                }
-                Err(e) => {
-                    output::print_json(&output::error_json(
-                        &e.to_string(),
-                        "Check whetstone/rules/ directory for approved rules",
-                    ));
-                    1
-                }
-            }
-        }
+        } => run_context_command(
+            &project_dir,
+            formats.as_deref(),
+            lang.as_deref(),
+            dry_run,
+            personal,
+            terse,
+            json_mode,
+        ),
 
         Commands::Actions { action } => match action {
             ActionsAction::All(args) => match gen::run(
@@ -1376,74 +1307,29 @@ pub fn run() -> i32 {
                     1
                 }
             },
-            ActionsAction::Context(args) => match generate_context::generate_context(
+            ActionsAction::Context(args) => run_context_command(
                 &args.project_dir,
                 None,
                 args.lang.as_deref(),
                 args.dry_run,
                 args.personal,
                 args.terse,
-            ) {
-                Ok(result) => {
-                    if json_mode {
-                        output::print_json(&result);
-                    } else {
-                        println!("wh actions context: generated context files");
-                    }
-                    0
-                }
-                Err(e) => {
-                    output::print_json(&output::error_json(
-                        &e.to_string(),
-                        "Check whetstone/rules/ directory for approved rules",
-                    ));
-                    1
-                }
-            },
-            ActionsAction::Test(args) => match generate_tests::generate_tests(
+                json_mode,
+            ),
+            ActionsAction::Test(args) => run_tests_command(
                 &args.project_dir,
                 args.lang.as_deref(),
                 args.dry_run,
                 args.personal,
-            ) {
-                Ok(result) => {
-                    if json_mode {
-                        output::print_json(&result);
-                    } else {
-                        println!("wh actions test: generated test files");
-                    }
-                    0
-                }
-                Err(e) => {
-                    output::print_json(&output::error_json(
-                        &e.to_string(),
-                        "Check whetstone/rules/ directory for approved rules",
-                    ));
-                    1
-                }
-            },
-            ActionsAction::Lint(args) => match generate_lint::generate_lint(
+                json_mode,
+            ),
+            ActionsAction::Lint(args) => run_lint_command(
                 &args.project_dir,
                 args.lang.as_deref(),
                 args.dry_run,
                 args.personal,
-            ) {
-                Ok(result) => {
-                    if json_mode {
-                        output::print_json(&result);
-                    } else {
-                        println!("wh actions lint: generated lint/formatter overlays");
-                    }
-                    0
-                }
-                Err(e) => {
-                    output::print_json(&output::error_json(
-                        &e.to_string(),
-                        "Check whetstone/rules/ directory for approved rules with lint_proxy signals",
-                    ));
-                    1
-                }
-            },
+                json_mode,
+            ),
         },
 
         Commands::Lint {
@@ -1451,73 +1337,14 @@ pub fn run() -> i32 {
             lang,
             dry_run,
             personal,
-        } => match generate_lint::generate_lint(&project_dir, lang.as_deref(), dry_run, personal) {
-            Ok(result) => {
-                if json_mode {
-                    output::print_json(&result);
-                } else if let Some(gen) = result.get("generated") {
-                    if let Some(lints) = gen.get("lint_configs").and_then(|v| v.as_array()) {
-                        for f in lints {
-                            let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                            println!("  + {path}");
-                        }
-                    }
-                    if let Some(formatters) =
-                        gen.get("formatter_configs").and_then(|v| v.as_array())
-                    {
-                        for f in formatters {
-                            let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                            println!("  + {path}");
-                        }
-                    }
-                }
-                0
-            }
-            Err(e) => {
-                output::print_json(&output::error_json(
-                    &e.to_string(),
-                    "Check whetstone/rules/ directory for approved rules with lint_proxy signals",
-                ));
-                1
-            }
-        },
+        } => run_lint_command(&project_dir, lang.as_deref(), dry_run, personal, json_mode),
 
         Commands::Tests {
             project_dir,
             lang,
             dry_run,
             personal,
-        } => match generate_tests::generate_tests(&project_dir, lang.as_deref(), dry_run, personal)
-        {
-            Ok(result) => {
-                if json_mode {
-                    output::print_json(&result);
-                } else {
-                    if let Some(gen) = result.get("generated") {
-                        if let Some(tests) = gen.get("tests").and_then(|v| v.as_array()) {
-                            for f in tests {
-                                let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                                println!("  + {path}");
-                            }
-                        }
-                        if let Some(lints) = gen.get("lint_configs").and_then(|v| v.as_array()) {
-                            for f in lints {
-                                let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                                println!("  + {path}");
-                            }
-                        }
-                    }
-                }
-                0
-            }
-            Err(e) => {
-                output::print_json(&output::error_json(
-                    &e.to_string(),
-                    "Check whetstone/rules/ directory for approved rules",
-                ));
-                1
-            }
-        },
+        } => run_tests_command(&project_dir, lang.as_deref(), dry_run, personal, json_mode),
 
         Commands::Approve {
             rule_id,
@@ -1525,41 +1352,21 @@ pub fn run() -> i32 {
             all,
             dep,
             confidence,
-        } => {
-            let result = match (rule_id, all) {
-                (Some(id), false) => approve::approve_by_id(&project_dir, &id),
-                (None, true) => {
-                    approve::approve_bulk(&project_dir, dep.as_deref(), confidence.as_deref())
-                }
-                (None, false) => {
-                    output::print_json(&output::error_json(
-                        "wh approve requires a <rule-id> or --all",
-                        "wh approve <rule-id> | wh approve --all [--dep <name>] [--confidence high]",
-                    ));
-                    return 1;
-                }
-                (Some(_), true) => unreachable!("clap conflicts_with guards this"),
-            };
-            match result {
-                Ok(value) => {
-                    if json_mode {
-                        output::print_json(&value);
-                    } else if let Some(count) = value.get("approved_count").and_then(|v| v.as_i64())
-                    {
-                        println!("wh approve: {count} candidate(s) approved");
-                    } else {
-                        let id = value.get("rule_id").and_then(|v| v.as_str()).unwrap_or("?");
-                        let action = value.get("action").and_then(|v| v.as_str()).unwrap_or("?");
-                        println!("wh approve: {id} -> {action}");
-                    }
-                    0
-                }
-                Err(e) => {
-                    output::print_json(&output::error_json(&e.to_string(), "wh approve --help"));
-                    1
-                }
-            }
-        }
+        } => run_approve_command(
+            &project_dir,
+            rule_id,
+            all,
+            dep,
+            confidence,
+            json_mode,
+            ApproveUiConfig {
+                command_name: "wh approve",
+                missing_usage_error: "wh approve requires a <rule-id> or --all",
+                missing_usage_hint:
+                    "wh approve <rule-id> | wh approve --all [--dep <name>] [--confidence high]",
+                failure_hint: "wh approve --help",
+            },
+        ),
 
         Commands::Extract {
             action,
@@ -1846,29 +1653,10 @@ pub fn run() -> i32 {
                 Some(ReviewAction::Worklist {
                     dep: wl_dep,
                     lang: wl_lang,
-                }) => {
-                    let res = match worklist::load(&project_dir) {
-                        Ok(handoff) => {
-                            let wl = handoff
-                                .get("worklist")
-                                .and_then(|v| v.as_array())
-                                .cloned()
-                                .unwrap_or_default();
-                            let filtered =
-                                worklist::filter(&wl, wl_dep.as_deref(), wl_lang.as_deref());
-                            Ok(serde_json::json!({
-                                "status": "ok",
-                                "generated_at": handoff.get("generated_at"),
-                                "trigger": handoff.get("trigger"),
-                                "total": filtered.len(),
-                                "entries": filtered,
-                                "next_command": "Pick the first `ready_now` entry, extract rules, and `wh extract submit <bundle>`",
-                            }))
-                        }
-                        Err(e) => Err(e),
-                    };
-                    (res, Render::Worklist)
-                }
+                }) => (
+                    build_worklist_value(&project_dir, wl_dep.as_deref(), wl_lang.as_deref()),
+                    Render::Worklist,
+                ),
                 None => (
                     review::list(review::ReviewListOptions {
                         project_dir: &project_dir,
@@ -2120,66 +1908,27 @@ pub fn run() -> i32 {
                 all,
                 dep,
                 confidence,
-            } => {
-                let result = match (rule_id, all) {
-                    (Some(id), false) => approve::approve_by_id(&project_dir, &id),
-                    (None, true) => {
-                        approve::approve_bulk(&project_dir, dep.as_deref(), confidence.as_deref())
-                    }
-                    (None, false) => {
-                        output::print_json(&output::error_json(
-                            "wh rules approve requires a <rule-id> or --all",
-                            "wh rules approve <rule-id> | wh rules approve --all [--dep <name>] [--confidence high]",
-                        ));
-                        return 1;
-                    }
-                    (Some(_), true) => unreachable!("clap conflicts_with guards this"),
-                };
-                match result {
-                    Ok(value) => {
-                        if json_mode {
-                            output::print_json(&value);
-                        } else if let Some(count) =
-                            value.get("approved_count").and_then(|v| v.as_i64())
-                        {
-                            println!("wh rules approve: {count} candidate(s) approved");
-                        } else {
-                            let id = value.get("rule_id").and_then(|v| v.as_str()).unwrap_or("?");
-                            let action =
-                                value.get("action").and_then(|v| v.as_str()).unwrap_or("?");
-                            println!("wh rules approve: {id} -> {action}");
-                        }
-                        0
-                    }
-                    Err(e) => {
-                        output::print_json(&output::error_json(
-                            &e.to_string(),
-                            "wh rules approve --help",
-                        ));
-                        1
-                    }
-                }
-            }
+            } => run_approve_command(
+                &project_dir,
+                rule_id,
+                all,
+                dep,
+                confidence,
+                json_mode,
+                ApproveUiConfig {
+                    command_name: "wh rules approve",
+                    missing_usage_error: "wh rules approve requires a <rule-id> or --all",
+                    missing_usage_hint:
+                        "wh rules approve <rule-id> | wh rules approve --all [--dep <name>] [--confidence high]",
+                    failure_hint: "wh rules approve --help",
+                },
+            ),
             RulesAction::Worklist {
                 dep,
                 lang,
                 project_dir,
-            } => match worklist::load(&project_dir) {
-                Ok(handoff) => {
-                    let wl = handoff
-                        .get("worklist")
-                        .and_then(|v| v.as_array())
-                        .cloned()
-                        .unwrap_or_default();
-                    let filtered = worklist::filter(&wl, dep.as_deref(), lang.as_deref());
-                    let value = serde_json::json!({
-                        "status": "ok",
-                        "generated_at": handoff.get("generated_at"),
-                        "trigger": handoff.get("trigger"),
-                        "total": filtered.len(),
-                        "entries": filtered,
-                        "next_command": "Pick the first `ready_now` entry, extract rules, and `wh extract submit <bundle>`",
-                    });
+            } => match build_worklist_value(&project_dir, dep.as_deref(), lang.as_deref()) {
+                Ok(value) => {
                     if json_mode {
                         output::print_json(&value);
                     } else {
@@ -2353,9 +2102,9 @@ pub fn run() -> i32 {
                             for s in arr {
                                 let name = s.get("name").and_then(|x| x.as_str()).unwrap_or("?");
                                 let bytes = s
-                                    .get("content")
-                                    .and_then(|x| x.as_str())
-                                    .map(|c| c.len())
+                                    .get("content_bytes")
+                                    .and_then(|x| x.as_u64())
+                                    .map(|c| c as usize)
                                     .unwrap_or(0);
                                 println!("  {name}  ({bytes} bytes)");
                             }
@@ -2401,55 +2150,23 @@ pub fn run() -> i32 {
                         println!("Config validation passed.");
                     }
                 }
-                if snapshot.has_errors() { 1 } else { 0 }
+                if snapshot.has_errors() {
+                    1
+                } else {
+                    0
+                }
             }
         },
 
         Commands::Report {
             project_dir,
             pr_comment,
-        } => {
-            let opts = report::ReportOptions {
-                project_dir: &project_dir,
-                pr_comment,
-            };
-            match report::build(&opts) {
-                Ok(mut data) => {
-                    let markdown = report::to_markdown(&data);
-                    let path = match report::write_markdown_report(&project_dir, &markdown) {
-                        Ok(path) => path,
-                        Err(e) => {
-                            output::print_json(&output::error_json(
-                                &e.to_string(),
-                                "Whetstone could not write whetstone/report.md; check filesystem permissions and retry",
-                            ));
-                            return 1;
-                        }
-                    };
-                    if let Some(obj) = data.as_object_mut() {
-                        obj.insert(
-                            "report_path".to_string(),
-                            serde_json::Value::String(path.display().to_string()),
-                        );
-                    }
-                    if pr_comment {
-                        print!("{}", markdown);
-                    } else if json_mode {
-                        output::print_json(&data);
-                    } else {
-                        println!("Report written to {}", path.display());
-                    }
-                    0
-                }
-                Err(e) => {
-                    output::print_json(&output::error_json(
-                        &e.to_string(),
-                        "wh report composes wh status + wh scan; fix the underlying failure and retry",
-                    ));
-                    1
-                }
-            }
-        }
+        } => run_report_command(
+            &project_dir,
+            pr_comment,
+            json_mode,
+            "wh report composes wh status + wh scan; fix the underlying failure and retry",
+        ),
 
         Commands::Debt {
             project_dir,
@@ -2561,6 +2278,310 @@ fn parse_since_days(raw: &str) -> Result<u32, String> {
     digits
         .parse::<u32>()
         .map_err(|_| format!("invalid churn window `{raw}`; use `90d` or a plain day count"))
+}
+
+fn run_report_command(project_dir: &Path, pr_comment: bool, json_mode: bool, hint: &str) -> i32 {
+    let opts = report::ReportOptions {
+        project_dir,
+        pr_comment,
+    };
+    match report::build(&opts) {
+        Ok(mut data) => {
+            let markdown = report::to_markdown(&data);
+            let path = match report::write_markdown_report(project_dir, &markdown) {
+                Ok(path) => path,
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "Whetstone could not write whetstone/report.md; check filesystem permissions and retry",
+                    ));
+                    return 1;
+                }
+            };
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert(
+                    "report_path".to_string(),
+                    serde_json::Value::String(path.display().to_string()),
+                );
+            }
+            if pr_comment {
+                print!("{}", markdown);
+            } else if json_mode {
+                output::print_json(&data);
+            } else {
+                println!("Report written to {}", path.display());
+            }
+            0
+        }
+        Err(e) => {
+            output::print_json(&output::error_json(&e.to_string(), hint));
+            1
+        }
+    }
+}
+
+fn run_context_command(
+    project_dir: &Path,
+    formats: Option<&str>,
+    lang: Option<&str>,
+    dry_run: bool,
+    personal: bool,
+    terse: bool,
+    json_mode: bool,
+) -> i32 {
+    match generate_context::generate_context(project_dir, formats, lang, dry_run, personal, terse) {
+        Ok(result) => {
+            if json_mode {
+                output::print_json(&result);
+            } else {
+                let gen = result.get("generated").and_then(|v| v.as_array());
+                if let Some(files) = gen {
+                    for f in files {
+                        let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                        let lines = f.get("lines").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let dry = if f.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false) {
+                            " (dry run)"
+                        } else {
+                            ""
+                        };
+                        println!("  + {path} ({lines} lines){dry}");
+                    }
+                }
+            }
+            0
+        }
+        Err(e) => {
+            output::print_json(&output::error_json(
+                &e.to_string(),
+                "Check whetstone/rules/ directory for approved rules",
+            ));
+            1
+        }
+    }
+}
+
+fn run_lint_command(
+    project_dir: &Path,
+    lang: Option<&str>,
+    dry_run: bool,
+    personal: bool,
+    json_mode: bool,
+) -> i32 {
+    match generate_lint::generate_lint(project_dir, lang, dry_run, personal) {
+        Ok(result) => {
+            if json_mode {
+                output::print_json(&result);
+            } else if let Some(gen) = result.get("generated") {
+                if let Some(lints) = gen.get("lint_configs").and_then(|v| v.as_array()) {
+                    for f in lints {
+                        let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                        println!("  + {path}");
+                    }
+                }
+                if let Some(formatters) = gen.get("formatter_configs").and_then(|v| v.as_array()) {
+                    for f in formatters {
+                        let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                        println!("  + {path}");
+                    }
+                }
+            }
+            0
+        }
+        Err(e) => {
+            output::print_json(&output::error_json(
+                &e.to_string(),
+                "Check whetstone/rules/ directory for approved rules with lint_proxy signals",
+            ));
+            1
+        }
+    }
+}
+
+fn run_tests_command(
+    project_dir: &Path,
+    lang: Option<&str>,
+    dry_run: bool,
+    personal: bool,
+    json_mode: bool,
+) -> i32 {
+    match generate_tests::generate_tests(project_dir, lang, dry_run, personal) {
+        Ok(result) => {
+            if json_mode {
+                output::print_json(&result);
+            } else if let Some(gen) = result.get("generated") {
+                if let Some(tests) = gen.get("tests").and_then(|v| v.as_array()) {
+                    for f in tests {
+                        let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                        println!("  + {path}");
+                    }
+                }
+                if let Some(lints) = gen.get("lint_configs").and_then(|v| v.as_array()) {
+                    for f in lints {
+                        let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                        println!("  + {path}");
+                    }
+                }
+            }
+            0
+        }
+        Err(e) => {
+            output::print_json(&output::error_json(
+                &e.to_string(),
+                "Check whetstone/rules/ directory for approved rules",
+            ));
+            1
+        }
+    }
+}
+
+struct ApproveUiConfig<'a> {
+    command_name: &'a str,
+    missing_usage_error: &'a str,
+    missing_usage_hint: &'a str,
+    failure_hint: &'a str,
+}
+
+fn run_approve_command(
+    project_dir: &Path,
+    rule_id: Option<String>,
+    all: bool,
+    dep: Option<String>,
+    confidence: Option<String>,
+    json_mode: bool,
+    ui: ApproveUiConfig<'_>,
+) -> i32 {
+    let result = match (rule_id, all) {
+        (Some(id), false) => approve::approve_by_id(project_dir, &id),
+        (None, true) => approve::approve_bulk(project_dir, dep.as_deref(), confidence.as_deref()),
+        (None, false) => {
+            output::print_json(&output::error_json(ui.missing_usage_error, ui.missing_usage_hint));
+            return 1;
+        }
+        (Some(_), true) => unreachable!("clap conflicts_with guards this"),
+    };
+
+    match result {
+        Ok(value) => {
+            if json_mode {
+                output::print_json(&value);
+            } else if let Some(count) = value.get("approved_count").and_then(|v| v.as_i64()) {
+                println!("{}: {count} candidate(s) approved", ui.command_name);
+            } else {
+                let id = value.get("rule_id").and_then(|v| v.as_str()).unwrap_or("?");
+                let action = value.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+                println!("{}: {id} -> {action}", ui.command_name);
+            }
+            0
+        }
+        Err(e) => {
+            output::print_json(&output::error_json(&e.to_string(), ui.failure_hint));
+            1
+        }
+    }
+}
+
+fn worklist_sort_key(entry: &serde_json::Value) -> (String, String, String, String) {
+    let bucket = entry
+        .get("priority_bucket")
+        .or_else(|| entry.get("priority"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let lang = entry
+        .get("lang")
+        .or_else(|| entry.get("language"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let dep = entry
+        .get("dep")
+        .or_else(|| entry.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let id = entry
+        .get("id")
+        .or_else(|| entry.get("rule_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    (bucket, lang, dep, id)
+}
+
+fn build_worklist_value(
+    project_dir: &Path,
+    dep: Option<&str>,
+    lang: Option<&str>,
+) -> anyhow::Result<serde_json::Value> {
+    let handoff = worklist::load(project_dir)?;
+    let mut filtered = handoff
+        .get("worklist")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    filtered = worklist::filter(&filtered, dep, lang);
+    backfill_worklist_languages(project_dir, &mut filtered);
+    filtered.sort_by_key(worklist_sort_key);
+
+    let total = filtered.len();
+    let truncated = total > WORKLIST_MAX_ENTRIES;
+    if truncated {
+        filtered.truncate(WORKLIST_MAX_ENTRIES);
+    }
+
+    Ok(serde_json::json!({
+        "status": "ok",
+        "generated_at": handoff.get("generated_at"),
+        "trigger": handoff.get("trigger"),
+        "handoff_path": project_dir.join("whetstone").join(".state").join("extraction-handoff.json").display().to_string(),
+        "total": total,
+        "returned": filtered.len(),
+        "truncated": truncated,
+        "max_entries": WORKLIST_MAX_ENTRIES,
+        "entries": filtered,
+        "next_command": "Pick the first `ready_now` entry, extract rules, and `wh extract submit <bundle>`",
+    }))
+}
+
+fn backfill_worklist_languages(project_dir: &Path, entries: &mut [serde_json::Value]) {
+    let mut sm = crate::state::StateManager::new(project_dir);
+    sm.load_all();
+    let deps = sm.inventory.all_deps();
+    let mut by_name: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+    for dep in deps {
+        let Some(name) = dep.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(language) = dep.get("language").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        by_name
+            .entry(name.to_string())
+            .or_default()
+            .insert(language.to_string());
+    }
+
+    for entry in entries.iter_mut() {
+        let missing_lang = entry
+            .get("language")
+            .and_then(|v| v.as_str())
+            .map(|s| s.is_empty())
+            .unwrap_or(true);
+        if !missing_lang {
+            continue;
+        }
+        let Some(name) = entry.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if let Some(langs) = by_name.get(name) {
+            if langs.len() == 1 {
+                if let Some(language) = langs.iter().next() {
+                    entry["language"] = serde_json::Value::String(language.clone());
+                }
+            }
+        }
+    }
 }
 
 fn launch_tui_for_command(command: &Commands) -> i32 {
@@ -2773,7 +2794,8 @@ fn load_deps_input(input: Option<&std::path::Path>) -> anyhow::Result<serde_json
 
 #[cfg(test)]
 mod tests {
-    use super::parse_since_days;
+    use super::{parse_since_days, worklist_sort_key};
+    use serde_json::json;
 
     #[test]
     fn parse_since_days_accepts_duration_suffix() {
@@ -2784,5 +2806,34 @@ mod tests {
     #[test]
     fn parse_since_days_rejects_bad_values() {
         assert!(parse_since_days("ten days").is_err());
+    }
+
+    #[test]
+    fn worklist_sort_key_prefers_stable_fields() {
+        let entry = json!({
+            "priority_bucket": "ready_now",
+            "lang": "python",
+            "dep": "fastapi",
+            "id": "fastapi.async-routes"
+        });
+        let key = worklist_sort_key(&entry);
+        assert_eq!(key.0, "ready_now");
+        assert_eq!(key.1, "python");
+        assert_eq!(key.2, "fastapi");
+        assert_eq!(key.3, "fastapi.async-routes");
+    }
+
+    #[test]
+    fn worklist_sort_key_falls_back_to_secondary_fields() {
+        let entry = json!({
+            "priority_bucket": "later",
+            "language": "rust",
+            "name": "serde",
+            "rule_id": "serde.deprecated-api"
+        });
+        let key = worklist_sort_key(&entry);
+        assert_eq!(key.1, "rust");
+        assert_eq!(key.2, "serde");
+        assert_eq!(key.3, "serde.deprecated-api");
     }
 }

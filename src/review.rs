@@ -2,11 +2,11 @@
 //!
 //! The lean refactor (bead whetstone-aww) reduced the command surface to:
 //! - `wh review` — list rules grouped by lifecycle status
-//! - `wh review show <id>` — full context for a single rule
-//! - `wh review worklist` — render the dependency-scoped extraction worklist
+//! - `wh rules show <id>` — full context for a single rule
+//! - `wh rules worklist` — render the dependency-scoped extraction worklist
 //!
 //! Apply/queue/diff flows were removed; the later beads introduce
-//! `wh extract` (submit candidates) and `wh approve` (candidate → approved)
+//! `wh extract` (submit candidates) and `wh rules approve` (candidate → approved)
 //! which own the lifecycle transitions instead.
 
 use anyhow::{anyhow, Result};
@@ -56,7 +56,7 @@ pub fn list(opts: ReviewListOptions<'_>) -> Result<Value> {
         },
         "rules": by_status,
         "warnings": warnings,
-        "next_command": "wh review show <rule-id> | wh approve <rule-id>",
+        "next_command": "wh rules show <rule-id> | wh rules approve <rule-id>",
     }))
 }
 
@@ -171,7 +171,8 @@ fn first_line(text: &str) -> String {
 pub fn format_worklist(result: &Value) -> String {
     let mut out = String::new();
     let total = result.get("total").and_then(|v| v.as_i64()).unwrap_or(0);
-    out.push_str(&format!("wh review worklist: {total} entry/entries\n"));
+    out.push_str(&format!("wh rules worklist: {total} entry/entries\n"));
+    out.push_str("Flow: sources -> rules -> violations\n");
     if let Some(entries) = result.get("entries").and_then(|v| v.as_array()) {
         for entry in entries {
             let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
@@ -192,9 +193,20 @@ pub fn format_worklist(result: &Value) -> String {
                 .get("next_step")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
+            let health = entry
+                .get("fetch_health")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let source_conf = entry
+                .get("source_confidence")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             out.push_str(&format!(
-                "  [{priority}] {name} ({lang}) — quota remaining: {remaining}\n    → {next}\n"
+                "  [{priority}] {name} ({lang}) — quota remaining: {remaining} · fetch: {health} · confidence: {source_conf}\n    → {next}\n"
             ));
+            if let Some(guidance) = entry.get("confidence_guidance").and_then(|v| v.as_str()) {
+                out.push_str(&format!("    guidance: {guidance}\n"));
+            }
         }
     }
     if let Some(next) = result.get("next_command").and_then(|v| v.as_str()) {

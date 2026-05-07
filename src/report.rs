@@ -178,7 +178,7 @@ pub fn to_markdown(data: &Value) -> String {
         if drifted > 0 {
             out.push_str(&format!(
                 "## Dependency drift\n\n{drifted} dep(s) have changed since the last refresh. \
-                 Run `wh reinit` to re-resolve, then `wh extract` + `wh approve` \
+                 Run `wh reinit` to re-resolve, then `wh extract` + `wh rules approve` \
                  to update rules.\n\n"
             ));
         } else {

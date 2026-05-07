@@ -1339,7 +1339,13 @@ extends:
     .unwrap();
 
     let (stdout, _stderr, ok) = run_whetstone(
-        &["config", "show", "--json", "--project-dir", tmp.to_str().unwrap()],
+        &[
+            "config",
+            "show",
+            "--json",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
         tmp.to_str().unwrap(),
     );
     assert!(ok, "wh config show should succeed: {stdout}");
@@ -1396,13 +1402,14 @@ extends:
     assert!(!ok, "wh config validate should fail for a missing pack");
     let result = parse_json(&stdout);
     assert_eq!(result["valid"], false);
-    assert!(
-        result["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|d| d["message"].as_str().unwrap_or("").contains("failed to load pack"))
-    );
+    assert!(result["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|d| d["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("failed to load pack")));
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

@@ -16,16 +16,11 @@ pub struct App {
     pub screen: Screen,
     pub quit: bool,
     pub input_mode: InputMode,
-    pub help_scroll_y: u16,
-    pub help_scroll_x: u16,
-    pub dashboard_scroll: usize,
+    pub help: HelpState,
+    pub dashboard_ui: DashboardUiState,
     pub dashboard: DashboardState,
-    pub sources_dataset: SourcesDataset,
-    pub sources_selected: usize,
-    pub sources_detail_selected: bool,
-    pub sources_detail_scroll_y: u16,
-    pub sources_form: SourcesFormState,
-    pub rules_form: RulesFormState,
+    pub sources_ui: SourcesUiState,
+    pub rules_ui: RulesUiState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -72,6 +67,31 @@ pub struct SourcesFormState {
 }
 
 #[derive(Debug, Default, Clone)]
+pub struct HelpState {
+    pub scroll_y: u16,
+    pub scroll_x: u16,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct DashboardUiState {
+    pub scroll: usize,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct SourcesUiState {
+    pub dataset: SourcesDataset,
+    pub selected: usize,
+    pub detail_selected: bool,
+    pub detail_scroll_y: u16,
+    pub form: SourcesFormState,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct RulesUiState {
+    pub form: RulesFormState,
+}
+
+#[derive(Debug, Default, Clone)]
 pub struct RulesFormState {
     pub active_field: usize,
     pub team_scope: bool,
@@ -104,7 +124,6 @@ pub struct DashboardState {
     /// method. Screens own their own data shape — see `src/tui/screens/*.rs`.
     pub rules: crate::tui::screens::rules::RulesView,
     pub sources: crate::tui::screens::sources::SourcesView,
-    pub extract: crate::tui::screens::extract::ExtractView,
     pub check: crate::tui::screens::check::CheckView,
 }
 
@@ -167,16 +186,11 @@ impl App {
             screen: Screen::Dashboard,
             quit: false,
             input_mode: InputMode::Normal,
-            help_scroll_y: 0,
-            help_scroll_x: 0,
-            dashboard_scroll: 0,
+            help: HelpState::default(),
+            dashboard_ui: DashboardUiState::default(),
             dashboard: DashboardState::default(),
-            sources_dataset: SourcesDataset::default(),
-            sources_selected: 0,
-            sources_detail_selected: false,
-            sources_detail_scroll_y: 0,
-            sources_form: SourcesFormState::default(),
-            rules_form: RulesFormState::default(),
+            sources_ui: SourcesUiState::default(),
+            rules_ui: RulesUiState::default(),
         };
         app.load_dashboard();
         Ok(app)
@@ -190,12 +204,10 @@ impl App {
 
     pub fn update(&mut self, msg: Msg) {
         match msg {
-            Msg::Quit => self.quit = true,
             Msg::GoToScreen(s) => {
                 self.screen = s;
                 self.ensure_current_screen_loaded();
             }
-            Msg::Tick => {} // reserved for future spinner animation
             Msg::Key(ev) => self.handle_key(ev),
         }
     }
@@ -203,14 +215,7 @@ impl App {
     /// Trigger the lazy loader for whichever screen is currently active.
     /// Screens that don't have a loader (Dashboard, Help) are no-ops.
     pub fn ensure_current_screen_loaded(&mut self) {
-        match self.screen {
-            Screen::Result => {}
-            Screen::Debt => self.ensure_debt_loaded(),
-            Screen::Sources => self.ensure_sources_loaded(),
-            Screen::Rules => self.ensure_rules_loaded(),
-            Screen::Check => self.ensure_check_loaded(),
-            Screen::Dashboard | Screen::Help => {}
-        }
+        crate::tui::screens::ensure_loaded(self.screen, self);
     }
 
     /// Each ensure_*_loaded method transitions `NotComputed` → `Loading` →
@@ -218,48 +223,24 @@ impl App {
     /// screen's `load` function in `src/tui/screens/<name>.rs`; the method
     /// below just drives the state machine.
     pub fn ensure_rules_loaded(&mut self) {
-        if !matches!(
-            self.dashboard.rules,
-            crate::tui::screens::rules::RulesView::NotComputed
-        ) {
-            return;
+        if self.dashboard.rules.is_not_computed() {
+            self.dashboard.rules = crate::tui::screens::rules::RulesView::Loading;
+            self.dashboard.rules = crate::tui::screens::rules::load(&self.project_dir);
         }
-        self.dashboard.rules = crate::tui::screens::rules::RulesView::Loading;
-        self.dashboard.rules = crate::tui::screens::rules::load(&self.project_dir);
     }
 
     pub fn ensure_sources_loaded(&mut self) {
-        self.ensure_extract_loaded();
-        if !matches!(
-            self.dashboard.sources,
-            crate::tui::screens::sources::SourcesView::NotComputed
-        ) {
-            return;
+        if self.dashboard.sources.is_not_computed() {
+            self.dashboard.sources = crate::tui::screens::sources::SourcesView::Loading;
+            self.dashboard.sources = crate::tui::screens::sources::load(&self.project_dir);
         }
-        self.dashboard.sources = crate::tui::screens::sources::SourcesView::Loading;
-        self.dashboard.sources = crate::tui::screens::sources::load(&self.project_dir);
-    }
-
-    pub fn ensure_extract_loaded(&mut self) {
-        if !matches!(
-            self.dashboard.extract,
-            crate::tui::screens::extract::ExtractView::NotComputed
-        ) {
-            return;
-        }
-        self.dashboard.extract = crate::tui::screens::extract::ExtractView::Loading;
-        self.dashboard.extract = crate::tui::screens::extract::load(&self.project_dir);
     }
 
     pub fn ensure_check_loaded(&mut self) {
-        if !matches!(
-            self.dashboard.check,
-            crate::tui::screens::check::CheckView::NotComputed
-        ) {
-            return;
+        if self.dashboard.check.is_not_computed() {
+            self.dashboard.check = crate::tui::screens::check::CheckView::Loading;
+            self.dashboard.check = crate::tui::screens::check::load(&self.project_dir);
         }
-        self.dashboard.check = crate::tui::screens::check::CheckView::Loading;
-        self.dashboard.check = crate::tui::screens::check::load(&self.project_dir);
     }
 
     /// Compute the debt report on-demand. Synchronous — running `wh debt`
@@ -287,28 +268,16 @@ impl App {
 
         match ev.code {
             KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => self.quit = true,
-            KeyCode::Char('1') => self.screen = Screen::Dashboard,
-            KeyCode::Char('2') => {
-                self.screen = Screen::Sources;
-                self.ensure_sources_loaded();
-            }
-            KeyCode::Char('3') => {
-                self.screen = Screen::Rules;
-                self.ensure_rules_loaded();
-            }
-            KeyCode::Char('4') => {
-                self.screen = Screen::Check;
-                self.ensure_check_loaded();
-            }
-            KeyCode::Char('5') => {
-                self.screen = Screen::Debt;
-                self.ensure_debt_loaded();
+            KeyCode::Char(c) if Screen::from_nav_key(c).is_some() => {
+                if let Some(screen) = Screen::from_nav_key(c) {
+                    self.update(Msg::GoToScreen(screen));
+                }
             }
             KeyCode::Char('?') => self.screen = Screen::Help,
             KeyCode::Char('a') | KeyCode::Char('A') => match self.screen {
                 Screen::Sources
                     if matches!(
-                        self.sources_dataset,
+                        self.sources_ui.dataset,
                         SourcesDataset::Personal | SourcesDataset::Team
                     ) =>
                 {
@@ -318,10 +287,10 @@ impl App {
                 _ => {}
             },
             KeyCode::Tab if self.screen == Screen::Sources => {
-                self.sources_detail_selected = !self.sources_detail_selected;
+                self.sources_ui.detail_selected = !self.sources_ui.detail_selected;
             }
             KeyCode::BackTab if self.screen == Screen::Sources => {
-                self.sources_detail_selected = !self.sources_detail_selected;
+                self.sources_ui.detail_selected = !self.sources_ui.detail_selected;
             }
             KeyCode::Tab if self.screen == Screen::Debt => {
                 if let DebtView::Ready(data) = &mut self.dashboard.debt {
@@ -329,33 +298,33 @@ impl App {
                 }
             }
             KeyCode::Char('d') | KeyCode::Char('D') if self.screen == Screen::Sources => {
-                self.sources_dataset = SourcesDataset::Dependencies;
-                self.sources_selected = 0;
-                self.sources_detail_scroll_y = 0;
+                self.sources_ui.dataset = SourcesDataset::Dependencies;
+                self.sources_ui.selected = 0;
+                self.sources_ui.detail_scroll_y = 0;
             }
             KeyCode::Char('p') | KeyCode::Char('P') if self.screen == Screen::Sources => {
-                self.sources_dataset = SourcesDataset::Personal;
-                self.sources_selected = 0;
-                self.sources_detail_scroll_y = 0;
+                self.sources_ui.dataset = SourcesDataset::Personal;
+                self.sources_ui.selected = 0;
+                self.sources_ui.detail_scroll_y = 0;
             }
             KeyCode::Char('t') | KeyCode::Char('T') if self.screen == Screen::Sources => {
-                self.sources_dataset = SourcesDataset::Team;
-                self.sources_selected = 0;
-                self.sources_detail_scroll_y = 0;
+                self.sources_ui.dataset = SourcesDataset::Team;
+                self.sources_ui.selected = 0;
+                self.sources_ui.detail_scroll_y = 0;
             }
             KeyCode::Left | KeyCode::Char('h')
-                if self.screen == Screen::Sources && !self.sources_detail_selected =>
+                if self.screen == Screen::Sources && !self.sources_ui.detail_selected =>
             {
-                self.sources_dataset = self.sources_dataset.prev();
-                self.sources_selected = 0;
-                self.sources_detail_scroll_y = 0;
+                self.sources_ui.dataset = self.sources_ui.dataset.prev();
+                self.sources_ui.selected = 0;
+                self.sources_ui.detail_scroll_y = 0;
             }
             KeyCode::Right | KeyCode::Char('l')
-                if self.screen == Screen::Sources && !self.sources_detail_selected =>
+                if self.screen == Screen::Sources && !self.sources_ui.detail_selected =>
             {
-                self.sources_dataset = self.sources_dataset.next();
-                self.sources_selected = 0;
-                self.sources_detail_scroll_y = 0;
+                self.sources_ui.dataset = self.sources_ui.dataset.next();
+                self.sources_ui.selected = 0;
+                self.sources_ui.detail_scroll_y = 0;
             }
             KeyCode::Up | KeyCode::Char('k') => self.select_prev_on_current_screen(1),
             KeyCode::Down | KeyCode::Char('j') => self.select_next_on_current_screen(1),
@@ -373,27 +342,27 @@ impl App {
         for _ in 0..steps {
             match self.screen {
                 Screen::Dashboard => {
-                    self.dashboard_scroll = self.dashboard_scroll.saturating_sub(1)
+                    self.dashboard_ui.scroll = self.dashboard_ui.scroll.saturating_sub(1)
                 }
-                Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_sub(1),
+                Screen::Help => self.help.scroll_y = self.help.scroll_y.saturating_sub(1),
                 Screen::Result => self.dashboard.result.scroll_up(1),
                 Screen::Debt => self.dashboard.debt.select_prev(),
-                Screen::Sources => match self.sources_dataset {
-                    SourcesDataset::Dependencies if self.sources_detail_selected => {
-                        self.sources_detail_scroll_y =
-                            self.sources_detail_scroll_y.saturating_sub(1)
+                Screen::Sources => match self.sources_ui.dataset {
+                    SourcesDataset::Dependencies if self.sources_ui.detail_selected => {
+                        self.sources_ui.detail_scroll_y =
+                            self.sources_ui.detail_scroll_y.saturating_sub(1)
                     }
                     SourcesDataset::Dependencies => {
-                        self.dashboard.extract.select_prev();
-                        self.sources_detail_scroll_y = 0;
+                        self.sources_ui.selected = self.sources_ui.selected.saturating_sub(1);
+                        self.sources_ui.detail_scroll_y = 0;
                     }
                     SourcesDataset::Personal | SourcesDataset::Team => {
-                        if self.sources_detail_selected {
-                            self.sources_detail_scroll_y =
-                                self.sources_detail_scroll_y.saturating_sub(1);
+                        if self.sources_ui.detail_selected {
+                            self.sources_ui.detail_scroll_y =
+                                self.sources_ui.detail_scroll_y.saturating_sub(1);
                         } else {
-                            self.sources_selected = self.sources_selected.saturating_sub(1);
-                            self.sources_detail_scroll_y = 0;
+                            self.sources_ui.selected = self.sources_ui.selected.saturating_sub(1);
+                            self.sources_ui.detail_scroll_y = 0;
                         }
                     }
                 },
@@ -407,50 +376,57 @@ impl App {
         for _ in 0..steps {
             match self.screen {
                 Screen::Dashboard => {
-                    self.dashboard_scroll = self.dashboard_scroll.saturating_add(1)
+                    self.dashboard_ui.scroll = self.dashboard_ui.scroll.saturating_add(1)
                 }
-                Screen::Help => self.help_scroll_y = self.help_scroll_y.saturating_add(1),
+                Screen::Help => self.help.scroll_y = self.help.scroll_y.saturating_add(1),
                 Screen::Result => self.dashboard.result.scroll_down(1),
                 Screen::Debt => self.dashboard.debt.select_next(),
-                Screen::Sources => match self.sources_dataset {
-                    SourcesDataset::Dependencies if self.sources_detail_selected => {
-                        self.sources_detail_scroll_y =
-                            self.sources_detail_scroll_y.saturating_add(1)
+                Screen::Sources => match self.sources_ui.dataset {
+                    SourcesDataset::Dependencies if self.sources_ui.detail_selected => {
+                        self.sources_ui.detail_scroll_y =
+                            self.sources_ui.detail_scroll_y.saturating_add(1)
                     }
                     SourcesDataset::Dependencies => {
-                        self.dashboard.extract.select_next();
-                        self.sources_detail_scroll_y = 0;
+                        let max = self
+                            .dashboard
+                            .sources
+                            .row_count_for(SourcesDataset::Dependencies)
+                            .saturating_sub(1);
+                        if self.sources_ui.selected < max {
+                            self.sources_ui.selected += 1;
+                        }
+                        self.sources_ui.detail_scroll_y = 0;
                     }
                     SourcesDataset::Personal => {
-                        if self.sources_detail_selected {
-                            self.sources_detail_scroll_y =
-                                self.sources_detail_scroll_y.saturating_add(1);
+                        if self.sources_ui.detail_selected {
+                            self.sources_ui.detail_scroll_y =
+                                self.sources_ui.detail_scroll_y.saturating_add(1);
                         } else {
                             let max = self
                                 .dashboard
                                 .sources
                                 .row_count_for(SourcesDataset::Personal)
                                 .saturating_sub(1);
-                            if self.sources_selected < max {
-                                self.sources_selected += 1;
+                            if self.sources_ui.selected < max {
+                                self.sources_ui.selected += 1;
                             }
-                            self.sources_detail_scroll_y = 0;
+                            self.sources_ui.detail_scroll_y = 0;
                         }
                     }
                     SourcesDataset::Team => {
-                        if self.sources_detail_selected {
-                            self.sources_detail_scroll_y =
-                                self.sources_detail_scroll_y.saturating_add(1);
+                        if self.sources_ui.detail_selected {
+                            self.sources_ui.detail_scroll_y =
+                                self.sources_ui.detail_scroll_y.saturating_add(1);
                         } else {
                             let max = self
                                 .dashboard
                                 .sources
                                 .row_count_for(SourcesDataset::Team)
                                 .saturating_sub(1);
-                            if self.sources_selected < max {
-                                self.sources_selected += 1;
+                            if self.sources_ui.selected < max {
+                                self.sources_ui.selected += 1;
                             }
-                            self.sources_detail_scroll_y = 0;
+                            self.sources_ui.detail_scroll_y = 0;
                         }
                     }
                 },
@@ -462,7 +438,7 @@ impl App {
 
     fn scroll_left_on_current_screen(&mut self, steps: u16) {
         match self.screen {
-            Screen::Help => self.help_scroll_x = self.help_scroll_x.saturating_sub(steps),
+            Screen::Help => self.help.scroll_x = self.help.scroll_x.saturating_sub(steps),
             Screen::Result => self.dashboard.result.scroll_left(steps),
             Screen::Debt => self.dashboard.debt.scroll_left(steps),
             _ => {}
@@ -471,7 +447,7 @@ impl App {
 
     fn scroll_right_on_current_screen(&mut self, steps: u16) {
         match self.screen {
-            Screen::Help => self.help_scroll_x = self.help_scroll_x.saturating_add(steps),
+            Screen::Help => self.help.scroll_x = self.help.scroll_x.saturating_add(steps),
             Screen::Result => self.dashboard.result.scroll_right(steps),
             Screen::Debt => self.dashboard.debt.scroll_right(steps),
             _ => {}
@@ -479,19 +455,19 @@ impl App {
     }
 
     fn open_sources_form(&mut self) {
-        self.sources_form = SourcesFormState {
+        self.sources_ui.form = SourcesFormState {
             active_field: 0,
-            team_scope: self.sources_dataset == SourcesDataset::Team,
+            team_scope: self.sources_ui.dataset == SourcesDataset::Team,
             url: String::new(),
             language_idx: 3,
             error: None,
         };
-        self.sources_detail_selected = true;
+        self.sources_ui.detail_selected = true;
         self.input_mode = InputMode::SourcesAdd;
     }
 
     fn open_rules_form(&mut self) {
-        self.rules_form = RulesFormState {
+        self.rules_ui.form = RulesFormState {
             active_field: 1,
             ..RulesFormState::default()
         };
@@ -510,26 +486,28 @@ impl App {
         match ev.code {
             KeyCode::Esc => {
                 self.input_mode = InputMode::Normal;
-                self.sources_form.error = None;
-                self.sources_detail_selected = false;
+                self.sources_ui.form.error = None;
+                self.sources_ui.detail_selected = false;
             }
             KeyCode::Tab => {
-                self.sources_form.active_field = (self.sources_form.active_field + 1) % 2;
+                self.sources_ui.form.active_field = (self.sources_ui.form.active_field + 1) % 2;
             }
             KeyCode::BackTab => {
-                self.sources_form.active_field = self.sources_form.active_field.saturating_sub(1);
+                self.sources_ui.form.active_field =
+                    self.sources_ui.form.active_field.saturating_sub(1);
             }
-            KeyCode::Backspace if self.sources_form.active_field == 0 => {
+            KeyCode::Backspace if self.sources_ui.form.active_field == 0 => {
                 self.current_sources_field_mut().pop();
             }
             KeyCode::Enter => self.submit_sources_form(),
-            KeyCode::Left | KeyCode::Char('h') if self.sources_form.active_field == 1 => {
-                self.sources_form.language_idx = self.sources_form.language_idx.saturating_sub(1);
+            KeyCode::Left | KeyCode::Char('h') if self.sources_ui.form.active_field == 1 => {
+                self.sources_ui.form.language_idx =
+                    self.sources_ui.form.language_idx.saturating_sub(1);
             }
-            KeyCode::Right | KeyCode::Char('l') if self.sources_form.active_field == 1 => {
-                self.sources_form.language_idx = (self.sources_form.language_idx + 1).min(3);
+            KeyCode::Right | KeyCode::Char('l') if self.sources_ui.form.active_field == 1 => {
+                self.sources_ui.form.language_idx = (self.sources_ui.form.language_idx + 1).min(3);
             }
-            KeyCode::Char(c) if self.sources_form.active_field == 0 => {
+            KeyCode::Char(c) if self.sources_ui.form.active_field == 0 => {
                 self.current_sources_field_mut().push(c);
             }
             _ => {}
@@ -540,16 +518,16 @@ impl App {
         match ev.code {
             KeyCode::Esc => {
                 self.input_mode = InputMode::Normal;
-                self.rules_form.error = None;
+                self.rules_ui.form.error = None;
             }
             KeyCode::Tab => {
-                self.rules_form.active_field = (self.rules_form.active_field + 1) % 4;
+                self.rules_ui.form.active_field = (self.rules_ui.form.active_field + 1) % 4;
             }
             KeyCode::BackTab => {
-                self.rules_form.active_field = self.rules_form.active_field.saturating_sub(1);
+                self.rules_ui.form.active_field = self.rules_ui.form.active_field.saturating_sub(1);
             }
             KeyCode::Backspace => {
-                if matches!(self.rules_form.active_field, 1 | 3) {
+                if matches!(self.rules_ui.form.active_field, 1 | 3) {
                     self.current_rules_field_mut().pop();
                 }
             }
@@ -559,19 +537,19 @@ impl App {
             {
                 self.submit_rules_form();
             }
-            KeyCode::Left | KeyCode::Char('h') if self.rules_form.active_field == 0 => {
-                self.rules_form.team_scope = !self.rules_form.team_scope;
+            KeyCode::Left | KeyCode::Char('h') if self.rules_ui.form.active_field == 0 => {
+                self.rules_ui.form.team_scope = !self.rules_ui.form.team_scope;
             }
-            KeyCode::Right | KeyCode::Char('l') if self.rules_form.active_field == 0 => {
-                self.rules_form.team_scope = !self.rules_form.team_scope;
+            KeyCode::Right | KeyCode::Char('l') if self.rules_ui.form.active_field == 0 => {
+                self.rules_ui.form.team_scope = !self.rules_ui.form.team_scope;
             }
-            KeyCode::Left | KeyCode::Char('h') if self.rules_form.active_field == 2 => {
-                self.rules_form.language_idx = self.rules_form.language_idx.saturating_sub(1);
+            KeyCode::Left | KeyCode::Char('h') if self.rules_ui.form.active_field == 2 => {
+                self.rules_ui.form.language_idx = self.rules_ui.form.language_idx.saturating_sub(1);
             }
-            KeyCode::Right | KeyCode::Char('l') if self.rules_form.active_field == 2 => {
-                self.rules_form.language_idx = (self.rules_form.language_idx + 1).min(3);
+            KeyCode::Right | KeyCode::Char('l') if self.rules_ui.form.active_field == 2 => {
+                self.rules_ui.form.language_idx = (self.rules_ui.form.language_idx + 1).min(3);
             }
-            KeyCode::Char(c) if matches!(self.rules_form.active_field, 1 | 3) => {
+            KeyCode::Char(c) if matches!(self.rules_ui.form.active_field, 1 | 3) => {
                 self.current_rules_field_mut().push(c);
             }
             _ => {}
@@ -579,14 +557,14 @@ impl App {
     }
 
     fn current_sources_field_mut(&mut self) -> &mut String {
-        &mut self.sources_form.url
+        &mut self.sources_ui.form.url
     }
 
     fn current_rules_field_mut(&mut self) -> &mut String {
-        match self.rules_form.active_field {
-            1 => &mut self.rules_form.name,
-            3 => &mut self.rules_form.rule_text,
-            _ => &mut self.rules_form.rule_text,
+        match self.rules_ui.form.active_field {
+            1 => &mut self.rules_ui.form.name,
+            3 => &mut self.rules_ui.form.rule_text,
+            _ => &mut self.rules_ui.form.rule_text,
         }
     }
 
@@ -594,36 +572,36 @@ impl App {
         match crate::source_mgmt::add(
             &self.project_dir,
             crate::source_mgmt::AddOptions {
-                url: self.sources_form.url.trim(),
+                url: self.sources_ui.form.url.trim(),
                 name: None,
-                language: Some(source_form_language(self.sources_form.language_idx)),
+                language: Some(source_form_language(self.sources_ui.form.language_idx)),
                 source_kind: None,
-                personal: !self.sources_form.team_scope,
+                personal: !self.sources_ui.form.team_scope,
             },
         ) {
             Ok(_) => {
                 self.dashboard.sources = crate::tui::screens::sources::SourcesView::NotComputed;
                 self.ensure_sources_loaded();
                 self.input_mode = InputMode::Normal;
-                self.sources_form = SourcesFormState::default();
-                self.sources_detail_selected = false;
+                self.sources_ui.form = SourcesFormState::default();
+                self.sources_ui.detail_selected = false;
             }
-            Err(e) => self.sources_form.error = Some(e.to_string()),
+            Err(e) => self.sources_ui.form.error = Some(e.to_string()),
         }
     }
 
     fn submit_rules_form(&mut self) {
-        let slug = slugify_rule_name(&self.rules_form.name);
+        let slug = slugify_rule_name(&self.rules_ui.form.name);
         if slug.is_empty() {
-            self.rules_form.error =
+            self.rules_ui.form.error =
                 Some("Rule name must contain at least one letter or number.".into());
             return;
         }
-        if self.rules_form.rule_text.trim().is_empty() {
-            self.rules_form.error = Some("Rule text must be non-empty.".into());
+        if self.rules_ui.form.rule_text.trim().is_empty() {
+            self.rules_ui.form.error = Some("Rule text must be non-empty.".into());
             return;
         }
-        let languages: &[&str] = match self.rules_form.language_idx {
+        let languages: &[&str] = match self.rules_ui.form.language_idx {
             0 => &["typescript"],
             1 => &["rust"],
             2 => &["python"],
@@ -640,7 +618,7 @@ impl App {
             })
             .collect();
         if let Some(existing) = first_existing_rule_id(&self.project_dir, &planned_ids) {
-            self.rules_form.error = Some(format!(
+            self.rules_ui.form.error = Some(format!(
                 "Rule `{existing}` already exists. Choose a different name or remove the existing rule first."
             ));
             return;
@@ -652,7 +630,7 @@ impl App {
                 &self.project_dir,
                 crate::rule_authoring::AddOptions {
                     rule_id,
-                    description: self.rules_form.rule_text.trim(),
+                    description: self.rules_ui.form.rule_text.trim(),
                     match_regex: None,
                     severity: "should",
                     confidence: "high",
@@ -660,7 +638,7 @@ impl App {
                     language,
                     source_url: None,
                     dep: Some("custom"),
-                    personal: !self.rules_form.team_scope,
+                    personal: !self.rules_ui.form.team_scope,
                 },
             ) {
                 errors.push(e.to_string());
@@ -671,9 +649,9 @@ impl App {
             self.dashboard.rules = crate::tui::screens::rules::RulesView::NotComputed;
             self.ensure_rules_loaded();
             self.input_mode = InputMode::Normal;
-            self.rules_form = RulesFormState::default();
+            self.rules_ui.form = RulesFormState::default();
         } else {
-            self.rules_form.error = Some(errors.join("\n"));
+            self.rules_ui.form.error = Some(errors.join("\n"));
         }
     }
 }
@@ -757,7 +735,7 @@ fn collect_dashboard(project_dir: &Path) -> DashboardState {
         }
     }
 
-    d.debt = load_debt_view(project_dir);
+    d.debt = DebtView::NotComputed;
 
     d
 }

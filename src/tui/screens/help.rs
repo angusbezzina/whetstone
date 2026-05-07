@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::tui::{app::App, components::footer, theme};
+use crate::tui::{app::App, components::footer, msg::Screen, theme};
 
 #[allow(dead_code)]
 pub fn hints() -> &'static [footer::Hint] {
@@ -24,7 +24,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .border_style(theme::border_active());
     let p = Paragraph::new(lines)
         .block(block)
-        .scroll((app.help_scroll_y, app.help_scroll_x));
+        .scroll((app.help.scroll_y, app.help.scroll_x));
     frame.render_widget(p, area);
 }
 
@@ -33,21 +33,34 @@ pub fn max_scroll(area: Rect) -> u16 {
 }
 
 fn build_lines() -> Vec<Line<'static>> {
+    let nav_keys = Screen::nav_hints()
+        .iter()
+        .map(|(key, _)| *key)
+        .collect::<Vec<_>>()
+        .join("–");
+    let nav_labels = Screen::nav_hints()
+        .iter()
+        .map(|(_, label)| *label)
+        .collect::<Vec<_>>()
+        .join(", ");
     vec![
         section("GLOBAL"),
-        kv(
-            "1–5",
-            "Jump to a screen (Home, Sources, Rules, Violations, Debt)",
-        ),
+        kv(&nav_keys, &format!("Jump to a screen ({nav_labels})")),
         kv("?", "Open this help screen"),
         kv("Q / ESC", "Quit the TUI"),
         kv("Ctrl-C", "Hard quit"),
         Line::from(""),
         section("CORE CLI"),
         kv("init", "Bootstrap repo + resolve trusted sources"),
-        kv("extract", "Draft / submit candidate rules from those sources"),
-        kv("approve", "Approve candidate rules"),
-        kv("actions all", "Generate context + tests + lint/formatter overlays"),
+        kv(
+            "extract",
+            "Draft / submit candidate rules from those sources",
+        ),
+        kv("rules approve", "Approve candidate rules"),
+        kv(
+            "actions all",
+            "Generate context + tests + lint/formatter overlays",
+        ),
         kv("scan", "Scan source files for rule violations"),
         kv("reinit", "Re-resolve changed dependencies/docs"),
         kv("status", "Health + adherence summary"),
@@ -59,7 +72,10 @@ fn build_lines() -> Vec<Line<'static>> {
             "list | show | add | edit | remove | query | approve | review | worklist",
         ),
         kv("sources ...", "add | edit | list | remove | verify"),
-        kv("config ...", "show | validate the active config + imported packs"),
+        kv(
+            "config ...",
+            "show | validate the active config + imported packs",
+        ),
         kv("actions X", "Run just all, context, test, or lint"),
         kv("status --report", "Render the one-page markdown summary"),
         Line::from(""),
@@ -82,7 +98,10 @@ fn build_lines() -> Vec<Line<'static>> {
             "Sources",
             "internal dependency sources plus handpicked trusted personal and team sources",
         ),
-        kv("Rules", "approved rules derived from those sources, with file and source detail"),
+        kv(
+            "Rules",
+            "approved rules derived from those sources, with file and source detail",
+        ),
         kv("Violations", "violation list + config issues"),
         kv(
             "Debt",

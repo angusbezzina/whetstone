@@ -4,7 +4,7 @@ All notable changes to Whetstone are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## Historical pre-0.3 development notes
 
 ### Changed
 - **Trusted sources now have a clearer shareability model.** `whetstone/whetstone.yaml` is now the canonical copy/paste entrypoint for sharing project taste across repositories, while optional imported packs layer underneath it instead of replacing it as the primary UX.

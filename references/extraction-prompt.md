@@ -22,7 +22,7 @@ The prompt has six sections:
 LLMs are trained on documentation snapshots typically 1-2 years old. Whetstone's highest value is catching things the LLM doesn't already know. The extraction prompt includes:
 
 - **Today's date** — so the agent knows the current temporal context
-- **Latest version and release date** — from the resolve-sources output
+- **Latest version and release date** — from the source-resolution / handoff output
 - **Explicit prioritization** — rules about changes from the last 18 months rank highest
 
 This means a migration footgun from 6 months ago is more valuable than a long-standing convention that every developer (and LLM) already knows. The ranking criteria put recency first.
@@ -193,9 +193,7 @@ When the extraction prompt produces rules, they are initially in **candidate** s
 |-------|-----------|----------|
 | `status` | `candidate` | `approved` |
 | `approved` | `false` | `true` |
-| `approved_at` | absent | ISO 8601 timestamp |
-| `proposed_at` | ISO 8601 timestamp | preserved from candidate |
-| `proposed_by` | `"whetstone-extraction"` | preserved from candidate |
+| lifecycle metadata | absent | absent in the lean schema |
 
 ### Candidate Artifacts
 
@@ -204,12 +202,11 @@ Candidate rules are stored in `whetstone/rules/{language}/{dependency}.yaml` wit
 ### Lifecycle Transitions
 
 ```
-candidate → approved   (user approves during review)
-candidate → denied     (user rejects with optional reason)
-approved  → deprecated (rule is superseded or source becomes invalid)
+candidate → approved   (user approves explicitly)
 ```
 
-Denied rules are kept in the YAML file with `status: denied` so the same rule isn't re-proposed on the next extraction run. The `denied_reason` field captures why, so future extraction can respect the decision.
+Rules that should not continue to exist are removed from the ruleset rather than
+transitioned to extra lifecycle states.
 
 ## Stale Rule Detection
 
@@ -217,16 +214,16 @@ Whetstone detects rule staleness through two mechanisms:
 
 ### 1. Content Hash Drift
 
-Each rule's source has a `content_hash` (SHA-256 of the fetched documentation content). When `resolve-sources.py` re-fetches documentation:
+Each rule's source has a `content_hash` (SHA-256 of the fetched documentation content). When `wh reinit` re-fetches documentation:
 
 - If the hash matches: source is unchanged, rules are **current**
 - If the hash differs: source has changed, rules are **stale** and should be re-evaluated
 
-The `--changed-only` flag on `resolve-sources.py` and `detect-deps.py` uses this mechanism to identify which dependencies need re-extraction.
+The refresh flow uses this mechanism to identify which dependencies need re-extraction.
 
 ### 2. Version Drift
 
-When a dependency's version in the manifest differs from the version recorded in the rule YAML's `source.version`, that's version drift. `detect-deps.py --check-drift` identifies these.
+When a dependency's version in the manifest differs from the version recorded in the rule YAML's `source.version`, that's version drift. `wh reinit --check` identifies these.
 
 ### 3. Time-based Freshness
 
@@ -235,7 +232,7 @@ Rules older than 60 days are flagged as potentially stale regardless of hash/ver
 ### Validation Workflow
 
 When drift is detected:
-1. Re-resolve the source (`resolve-sources.py --changed-only`)
-2. Compare new content against existing rules
-3. Propose updates, additions, or deprecations
-4. Mark validated rules with `last_validated` and `validation_status: current`
+1. Re-resolve the source (`wh reinit`)
+2. Review `refresh-diff.json` and `re_extraction_candidates`
+3. Re-author or update the affected candidate/approved rules
+4. Regenerate outputs with `wh actions all`

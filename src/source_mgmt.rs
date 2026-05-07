@@ -12,8 +12,8 @@
 //!
 //! Epic 3E follow-up (`whetstone-gpe`).
 
-use std::fs;
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
@@ -201,6 +201,12 @@ pub fn format_list_human(result: &Value) -> String {
             out.push_str(&format!(
                 "  {name}  [{lang} · {kind} · {fetch_state}]\n    {url}\n    last fetched: {fetched}\n"
             ));
+            if let Some(conf) = e.get("source_confidence").and_then(|v| v.as_str()) {
+                out.push_str(&format!("    source confidence: {conf}\n"));
+            }
+            if let Some(guidance) = e.get("confidence_guidance").and_then(|v| v.as_str()) {
+                out.push_str(&format!("    guidance: {guidance}\n"));
+            }
         }
         out.push('\n');
     }
@@ -208,6 +214,11 @@ pub fn format_list_human(result: &Value) -> String {
 }
 
 fn entry_json(s: &CustomSource, layer: &str, status: Option<&SourceStatus>) -> Value {
+    let last_source_type = status.and_then(|s| s.last_source_type.clone());
+    let confidence = last_source_type
+        .as_deref()
+        .map(source_type_confidence)
+        .unwrap_or("unknown");
     json!({
         "url": s.url,
         "name": s.name,
@@ -216,8 +227,27 @@ fn entry_json(s: &CustomSource, layer: &str, status: Option<&SourceStatus>) -> V
         "layer": layer,
         "fetch_state": status.map(|s| s.fetch_state.clone()).unwrap_or_else(|| "never_fetched".to_string()),
         "last_fetched": status.and_then(|s| s.last_fetched.clone()),
-        "last_source_type": status.and_then(|s| s.last_source_type.clone()),
+        "last_source_type": last_source_type,
+        "source_confidence": confidence,
+        "confidence_guidance": source_confidence_guidance(confidence),
     })
+}
+
+fn source_type_confidence(source_type: &str) -> &'static str {
+    match source_type {
+        "llms_txt" | "llms_full_txt" => "high",
+        "docs_url" | "readme" => "medium",
+        _ => "low",
+    }
+}
+
+fn source_confidence_guidance(confidence: &str) -> &'static str {
+    match confidence {
+        "high" => "Good extraction source; citations are usually straightforward.",
+        "medium" => "Usable source, but review citations carefully before approving rules.",
+        "low" => "Low-confidence source; prefer source verification before extraction.",
+        _ => "Source has not been fetched yet; run `wh sources verify <name-or-url>`.",
+    }
 }
 
 // ── edit ──
@@ -504,7 +534,10 @@ pub fn fetch(project_dir: &Path, target: &str) -> Result<Value> {
     }
 
     let timeout = project_cfg.resolve.timeout_seconds.unwrap_or(15);
-    let ttl = project_cfg.resolve.cache_ttl_seconds.unwrap_or(crate::state::cache::DEFAULT_TTL);
+    let ttl = project_cfg
+        .resolve
+        .cache_ttl_seconds
+        .unwrap_or(crate::state::cache::DEFAULT_TTL);
     let mut sm = crate::state::StateManager::new(project_dir);
     sm.ensure_dir();
     sm.load_all();
@@ -512,8 +545,8 @@ pub fn fetch(project_dir: &Path, target: &str) -> Result<Value> {
     for (src, layer) in matched {
         let fetched = crate::resolve::resolve_custom_sources(std::slice::from_ref(src), timeout);
         for item in fetched {
-            let mut with_layer = item;
-            if let Value::Object(ref mut m) = with_layer {
+            let mut cache_entry = item.clone();
+            if let Value::Object(ref mut m) = cache_entry {
                 m.insert("layer".to_string(), Value::String(layer.to_string()));
                 m.insert(
                     "fetch_timestamp".to_string(),
@@ -521,8 +554,24 @@ pub fn fetch(project_dir: &Path, target: &str) -> Result<Value> {
                 );
                 m.insert("ttl_seconds".to_string(), Value::from(ttl));
             }
-            sm.cache.upsert(with_layer.clone());
-            results.push(with_layer);
+            sm.cache.upsert(cache_entry);
+
+            let mut output_item = item;
+            if let Value::Object(ref mut m) = output_item {
+                let content_bytes = m
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .map(|c| c.len() as u64)
+                    .unwrap_or(0);
+                m.remove("content");
+                m.insert("layer".to_string(), Value::String(layer.to_string()));
+                m.insert("content_bytes".to_string(), Value::from(content_bytes));
+                m.insert(
+                    "fetch_timestamp".to_string(),
+                    Value::String(crate::state::now_iso()),
+                );
+            }
+            results.push(output_item);
         }
     }
     sm.cache.save();
@@ -615,7 +664,10 @@ fn custom_source_statuses(project_dir: &Path) -> BTreeMap<String, SourceStatus> 
         if version != "custom" {
             continue;
         }
-        let language = entry.get("language").and_then(|v| v.as_str()).unwrap_or("any");
+        let language = entry
+            .get("language")
+            .and_then(|v| v.as_str())
+            .unwrap_or("any");
         let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
         if name.is_empty() {
             continue;

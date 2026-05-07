@@ -351,10 +351,12 @@ fn extract_formatter_options(
 fn rendered_toml_options(options: &BTreeMap<String, Value>) -> Vec<RenderedOption> {
     options
         .iter()
-        .filter_map(|(key, value)| toml_scalar(value).map(|rendered| RenderedOption {
-            key: key.clone(),
-            value: rendered,
-        }))
+        .filter_map(|(key, value)| {
+            toml_scalar(value).map(|rendered| RenderedOption {
+                key: key.clone(),
+                value: rendered,
+            })
+        })
         .collect()
 }
 

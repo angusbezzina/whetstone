@@ -156,54 +156,13 @@ pub fn view(frame: &mut Frame<'_>, app: &App) {
     let body = chunks[1];
     let hints: &[footer::Hint] = footer::global_hints();
 
-    match app.screen {
-        Screen::Dashboard => screens::dashboard::render(frame, body, app),
-        Screen::Result => screens::result::render(frame, body, app),
-        Screen::Sources => screens::sources::render(frame, body, app),
-        Screen::Rules => screens::rules::render(frame, body, app),
-        Screen::Check => screens::check::render(frame, body, app),
-        Screen::Debt => screens::debt::render(frame, body, app),
-        Screen::Help => screens::help::render(frame, body, app),
-    }
+    screens::render(frame, body, app);
 
     if app.input_mode == app::InputMode::Normal {
-        let scroll_hint = scroll_hint_state(body, app);
+        let scroll_hint = screens::scroll_hint(app.screen, body, app);
         footer::render(frame, chunks[2], hints, scroll_hint);
     } else {
         footer::render_form(frame, chunks[2], hints);
-    }
-}
-
-fn scroll_hint_state(body: Rect, app: &App) -> Option<footer::ScrollHint> {
-    match app.screen {
-        Screen::Dashboard => hint_from_offset(
-            app.dashboard_scroll as u16,
-            screens::dashboard::max_scroll(body, app),
-        ),
-        Screen::Help => hint_from_offset(app.help_scroll_y, screens::help::max_scroll(body)),
-        Screen::Result => match &app.dashboard.result {
-            crate::tui::screens::result::ResultView::Ready(data) => {
-                hint_from_offset(data.scroll_y, screens::result::max_scroll(body, data))
-            }
-            _ => None,
-        },
-        Screen::Sources => screens::sources::scroll_hint(body, app),
-        Screen::Debt => match &app.dashboard.debt {
-            crate::tui::app::DebtView::Ready(data) => screens::debt::scroll_hint(body, data),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn hint_from_offset(offset: u16, max_offset: u16) -> Option<footer::ScrollHint> {
-    if max_offset == 0 {
-        None
-    } else {
-        Some(footer::ScrollHint {
-            up: offset > 0,
-            down: offset < max_offset,
-        })
     }
 }
 
@@ -400,10 +359,10 @@ mod tests {
         app.screen = Screen::Dashboard;
 
         app.update(Msg::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
-        assert_eq!(app.dashboard_scroll, 1);
+        assert_eq!(app.dashboard_ui.scroll, 1);
 
         app.update(Msg::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)));
-        assert_eq!(app.dashboard_scroll, 0);
+        assert_eq!(app.dashboard_ui.scroll, 0);
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -415,7 +374,7 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("wh_tui_footer_scroll_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         let mut app = App::new(&tmp).unwrap();
-        app.dashboard_scroll = 1;
+        app.dashboard_ui.scroll = 1;
 
         terminal.draw(|frame| view(frame, &app)).unwrap();
 

@@ -17,22 +17,15 @@ use ratatui::{
     Frame,
 };
 
-use crate::tui::{app::App, components::footer, theme};
+use crate::tui::{app::App, components::footer, screens::LoadState, theme};
 
 #[allow(dead_code)]
 pub fn hints() -> &'static [footer::Hint] {
     &[("1", "HOME"), ("?", "HELP"), ("Q", "QUIT")]
 }
 
-/// Four data states, identical shape across every second-slice screen.
-#[derive(Default, Clone)]
-pub enum RulesView {
-    #[default]
-    NotComputed,
-    Loading,
-    Ready(Box<RulesData>),
-    Error(String),
-}
+/// Four data states, shared across list/detail screens.
+pub type RulesView = LoadState<RulesData>;
 
 /// One row in the left-hand list. Projected from `LayeredRule` so the
 /// renderer doesn't touch the underlying `ApprovedRule` shape.
@@ -291,7 +284,7 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
 }
 
 fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let form = &app.rules_form;
+        let form = &app.rules_ui.form;
     let lang = match form.language_idx {
         0 => "TS",
         1 => "Rust",
