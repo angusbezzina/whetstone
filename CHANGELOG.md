@@ -4,6 +4,27 @@ All notable changes to Whetstone are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.8.14] - 2026-05-07
+
+### Added
+- **Config sharing is now a first-class surface.** `wh config show` and `wh config validate` now inspect the effective config stack, imported packs, and per-key provenance, while imported pack rules participate in the effective project ruleset.
+- **Formatter-backed enforcement is now available as a narrow fourth output surface.** Approved, source-backed rules can emit Ruff/Biome formatting options and dedicated `rustfmt.whetstone.toml` overlays where the rule maps to a safe mechanical rewrite.
+
+### Changed
+- **Canonical project taste now lives at `whetstone/whetstone.yaml`.** That file is the default copy/paste shareability entrypoint, with optional imported packs layered underneath it.
+- **The CLI and TUI now teach the same workflow model.** Trusted sources and dependency detection feed rules, approved rules feed violations, and tech debt remains a separate track.
+- **Source health is more visible.** `wh sources list`, worklists, and the TUI now surface fetch state, confidence, and guidance for trusted sources.
+- **Agent-facing outputs are more predictable.** Worklist and source-resolution flows are more deterministic, better bounded for automation, and prefer canonical next-step guidance.
+
+### Docs
+- Added a CLI vNext migration guide plus a platform/registry roadmap and API sketch.
+- Refreshed troubleshooting, handoff, extraction-prompt, workflow, README, and agent docs to match the current canonical command surface.
+
+### Removed
+- Removed the dormant `detect_patterns` Rust module from the shipped codebase.
+
 ## Historical pre-0.3 development notes
 
 ### Changed
@@ -393,6 +414,8 @@ no Python runtime dependency.
   aarch64 with cross-compilation support.
 
 [0.5.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.5.0
+[0.8.14]: https://github.com/angusbezzina/whetstone/releases/tag/v0.8.14
+[0.8.13]: https://github.com/angusbezzina/whetstone/releases/tag/v0.8.13
 [0.4.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.4.0
 [0.3.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.3.0
 [0.1.2]: https://github.com/angusbezzina/whetstone/releases/tag/v0.1.2
