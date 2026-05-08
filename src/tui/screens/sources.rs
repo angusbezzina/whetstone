@@ -199,9 +199,7 @@ fn render_internal_source_detail(frame: &mut Frame<'_>, area: Rect, app: &App) {
             area,
             "Dependency source->rule worklist is not loaded yet.",
         ),
-        SourcesView::Loading => {
-            render_placeholder(frame, area, "Loading source->rule worklist…")
-        }
+        SourcesView::Loading => render_placeholder(frame, area, "Loading source->rule worklist…"),
         SourcesView::Error(msg) => render_error(frame, area, msg),
         SourcesView::Ready(data) => {
             if let Some(msg) = &data.dependency_error {
@@ -342,18 +340,16 @@ fn render_custom_detail(frame: &mut Frame<'_>, area: Rect, app: &App, personal: 
             frame,
             area,
             "Handpicked sources are not loaded yet.",
-            personal,
             app.sources_ui.detail_selected,
         ),
         SourcesView::Loading => render_custom_detail_message(
             frame,
             area,
             "Loading handpicked sources…",
-            personal,
             app.sources_ui.detail_selected,
         ),
         SourcesView::Error(msg) => {
-            render_custom_detail_message(frame, area, msg, personal, app.sources_ui.detail_selected)
+            render_custom_detail_message(frame, area, msg, app.sources_ui.detail_selected)
         }
         SourcesView::Ready(data) => {
             let rows = if personal {
@@ -366,7 +362,6 @@ fn render_custom_detail(frame: &mut Frame<'_>, area: Rect, app: &App, personal: 
                     frame,
                     area,
                     "No source selected.",
-                    personal,
                     app.sources_ui.detail_selected,
                 );
                 return;
@@ -394,18 +389,13 @@ fn render_custom_detail(frame: &mut Frame<'_>, area: Rect, app: &App, personal: 
                     Style::default().fg(theme::MUTED),
                 )));
             }
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                add_source_note(personal),
-                Style::default().fg(theme::MUTED),
-            )));
             let effective_scroll = app
                 .sources_ui
                 .detail_scroll_y
                 .min(crate::tui::paragraph_max_scroll(&lines, area));
             frame.render_widget(
                 Paragraph::new(lines)
-                    .block(block("DETAIL", app.sources_ui.detail_selected))
+                    .block(detail_block(app.sources_ui.detail_selected))
                     .wrap(Wrap { trim: false })
                     .scroll((effective_scroll, 0)),
                 area,
@@ -534,26 +524,15 @@ fn render_placeholder(frame: &mut Frame<'_>, area: Rect, message: &str) {
     frame.render_widget(Paragraph::new(lines).block(block("SOURCES", false)), area);
 }
 
-fn render_custom_detail_message(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    message: &str,
-    personal: bool,
-    active: bool,
-) {
+fn render_custom_detail_message(frame: &mut Frame<'_>, area: Rect, message: &str, active: bool) {
     let lines = vec![
         Line::from(""),
         Line::from(Span::styled(
             format!("  {message}"),
             Style::default().fg(theme::MUTED),
         )),
-        Line::from(""),
-        Line::from(Span::styled(
-            format!("  {}", add_source_note(personal)),
-            Style::default().fg(theme::MUTED),
-        )),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("DETAIL", active)), area);
+    frame.render_widget(Paragraph::new(lines).block(detail_block(active)), area);
 }
 
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
@@ -627,18 +606,14 @@ fn custom_detail_max_scroll(area: Rect, app: &App, personal: bool) -> u16 {
             Style::default().fg(theme::MUTED),
         )));
     }
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        add_source_note(personal),
-        Style::default().fg(theme::MUTED),
-    )));
-
     crate::tui::paragraph_max_scroll(&lines, area)
 }
 
 fn dependency_detail_max_scroll(area: Rect, app: &App) -> u16 {
     match &app.dashboard.sources {
-        SourcesView::Ready(data) if data.dependency_error.is_none() && !data.dependencies.is_empty() => {
+        SourcesView::Ready(data)
+            if data.dependency_error.is_none() && !data.dependencies.is_empty() =>
+        {
             let extract_data = crate::tui::screens::extract::ExtractData {
                 entries: data.dependencies.clone(),
                 selected: app.sources_ui.selected,
@@ -649,12 +624,14 @@ fn dependency_detail_max_scroll(area: Rect, app: &App) -> u16 {
     }
 }
 
-fn add_source_note(personal: bool) -> &'static str {
-    if personal {
-        "Press A to add a new source to the Personal list."
-    } else {
-        "Press A to add a new source to the Team list."
-    }
+fn detail_block(active: bool) -> Block<'static> {
+    block("DETAIL", active).title_top(
+        Line::from(Span::styled(
+            " Press A to add a source ",
+            Style::default().fg(theme::AMBER).bold(),
+        ))
+        .right_aligned(),
+    )
 }
 
 fn source_form_language_label(idx: usize) -> &'static str {

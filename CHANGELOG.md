@@ -6,6 +6,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.15] - 2026-05-08
+
+### Fixed
+- **Rules are easier to scan and author in the TUI.** All-language custom rules now collapse into one entry with language filters above the list, the add-rule flow now captures severity, and rule detail now shows a cleaner source classification (`Dependency`, `Source`, `Personal Rule`, or `Team Rule`) instead of raw internals.
+- **Dashboard and source detail panes are clearer.** The dashboard now presents debt as a structured detail row, and the Sources detail pane keeps its add-source prompt in the pane chrome instead of repeating it in the body.
+
 ## [0.8.14] - 2026-05-07
 
 ### Added

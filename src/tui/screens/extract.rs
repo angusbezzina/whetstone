@@ -565,7 +565,10 @@ mod tests {
             .collect();
 
         assert!(rendered.contains("fastapi"));
-        assert!(rendered.contains("High-confidence source") || rendered.contains("High confidence source"));
+        assert!(
+            rendered.contains("High-confidence source")
+                || rendered.contains("High confidence source")
+        );
     }
 
     #[test]

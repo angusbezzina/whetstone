@@ -57,6 +57,35 @@ impl SourcesDataset {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RulesLanguageFilter {
+    #[default]
+    All,
+    Python,
+    Rust,
+    Typescript,
+}
+
+impl RulesLanguageFilter {
+    pub fn next(self) -> Self {
+        match self {
+            Self::All => Self::Python,
+            Self::Python => Self::Rust,
+            Self::Rust => Self::Typescript,
+            Self::Typescript => Self::All,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::All => Self::Typescript,
+            Self::Python => Self::All,
+            Self::Rust => Self::Python,
+            Self::Typescript => Self::Rust,
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct SourcesFormState {
     pub active_field: usize,
@@ -88,17 +117,34 @@ pub struct SourcesUiState {
 
 #[derive(Debug, Default, Clone)]
 pub struct RulesUiState {
+    pub language_filter: RulesLanguageFilter,
+    pub selected: usize,
     pub form: RulesFormState,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct RulesFormState {
     pub active_field: usize,
     pub team_scope: bool,
     pub name: String,
     pub language_idx: usize,
+    pub severity_idx: usize,
     pub rule_text: String,
     pub error: Option<String>,
+}
+
+impl Default for RulesFormState {
+    fn default() -> Self {
+        Self {
+            active_field: 0,
+            team_scope: false,
+            name: String::new(),
+            language_idx: 3,
+            severity_idx: 1,
+            rule_text: String::new(),
+            error: None,
+        }
+    }
 }
 
 /// Cached data for the dashboard. Populated on start.
@@ -326,6 +372,14 @@ impl App {
                 self.sources_ui.selected = 0;
                 self.sources_ui.detail_scroll_y = 0;
             }
+            KeyCode::Left | KeyCode::Char('h') if self.screen == Screen::Rules => {
+                self.rules_ui.language_filter = self.rules_ui.language_filter.prev();
+                self.rules_ui.selected = 0;
+            }
+            KeyCode::Right | KeyCode::Char('l') if self.screen == Screen::Rules => {
+                self.rules_ui.language_filter = self.rules_ui.language_filter.next();
+                self.rules_ui.selected = 0;
+            }
             KeyCode::Up | KeyCode::Char('k') => self.select_prev_on_current_screen(1),
             KeyCode::Down | KeyCode::Char('j') => self.select_next_on_current_screen(1),
             KeyCode::PageUp => self.select_prev_on_current_screen(10),
@@ -366,7 +420,7 @@ impl App {
                         }
                     }
                 },
-                Screen::Rules => self.dashboard.rules.select_prev(),
+                Screen::Rules => self.rules_ui.selected = self.rules_ui.selected.saturating_sub(1),
                 Screen::Check => self.dashboard.check.select_prev(),
             }
         }
@@ -430,7 +484,16 @@ impl App {
                         }
                     }
                 },
-                Screen::Rules => self.dashboard.rules.select_next(),
+                Screen::Rules => {
+                    let max = self
+                        .dashboard
+                        .rules
+                        .row_count_for(self.rules_ui.language_filter)
+                        .saturating_sub(1);
+                    if self.rules_ui.selected < max {
+                        self.rules_ui.selected += 1;
+                    }
+                }
                 Screen::Check => self.dashboard.check.select_next(),
             }
         }
@@ -521,13 +584,13 @@ impl App {
                 self.rules_ui.form.error = None;
             }
             KeyCode::Tab => {
-                self.rules_ui.form.active_field = (self.rules_ui.form.active_field + 1) % 4;
+                self.rules_ui.form.active_field = (self.rules_ui.form.active_field + 1) % 5;
             }
             KeyCode::BackTab => {
                 self.rules_ui.form.active_field = self.rules_ui.form.active_field.saturating_sub(1);
             }
             KeyCode::Backspace => {
-                if matches!(self.rules_ui.form.active_field, 1 | 3) {
+                if matches!(self.rules_ui.form.active_field, 1 | 4) {
                     self.current_rules_field_mut().pop();
                 }
             }
@@ -549,7 +612,13 @@ impl App {
             KeyCode::Right | KeyCode::Char('l') if self.rules_ui.form.active_field == 2 => {
                 self.rules_ui.form.language_idx = (self.rules_ui.form.language_idx + 1).min(3);
             }
-            KeyCode::Char(c) if matches!(self.rules_ui.form.active_field, 1 | 3) => {
+            KeyCode::Left | KeyCode::Char('h') if self.rules_ui.form.active_field == 3 => {
+                self.rules_ui.form.severity_idx = self.rules_ui.form.severity_idx.saturating_sub(1);
+            }
+            KeyCode::Right | KeyCode::Char('l') if self.rules_ui.form.active_field == 3 => {
+                self.rules_ui.form.severity_idx = (self.rules_ui.form.severity_idx + 1).min(2);
+            }
+            KeyCode::Char(c) if matches!(self.rules_ui.form.active_field, 1 | 4) => {
                 self.current_rules_field_mut().push(c);
             }
             _ => {}
@@ -563,7 +632,7 @@ impl App {
     fn current_rules_field_mut(&mut self) -> &mut String {
         match self.rules_ui.form.active_field {
             1 => &mut self.rules_ui.form.name,
-            3 => &mut self.rules_ui.form.rule_text,
+            4 => &mut self.rules_ui.form.rule_text,
             _ => &mut self.rules_ui.form.rule_text,
         }
     }
@@ -592,6 +661,7 @@ impl App {
 
     fn submit_rules_form(&mut self) {
         let slug = slugify_rule_name(&self.rules_ui.form.name);
+        let severity = rule_form_severity(self.rules_ui.form.severity_idx);
         if slug.is_empty() {
             self.rules_ui.form.error =
                 Some("Rule name must contain at least one letter or number.".into());
@@ -632,7 +702,7 @@ impl App {
                     rule_id,
                     description: self.rules_ui.form.rule_text.trim(),
                     match_regex: None,
-                    severity: "should",
+                    severity,
                     confidence: "high",
                     category: "convention",
                     language,
@@ -650,9 +720,19 @@ impl App {
             self.ensure_rules_loaded();
             self.input_mode = InputMode::Normal;
             self.rules_ui.form = RulesFormState::default();
+            self.rules_ui.language_filter = RulesLanguageFilter::All;
+            self.rules_ui.selected = 0;
         } else {
             self.rules_ui.form.error = Some(errors.join("\n"));
         }
+    }
+}
+
+pub fn rule_form_severity(idx: usize) -> &'static str {
+    match idx {
+        0 => "must",
+        1 => "should",
+        _ => "may",
     }
 }
 
@@ -900,4 +980,52 @@ fn first_existing_rule_id(project_dir: &Path, planned: &[String]) -> Option<Stri
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn submit_rules_form_persists_selected_severity() {
+        let tmp = std::env::temp_dir().join(format!("wh_tui_rules_submit_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::create_dir_all(&tmp);
+
+        let mut app = App::new(&tmp).unwrap();
+        app.rules_ui.form = RulesFormState {
+            name: "Critical Rule".into(),
+            language_idx: 2,
+            severity_idx: 0,
+            rule_text: "Never do the bad thing.".into(),
+            ..RulesFormState::default()
+        };
+
+        app.submit_rules_form();
+
+        let paths = crate::layers::LayerPaths::for_project(&tmp);
+        let (rules, _warnings) = crate::rules::load_approved_rules(&paths.personal_rules_dir, None);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].id, "custom.critical-rule");
+        assert_eq!(rules[0].severity, "must");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn rules_screen_left_right_cycles_language_filters() {
+        let tmp = std::env::temp_dir().join(format!("wh_tui_rules_filter_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.screen = Screen::Rules;
+
+        app.update(Msg::Key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)));
+        assert_eq!(app.rules_ui.language_filter, RulesLanguageFilter::Python);
+
+        app.update(Msg::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)));
+        assert_eq!(app.rules_ui.language_filter, RulesLanguageFilter::All);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

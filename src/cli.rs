@@ -2454,7 +2454,10 @@ fn run_approve_command(
         (Some(id), false) => approve::approve_by_id(project_dir, &id),
         (None, true) => approve::approve_bulk(project_dir, dep.as_deref(), confidence.as_deref()),
         (None, false) => {
-            output::print_json(&output::error_json(ui.missing_usage_error, ui.missing_usage_hint));
+            output::print_json(&output::error_json(
+                ui.missing_usage_error,
+                ui.missing_usage_hint,
+            ));
             return 1;
         }
         (Some(_), true) => unreachable!("clap conflicts_with guards this"),

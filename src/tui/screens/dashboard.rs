@@ -144,10 +144,11 @@ fn build_lines(width: u16, app: &App) -> Vec<Line<'static>> {
     lines.push(Line::from(""));
     match &d.debt {
         DebtView::Ready(summary) => {
-            lines.push(Line::from(Span::styled(
-                format!("Debt {}", theme::humanize_token(&summary.debt_label)),
-                Style::default().fg(theme::AMBER).bold(),
-            )));
+            lines.push(accent_detail_line(
+                width,
+                "Debt Level",
+                &theme::humanize_token(&summary.debt_label),
+            ));
             lines.push(detail_line(width, "Dead", &summary.by_dead.to_string()));
             lines.push(detail_line(width, "Duplicate", &summary.by_dup.to_string()));
             lines.push(detail_line(

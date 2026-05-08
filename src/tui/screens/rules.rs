@@ -3,9 +3,9 @@
 //! First slice for whetstone-69jb.1: static two-pane layout driven by the
 //! four-state `RulesView` enum. The left pane lists merged rule ids with a
 //! colored severity badge; the right pane shows full detail (description,
-//! source_url, layer, language, dep) for the currently selected rule.
-//! Keyboard selection is wired via up/down and j/k; the list renders a moving
-//! viewport so large rule sets remain navigable.
+//! layer, language, dep) for the currently selected rule. Keyboard selection is
+//! wired via up/down and j/k; the list renders a moving viewport so large rule
+//! sets remain navigable.
 
 use std::path::Path;
 
@@ -17,7 +17,12 @@ use ratatui::{
     Frame,
 };
 
-use crate::tui::{app::App, components::footer, screens::LoadState, theme};
+use crate::tui::{
+    app::{App, RulesLanguageFilter},
+    components::footer,
+    screens::LoadState,
+    theme,
+};
 
 #[allow(dead_code)]
 pub fn hints() -> &'static [footer::Hint] {
@@ -34,12 +39,13 @@ pub struct RuleRow {
     pub id: String,
     pub severity: String,
     pub confidence: String,
-    pub language: String,
+    pub languages: Vec<String>,
     /// Derived from the rule id prefix (e.g. `fastapi.async-routes` → `fastapi`).
     /// Falls back to the id itself when there is no `.` separator.
     pub dep: String,
     /// `"project"` or `"personal"` — mirrors `layers::Layer::as_str()`.
     pub layer: String,
+    pub source_name: String,
     pub source_url: String,
     pub description: String,
 }
@@ -48,25 +54,13 @@ pub struct RuleRow {
 #[derive(Debug, Default, Clone)]
 pub struct RulesData {
     pub rows: Vec<RuleRow>,
-    /// `(language, count)` pairs for the header summary. Sorted by language.
-    pub by_language: Vec<(String, usize)>,
-    /// Selected index into `rows`. v1 pins it to 0; future work wires j/k.
-    pub selected: usize,
 }
 
 impl RulesView {
-    pub fn select_prev(&mut self) {
-        if let RulesView::Ready(data) = self {
-            data.selected = data.selected.saturating_sub(1);
-        }
-    }
-
-    pub fn select_next(&mut self) {
-        if let RulesView::Ready(data) = self {
-            let len = data.rows.len();
-            if len > 0 && data.selected + 1 < len {
-                data.selected += 1;
-            }
+    pub fn row_count_for(&self, filter: RulesLanguageFilter) -> usize {
+        match self {
+            RulesView::Ready(data) => filtered_rows(data, filter).len(),
+            _ => 0,
         }
     }
 }
@@ -92,7 +86,7 @@ pub fn load(project_dir: &Path) -> RulesView {
         return RulesView::Error("No rules found — run wh init or wh rules add".into());
     }
 
-    let mut rows: Vec<RuleRow> = merged
+    let rows: Vec<RuleRow> = merged
         .merged
         .iter()
         .map(|lr| {
@@ -106,26 +100,18 @@ pub fn load(project_dir: &Path) -> RulesView {
                 id: lr.rule.id.clone(),
                 severity: lr.rule.severity.clone(),
                 confidence: lr.rule.confidence.clone(),
-                language: lr.rule.language.clone(),
+                languages: vec![lr.rule.language.clone()],
                 dep,
                 layer: lr.layer.as_str().to_string(),
+                source_name: lr.rule.source_name.clone(),
                 source_url: lr.rule.source_url.clone(),
                 description: lr.rule.description.clone(),
             }
         })
         .collect();
-    rows.sort_by(|a, b| a.id.cmp(&b.id));
+    let rows = group_custom_multi_language_rows(rows);
 
-    let mut by_lang: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for row in &rows {
-        *by_lang.entry(row.language.clone()).or_insert(0) += 1;
-    }
-
-    RulesView::Ready(Box::new(RulesData {
-        rows,
-        by_language: by_lang.into_iter().collect(),
-        selected: 0,
-    }))
+    RulesView::Ready(Box::new(RulesData { rows }))
 }
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -141,33 +127,57 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         RulesView::Ready(data) if data.rows.is_empty() => {
             render_placeholder(frame, area, "No approved rules to display.")
         }
-        RulesView::Ready(data) => render_ready(frame, area, data),
+        RulesView::Ready(data) => render_ready(frame, area, app, data),
     }
 }
 
-fn render_ready(frame: &mut Frame<'_>, area: Rect, data: &RulesData) {
+fn render_ready(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
         .split(area);
 
-    render_list(frame, cols[0], data);
-    render_detail(frame, cols[1], data);
+    render_list(frame, cols[0], app, data);
+    render_detail(frame, cols[1], app, data);
 }
 
-fn render_list(frame: &mut Frame<'_>, area: Rect, data: &RulesData) {
-    let width = area.width.saturating_sub(4) as usize;
-    let visible = area.height.saturating_sub(2) as usize;
-    let (start, end) = window_bounds(data.selected, data.rows.len(), visible);
-    let items: Vec<ListItem> = data
-        .rows
+fn render_list(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData) {
+    let panes = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(language_tabs_line(app.rules_ui.language_filter, data))
+            .block(block("LANGUAGE", false)),
+        panes[0],
+    );
+
+    let rows = filtered_rows(data, app.rules_ui.language_filter);
+    let selected = app.rules_ui.selected.min(rows.len().saturating_sub(1));
+
+    if rows.is_empty() {
+        let lines = vec![Line::from(Span::styled(
+            "  No rules in this language.",
+            Style::default().fg(theme::MUTED),
+        ))];
+        frame.render_widget(
+            Paragraph::new(lines).block(block("RULE LIST", true)),
+            panes[1],
+        );
+        return;
+    }
+
+    let width = panes[1].width.saturating_sub(4) as usize;
+    let visible = panes[1].height.saturating_sub(2) as usize;
+    let (start, end) = window_bounds(selected, rows.len(), visible);
+    let items: Vec<ListItem> = rows
         .iter()
         .enumerate()
         .skip(start)
         .take(end.saturating_sub(start))
         .map(|(i, row)| {
-            let marker = if i == data.selected { "▶ " } else { "  " };
-            let marker_color = if i == data.selected {
+            let marker = if i == selected { "▶ " } else { "  " };
+            let marker_color = if i == selected {
                 theme::AMBER
             } else {
                 theme::MUTED
@@ -186,27 +196,14 @@ fn render_list(frame: &mut Frame<'_>, area: Rect, data: &RulesData) {
         })
         .collect();
 
-    let title = rules_title(data);
-    let list = List::new(items).block(block(&title, true));
-    frame.render_widget(list, area);
+    let list = List::new(items).block(block("RULE LIST", true));
+    frame.render_widget(list, panes[1]);
 }
 
-fn rules_title(data: &RulesData) -> String {
-    if data.by_language.is_empty() {
-        format!("RULES ({})", data.rows.len())
-    } else {
-        let breakdown = data
-            .by_language
-            .iter()
-            .map(|(lang, n)| format!("{lang} {n}"))
-            .collect::<Vec<_>>()
-            .join("  ");
-        format!("RULES ({}  ·  {breakdown})", data.rows.len())
-    }
-}
-
-fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &RulesData) {
-    let Some(row) = data.rows.get(data.selected) else {
+fn render_detail(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData) {
+    let rows = filtered_rows(data, app.rules_ui.language_filter);
+    let selected = app.rules_ui.selected.min(rows.len().saturating_sub(1));
+    let Some(row) = rows.get(selected) else {
         render_placeholder(frame, area, "No rule selected.");
         return;
     };
@@ -228,19 +225,18 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, data: &RulesData) {
                 .bold(),
         ),
         kv_line(area.width, "Confidence", &row.confidence, Style::default()),
-        kv_line(area.width, "Language", &row.language, Style::default()),
-        kv_line(area.width, "Dependency", &row.dep, Style::default()),
+        kv_line(
+            area.width,
+            "Language",
+            &display_languages(&row.languages),
+            Style::default(),
+        ),
+        kv_line(area.width, "Source", &source_label(row), Style::default()),
         kv_line(
             area.width,
             "Layer",
             &row.layer,
             Style::default().fg(layer_color).bold(),
-        ),
-        kv_line(
-            area.width,
-            "Source",
-            &row.source_url,
-            Style::default().fg(theme::AMBER),
         ),
         Line::from(""),
         Line::from(Span::styled(
@@ -284,16 +280,17 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
 }
 
 fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
-        let form = &app.rules_ui.form;
+    let form = &app.rules_ui.form;
     let lang = match form.language_idx {
         0 => "TS",
         1 => "Rust",
         2 => "Python",
         _ => "All",
     };
+    let severity = crate::tui::app::rule_form_severity(form.severity_idx).to_uppercase();
     let lines = vec![
         Line::from(Span::styled(
-            "Tab next field · ←/→ change scope/language · Enter submit · Esc cancel",
+            "Tab next field · ←/→ change scope/language/severity · Enter submit · Esc cancel",
             Style::default().fg(theme::MUTED),
         )),
         Line::from(""),
@@ -304,6 +301,7 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ),
         form_line("Name", &form.name, form.active_field == 1),
         form_line("Language", lang, form.active_field == 2),
+        form_line("Severity", &severity, form.active_field == 3),
         Line::from(""),
         Line::from(Span::styled("Rule Text", theme::header_meta())),
         Line::from(Span::styled(
@@ -312,7 +310,7 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
             } else {
                 &form.rule_text
             },
-            if form.active_field == 3 {
+            if form.active_field == 4 {
                 Style::default().fg(theme::AMBER).bold()
             } else {
                 Style::default().fg(ratatui::style::Color::White)
@@ -361,6 +359,150 @@ fn block(title: &str, show_add_cta: bool) -> Block<'static> {
         );
     }
     block
+}
+
+fn group_custom_multi_language_rows(rows: Vec<RuleRow>) -> Vec<RuleRow> {
+    let mut grouped: std::collections::BTreeMap<String, Vec<RuleRow>> =
+        std::collections::BTreeMap::new();
+    let mut passthrough = Vec::new();
+
+    for row in rows {
+        if let Some(base_id) = custom_multi_language_base_id(&row.id) {
+            grouped.entry(base_id).or_default().push(row);
+        } else {
+            passthrough.push(row);
+        }
+    }
+
+    let mut combined = passthrough;
+    for (base_id, mut group) in grouped {
+        if group.len() == 1 {
+            combined.push(group.pop().expect("single-item group must contain a row"));
+            continue;
+        }
+
+        let first = group.remove(0);
+        let mut languages = first.languages.clone();
+        for row in group {
+            languages.extend(row.languages);
+        }
+        sort_languages(&mut languages);
+        languages.dedup();
+
+        combined.push(RuleRow {
+            id: base_id,
+            severity: first.severity,
+            confidence: first.confidence,
+            languages,
+            dep: first.dep,
+            layer: first.layer,
+            source_name: first.source_name,
+            source_url: first.source_url,
+            description: first.description,
+        });
+    }
+
+    combined.sort_by(|a, b| a.id.cmp(&b.id));
+    combined
+}
+
+fn custom_multi_language_base_id(id: &str) -> Option<String> {
+    for language in ["python", "rust", "typescript"] {
+        let suffix = format!("-{language}");
+        if id.starts_with("custom.") && id.ends_with(&suffix) {
+            return Some(id.trim_end_matches(&suffix).to_string());
+        }
+    }
+    None
+}
+
+fn filtered_rows(data: &RulesData, filter: RulesLanguageFilter) -> Vec<&RuleRow> {
+    data.rows
+        .iter()
+        .filter(|row| row_matches_filter(row, filter))
+        .collect()
+}
+
+fn row_matches_filter(row: &RuleRow, filter: RulesLanguageFilter) -> bool {
+    match filter {
+        RulesLanguageFilter::All => true,
+        RulesLanguageFilter::Python => row.languages.iter().any(|lang| lang == "python"),
+        RulesLanguageFilter::Rust => row.languages.iter().any(|lang| lang == "rust"),
+        RulesLanguageFilter::Typescript => row.languages.iter().any(|lang| lang == "typescript"),
+    }
+}
+
+fn language_tabs_line(active: RulesLanguageFilter, data: &RulesData) -> Line<'static> {
+    let tab = |label: String, is_active: bool| {
+        if is_active {
+            Span::styled(
+                format!("[{label}]"),
+                Style::default().fg(theme::AMBER).bold(),
+            )
+        } else {
+            Span::styled(format!(" {label} "), Style::default().fg(theme::MUTED))
+        }
+    };
+
+    let all = filtered_rows(data, RulesLanguageFilter::All).len();
+    let python = filtered_rows(data, RulesLanguageFilter::Python).len();
+    let rust = filtered_rows(data, RulesLanguageFilter::Rust).len();
+    let typescript = filtered_rows(data, RulesLanguageFilter::Typescript).len();
+
+    Line::from(vec![
+        tab(format!("All {all}"), active == RulesLanguageFilter::All),
+        Span::raw(" "),
+        tab(
+            format!("Python {python}"),
+            active == RulesLanguageFilter::Python,
+        ),
+        Span::raw(" "),
+        tab(format!("Rust {rust}"), active == RulesLanguageFilter::Rust),
+        Span::raw(" "),
+        tab(
+            format!("TS {typescript}"),
+            active == RulesLanguageFilter::Typescript,
+        ),
+    ])
+}
+
+fn display_languages(languages: &[String]) -> String {
+    if languages.len() == 3
+        && languages.iter().any(|lang| lang == "python")
+        && languages.iter().any(|lang| lang == "rust")
+        && languages.iter().any(|lang| lang == "typescript")
+    {
+        return "all".to_string();
+    }
+
+    languages.join(", ")
+}
+
+fn sort_languages(languages: &mut [String]) {
+    languages.sort_by_key(|language| match language.as_str() {
+        "python" => 0,
+        "rust" => 1,
+        "typescript" => 2,
+        _ => 3,
+    });
+}
+
+fn source_label(row: &RuleRow) -> String {
+    let is_authored_rule =
+        row.id.starts_with("custom.") || row.source_url.starts_with("personal://");
+    if is_authored_rule {
+        return if row.layer == "personal" {
+            "Personal Rule".to_string()
+        } else {
+            "Team Rule".to_string()
+        };
+    }
+
+    if row.source_name == row.dep {
+        "Dependency".to_string()
+    } else {
+        "Source".to_string()
+    }
 }
 
 fn kv_line(width: u16, label: &str, value: &str, value_style: Style) -> Line<'static> {
@@ -412,12 +554,16 @@ mod tests {
             id: id.to_string(),
             severity: severity.to_string(),
             confidence: "high".to_string(),
-            language: "python".to_string(),
+            languages: vec!["python".to_string()],
             dep: id
                 .split_once('.')
                 .map(|(p, _)| p.to_string())
                 .unwrap_or_default(),
             layer: layer.to_string(),
+            source_name: id
+                .split_once('.')
+                .map(|(p, _)| p.to_string())
+                .unwrap_or_default(),
             source_url: format!("https://example.com/{id}"),
             description: format!("A sample rule called {id}."),
         }
@@ -450,12 +596,7 @@ mod tests {
             mk_row("fa.async", "must", "project"),
             mk_row("pd.strict", "should", "personal"),
         ];
-        let by_language = vec![("python".to_string(), rows.len())];
-        app.dashboard.rules = RulesView::Ready(Box::new(RulesData {
-            rows,
-            by_language,
-            selected: 0,
-        }));
+        app.dashboard.rules = RulesView::Ready(Box::new(RulesData { rows }));
 
         let backend = TestBackend::new(140, 24);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -477,6 +618,11 @@ mod tests {
         assert!(
             rendered.contains("Press A to Add a Rule"),
             "expected add-rule CTA in buffer; got: {}",
+            preview(&rendered, 400)
+        );
+        assert!(
+            rendered.contains("LANGUAGE"),
+            "expected language tabs block in buffer; got: {}",
             preview(&rendered, 400)
         );
 
@@ -503,6 +649,114 @@ mod tests {
             "expected error message in buffer; got: {}",
             preview(&rendered, 400)
         );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn render_detail_shows_source_label_and_value() {
+        let tmp = std::env::temp_dir().join(format!("wh_tui_rules_detail_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.dashboard.rules = RulesView::Ready(Box::new(RulesData {
+            rows: vec![mk_row("fa.async", "must", "project")],
+        }));
+
+        let backend = TestBackend::new(140, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), &app))
+            .unwrap();
+
+        let rendered = buffer_string(&terminal);
+        assert!(
+            rendered.contains("Source"),
+            "detail pane should show source field; got: {}",
+            preview(&rendered, 400)
+        );
+        assert!(
+            rendered.contains("Dependency"),
+            "detail pane should classify dependency-backed rules; got: {}",
+            preview(&rendered, 400)
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn source_label_maps_authored_rules_by_scope() {
+        let mut row = mk_row("custom.personal-rule", "should", "personal");
+        row.source_name = "custom".to_string();
+        row.source_url = "personal://custom/custom.personal-rule".to_string();
+        assert_eq!(source_label(&row), "Personal Rule");
+
+        row.layer = "project".to_string();
+        assert_eq!(source_label(&row), "Team Rule");
+    }
+
+    #[test]
+    fn source_label_maps_non_dependency_rules_to_source() {
+        let mut row = mk_row("handbook.write-tests", "should", "project");
+        row.source_name = "engineering-handbook".to_string();
+        assert_eq!(source_label(&row), "Source");
+    }
+
+    #[test]
+    fn render_add_rule_form_shows_severity_field() {
+        let tmp = std::env::temp_dir().join(format!("wh_tui_rules_form_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.input_mode = crate::tui::app::InputMode::RulesAdd;
+
+        let backend = TestBackend::new(140, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), &app))
+            .unwrap();
+
+        let rendered = buffer_string(&terminal);
+        assert!(
+            rendered.contains("Severity"),
+            "add-rule form should show severity field; got: {}",
+            preview(&rendered, 400)
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn load_groups_custom_all_language_rules_into_one_row() {
+        let tmp = std::env::temp_dir().join(format!("wh_tui_rules_group_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::create_dir_all(&tmp);
+
+        for language in ["python", "rust", "typescript"] {
+            crate::rule_authoring::add(
+                &tmp,
+                crate::rule_authoring::AddOptions {
+                    rule_id: &format!("custom.grouped-{language}"),
+                    description: "Grouped rule",
+                    match_regex: None,
+                    severity: "should",
+                    confidence: "high",
+                    category: "convention",
+                    language,
+                    source_url: None,
+                    dep: Some("custom"),
+                    personal: true,
+                },
+            )
+            .unwrap();
+        }
+
+        let view = load(&tmp);
+        let RulesView::Ready(data) = view else {
+            panic!("expected rules view to load successfully");
+        };
+
+        assert_eq!(data.rows.len(), 1, "expected grouped all-language rule");
+        assert_eq!(data.rows[0].id, "custom.grouped");
+        assert_eq!(display_languages(&data.rows[0].languages), "all");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

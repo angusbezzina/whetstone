@@ -298,41 +298,38 @@ mod tests {
                 id: id.into(),
                 severity: "should".into(),
                 confidence: "high".into(),
-                language: "rust".into(),
+                languages: vec!["rust".into()],
                 dep: id.split('.').next().unwrap_or(id).into(),
                 layer: "project".into(),
+                source_name: id.split('.').next().unwrap_or(id).into(),
                 source_url: "https://example.com".into(),
                 description: "x".into(),
             }
         }
         app.dashboard.rules = RulesView::Ready(Box::new(RulesData {
             rows: vec![row("a.one"), row("b.two"), row("c.three")],
-            by_language: vec![("rust".into(), 3)],
-            selected: 0,
         }));
 
         app.update(Msg::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
         app.update(Msg::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
-        if let RulesView::Ready(d) = &app.dashboard.rules {
-            assert_eq!(d.selected, 2, "two Down presses should land on index 2");
-        } else {
+        if !matches!(&app.dashboard.rules, RulesView::Ready(_)) {
             panic!("rules view flipped out of Ready");
         }
+        assert_eq!(
+            app.rules_ui.selected, 2,
+            "two Down presses should land on index 2"
+        );
 
         // Down at the bottom clamps to the last row.
         app.update(Msg::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
-        if let RulesView::Ready(d) = &app.dashboard.rules {
-            assert_eq!(d.selected, 2);
-        }
+        assert_eq!(app.rules_ui.selected, 2);
 
         // j/k work as vim aliases.
         app.update(Msg::Key(KeyEvent::new(
             KeyCode::Char('k'),
             KeyModifiers::NONE,
         )));
-        if let RulesView::Ready(d) = &app.dashboard.rules {
-            assert_eq!(d.selected, 1);
-        }
+        assert_eq!(app.rules_ui.selected, 1);
         app.update(Msg::Key(KeyEvent::new(
             KeyCode::Char('k'),
             KeyModifiers::NONE,
@@ -341,9 +338,7 @@ mod tests {
             KeyCode::Char('k'),
             KeyModifiers::NONE,
         )));
-        if let RulesView::Ready(d) = &app.dashboard.rules {
-            assert_eq!(d.selected, 0, "Up at the top clamps to 0");
-        }
+        assert_eq!(app.rules_ui.selected, 0, "Up at the top clamps to 0");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
