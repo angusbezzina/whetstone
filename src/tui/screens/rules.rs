@@ -37,6 +37,7 @@ pub type RulesView = LoadState<RulesData>;
 #[derive(Debug, Clone)]
 pub struct RuleRow {
     pub id: String,
+    pub member_ids: Vec<String>,
     pub severity: String,
     pub confidence: String,
     pub languages: Vec<String>,
@@ -61,6 +62,15 @@ impl RulesView {
         match self {
             RulesView::Ready(data) => filtered_rows(data, filter).len(),
             _ => 0,
+        }
+    }
+
+    pub fn selected_row(&self, filter: RulesLanguageFilter, selected: usize) -> Option<RuleRow> {
+        match self {
+            RulesView::Ready(data) => filtered_rows(data, filter)
+                .get(selected)
+                .map(|row| (*row).clone()),
+            _ => None,
         }
     }
 }
@@ -98,6 +108,7 @@ pub fn load(project_dir: &Path) -> RulesView {
                 .unwrap_or_else(|| lr.rule.id.clone());
             RuleRow {
                 id: lr.rule.id.clone(),
+                member_ids: vec![lr.rule.id.clone()],
                 severity: lr.rule.severity.clone(),
                 confidence: lr.rule.confidence.clone(),
                 languages: vec![lr.rule.language.clone()],
@@ -115,7 +126,10 @@ pub fn load(project_dir: &Path) -> RulesView {
 }
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    if app.input_mode == crate::tui::app::InputMode::RulesAdd {
+    if matches!(
+        app.input_mode,
+        crate::tui::app::InputMode::RulesAdd | crate::tui::app::InputMode::RulesEdit
+    ) {
         render_add_rule_form(frame, area, app);
         return;
     }
@@ -134,7 +148,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
 fn render_ready(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
         .split(area);
 
     render_list(frame, cols[0], app, data);
@@ -161,7 +175,7 @@ fn render_list(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData) {
             Style::default().fg(theme::MUTED),
         ))];
         frame.render_widget(
-            Paragraph::new(lines).block(block("RULE LIST", true)),
+            Paragraph::new(lines).block(block("RULE SET", true)),
             panes[1],
         );
         return;
@@ -196,7 +210,7 @@ fn render_list(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData) {
         })
         .collect();
 
-    let list = List::new(items).block(block("RULE LIST", true));
+    let list = List::new(items).block(block("RULE SET", true));
     frame.render_widget(list, panes[1]);
 }
 
@@ -208,13 +222,7 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData)
         return;
     };
 
-    let layer_color = if row.layer == "personal" {
-        theme::AMBER
-    } else {
-        theme::MUTED
-    };
-
-    let lines = vec![
+    let mut lines = vec![
         kv_line(area.width, "ID", &row.id, Style::default().bold()),
         kv_line(
             area.width,
@@ -232,12 +240,7 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData)
             Style::default(),
         ),
         kv_line(area.width, "Source", &source_label(row), Style::default()),
-        kv_line(
-            area.width,
-            "Layer",
-            &row.layer,
-            Style::default().fg(layer_color).bold(),
-        ),
+        kv_line(area.width, "Layer", &row.layer, Style::default()),
         Line::from(""),
         Line::from(Span::styled(
             "Description",
@@ -247,9 +250,19 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData)
         Line::from(row.description.clone()),
     ];
 
+    if let Some(message) = &app.rules_ui.detail_message {
+        lines.extend([
+            Line::from(""),
+            Line::from(Span::styled(
+                message.clone(),
+                Style::default().fg(theme::STATUS_WARN),
+            )),
+        ]);
+    }
+
     let paragraph = Paragraph::new(lines)
         .wrap(Wrap { trim: false })
-        .block(block("DETAIL", false));
+        .block(detail_block(row));
     frame.render_widget(paragraph, area);
 }
 
@@ -281,6 +294,7 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
 
 fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let form = &app.rules_ui.form;
+    let is_edit = app.input_mode == crate::tui::app::InputMode::RulesEdit;
     let lang = match form.language_idx {
         0 => "TS",
         1 => "Rust",
@@ -290,7 +304,11 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let severity = crate::tui::app::rule_form_severity(form.severity_idx).to_uppercase();
     let lines = vec![
         Line::from(Span::styled(
-            "Tab next field · ←/→ change scope/language/severity · Enter submit · Esc cancel",
+            if is_edit {
+                "Tab next field · ←/→ change scope/language/severity · Enter save · Esc cancel"
+            } else {
+                "Tab next field · ←/→ change scope/language/severity · Enter submit · Esc cancel"
+            },
             Style::default().fg(theme::MUTED),
         )),
         Line::from(""),
@@ -325,7 +343,7 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
     frame.render_widget(
         Paragraph::new(lines)
-            .block(block("ADD RULE", false))
+            .block(block(if is_edit { "EDIT RULE" } else { "ADD RULE" }, false))
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -361,6 +379,21 @@ fn block(title: &str, show_add_cta: bool) -> Block<'static> {
     block
 }
 
+fn detail_block(row: &RuleRow) -> Block<'static> {
+    let title = if is_authored_rule(row) {
+        " E Edit · D Delete "
+    } else {
+        " Read-only rule "
+    };
+    block("DETAIL", false).title_top(
+        Line::from(Span::styled(
+            title,
+            Style::default().fg(theme::AMBER).bold(),
+        ))
+        .right_aligned(),
+    )
+}
+
 fn group_custom_multi_language_rows(rows: Vec<RuleRow>) -> Vec<RuleRow> {
     let mut grouped: std::collections::BTreeMap<String, Vec<RuleRow>> =
         std::collections::BTreeMap::new();
@@ -382,6 +415,12 @@ fn group_custom_multi_language_rows(rows: Vec<RuleRow>) -> Vec<RuleRow> {
         }
 
         let first = group.remove(0);
+        let member_ids: Vec<String> = first
+            .member_ids
+            .iter()
+            .cloned()
+            .chain(group.iter().flat_map(|row| row.member_ids.iter().cloned()))
+            .collect();
         let mut languages = first.languages.clone();
         for row in group {
             languages.extend(row.languages);
@@ -391,6 +430,7 @@ fn group_custom_multi_language_rows(rows: Vec<RuleRow>) -> Vec<RuleRow> {
 
         combined.push(RuleRow {
             id: base_id,
+            member_ids,
             severity: first.severity,
             confidence: first.confidence,
             languages,
@@ -488,21 +528,23 @@ fn sort_languages(languages: &mut [String]) {
 }
 
 fn source_label(row: &RuleRow) -> String {
-    let is_authored_rule =
-        row.id.starts_with("custom.") || row.source_url.starts_with("personal://");
-    if is_authored_rule {
+    if is_authored_rule(row) {
         return if row.layer == "personal" {
-            "Personal Rule".to_string()
+            "Personal".to_string()
         } else {
-            "Team Rule".to_string()
+            "Team".to_string()
         };
     }
 
-    if row.source_name == row.dep {
-        "Dependency".to_string()
+    if !row.source_name.is_empty() && row.source_name != row.dep {
+        row.source_name.clone()
     } else {
-        "Source".to_string()
+        format!("{} (Dependency)", row.dep)
     }
+}
+
+fn is_authored_rule(row: &RuleRow) -> bool {
+    row.id.starts_with("custom.") || row.source_url.starts_with("personal://")
 }
 
 fn kv_line(width: u16, label: &str, value: &str, value_style: Style) -> Line<'static> {
@@ -552,6 +594,7 @@ mod tests {
     fn mk_row(id: &str, severity: &str, layer: &str) -> RuleRow {
         RuleRow {
             id: id.to_string(),
+            member_ids: vec![id.to_string()],
             severity: severity.to_string(),
             confidence: "high".to_string(),
             languages: vec!["python".to_string()],
@@ -675,7 +718,7 @@ mod tests {
             preview(&rendered, 400)
         );
         assert!(
-            rendered.contains("Dependency"),
+            rendered.contains("fa (Dependency)"),
             "detail pane should classify dependency-backed rules; got: {}",
             preview(&rendered, 400)
         );
@@ -688,17 +731,17 @@ mod tests {
         let mut row = mk_row("custom.personal-rule", "should", "personal");
         row.source_name = "custom".to_string();
         row.source_url = "personal://custom/custom.personal-rule".to_string();
-        assert_eq!(source_label(&row), "Personal Rule");
+        assert_eq!(source_label(&row), "Personal");
 
         row.layer = "project".to_string();
-        assert_eq!(source_label(&row), "Team Rule");
+        assert_eq!(source_label(&row), "Team");
     }
 
     #[test]
     fn source_label_maps_non_dependency_rules_to_source() {
         let mut row = mk_row("handbook.write-tests", "should", "project");
         row.source_name = "engineering-handbook".to_string();
-        assert_eq!(source_label(&row), "Source");
+        assert_eq!(source_label(&row), "engineering-handbook");
     }
 
     #[test]

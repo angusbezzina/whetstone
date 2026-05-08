@@ -296,6 +296,7 @@ mod tests {
         fn row(id: &str) -> RuleRow {
             RuleRow {
                 id: id.into(),
+                member_ids: vec![id.into()],
                 severity: "should".into(),
                 confidence: "high".into(),
                 languages: vec!["rust".into()],

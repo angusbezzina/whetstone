@@ -29,6 +29,7 @@ pub enum InputMode {
     Normal,
     SourcesAdd,
     RulesAdd,
+    RulesEdit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -119,7 +120,14 @@ pub struct SourcesUiState {
 pub struct RulesUiState {
     pub language_filter: RulesLanguageFilter,
     pub selected: usize,
+    pub detail_message: Option<String>,
+    pub editing: Option<RulesEditState>,
     pub form: RulesFormState,
+}
+
+#[derive(Debug, Clone)]
+pub struct RulesEditState {
+    pub original_row: crate::tui::screens::rules::RuleRow,
 }
 
 #[derive(Debug, Clone)]
@@ -332,6 +340,12 @@ impl App {
                 Screen::Rules => self.open_rules_form(),
                 _ => {}
             },
+            KeyCode::Char('e') | KeyCode::Char('E') if self.screen == Screen::Rules => {
+                self.open_rules_edit_form()
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') if self.screen == Screen::Rules => {
+                self.delete_selected_rule()
+            }
             KeyCode::Tab if self.screen == Screen::Sources => {
                 self.sources_ui.detail_selected = !self.sources_ui.detail_selected;
             }
@@ -375,10 +389,12 @@ impl App {
             KeyCode::Left | KeyCode::Char('h') if self.screen == Screen::Rules => {
                 self.rules_ui.language_filter = self.rules_ui.language_filter.prev();
                 self.rules_ui.selected = 0;
+                self.rules_ui.detail_message = None;
             }
             KeyCode::Right | KeyCode::Char('l') if self.screen == Screen::Rules => {
                 self.rules_ui.language_filter = self.rules_ui.language_filter.next();
                 self.rules_ui.selected = 0;
+                self.rules_ui.detail_message = None;
             }
             KeyCode::Up | KeyCode::Char('k') => self.select_prev_on_current_screen(1),
             KeyCode::Down | KeyCode::Char('j') => self.select_next_on_current_screen(1),
@@ -420,7 +436,10 @@ impl App {
                         }
                     }
                 },
-                Screen::Rules => self.rules_ui.selected = self.rules_ui.selected.saturating_sub(1),
+                Screen::Rules => {
+                    self.rules_ui.selected = self.rules_ui.selected.saturating_sub(1);
+                    self.rules_ui.detail_message = None;
+                }
                 Screen::Check => self.dashboard.check.select_prev(),
             }
         }
@@ -493,6 +512,7 @@ impl App {
                     if self.rules_ui.selected < max {
                         self.rules_ui.selected += 1;
                     }
+                    self.rules_ui.detail_message = None;
                 }
                 Screen::Check => self.dashboard.check.select_next(),
             }
@@ -534,14 +554,40 @@ impl App {
             active_field: 1,
             ..RulesFormState::default()
         };
+        self.rules_ui.editing = None;
+        self.rules_ui.detail_message = None;
         self.input_mode = InputMode::RulesAdd;
+    }
+
+    fn open_rules_edit_form(&mut self) {
+        let Some(row) = self.current_selected_rules_row() else {
+            return;
+        };
+        if !is_authored_rule_row(&row) {
+            self.rules_ui.detail_message =
+                Some("Only Personal and Team rules can be edited here.".into());
+            return;
+        }
+
+        self.rules_ui.form = RulesFormState {
+            active_field: 1,
+            team_scope: row.layer == "project",
+            name: editable_rule_name(&row.id),
+            language_idx: rule_form_language_idx(&row.languages),
+            severity_idx: rule_form_severity_idx(&row.severity),
+            rule_text: row.description.clone(),
+            error: None,
+        };
+        self.rules_ui.editing = Some(RulesEditState { original_row: row });
+        self.rules_ui.detail_message = None;
+        self.input_mode = InputMode::RulesEdit;
     }
 
     fn handle_form_key(&mut self, ev: KeyEvent) {
         match self.input_mode {
             InputMode::Normal => {}
             InputMode::SourcesAdd => self.handle_sources_form_key(ev),
-            InputMode::RulesAdd => self.handle_rules_form_key(ev),
+            InputMode::RulesAdd | InputMode::RulesEdit => self.handle_rules_form_key(ev),
         }
     }
 
@@ -582,6 +628,7 @@ impl App {
             KeyCode::Esc => {
                 self.input_mode = InputMode::Normal;
                 self.rules_ui.form.error = None;
+                self.rules_ui.editing = None;
             }
             KeyCode::Tab => {
                 self.rules_ui.form.active_field = (self.rules_ui.form.active_field + 1) % 5;
@@ -660,6 +707,11 @@ impl App {
     }
 
     fn submit_rules_form(&mut self) {
+        if self.rules_ui.editing.is_some() {
+            self.submit_rules_edit_form();
+            return;
+        }
+
         let slug = slugify_rule_name(&self.rules_ui.form.name);
         let severity = rule_form_severity(self.rules_ui.form.severity_idx);
         if slug.is_empty() {
@@ -722,9 +774,159 @@ impl App {
             self.rules_ui.form = RulesFormState::default();
             self.rules_ui.language_filter = RulesLanguageFilter::All;
             self.rules_ui.selected = 0;
+            self.rules_ui.detail_message = None;
         } else {
             self.rules_ui.form.error = Some(errors.join("\n"));
         }
+    }
+
+    fn submit_rules_edit_form(&mut self) {
+        let Some(editing) = self.rules_ui.editing.clone() else {
+            self.input_mode = InputMode::Normal;
+            return;
+        };
+
+        let slug = slugify_rule_name(&self.rules_ui.form.name);
+        let severity = rule_form_severity(self.rules_ui.form.severity_idx);
+        if slug.is_empty() {
+            self.rules_ui.form.error =
+                Some("Rule name must contain at least one letter or number.".into());
+            return;
+        }
+        if self.rules_ui.form.rule_text.trim().is_empty() {
+            self.rules_ui.form.error = Some("Rule text must be non-empty.".into());
+            return;
+        }
+
+        let languages = rules_form_languages(self.rules_ui.form.language_idx);
+        let planned_ids: Vec<String> = languages
+            .iter()
+            .map(|language| {
+                if languages.len() == 1 {
+                    format!("custom.{slug}")
+                } else {
+                    format!("custom.{slug}-{language}")
+                }
+            })
+            .collect();
+
+        if let Some(existing) = first_existing_rule_id_except(
+            &self.project_dir,
+            &planned_ids,
+            &editing.original_row.member_ids,
+        ) {
+            self.rules_ui.form.error = Some(format!(
+                "Rule `{existing}` already exists. Choose a different name or remove the existing rule first."
+            ));
+            return;
+        }
+
+        let mut removed_ids = Vec::new();
+        for rule_id in &editing.original_row.member_ids {
+            match crate::rule_authoring::remove(
+                &self.project_dir,
+                crate::rule_authoring::RemoveOptions { rule_id },
+            ) {
+                Ok(_) => removed_ids.push(rule_id.clone()),
+                Err(e) => {
+                    let _ = restore_authored_rule(
+                        &self.project_dir,
+                        &editing.original_row,
+                        &removed_ids,
+                    );
+                    self.rules_ui.form.error = Some(e.to_string());
+                    return;
+                }
+            }
+        }
+
+        let mut created_ids = Vec::new();
+        for (language, rule_id) in languages.iter().zip(planned_ids.iter()) {
+            match crate::rule_authoring::add(
+                &self.project_dir,
+                crate::rule_authoring::AddOptions {
+                    rule_id,
+                    description: self.rules_ui.form.rule_text.trim(),
+                    match_regex: None,
+                    severity,
+                    confidence: "high",
+                    category: "convention",
+                    language,
+                    source_url: None,
+                    dep: Some("custom"),
+                    personal: !self.rules_ui.form.team_scope,
+                },
+            ) {
+                Ok(_) => created_ids.push(rule_id.clone()),
+                Err(e) => {
+                    for created_id in &created_ids {
+                        let _ = crate::rule_authoring::remove(
+                            &self.project_dir,
+                            crate::rule_authoring::RemoveOptions {
+                                rule_id: created_id,
+                            },
+                        );
+                    }
+                    let _ = restore_authored_rule(
+                        &self.project_dir,
+                        &editing.original_row,
+                        &editing.original_row.member_ids,
+                    );
+                    self.rules_ui.form.error = Some(e.to_string());
+                    return;
+                }
+            }
+        }
+
+        self.dashboard.rules = crate::tui::screens::rules::RulesView::NotComputed;
+        self.ensure_rules_loaded();
+        self.input_mode = InputMode::Normal;
+        self.rules_ui.form = RulesFormState::default();
+        self.rules_ui.editing = None;
+        self.rules_ui.detail_message = None;
+        self.rules_ui.language_filter = RulesLanguageFilter::All;
+        self.rules_ui.selected = 0;
+    }
+
+    fn delete_selected_rule(&mut self) {
+        let Some(row) = self.current_selected_rules_row() else {
+            return;
+        };
+        if !is_authored_rule_row(&row) {
+            self.rules_ui.detail_message =
+                Some("Only Personal and Team rules can be deleted here.".into());
+            return;
+        }
+
+        let mut errors = Vec::new();
+        for rule_id in &row.member_ids {
+            if let Err(e) = crate::rule_authoring::remove(
+                &self.project_dir,
+                crate::rule_authoring::RemoveOptions { rule_id },
+            ) {
+                errors.push(e.to_string());
+            }
+        }
+
+        if errors.is_empty() {
+            self.dashboard.rules = crate::tui::screens::rules::RulesView::NotComputed;
+            self.ensure_rules_loaded();
+            let max = self
+                .dashboard
+                .rules
+                .row_count_for(self.rules_ui.language_filter)
+                .saturating_sub(1);
+            self.rules_ui.selected = self.rules_ui.selected.min(max);
+            self.rules_ui.detail_message = None;
+        } else {
+            self.rules_ui.detail_message = Some(errors.join("\n"));
+        }
+    }
+
+    fn current_selected_rules_row(&self) -> Option<crate::tui::screens::rules::RuleRow> {
+        self.dashboard
+            .rules
+            .selected_row(self.rules_ui.language_filter, self.rules_ui.selected)
     }
 }
 
@@ -734,6 +936,118 @@ pub fn rule_form_severity(idx: usize) -> &'static str {
         1 => "should",
         _ => "may",
     }
+}
+
+fn rule_form_severity_idx(severity: &str) -> usize {
+    match severity {
+        "must" => 0,
+        "should" => 1,
+        _ => 2,
+    }
+}
+
+fn rule_form_language_idx(languages: &[String]) -> usize {
+    match languages {
+        [language] => match language.as_str() {
+            "typescript" => 0,
+            "rust" => 1,
+            "python" => 2,
+            _ => 3,
+        },
+        _ => 3,
+    }
+}
+
+fn rules_form_languages(idx: usize) -> &'static [&'static str] {
+    match idx {
+        0 => &["typescript"],
+        1 => &["rust"],
+        2 => &["python"],
+        _ => &["python", "rust", "typescript"],
+    }
+}
+
+fn editable_rule_name(rule_id: &str) -> String {
+    rule_id
+        .strip_prefix("custom.")
+        .unwrap_or(rule_id)
+        .to_string()
+}
+
+fn is_authored_rule_row(row: &crate::tui::screens::rules::RuleRow) -> bool {
+    row.id.starts_with("custom.") || row.source_url.starts_with("personal://")
+}
+
+fn restore_authored_rule(
+    project_dir: &Path,
+    row: &crate::tui::screens::rules::RuleRow,
+    rule_ids: &[String],
+) -> Result<()> {
+    for rule_id in rule_ids {
+        let language = authored_rule_language(rule_id, &row.languages)?;
+        crate::rule_authoring::add(
+            project_dir,
+            crate::rule_authoring::AddOptions {
+                rule_id,
+                description: &row.description,
+                match_regex: None,
+                severity: &row.severity,
+                confidence: &row.confidence,
+                category: "convention",
+                language,
+                source_url: None,
+                dep: Some("custom"),
+                personal: row.layer == "personal",
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn authored_rule_language<'a>(rule_id: &str, fallback_languages: &'a [String]) -> Result<&'a str> {
+    if let Some(language) = rule_id.strip_suffix("-python") {
+        let _ = language;
+        return Ok("python");
+    }
+    if let Some(language) = rule_id.strip_suffix("-rust") {
+        let _ = language;
+        return Ok("rust");
+    }
+    if let Some(language) = rule_id.strip_suffix("-typescript") {
+        let _ = language;
+        return Ok("typescript");
+    }
+
+    fallback_languages
+        .first()
+        .map(|language| language.as_str())
+        .ok_or_else(|| anyhow::anyhow!("unable to determine language for `{rule_id}`"))
+}
+
+fn first_existing_rule_id_except(
+    project_dir: &Path,
+    planned: &[String],
+    ignored_ids: &[String],
+) -> Option<String> {
+    let ignored: std::collections::HashSet<&str> = ignored_ids.iter().map(String::as_str).collect();
+    let paths = crate::layers::LayerPaths::for_project(project_dir);
+    for dir in [&paths.project_rules_dir, &paths.personal_rules_dir] {
+        if !dir.exists() {
+            continue;
+        }
+        let (files, _) = crate::rules::load_rule_files(dir);
+        for file in files {
+            for rule in file.rule_file.rules {
+                if ignored.contains(rule.id.as_str()) {
+                    continue;
+                }
+                if planned.iter().any(|id| id == &rule.id) {
+                    return Some(rule.id);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Gather everything the dashboard needs in one pass. Reuses the existing
@@ -911,13 +1225,13 @@ fn debt_snippet(evidence: &crate::debt::types::Evidence) -> String {
     use crate::debt::types::Evidence;
 
     match evidence {
-        Evidence::ManifestEntry { snippet, .. } => truncate_inline(snippet, 220),
+        Evidence::ManifestEntry { snippet, .. } => snippet.clone(),
         Evidence::SymbolDef {
             name, symbol_kind, ..
         } => {
             format!("{symbol_kind}: {name}")
         }
-        Evidence::DuplicateCluster { snippet, .. } => truncate_inline(snippet, 220),
+        Evidence::DuplicateCluster { snippet, .. } => snippet.clone(),
         Evidence::OrphanedFile { path, .. } => path.clone(),
         Evidence::ChurnViolationIntersection {
             changes,
@@ -925,17 +1239,6 @@ fn debt_snippet(evidence: &crate::debt::types::Evidence) -> String {
             window_days,
             ..
         } => format!("{changes} changes and {violations} violations over {window_days}d"),
-    }
-}
-
-fn truncate_inline(text: &str, max: usize) -> String {
-    let compact = text.replace('\n', " ");
-    let mut chars = compact.chars();
-    let taken: String = chars.by_ref().take(max).collect();
-    if chars.next().is_some() {
-        format!("{taken}…")
-    } else {
-        taken
     }
 }
 
@@ -1027,5 +1330,103 @@ mod tests {
         assert_eq!(app.rules_ui.language_filter, RulesLanguageFilter::All);
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn delete_selected_custom_rule_removes_grouped_rules() {
+        let tmp = std::env::temp_dir().join(format!("wh_tui_rules_delete_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::create_dir_all(&tmp);
+
+        for language in ["python", "rust", "typescript"] {
+            crate::rule_authoring::add(
+                &tmp,
+                crate::rule_authoring::AddOptions {
+                    rule_id: &format!("custom.clean-up-{language}"),
+                    description: "Temporary rule",
+                    match_regex: None,
+                    severity: "should",
+                    confidence: "high",
+                    category: "convention",
+                    language,
+                    source_url: None,
+                    dep: Some("custom"),
+                    personal: true,
+                },
+            )
+            .unwrap();
+        }
+
+        let mut app = App::new(&tmp).unwrap();
+        app.screen = Screen::Rules;
+        app.dashboard.rules = crate::tui::screens::rules::load(&tmp);
+
+        app.delete_selected_rule();
+
+        let paths = crate::layers::LayerPaths::for_project(&tmp);
+        let (rules, _) = crate::rules::load_approved_rules(&paths.personal_rules_dir, None);
+        assert!(rules.is_empty());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn editing_selected_custom_rule_rewrites_scope_language_and_text() {
+        let tmp = std::env::temp_dir().join(format!("wh_tui_rules_edit_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::create_dir_all(&tmp);
+
+        crate::rule_authoring::add(
+            &tmp,
+            crate::rule_authoring::AddOptions {
+                rule_id: "custom.initial-rule",
+                description: "Initial rule text",
+                match_regex: None,
+                severity: "should",
+                confidence: "high",
+                category: "convention",
+                language: "python",
+                source_url: None,
+                dep: Some("custom"),
+                personal: true,
+            },
+        )
+        .unwrap();
+
+        let mut app = App::new(&tmp).unwrap();
+        app.screen = Screen::Rules;
+        app.dashboard.rules = crate::tui::screens::rules::load(&tmp);
+
+        app.open_rules_edit_form();
+        app.rules_ui.form.team_scope = true;
+        app.rules_ui.form.name = "updated-rule".into();
+        app.rules_ui.form.language_idx = 1;
+        app.rules_ui.form.severity_idx = 0;
+        app.rules_ui.form.rule_text = "Updated rule text".into();
+        app.submit_rules_form();
+
+        let paths = crate::layers::LayerPaths::for_project(&tmp);
+        let (personal_rules, _) =
+            crate::rules::load_approved_rules(&paths.personal_rules_dir, None);
+        let (project_rules, _) = crate::rules::load_approved_rules(&paths.project_rules_dir, None);
+        assert!(personal_rules.is_empty());
+        assert_eq!(project_rules.len(), 1);
+        assert_eq!(project_rules[0].id, "custom.updated-rule");
+        assert_eq!(project_rules[0].language, "rust");
+        assert_eq!(project_rules[0].severity, "must");
+        assert_eq!(project_rules[0].description, "Updated rule text");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn debt_snippet_preserves_multiline_evidence() {
+        let evidence = crate::debt::types::Evidence::ManifestEntry {
+            snippet: "line one\nline two".into(),
+            references: 2,
+            locations: Vec::new(),
+        };
+
+        assert_eq!(debt_snippet(&evidence), "line one\nline two");
     }
 }

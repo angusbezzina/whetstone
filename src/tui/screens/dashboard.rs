@@ -101,10 +101,6 @@ fn build_lines(width: u16, app: &App) -> Vec<Line<'static>> {
 
     lines.push(section("RULES"));
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "Rules by language",
-        theme::header_meta(),
-    )));
     lines.push(detail_line(width, "TS", &counts.ts.to_string()));
     lines.push(detail_line(width, "Rust", &counts.rust.to_string()));
     lines.push(detail_line(width, "Python", &counts.python.to_string()));
@@ -114,10 +110,6 @@ fn build_lines(width: u16, app: &App) -> Vec<Line<'static>> {
 
     lines.push(section("VIOLATIONS"));
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "Violations by language",
-        theme::header_meta(),
-    )));
     lines.push(detail_line(
         width,
         "TS",
@@ -316,5 +308,59 @@ fn truncate(value: &str, max: usize) -> String {
     } else {
         let kept: String = value.chars().take(max.saturating_sub(1)).collect();
         format!("{kept}…")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::app::{DebtSummaryView, ViolationCounts};
+
+    #[test]
+    fn dashboard_lines_omit_language_breakdown_headings() {
+        let tmp = std::env::temp_dir().join(format!("wh_dashboard_lines_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.dashboard.rules_by_language = vec![
+            ("typescript".into(), 1),
+            ("rust".into(), 2),
+            ("python".into(), 3),
+        ];
+        app.dashboard.violations_by_language = LanguageCounts {
+            ts: 1,
+            rust: 2,
+            python: 3,
+            all: 6,
+        };
+        app.dashboard.violation_counts = ViolationCounts {
+            must: 1,
+            should: 1,
+            may: 1,
+        };
+        app.dashboard.rules_total = 6;
+        app.dashboard.debt = DebtView::Ready(Box::new(DebtSummaryView {
+            debt_label: "high".into(),
+            finding_count: 4,
+            by_dead: 1,
+            by_dup: 2,
+            by_deps: 1,
+            selected: 0,
+            detail_selected: false,
+            detail_scroll_y: 0,
+            scroll_x: 0,
+            hotspots: Vec::new(),
+        }));
+
+        let rendered = build_lines(120, &app)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!rendered.contains("Rules by language"));
+        assert!(!rendered.contains("Violations by language"));
+        assert!(rendered.contains("Debt Level"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

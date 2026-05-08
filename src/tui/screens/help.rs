@@ -82,8 +82,12 @@ fn build_lines() -> Vec<Line<'static>> {
         section("IN A LIST"),
         kv("↑ / ↓ / j / k", "Navigate"),
         kv("PgUp / PgDn", "Move faster through longer lists"),
-        kv("← / → / h / l", "Horizontal scroll on supported screens"),
+        kv(
+            "← / → / h / l",
+            "Switch Sources/Rules tabs or scroll supported panes",
+        ),
         kv("A", "Open add form on Sources or Rules"),
+        kv("E / D", "Edit or delete the selected personal/team rule"),
         kv(
             "Tab / Enter / T",
             "Move fields, save, or toggle Personal/Team while editing",

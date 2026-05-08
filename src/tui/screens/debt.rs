@@ -207,7 +207,7 @@ fn issue_item(selected: bool, hotspot: &DebtHotspotRow, width: usize) -> ListIte
             Span::raw(" "),
             Span::styled(
                 format!("({} Impact)", hotspot.impact_level),
-                Style::default().fg(ratatui::style::Color::White),
+                Style::default().fg(theme::MUTED).italic(),
             ),
         ]),
         Line::from(vec![
@@ -295,9 +295,28 @@ fn detail_lines(hotspot: &DebtHotspotRow) -> Vec<Line<'static>> {
         Line::from(""),
         Line::from(Span::styled("Snippet", theme::header_title())),
         Line::from(""),
-        Line::from(hotspot.snippet.clone()),
     ]);
+    lines.extend(formatted_snippet_lines(&hotspot.snippet));
     lines
+}
+
+fn formatted_snippet_lines(snippet: &str) -> Vec<Line<'static>> {
+    if snippet.trim().is_empty() {
+        return vec![Line::from(Span::styled(
+            "    —",
+            Style::default().fg(theme::MUTED),
+        ))];
+    }
+
+    snippet
+        .lines()
+        .map(|line| {
+            Line::from(vec![
+                Span::styled("    ", Style::default().fg(theme::MUTED)),
+                Span::raw(line.to_string()),
+            ])
+        })
+        .collect()
 }
 
 fn block(title: &str, active: bool) -> Block<'static> {
@@ -349,4 +368,32 @@ fn window_bounds(selected: usize, len: usize, visible: usize) -> (usize, usize) 
     }
     let start = selected.saturating_sub(visible / 2).min(len - visible);
     (start, (start + visible).min(len))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detail_lines_preserve_and_indent_multiline_snippet() {
+        let hotspot = DebtHotspotRow {
+            category: "dup".into(),
+            confidence: "high".into(),
+            rule_id: "dup.block".into(),
+            title: "Duplicate block".into(),
+            compact_title: "Duplicate block".into(),
+            primary_file: "src/lib.rs".into(),
+            files: vec!["src/lib.rs".into()],
+            snippet: "first line\nsecond line".into(),
+            impact_level: "High".into(),
+        };
+
+        let lines = detail_lines(&hotspot);
+        let rendered: Vec<String> = lines.iter().map(ToString::to_string).collect();
+
+        assert_eq!(rendered[0], "Duplicate block");
+        assert!(rendered.iter().any(|line| line == "Snippet"));
+        assert!(rendered.iter().any(|line| line == "    first line"));
+        assert!(rendered.iter().any(|line| line == "    second line"));
+    }
 }

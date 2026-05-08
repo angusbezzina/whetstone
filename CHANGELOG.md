@@ -6,6 +6,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.16] - 2026-05-08
+
+### Fixed
+- **Rules now behaves like a proper operator workbench in the TUI.** The left pane matches the Sources-style language selector plus rule-set layout, detail now reports clearer provenance labels, layer styling is neutral, and custom personal/team rules can be edited or deleted directly from the detail view with the same guided form behavior used for authoring.
+- **Debt and dashboard presentation are easier to scan.** Debt rows now de-emphasize impact labels, detail preserves full snippets with clearer indentation, and the dashboard trims redundant language-heading copy while keeping the debt summary aligned as structured key/value data.
+
 ## [0.8.15] - 2026-05-08
 
 ### Fixed
