@@ -6,6 +6,16 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.17] - 2026-05-09
+
+### Added
+- **Custom rules can now bind directly to enforcement surfaces.** Rule YAML, CLI authoring, and the TUI now support structured linter bindings, formatter options, and explicit linked test targets for personal and team rules.
+- **The Rules TUI now captures enforcement mode.** Users can choose Advisory, Pattern, Linter, Formatter, or Test while authoring custom rules, and rule detail shows the configured enforcement binding.
+
+### Changed
+- **Generation and scan now consume structured enforcement metadata.** Lint generation prefers `signals[].lint` over free-text parsing, test generation surfaces linked tests, and `wh scan` reports missing lint, formatter, or linked-test configuration as actionable config issues.
+- **Agent guidance now teaches enforceable custom rules.** The skill, schema, README, extraction prompt, and signal-strategy docs now show structured lint, formatter, and test-backed rule examples.
+
 ## [0.8.16] - 2026-05-08
 
 ### Fixed
