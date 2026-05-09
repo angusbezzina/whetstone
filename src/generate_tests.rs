@@ -60,6 +60,7 @@ pub fn generate_tests(
     }
 
     let mut test_files: Vec<Value> = Vec::new();
+    let linked_tests = collect_linked_tests(&approved);
     let mut all_warnings: Vec<String> = warnings;
 
     for (language, rules) in &by_language {
@@ -99,6 +100,7 @@ pub fn generate_tests(
         "status": "ok",
         "generated": {
             "tests": test_files,
+            "linked_tests": linked_tests,
         },
         "rules_count": approved.len(),
         "languages": by_language.keys().collect::<Vec<_>>(),
@@ -169,13 +171,21 @@ fn generate_python(
     let by_dep = group_by_source(rules);
 
     for (source_name, dep_rules) in &by_dep {
+        let renderable_rules: Vec<&ApprovedRule> = dep_rules
+            .iter()
+            .copied()
+            .filter(|rule| !rule.signals.is_empty())
+            .collect();
+        if renderable_rules.is_empty() {
+            continue;
+        }
         let safe_name = sanitize_name(source_name);
         let test_filename = format!("test_{safe_name}.py");
         let test_path = evals_dir.join(&test_filename);
 
         let mut ctx = Context::new();
         ctx.insert("source_name", source_name);
-        let tmpl_rules: Vec<TemplateRule> = dep_rules.iter().map(|r| to_template_rule(r)).collect();
+        let tmpl_rules: Vec<TemplateRule> = renderable_rules.iter().map(|r| to_template_rule(r)).collect();
         let needs_re = tmpl_rules
             .iter()
             .any(|r| r.signals.iter().any(|s| s.match_pattern.is_some()));
@@ -184,7 +194,7 @@ fn generate_python(
 
         let content = render(tera, "python_test.py.tera", &ctx);
         if write_generated(&test_path, &content, dry_run) {
-            for rule in dep_rules {
+            for rule in &renderable_rules {
                 test_files.push(serde_json::json!({
                     "path": test_path.display().to_string(),
                     "type": "test",
@@ -221,17 +231,25 @@ fn generate_typescript(
     let by_dep = group_by_source(rules);
 
     for (source_name, dep_rules) in &by_dep {
+        let renderable_rules: Vec<&ApprovedRule> = dep_rules
+            .iter()
+            .copied()
+            .filter(|rule| !rule.signals.is_empty())
+            .collect();
+        if renderable_rules.is_empty() {
+            continue;
+        }
         let safe_name = sanitize_name(source_name);
         let test_filename = format!("{safe_name}.test.ts");
         let test_path = evals_dir.join(&test_filename);
 
         let mut ctx = Context::new();
-        let tmpl_rules: Vec<TemplateRule> = dep_rules.iter().map(|r| to_template_rule(r)).collect();
+        let tmpl_rules: Vec<TemplateRule> = renderable_rules.iter().map(|r| to_template_rule(r)).collect();
         ctx.insert("rules", &tmpl_rules);
 
         let content = render(tera, "typescript_test.ts.tera", &ctx);
         if write_generated(&test_path, &content, dry_run) {
-            for rule in dep_rules {
+            for rule in &renderable_rules {
                 test_files.push(serde_json::json!({
                     "path": test_path.display().to_string(),
                     "type": "test",
@@ -259,18 +277,26 @@ fn generate_rust(
     let by_dep = group_by_source(rules);
 
     for (source_name, dep_rules) in &by_dep {
+        let renderable_rules: Vec<&ApprovedRule> = dep_rules
+            .iter()
+            .copied()
+            .filter(|rule| !rule.signals.is_empty())
+            .collect();
+        if renderable_rules.is_empty() {
+            continue;
+        }
         let safe_name = sanitize_name(source_name);
         let test_filename = format!("test_{safe_name}.rs");
         let test_path = evals_dir.join(&test_filename);
 
         let mut ctx = Context::new();
         ctx.insert("source_name", source_name);
-        let tmpl_rules: Vec<TemplateRule> = dep_rules.iter().map(|r| to_template_rule(r)).collect();
+        let tmpl_rules: Vec<TemplateRule> = renderable_rules.iter().map(|r| to_template_rule(r)).collect();
         ctx.insert("rules", &tmpl_rules);
 
         let content = render(tera, "rust_test.rs.tera", &ctx);
         if write_generated(&test_path, &content, dry_run) {
-            for rule in dep_rules {
+            for rule in &renderable_rules {
                 test_files.push(serde_json::json!({
                     "path": test_path.display().to_string(),
                     "type": "test",
@@ -295,6 +321,22 @@ fn group_by_source<'a>(rules: &[&'a ApprovedRule]) -> BTreeMap<String, Vec<&'a A
             .push(rule);
     }
     by_dep
+}
+
+fn collect_linked_tests(rules: &[ApprovedRule]) -> Vec<Value> {
+    let mut linked = Vec::new();
+    for rule in rules {
+        for test in &rule.tests {
+            linked.push(serde_json::json!({
+                "rule_id": rule.id,
+                "language": rule.language,
+                "runner": test.runner,
+                "path": test.path,
+                "selector": test.selector,
+            }));
+        }
+    }
+    linked
 }
 
 /// Produce a filesystem-safe identifier from a dependency source name.
@@ -366,12 +408,43 @@ mod tests {
                 match_pattern: match_pattern.map(String::from),
                 ast_query: None,
                 ast_scope: None,
+                lint: None,
             }],
             formatter: None,
+            tests: Vec::new(),
             golden_examples: Vec::new(),
             deterministic_pass_threshold: None,
             deterministic_fail_threshold: None,
         }
+    }
+
+    #[test]
+    fn linked_tests_surface_external_bindings() {
+        let rule = ApprovedRule {
+            id: "demo.external".into(),
+            severity: "should".into(),
+            confidence: "high".into(),
+            category: "convention".into(),
+            description: "desc".into(),
+            source_url: "https://example".into(),
+            source_name: "demo".into(),
+            language: "python".into(),
+            signals: Vec::new(),
+            formatter: None,
+            tests: vec![rules::ApprovedTestBinding {
+                runner: "pytest".into(),
+                path: "tests/style/test_demo.py".into(),
+                selector: Some("test_demo_rule".into()),
+            }],
+            golden_examples: Vec::new(),
+            deterministic_pass_threshold: None,
+            deterministic_fail_threshold: None,
+        };
+
+        let linked = collect_linked_tests(&[rule]);
+        assert_eq!(linked.len(), 1);
+        assert_eq!(linked[0]["runner"], "pytest");
+        assert_eq!(linked[0]["path"], "tests/style/test_demo.py");
     }
 
     #[test]

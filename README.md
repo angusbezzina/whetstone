@@ -294,10 +294,20 @@ rules:
       tool: ruff
       options:
         quote-style: single
+    tests:
+      - runner: pytest
+        path: tests/style/test_fastapi_rules.py
+        selector: test_async_routes
     signals:
       - id: is-sync-function
         strategy: ast         # ast | pattern | lint_proxy
         weight: required
+      - id: mutable-defaults
+        strategy: lint_proxy
+        weight: required
+        lint:
+          tool: ruff
+          code: B006
 ```
 
 See [`references/rule-schema.yaml`](references/rule-schema.yaml) for the full schema.

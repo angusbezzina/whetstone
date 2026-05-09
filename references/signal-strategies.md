@@ -4,7 +4,7 @@
 
 ## Overview
 
-Every Whetstone rule is decomposed into one or more **signals** — individual checks that can verify whether code follows the rule. The goal is 100% deterministic coverage: every rule must have at least one AST, pattern, or `lint_proxy` signal.
+Every Whetstone rule is decomposed into one or more **signals** — individual checks that can verify whether code follows the rule. The goal is 100% deterministic coverage: every rule should have at least one AST, pattern, or `lint_proxy` signal when possible. Formatter-backed or explicitly test-bound rules may rely on structured `formatter` / `tests` bindings instead.
 
 ## Strategy Types
 
@@ -74,7 +74,22 @@ Every Whetstone rule is decomposed into one or more **signals** — individual c
 
 **Deterministic**: Yes (delegated to the linter).
 
-**Implementation**: Generates linter configuration overlays:
+**Implementation**: Generates linter configuration overlays. Prefer structured bindings on the signal itself:
+
+```yaml
+signals:
+  - id: mutable-defaults
+    strategy: lint_proxy
+    description: Covered by Ruff
+    weight: required
+    lint:
+      tool: ruff
+      code: B006
+```
+
+This avoids brittle free-text parsing of descriptions.
+
+Generates linter configuration overlays:
 - Python: `ruff.whetstone.toml` with `extend-select`
 - TypeScript: `biome.whetstone.json` with rule config
 - Rust: `clippy.whetstone.toml` with lint settings
@@ -113,6 +128,7 @@ deterministic_fail_threshold: 0  # 0 deterministic signals = auto-fail
 When decomposing a rule into signals:
 
 - [ ] At least one signal has strategy `ast` or `pattern`
+- [ ] `lint_proxy` signals include structured `lint.tool` + `lint.code`
 - [ ] No signal is redundant with another
 - [ ] Exactly one signal has weight `required`
 - [ ] All signals have descriptive `description` fields

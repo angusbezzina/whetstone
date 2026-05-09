@@ -1,4 +1,5 @@
 use clap::{Args, Parser, Subcommand};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::{
@@ -257,6 +258,7 @@ enum ConfigAction {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum RulesAction {
     /// List rules by lifecycle status (candidate / approved)
     List {
@@ -293,6 +295,38 @@ enum RulesAction {
         /// Regex pattern that signals a violation (produces a `pattern` signal)
         #[arg(long = "match")]
         match_regex: Option<String>,
+
+        /// Structured lint binding tool [ruff | biome | clippy]
+        #[arg(long)]
+        lint_tool: Option<String>,
+
+        /// Structured lint binding code (e.g. B006, suspicious/noExplicitAny)
+        #[arg(long)]
+        lint_code: Option<String>,
+
+        /// Formatter tool [ruff | biome | rustfmt]
+        #[arg(long)]
+        formatter_tool: Option<String>,
+
+        /// Formatter option(s) as key=value. Repeat for multiple options.
+        #[arg(long = "formatter-option")]
+        formatter_options: Vec<String>,
+
+        /// Explicit test runner [pytest | vitest | cargo]
+        #[arg(long)]
+        test_runner: Option<String>,
+
+        /// Path to a specific test file to bind this rule to
+        #[arg(long)]
+        test_path: Option<String>,
+
+        /// Optional test selector within the bound test file
+        #[arg(long)]
+        test_selector: Option<String>,
+
+        /// Explicitly create an advisory rule with no concrete enforcement binding
+        #[arg(long)]
+        advisory: bool,
 
         /// Severity [must | should | may]
         #[arg(long, default_value = "should")]
@@ -458,6 +492,7 @@ enum RulesAction {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Bootstrap from zero: detect dependencies, resolve documentation, write extraction handoff
     #[command(name = "init")]
@@ -1738,6 +1773,14 @@ pub fn run() -> i32 {
                 rule_id,
                 description,
                 match_regex,
+                lint_tool,
+                lint_code,
+                formatter_tool,
+                formatter_options,
+                test_runner,
+                test_path,
+                test_selector,
+                advisory,
                 severity,
                 confidence,
                 category,
@@ -1749,16 +1792,33 @@ pub fn run() -> i32 {
                 project_dir,
             } => {
                 let personal = !project;
+                let enforcement = match build_rule_enforcement(RuleEnforcementInput {
+                    match_regex,
+                    lint_tool,
+                    lint_code,
+                    formatter_tool,
+                    formatter_options,
+                    test_runner,
+                    test_path,
+                    test_selector,
+                    advisory,
+                }) {
+                    Ok(enforcement) => enforcement,
+                    Err(e) => {
+                        output::print_json(&output::error_json(&e.to_string(), "Choose exactly one enforcement mode for `wh rules add`"));
+                        return 1;
+                    }
+                };
                 let opts = rule_authoring::AddOptions {
-                    rule_id: &rule_id,
-                    description: &description,
-                    match_regex: match_regex.as_deref(),
-                    severity: &severity,
-                    confidence: &confidence,
-                    category: &category,
-                    language: &lang,
-                    source_url: source_url.as_deref(),
-                    dep: dep.as_deref(),
+                    rule_id,
+                    description,
+                    severity,
+                    confidence,
+                    category,
+                    language: lang,
+                    source_url,
+                    dep,
+                    enforcement,
                     personal,
                 };
                 match rule_authoring::add(&project_dir, opts) {
@@ -2415,6 +2475,18 @@ fn run_tests_command(
                         println!("  + {path}");
                     }
                 }
+                if let Some(linked) = gen.get("linked_tests").and_then(|v| v.as_array()) {
+                    for binding in linked {
+                        let runner = binding.get("runner").and_then(|v| v.as_str()).unwrap_or("?");
+                        let path = binding.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                        let selector = binding
+                            .get("selector")
+                            .and_then(|v| v.as_str())
+                            .map(|selector| format!(" :: {selector}"))
+                            .unwrap_or_default();
+                        println!("  ↳ linked test: {runner} {path}{selector}");
+                    }
+                }
                 if let Some(lints) = gen.get("lint_configs").and_then(|v| v.as_array()) {
                     for f in lints {
                         let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("?");
@@ -2795,9 +2867,129 @@ fn load_deps_input(input: Option<&std::path::Path>) -> anyhow::Result<serde_json
     }
 }
 
+struct RuleEnforcementInput {
+    match_regex: Option<String>,
+    lint_tool: Option<String>,
+    lint_code: Option<String>,
+    formatter_tool: Option<String>,
+    formatter_options: Vec<String>,
+    test_runner: Option<String>,
+    test_path: Option<String>,
+    test_selector: Option<String>,
+    advisory: bool,
+}
+
+fn build_rule_enforcement(input: RuleEnforcementInput) -> anyhow::Result<rule_authoring::EnforcementMode> {
+    let RuleEnforcementInput {
+        match_regex,
+        lint_tool,
+        lint_code,
+        formatter_tool,
+        formatter_options,
+        test_runner,
+        test_path,
+        test_selector,
+        advisory,
+    } = input;
+    let mut chosen = Vec::new();
+    if match_regex.is_some() {
+        chosen.push("pattern");
+    }
+    if lint_tool.is_some() || lint_code.is_some() {
+        chosen.push("lint");
+    }
+    if formatter_tool.is_some() || !formatter_options.is_empty() {
+        chosen.push("formatter");
+    }
+    if test_runner.is_some() || test_path.is_some() || test_selector.is_some() {
+        chosen.push("test");
+    }
+    if advisory {
+        chosen.push("advisory");
+    }
+
+    if chosen.len() != 1 {
+        return Err(anyhow::anyhow!(
+            "choose exactly one enforcement mode: --match, --lint-tool/--lint-code, --formatter-tool/--formatter-option, --test-runner/--test-path, or --advisory"
+        ));
+    }
+
+    if let Some(regex) = match_regex {
+        return Ok(rule_authoring::EnforcementMode::Pattern { regex });
+    }
+
+    if lint_tool.is_some() || lint_code.is_some() {
+        let tool = lint_tool.ok_or_else(|| anyhow::anyhow!("--lint-tool is required"))?;
+        let code = lint_code.ok_or_else(|| anyhow::anyhow!("--lint-code is required"))?;
+        return Ok(rule_authoring::EnforcementMode::Lint { tool, code });
+    }
+
+    if formatter_tool.is_some() || !formatter_options.is_empty() {
+        let tool = formatter_tool.ok_or_else(|| anyhow::anyhow!("--formatter-tool is required"))?;
+        let options = parse_formatter_options(&formatter_options)?;
+        return Ok(rule_authoring::EnforcementMode::Formatter { tool, options });
+    }
+
+    if test_runner.is_some() || test_path.is_some() || test_selector.is_some() {
+        let runner = test_runner.ok_or_else(|| anyhow::anyhow!("--test-runner is required"))?;
+        let path = test_path.ok_or_else(|| anyhow::anyhow!("--test-path is required"))?;
+        return Ok(rule_authoring::EnforcementMode::Test {
+            runner,
+            path,
+            selector: test_selector,
+        });
+    }
+
+    Ok(rule_authoring::EnforcementMode::Advisory)
+}
+
+fn parse_formatter_options(entries: &[String]) -> anyhow::Result<BTreeMap<String, serde_json::Value>> {
+    let mut options = BTreeMap::new();
+    for entry in entries {
+        let (key, raw) = entry.split_once('=').ok_or_else(|| {
+            anyhow::anyhow!("formatter options must use key=value syntax (got `{entry}`)")
+        })?;
+        let key = key.trim();
+        let raw = raw.trim();
+        if key.is_empty() || raw.is_empty() {
+            return Err(anyhow::anyhow!(
+                "formatter options must use non-empty key=value syntax (got `{entry}`)"
+            ));
+        }
+        options.insert(key.to_string(), formatter_option_value(raw));
+    }
+    if options.is_empty() {
+        return Err(anyhow::anyhow!(
+            "at least one --formatter-option key=value pair is required"
+        ));
+    }
+    Ok(options)
+}
+
+fn formatter_option_value(raw: &str) -> serde_json::Value {
+    if raw.eq_ignore_ascii_case("true") {
+        return serde_json::Value::Bool(true);
+    }
+    if raw.eq_ignore_ascii_case("false") {
+        return serde_json::Value::Bool(false);
+    }
+    if let Ok(parsed) = raw.parse::<i64>() {
+        return serde_json::json!(parsed);
+    }
+    if let Ok(parsed) = raw.parse::<f64>() {
+        if parsed.is_finite() {
+            return serde_json::json!(parsed);
+        }
+    }
+    serde_json::Value::String(raw.to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_since_days, worklist_sort_key};
+    use super::{
+        build_rule_enforcement, formatter_option_value, parse_formatter_options, parse_since_days,
+        worklist_sort_key, RuleEnforcementInput,
+    };
     use serde_json::json;
 
     #[test]
@@ -2838,5 +3030,35 @@ mod tests {
         assert_eq!(key.1, "rust");
         assert_eq!(key.2, "serde");
         assert_eq!(key.3, "serde.deprecated-api");
+    }
+
+    #[test]
+    fn formatter_option_parser_coerces_bool_and_number() {
+        assert_eq!(formatter_option_value("true"), json!(true));
+        assert_eq!(formatter_option_value("80"), json!(80));
+        assert_eq!(formatter_option_value("single"), json!("single"));
+    }
+
+    #[test]
+    fn parse_formatter_options_requires_key_value_pairs() {
+        assert!(parse_formatter_options(&["quote-style=single".into()]).is_ok());
+        assert!(parse_formatter_options(&["broken".into()]).is_err());
+    }
+
+    #[test]
+    fn rule_enforcement_builder_rejects_multiple_modes() {
+        let err = build_rule_enforcement(RuleEnforcementInput {
+            match_regex: Some("foo".into()),
+            lint_tool: Some("ruff".into()),
+            lint_code: Some("B006".into()),
+            formatter_tool: None,
+            formatter_options: Vec::new(),
+            test_runner: None,
+            test_path: None,
+            test_selector: None,
+            advisory: false,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("choose exactly one enforcement mode"));
     }
 }

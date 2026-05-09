@@ -4,6 +4,7 @@
 //! Screen-specific state lives on sub-structs under `App`.
 
 use std::path::{Path, PathBuf};
+use std::collections::BTreeMap;
 
 use anyhow::Result;
 use serde_json::Value;
@@ -137,7 +138,11 @@ pub struct RulesFormState {
     pub name: String,
     pub language_idx: usize,
     pub severity_idx: usize,
+    pub mode_idx: usize,
     pub rule_text: String,
+    pub detail_a: String,
+    pub detail_b: String,
+    pub detail_c: String,
     pub error: Option<String>,
 }
 
@@ -149,7 +154,11 @@ impl Default for RulesFormState {
             name: String::new(),
             language_idx: 3,
             severity_idx: 1,
+            mode_idx: 1,
             rule_text: String::new(),
+            detail_a: String::new(),
+            detail_b: String::new(),
+            detail_c: String::new(),
             error: None,
         }
     }
@@ -569,14 +578,12 @@ impl App {
             return;
         }
 
-        self.rules_ui.form = RulesFormState {
-            active_field: 1,
-            team_scope: row.layer == "project",
-            name: editable_rule_name(&row.id),
-            language_idx: rule_form_language_idx(&row.languages),
-            severity_idx: rule_form_severity_idx(&row.severity),
-            rule_text: row.description.clone(),
-            error: None,
+        self.rules_ui.form = match rules_form_from_row(&row) {
+            Ok(form) => form,
+            Err(err) => {
+                self.rules_ui.detail_message = Some(err.to_string());
+                return;
+            }
         };
         self.rules_ui.editing = Some(RulesEditState { original_row: row });
         self.rules_ui.detail_message = None;
@@ -631,13 +638,18 @@ impl App {
                 self.rules_ui.editing = None;
             }
             KeyCode::Tab => {
-                self.rules_ui.form.active_field = (self.rules_ui.form.active_field + 1) % 5;
+                self.rules_ui.form.active_field =
+                    (self.rules_ui.form.active_field + 1) % rule_form_field_count(self.rules_ui.form.mode_idx);
             }
             KeyCode::BackTab => {
-                self.rules_ui.form.active_field = self.rules_ui.form.active_field.saturating_sub(1);
+                self.rules_ui.form.active_field = if self.rules_ui.form.active_field == 0 {
+                    rule_form_field_count(self.rules_ui.form.mode_idx).saturating_sub(1)
+                } else {
+                    self.rules_ui.form.active_field.saturating_sub(1)
+                };
             }
             KeyCode::Backspace => {
-                if matches!(self.rules_ui.form.active_field, 1 | 4) {
+                if matches!(self.rules_ui.form.active_field, 1 | 5 | 6 | 7 | 8) {
                     self.current_rules_field_mut().pop();
                 }
             }
@@ -665,7 +677,15 @@ impl App {
             KeyCode::Right | KeyCode::Char('l') if self.rules_ui.form.active_field == 3 => {
                 self.rules_ui.form.severity_idx = (self.rules_ui.form.severity_idx + 1).min(2);
             }
-            KeyCode::Char(c) if matches!(self.rules_ui.form.active_field, 1 | 4) => {
+            KeyCode::Left | KeyCode::Char('h') if self.rules_ui.form.active_field == 4 => {
+                self.rules_ui.form.mode_idx = self.rules_ui.form.mode_idx.saturating_sub(1);
+                clamp_rule_form_active_field(&mut self.rules_ui.form);
+            }
+            KeyCode::Right | KeyCode::Char('l') if self.rules_ui.form.active_field == 4 => {
+                self.rules_ui.form.mode_idx = (self.rules_ui.form.mode_idx + 1).min(4);
+                clamp_rule_form_active_field(&mut self.rules_ui.form);
+            }
+            KeyCode::Char(c) if matches!(self.rules_ui.form.active_field, 1 | 5 | 6 | 7 | 8) => {
                 self.current_rules_field_mut().push(c);
             }
             _ => {}
@@ -679,7 +699,10 @@ impl App {
     fn current_rules_field_mut(&mut self) -> &mut String {
         match self.rules_ui.form.active_field {
             1 => &mut self.rules_ui.form.name,
-            4 => &mut self.rules_ui.form.rule_text,
+            5 => &mut self.rules_ui.form.rule_text,
+            6 => &mut self.rules_ui.form.detail_a,
+            7 => &mut self.rules_ui.form.detail_b,
+            8 => &mut self.rules_ui.form.detail_c,
             _ => &mut self.rules_ui.form.rule_text,
         }
     }
@@ -712,6 +735,14 @@ impl App {
             return;
         }
 
+        let enforcement = match rules_form_enforcement(&self.rules_ui.form) {
+            Ok(enforcement) => enforcement,
+            Err(err) => {
+                self.rules_ui.form.error = Some(err.to_string());
+                return;
+            }
+        };
+
         let slug = slugify_rule_name(&self.rules_ui.form.name);
         let severity = rule_form_severity(self.rules_ui.form.severity_idx);
         if slug.is_empty() {
@@ -723,12 +754,19 @@ impl App {
             self.rules_ui.form.error = Some("Rule text must be non-empty.".into());
             return;
         }
-        let languages: &[&str] = match self.rules_ui.form.language_idx {
-            0 => &["typescript"],
-            1 => &["rust"],
-            2 => &["python"],
-            _ => &["python", "rust", "typescript"],
-        };
+        let languages = rules_form_languages(self.rules_ui.form.language_idx);
+        if matches!(
+            enforcement,
+            crate::rule_authoring::EnforcementMode::Lint { .. }
+                | crate::rule_authoring::EnforcementMode::Formatter { .. }
+                | crate::rule_authoring::EnforcementMode::Test { .. }
+        ) && languages.len() != 1
+        {
+            self.rules_ui.form.error = Some(
+                "This enforcement mode requires a single language selection in the TUI.".into(),
+            );
+            return;
+        }
         let planned_ids: Vec<String> = languages
             .iter()
             .map(|language| {
@@ -751,15 +789,15 @@ impl App {
             if let Err(e) = crate::rule_authoring::add(
                 &self.project_dir,
                 crate::rule_authoring::AddOptions {
-                    rule_id,
-                    description: self.rules_ui.form.rule_text.trim(),
-                    match_regex: None,
-                    severity,
-                    confidence: "high",
-                    category: "convention",
-                    language,
+                    rule_id: rule_id.clone(),
+                    description: self.rules_ui.form.rule_text.trim().to_string(),
+                    severity: severity.to_string(),
+                    confidence: "high".to_string(),
+                    category: "convention".to_string(),
+                    language: (*language).to_string(),
                     source_url: None,
-                    dep: Some("custom"),
+                    dep: Some("custom".to_string()),
+                    enforcement: enforcement.clone(),
                     personal: !self.rules_ui.form.team_scope,
                 },
             ) {
@@ -786,6 +824,14 @@ impl App {
             return;
         };
 
+        let enforcement = match rules_form_enforcement(&self.rules_ui.form) {
+            Ok(enforcement) => enforcement,
+            Err(err) => {
+                self.rules_ui.form.error = Some(err.to_string());
+                return;
+            }
+        };
+
         let slug = slugify_rule_name(&self.rules_ui.form.name);
         let severity = rule_form_severity(self.rules_ui.form.severity_idx);
         if slug.is_empty() {
@@ -799,6 +845,18 @@ impl App {
         }
 
         let languages = rules_form_languages(self.rules_ui.form.language_idx);
+        if matches!(
+            enforcement,
+            crate::rule_authoring::EnforcementMode::Lint { .. }
+                | crate::rule_authoring::EnforcementMode::Formatter { .. }
+                | crate::rule_authoring::EnforcementMode::Test { .. }
+        ) && languages.len() != 1
+        {
+            self.rules_ui.form.error = Some(
+                "This enforcement mode requires a single language selection in the TUI.".into(),
+            );
+            return;
+        }
         let planned_ids: Vec<String> = languages
             .iter()
             .map(|language| {
@@ -845,15 +903,15 @@ impl App {
             match crate::rule_authoring::add(
                 &self.project_dir,
                 crate::rule_authoring::AddOptions {
-                    rule_id,
-                    description: self.rules_ui.form.rule_text.trim(),
-                    match_regex: None,
-                    severity,
-                    confidence: "high",
-                    category: "convention",
-                    language,
+                    rule_id: rule_id.clone(),
+                    description: self.rules_ui.form.rule_text.trim().to_string(),
+                    severity: severity.to_string(),
+                    confidence: "high".to_string(),
+                    category: "convention".to_string(),
+                    language: (*language).to_string(),
                     source_url: None,
-                    dep: Some("custom"),
+                    dep: Some("custom".to_string()),
+                    enforcement: enforcement.clone(),
                     personal: !self.rules_ui.form.team_scope,
                 },
             ) {
@@ -938,6 +996,31 @@ pub fn rule_form_severity(idx: usize) -> &'static str {
     }
 }
 
+pub fn rule_form_mode_label(idx: usize) -> &'static str {
+    match idx {
+        1 => "Pattern",
+        2 => "Linter",
+        3 => "Formatter",
+        4 => "Test",
+        _ => "Advisory",
+    }
+}
+
+pub fn rule_form_field_count(mode_idx: usize) -> usize {
+    match mode_idx {
+        0 => 6,
+        1 => 7,
+        2 => 8,
+        3 | 4 => 9,
+        _ => 6,
+    }
+}
+
+fn clamp_rule_form_active_field(form: &mut RulesFormState) {
+    let max = rule_form_field_count(form.mode_idx).saturating_sub(1);
+    form.active_field = form.active_field.min(max);
+}
+
 fn rule_form_severity_idx(severity: &str) -> usize {
     match severity {
         "must" => 0,
@@ -967,6 +1050,202 @@ fn rules_form_languages(idx: usize) -> &'static [&'static str] {
     }
 }
 
+fn rules_form_enforcement(
+    form: &RulesFormState,
+) -> Result<crate::rule_authoring::EnforcementMode> {
+    match form.mode_idx {
+        1 => {
+            if form.detail_a.trim().is_empty() {
+                Err(anyhow::anyhow!("Pattern mode requires a non-empty regex."))
+            } else {
+                Ok(crate::rule_authoring::EnforcementMode::Pattern {
+                    regex: form.detail_a.trim().to_string(),
+                })
+            }
+        }
+        2 => {
+            if form.detail_a.trim().is_empty() || form.detail_b.trim().is_empty() {
+                Err(anyhow::anyhow!("Linter mode requires a tool and code."))
+            } else {
+                Ok(crate::rule_authoring::EnforcementMode::Lint {
+                    tool: form.detail_a.trim().to_string(),
+                    code: form.detail_b.trim().to_string(),
+                })
+            }
+        }
+        3 => {
+            if form.detail_a.trim().is_empty()
+                || form.detail_b.trim().is_empty()
+                || form.detail_c.trim().is_empty()
+            {
+                Err(anyhow::anyhow!(
+                    "Formatter mode requires a tool, option key, and option value."
+                ))
+            } else {
+                let mut options = BTreeMap::new();
+                options.insert(
+                    form.detail_b.trim().to_string(),
+                    parse_rule_form_value(form.detail_c.trim()),
+                );
+                Ok(crate::rule_authoring::EnforcementMode::Formatter {
+                    tool: form.detail_a.trim().to_string(),
+                    options,
+                })
+            }
+        }
+        4 => {
+            if form.detail_a.trim().is_empty() || form.detail_b.trim().is_empty() {
+                Err(anyhow::anyhow!("Test mode requires a runner and test path."))
+            } else {
+                Ok(crate::rule_authoring::EnforcementMode::Test {
+                    runner: form.detail_a.trim().to_string(),
+                    path: form.detail_b.trim().to_string(),
+                    selector: (!form.detail_c.trim().is_empty())
+                        .then(|| form.detail_c.trim().to_string()),
+                })
+            }
+        }
+        _ => Ok(crate::rule_authoring::EnforcementMode::Advisory),
+    }
+}
+
+fn parse_rule_form_value(raw: &str) -> Value {
+    if raw.eq_ignore_ascii_case("true") {
+        return Value::Bool(true);
+    }
+    if raw.eq_ignore_ascii_case("false") {
+        return Value::Bool(false);
+    }
+    if let Ok(parsed) = raw.parse::<i64>() {
+        return serde_json::json!(parsed);
+    }
+    if let Ok(parsed) = raw.parse::<f64>() {
+        if parsed.is_finite() {
+            return serde_json::json!(parsed);
+        }
+    }
+    Value::String(raw.to_string())
+}
+
+fn rules_form_from_row(row: &crate::tui::screens::rules::RuleRow) -> Result<RulesFormState> {
+    let enforcement = row_enforcement_for_form(row)?;
+    Ok(RulesFormState {
+        active_field: 1,
+        team_scope: row.layer == "project",
+        name: editable_rule_name(&row.id),
+        language_idx: rule_form_language_idx(&row.languages),
+        severity_idx: rule_form_severity_idx(&row.severity),
+        mode_idx: enforcement.0,
+        rule_text: row.description.clone(),
+        detail_a: enforcement.1,
+        detail_b: enforcement.2,
+        detail_c: enforcement.3,
+        error: None,
+    })
+}
+
+fn row_enforcement_for_form(
+    row: &crate::tui::screens::rules::RuleRow,
+) -> Result<(usize, String, String, String)> {
+    let surface_count = usize::from(!row.match_patterns.is_empty())
+        + usize::from(!row.lint_bindings.is_empty())
+        + usize::from(row.formatter.is_some())
+        + usize::from(!row.tests.is_empty());
+    if surface_count > 1 {
+        return Err(anyhow::anyhow!(
+            "This authored rule has multiple enforcement surfaces; edit it via CLI or YAML-backed workflow instead."
+        ));
+    }
+    if row.match_patterns.len() > 1 {
+        return Err(anyhow::anyhow!(
+            "This authored rule has multiple match patterns; edit it via CLI instead."
+        ));
+    }
+    if row.lint_bindings.len() > 1 {
+        return Err(anyhow::anyhow!(
+            "This authored rule has multiple lint bindings; edit it via CLI instead."
+        ));
+    }
+    if row.tests.len() > 1 {
+        return Err(anyhow::anyhow!(
+            "This authored rule has multiple linked tests; edit it via CLI instead."
+        ));
+    }
+    if let Some(pattern) = row.match_patterns.first() {
+        return Ok((1, pattern.clone(), String::new(), String::new()));
+    }
+    if let Some(lint) = row.lint_bindings.first() {
+        return Ok((2, lint.tool.clone(), lint.code.clone(), String::new()));
+    }
+    if let Some(formatter) = &row.formatter {
+        if formatter.options.len() > 1 {
+            return Err(anyhow::anyhow!(
+                "This authored rule has multiple formatter options; edit it via CLI instead."
+            ));
+        }
+        if let Some((key, value)) = formatter.options.iter().next() {
+            return Ok((
+                3,
+                formatter.tool.clone(),
+                key.clone(),
+                formatter_value_to_string(value),
+            ));
+        }
+        return Ok((3, formatter.tool.clone(), String::new(), String::new()));
+    }
+    if let Some(test) = row.tests.first() {
+        return Ok((
+            4,
+            test.runner.clone(),
+            test.path.clone(),
+            test.selector.clone().unwrap_or_default(),
+        ));
+    }
+    Ok((0, String::new(), String::new(), String::new()))
+}
+
+fn formatter_value_to_string(value: &Value) -> String {
+    match value {
+        Value::Bool(v) => v.to_string(),
+        Value::Number(v) => v.to_string(),
+        Value::String(v) => v.clone(),
+        _ => value.to_string(),
+    }
+}
+
+fn add_options_from_row(
+    row: &crate::tui::screens::rules::RuleRow,
+    rule_id: &str,
+    language: &str,
+) -> Result<crate::rule_authoring::AddOptions> {
+    let (mode_idx, detail_a, detail_b, detail_c) = row_enforcement_for_form(row)?;
+    let form = RulesFormState {
+        active_field: 1,
+        team_scope: row.layer == "project",
+        name: editable_rule_name(&row.id),
+        language_idx: rule_form_language_idx(&row.languages),
+        severity_idx: rule_form_severity_idx(&row.severity),
+        mode_idx,
+        rule_text: row.description.clone(),
+        detail_a,
+        detail_b,
+        detail_c,
+        error: None,
+    };
+    Ok(crate::rule_authoring::AddOptions {
+        rule_id: rule_id.to_string(),
+        description: row.description.clone(),
+        severity: row.severity.clone(),
+        confidence: row.confidence.clone(),
+        category: row.category.clone(),
+        language: language.to_string(),
+        source_url: None,
+        dep: Some("custom".to_string()),
+        enforcement: rules_form_enforcement(&form)?,
+        personal: row.layer == "personal",
+    })
+}
+
 fn editable_rule_name(rule_id: &str) -> String {
     rule_id
         .strip_prefix("custom.")
@@ -985,21 +1264,9 @@ fn restore_authored_rule(
 ) -> Result<()> {
     for rule_id in rule_ids {
         let language = authored_rule_language(rule_id, &row.languages)?;
-        crate::rule_authoring::add(
-            project_dir,
-            crate::rule_authoring::AddOptions {
-                rule_id,
-                description: &row.description,
-                match_regex: None,
-                severity: &row.severity,
-                confidence: &row.confidence,
-                category: "convention",
-                language,
-                source_url: None,
-                dep: Some("custom"),
-                personal: row.layer == "personal",
-            },
-        )?;
+        let mut opts = add_options_from_row(row, rule_id, language)?;
+        opts.personal = row.layer == "personal";
+        crate::rule_authoring::add(project_dir, opts)?;
     }
     Ok(())
 }
@@ -1302,6 +1569,7 @@ mod tests {
             language_idx: 2,
             severity_idx: 0,
             rule_text: "Never do the bad thing.".into(),
+            detail_a: "bad_thing".into(),
             ..RulesFormState::default()
         };
 
@@ -1342,15 +1610,17 @@ mod tests {
             crate::rule_authoring::add(
                 &tmp,
                 crate::rule_authoring::AddOptions {
-                    rule_id: &format!("custom.clean-up-{language}"),
-                    description: "Temporary rule",
-                    match_regex: None,
-                    severity: "should",
-                    confidence: "high",
-                    category: "convention",
-                    language,
+                    rule_id: format!("custom.clean-up-{language}"),
+                    description: "Temporary rule".into(),
+                    severity: "should".into(),
+                    confidence: "high".into(),
+                    category: "convention".into(),
+                    language: language.into(),
                     source_url: None,
-                    dep: Some("custom"),
+                    dep: Some("custom".into()),
+                    enforcement: crate::rule_authoring::EnforcementMode::Pattern {
+                        regex: "temporary_rule".into(),
+                    },
                     personal: true,
                 },
             )
@@ -1379,15 +1649,17 @@ mod tests {
         crate::rule_authoring::add(
             &tmp,
             crate::rule_authoring::AddOptions {
-                rule_id: "custom.initial-rule",
-                description: "Initial rule text",
-                match_regex: None,
-                severity: "should",
-                confidence: "high",
-                category: "convention",
-                language: "python",
+                rule_id: "custom.initial-rule".into(),
+                description: "Initial rule text".into(),
+                severity: "should".into(),
+                confidence: "high".into(),
+                category: "convention".into(),
+                language: "python".into(),
                 source_url: None,
-                dep: Some("custom"),
+                dep: Some("custom".into()),
+                enforcement: crate::rule_authoring::EnforcementMode::Pattern {
+                    regex: "initial_rule".into(),
+                },
                 personal: true,
             },
         )
@@ -1403,6 +1675,10 @@ mod tests {
         app.rules_ui.form.language_idx = 1;
         app.rules_ui.form.severity_idx = 0;
         app.rules_ui.form.rule_text = "Updated rule text".into();
+        app.rules_ui.form.mode_idx = 2;
+        app.rules_ui.form.detail_a = "clippy".into();
+        app.rules_ui.form.detail_b = "unwrap_used".into();
+        app.rules_ui.form.detail_c = String::new();
         app.submit_rules_form();
 
         let paths = crate::layers::LayerPaths::for_project(&tmp);
@@ -1415,6 +1691,8 @@ mod tests {
         assert_eq!(project_rules[0].language, "rust");
         assert_eq!(project_rules[0].severity, "must");
         assert_eq!(project_rules[0].description, "Updated rule text");
+        assert_eq!(project_rules[0].signals[0].lint.as_ref().map(|lint| lint.tool.as_str()), Some("clippy"));
+        assert_eq!(project_rules[0].signals[0].lint.as_ref().map(|lint| lint.code.as_str()), Some("unwrap_used"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

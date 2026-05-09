@@ -40,6 +40,7 @@ pub struct RuleRow {
     pub member_ids: Vec<String>,
     pub severity: String,
     pub confidence: String,
+    pub category: String,
     pub languages: Vec<String>,
     /// Derived from the rule id prefix (e.g. `fastapi.async-routes` → `fastapi`).
     /// Falls back to the id itself when there is no `.` separator.
@@ -49,6 +50,10 @@ pub struct RuleRow {
     pub source_name: String,
     pub source_url: String,
     pub description: String,
+    pub match_patterns: Vec<String>,
+    pub lint_bindings: Vec<crate::rules::ApprovedLintBinding>,
+    pub formatter: Option<crate::rules::ApprovedFormatterDirective>,
+    pub tests: Vec<crate::rules::ApprovedTestBinding>,
 }
 
 /// Everything the renderer needs. Cheap to clone — mostly short strings.
@@ -111,12 +116,27 @@ pub fn load(project_dir: &Path) -> RulesView {
                 member_ids: vec![lr.rule.id.clone()],
                 severity: lr.rule.severity.clone(),
                 confidence: lr.rule.confidence.clone(),
+                category: lr.rule.category.clone(),
                 languages: vec![lr.rule.language.clone()],
                 dep,
                 layer: lr.layer.as_str().to_string(),
                 source_name: lr.rule.source_name.clone(),
                 source_url: lr.rule.source_url.clone(),
                 description: lr.rule.description.clone(),
+                match_patterns: lr
+                    .rule
+                    .signals
+                    .iter()
+                    .filter_map(|signal| signal.match_pattern.clone())
+                    .collect(),
+                lint_bindings: lr
+                    .rule
+                    .signals
+                    .iter()
+                    .flat_map(crate::rules::approved_signal_lint_bindings)
+                    .collect(),
+                formatter: lr.rule.formatter.clone(),
+                tests: lr.rule.tests.clone(),
             }
         })
         .collect();
@@ -233,6 +253,7 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData)
                 .bold(),
         ),
         kv_line(area.width, "Confidence", &row.confidence, Style::default()),
+        kv_line(area.width, "Category", &row.category, Style::default()),
         kv_line(
             area.width,
             "Language",
@@ -241,6 +262,12 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData)
         ),
         kv_line(area.width, "Source", &source_label(row), Style::default()),
         kv_line(area.width, "Layer", &row.layer, Style::default()),
+        kv_line(
+            area.width,
+            "Enforcement",
+            &enforcement_summary(row),
+            Style::default(),
+        ),
         Line::from(""),
         Line::from(Span::styled(
             "Description",
@@ -249,6 +276,19 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData)
         Line::from(""),
         Line::from(row.description.clone()),
     ];
+
+    let enforcement_lines = enforcement_detail_lines(row);
+    if !enforcement_lines.is_empty() {
+        lines.extend([
+            Line::from(""),
+            Line::from(Span::styled(
+                "Enforcement Details",
+                Style::default().fg(theme::MUTED),
+            )),
+            Line::from(""),
+        ]);
+        lines.extend(enforcement_lines);
+    }
 
     if let Some(message) = &app.rules_ui.detail_message {
         lines.extend([
@@ -302,12 +342,13 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
         _ => "All",
     };
     let severity = crate::tui::app::rule_form_severity(form.severity_idx).to_uppercase();
-    let lines = vec![
+    let mode = crate::tui::app::rule_form_mode_label(form.mode_idx);
+    let mut lines = vec![
         Line::from(Span::styled(
             if is_edit {
-                "Tab next field · ←/→ change scope/language/severity · Enter save · Esc cancel"
+                "Tab next field · ←/→ change scope/language/severity/mode · Enter save · Esc cancel"
             } else {
-                "Tab next field · ←/→ change scope/language/severity · Enter submit · Esc cancel"
+                "Tab next field · ←/→ change scope/language/severity/mode · Enter submit · Esc cancel"
             },
             Style::default().fg(theme::MUTED),
         )),
@@ -320,6 +361,7 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
         form_line("Name", &form.name, form.active_field == 1),
         form_line("Language", lang, form.active_field == 2),
         form_line("Severity", &severity, form.active_field == 3),
+        form_line("Mode", mode, form.active_field == 4),
         Line::from(""),
         Line::from(Span::styled("Rule Text", theme::header_meta())),
         Line::from(Span::styled(
@@ -328,18 +370,26 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
             } else {
                 &form.rule_text
             },
-            if form.active_field == 4 {
+            if form.active_field == 5 {
                 Style::default().fg(theme::AMBER).bold()
             } else {
                 Style::default().fg(ratatui::style::Color::White)
             },
         )),
+    ];
+
+    for (field_idx, label, value) in mode_specific_form_rows(form) {
+        lines.push(Line::from(""));
+        lines.push(form_line(label, &value, form.active_field == field_idx));
+    }
+
+    lines.extend([
         Line::from(""),
         Line::from(Span::styled(
             form.error.clone().unwrap_or_default(),
             Style::default().fg(theme::STATUS_WARN),
         )),
-    ];
+    ]);
 
     frame.render_widget(
         Paragraph::new(lines)
@@ -433,12 +483,17 @@ fn group_custom_multi_language_rows(rows: Vec<RuleRow>) -> Vec<RuleRow> {
             member_ids,
             severity: first.severity,
             confidence: first.confidence,
+            category: first.category,
             languages,
             dep: first.dep,
             layer: first.layer,
             source_name: first.source_name,
             source_url: first.source_url,
             description: first.description,
+            match_patterns: first.match_patterns,
+            lint_bindings: first.lint_bindings,
+            formatter: first.formatter,
+            tests: first.tests,
         });
     }
 
@@ -547,6 +602,71 @@ fn is_authored_rule(row: &RuleRow) -> bool {
     row.id.starts_with("custom.") || row.source_url.starts_with("personal://")
 }
 
+fn enforcement_summary(row: &RuleRow) -> String {
+    if !row.match_patterns.is_empty() {
+        return format!("pattern ({})", row.match_patterns[0]);
+    }
+    if let Some(binding) = row.lint_bindings.first() {
+        return format!("linter ({} {})", binding.tool, binding.code);
+    }
+    if let Some(formatter) = &row.formatter {
+        return format!("formatter ({})", formatter.tool);
+    }
+    if let Some(test) = row.tests.first() {
+        return format!("test ({})", test.runner);
+    }
+    "advisory".to_string()
+}
+
+fn enforcement_detail_lines(row: &RuleRow) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for pattern in &row.match_patterns {
+        lines.push(Line::from(format!("Pattern: {pattern}")));
+    }
+    for lint in &row.lint_bindings {
+        lines.push(Line::from(format!("Lint: {} {}", lint.tool, lint.code)));
+    }
+    if let Some(formatter) = &row.formatter {
+        lines.push(Line::from(format!("Formatter: {}", formatter.tool)));
+        for (key, value) in &formatter.options {
+            lines.push(Line::from(format!("  {key} = {value}")));
+        }
+    }
+    for test in &row.tests {
+        let selector = test
+            .selector
+            .as_ref()
+            .map(|selector| format!(" :: {selector}"))
+            .unwrap_or_default();
+        lines.push(Line::from(format!(
+            "Test: {} {}{}",
+            test.runner, test.path, selector
+        )));
+    }
+    lines
+}
+
+fn mode_specific_form_rows(form: &crate::tui::app::RulesFormState) -> Vec<(usize, &'static str, String)> {
+    match form.mode_idx {
+        1 => vec![(6, "Regex", form.detail_a.clone())],
+        2 => vec![
+            (6, "Lint Tool", form.detail_a.clone()),
+            (7, "Lint Code", form.detail_b.clone()),
+        ],
+        3 => vec![
+            (6, "Fmt Tool", form.detail_a.clone()),
+            (7, "Fmt Key", form.detail_b.clone()),
+            (8, "Fmt Value", form.detail_c.clone()),
+        ],
+        4 => vec![
+            (6, "Runner", form.detail_a.clone()),
+            (7, "Test Path", form.detail_b.clone()),
+            (8, "Selector", form.detail_c.clone()),
+        ],
+        _ => vec![(6, "Mode", "No additional fields".to_string())],
+    }
+}
+
 fn kv_line(width: u16, label: &str, value: &str, value_style: Style) -> Line<'static> {
     let label_text = label.to_string();
     let available = width.saturating_sub(2) as usize;
@@ -597,6 +717,7 @@ mod tests {
             member_ids: vec![id.to_string()],
             severity: severity.to_string(),
             confidence: "high".to_string(),
+            category: "convention".to_string(),
             languages: vec!["python".to_string()],
             dep: id
                 .split_once('.')
@@ -609,6 +730,10 @@ mod tests {
                 .unwrap_or_default(),
             source_url: format!("https://example.com/{id}"),
             description: format!("A sample rule called {id}."),
+            match_patterns: Vec::new(),
+            lint_bindings: Vec::new(),
+            formatter: None,
+            tests: Vec::new(),
         }
     }
 
@@ -777,15 +902,17 @@ mod tests {
             crate::rule_authoring::add(
                 &tmp,
                 crate::rule_authoring::AddOptions {
-                    rule_id: &format!("custom.grouped-{language}"),
-                    description: "Grouped rule",
-                    match_regex: None,
-                    severity: "should",
-                    confidence: "high",
-                    category: "convention",
-                    language,
+                    rule_id: format!("custom.grouped-{language}"),
+                    description: "Grouped rule".into(),
+                    severity: "should".into(),
+                    confidence: "high".into(),
+                    category: "convention".into(),
+                    language: language.into(),
                     source_url: None,
-                    dep: Some("custom"),
+                    dep: Some("custom".into()),
+                    enforcement: crate::rule_authoring::EnforcementMode::Pattern {
+                        regex: "grouped_rule".into(),
+                    },
                     personal: true,
                 },
             )

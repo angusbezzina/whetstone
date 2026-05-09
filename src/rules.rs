@@ -30,6 +30,15 @@ const VALID_CONFIDENCES: &[&str] = &["high", "medium"];
 /// See `references/handoff-schema.md` and `references/workflow-matrix.md`.
 const VALID_STATUSES: &[&str] = &["candidate", "approved"];
 
+/// Supported lint tools for structured lint bindings.
+const VALID_LINT_TOOLS: &[&str] = &["ruff", "biome", "clippy"];
+
+/// Supported formatter tools for formatter-backed custom rules.
+const VALID_FORMATTER_TOOLS: &[&str] = &["ruff", "biome", "rustfmt"];
+
+/// Supported explicit test runners for test-backed custom rules.
+const VALID_TEST_RUNNERS: &[&str] = &["pytest", "vitest", "cargo"];
+
 // --- Serde deserialization types ---
 
 #[allow(dead_code)]
@@ -93,6 +102,8 @@ pub struct Rule {
     #[serde(default)]
     pub formatter: Option<FormatterDirective>,
     #[serde(default)]
+    pub tests: Vec<TestBinding>,
+    #[serde(default)]
     pub golden_examples: Vec<GoldenExample>,
 }
 
@@ -102,6 +113,24 @@ pub struct FormatterDirective {
     pub tool: String,
     #[serde(default)]
     pub options: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LintBinding {
+    #[serde(default)]
+    pub tool: String,
+    #[serde(default)]
+    pub code: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TestBinding {
+    #[serde(default)]
+    pub runner: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub selector: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -131,6 +160,10 @@ pub struct Signal {
     /// surrounding file text like comments and module-level code.
     #[serde(default)]
     pub ast_scope: Option<String>,
+    /// Structured lint binding for `lint_proxy` signals. Prefer this over
+    /// encoding the tool/code pair in free-text descriptions.
+    #[serde(default)]
+    pub lint: Option<LintBinding>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -234,15 +267,25 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
             });
         }
 
-        // Must have at least one deterministic signal
-        let has_deterministic = rule
+        let has_enforcement_surface = rule
             .signals
             .iter()
-            .any(|s| matches!(s.strategy.as_str(), "ast" | "pattern"));
-        if !has_deterministic && !rule.signals.is_empty() {
+            .any(|s| matches!(s.strategy.as_str(), "ast" | "pattern" | "lint_proxy"))
+            || rule.formatter.is_some()
+            || !rule.tests.is_empty();
+        if !has_enforcement_surface {
             warnings.push(ValidationWarning {
                 file: file_path.to_string(),
-                message: format!("{rule_ctx}: no deterministic signal (ast or pattern)"),
+                message: format!(
+                    "{rule_ctx}: no enforceable signal or binding (expected ast, pattern, lint_proxy, formatter, or tests)"
+                ),
+            });
+        }
+
+        if rule.signals.is_empty() && rule.formatter.is_none() && rule.tests.is_empty() {
+            warnings.push(ValidationWarning {
+                file: file_path.to_string(),
+                message: format!("{rule_ctx}: no signals, formatter, or tests defined"),
             });
         }
 
@@ -253,6 +296,54 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
                     message: format!("{rule_ctx}: signal has invalid strategy '{}'", sig.strategy),
                 });
             }
+
+            if let Some(lint) = &sig.lint {
+                if sig.strategy != "lint_proxy" {
+                    warnings.push(ValidationWarning {
+                        file: file_path.to_string(),
+                        message: format!(
+                            "{rule_ctx}: signal `{}` declares `lint` metadata but strategy is `{}` (expected lint_proxy)",
+                            sig.id.clone().unwrap_or_default(),
+                            sig.strategy
+                        ),
+                    });
+                }
+                if lint.tool.trim().is_empty() {
+                    warnings.push(ValidationWarning {
+                        file: file_path.to_string(),
+                        message: format!(
+                            "{rule_ctx}: signal `{}` has empty lint.tool",
+                            sig.id.clone().unwrap_or_default()
+                        ),
+                    });
+                } else if !VALID_LINT_TOOLS.contains(&lint.tool.as_str()) {
+                    warnings.push(ValidationWarning {
+                        file: file_path.to_string(),
+                        message: format!(
+                            "{rule_ctx}: signal `{}` uses unsupported lint.tool `{}`",
+                            sig.id.clone().unwrap_or_default(),
+                            lint.tool
+                        ),
+                    });
+                }
+                if lint.code.trim().is_empty() {
+                    warnings.push(ValidationWarning {
+                        file: file_path.to_string(),
+                        message: format!(
+                            "{rule_ctx}: signal `{}` has empty lint.code",
+                            sig.id.clone().unwrap_or_default()
+                        ),
+                    });
+                }
+            } else if sig.strategy == "lint_proxy" {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!(
+                        "{rule_ctx}: signal `{}` uses legacy lint_proxy description parsing; add lint.tool and lint.code",
+                        sig.id.clone().unwrap_or_default()
+                    ),
+                });
+            }
         }
 
         if let Some(formatter) = &rule.formatter {
@@ -261,11 +352,42 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
                     file: file_path.to_string(),
                     message: format!("{rule_ctx}: formatter.tool is empty"),
                 });
+            } else if !VALID_FORMATTER_TOOLS.contains(&formatter.tool.as_str()) {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!(
+                        "{rule_ctx}: formatter.tool `{}` is unsupported",
+                        formatter.tool
+                    ),
+                });
             }
             if formatter.options.is_empty() {
                 warnings.push(ValidationWarning {
                     file: file_path.to_string(),
                     message: format!("{rule_ctx}: formatter.options is empty"),
+                });
+            }
+        }
+
+        for test in &rule.tests {
+            if test.runner.trim().is_empty() {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!("{rule_ctx}: tests[].runner is empty"),
+                });
+            } else if !VALID_TEST_RUNNERS.contains(&test.runner.as_str()) {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!(
+                        "{rule_ctx}: tests[].runner `{}` is unsupported",
+                        test.runner
+                    ),
+                });
+            }
+            if test.path.trim().is_empty() {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!("{rule_ctx}: tests[].path is empty"),
                 });
             }
         }
@@ -661,12 +783,25 @@ pub fn load_approved_rules(
                         match_pattern: s.match_pattern.clone(),
                         ast_query: s.ast_query.clone(),
                         ast_scope: s.ast_scope.clone(),
+                        lint: s.lint.as_ref().map(|lint| ApprovedLintBinding {
+                            tool: lint.tool.clone(),
+                            code: lint.code.clone(),
+                        }),
                     })
                     .collect(),
                 formatter: rule.formatter.as_ref().map(|f| ApprovedFormatterDirective {
                     tool: f.tool.clone(),
                     options: f.options.clone(),
                 }),
+                tests: rule
+                    .tests
+                    .iter()
+                    .map(|t| ApprovedTestBinding {
+                        runner: t.runner.clone(),
+                        path: t.path.clone(),
+                        selector: t.selector.clone(),
+                    })
+                    .collect(),
                 golden_examples: rule
                     .golden_examples
                     .iter()
@@ -726,12 +861,25 @@ pub fn approved_from_loaded(
                         match_pattern: s.match_pattern.clone(),
                         ast_query: s.ast_query.clone(),
                         ast_scope: s.ast_scope.clone(),
+                        lint: s.lint.as_ref().map(|lint| ApprovedLintBinding {
+                            tool: lint.tool.clone(),
+                            code: lint.code.clone(),
+                        }),
                     })
                     .collect(),
                 formatter: rule.formatter.as_ref().map(|f| ApprovedFormatterDirective {
                     tool: f.tool.clone(),
                     options: f.options.clone(),
                 }),
+                tests: rule
+                    .tests
+                    .iter()
+                    .map(|t| ApprovedTestBinding {
+                        runner: t.runner.clone(),
+                        path: t.path.clone(),
+                        selector: t.selector.clone(),
+                    })
+                    .collect(),
                 golden_examples: rule
                     .golden_examples
                     .iter()
@@ -764,16 +912,32 @@ pub struct ApprovedRule {
     pub language: String,
     pub signals: Vec<ApprovedSignal>,
     pub formatter: Option<ApprovedFormatterDirective>,
+    pub tests: Vec<ApprovedTestBinding>,
     pub golden_examples: Vec<ApprovedExample>,
     pub deterministic_pass_threshold: Option<u32>,
     pub deterministic_fail_threshold: Option<u32>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct ApprovedFormatterDirective {
     pub tool: String,
     pub options: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ApprovedLintBinding {
+    pub tool: String,
+    pub code: String,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ApprovedTestBinding {
+    pub runner: String,
+    pub path: String,
+    pub selector: Option<String>,
 }
 
 #[derive(Clone)]
@@ -786,6 +950,7 @@ pub struct ApprovedSignal {
     pub match_pattern: Option<String>,
     pub ast_query: Option<String>,
     pub ast_scope: Option<String>,
+    pub lint: Option<ApprovedLintBinding>,
 }
 
 #[derive(Clone)]
@@ -795,6 +960,50 @@ pub struct ApprovedExample {
     pub verdict: String,
     pub reason: String,
     pub language: Option<String>,
+}
+
+pub fn lint_tool_matches_language(tool: &str, language: &str) -> bool {
+    matches!(
+        (tool, language),
+        ("ruff", "python") | ("biome", "typescript") | ("clippy", "rust")
+    )
+}
+
+pub fn formatter_tool_matches_language(tool: &str, language: &str) -> bool {
+    matches!(
+        (tool, language),
+        ("ruff", "python") | ("biome", "typescript") | ("rustfmt", "rust")
+    )
+}
+
+pub fn test_runner_matches_language(runner: &str, language: &str) -> bool {
+    matches!(
+        (runner, language),
+        ("pytest", "python") | ("vitest", "typescript") | ("cargo", "rust")
+    )
+}
+
+pub fn parse_legacy_lint_bindings(description: &str) -> Vec<ApprovedLintBinding> {
+    let mut out = Vec::new();
+    let parts: Vec<&str> = description.split_whitespace().collect();
+    for (i, part) in parts.iter().enumerate() {
+        let normalized = part.to_ascii_lowercase();
+        if VALID_LINT_TOOLS.contains(&normalized.as_str()) && i + 1 < parts.len() {
+            out.push(ApprovedLintBinding {
+                tool: normalized,
+                code: parts[i + 1].trim_matches(&[',', '.', ';'][..]).to_string(),
+            });
+        }
+    }
+    out
+}
+
+pub fn approved_signal_lint_bindings(signal: &ApprovedSignal) -> Vec<ApprovedLintBinding> {
+    signal
+        .lint
+        .clone()
+        .map(|binding| vec![binding])
+        .unwrap_or_else(|| parse_legacy_lint_bindings(&signal.description))
 }
 
 /// Collect summary stats from loaded rule files (used by multiple commands).

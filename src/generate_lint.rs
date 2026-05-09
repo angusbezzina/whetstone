@@ -285,14 +285,9 @@ fn extract_lint_proxy_codes(rules: &[&ApprovedRule], linter: &str) -> Vec<String
             if signal.strategy != "lint_proxy" {
                 continue;
             }
-            let desc = signal.description.to_lowercase();
-            if !desc.contains(linter) {
-                continue;
-            }
-            let parts: Vec<&str> = signal.description.split_whitespace().collect();
-            for (i, part) in parts.iter().enumerate() {
-                if part.to_lowercase() == linter && i + 1 < parts.len() {
-                    codes.push(parts[i + 1].to_string());
+            for binding in rules::approved_signal_lint_bindings(signal) {
+                if binding.tool == linter {
+                    codes.push(binding.code);
                 }
             }
         }
@@ -431,10 +426,45 @@ mod tests {
                     .map(|(k, v)| (k.to_string(), v.clone()))
                     .collect(),
             }),
+            tests: Vec::new(),
             golden_examples: Vec::new(),
             deterministic_pass_threshold: None,
             deterministic_fail_threshold: None,
         }
+    }
+
+    #[test]
+    fn structured_lint_binding_is_preferred() {
+        let rule = ApprovedRule {
+            id: "demo.b006".into(),
+            severity: "must".into(),
+            confidence: "high".into(),
+            category: "default".into(),
+            description: "desc".into(),
+            source_url: "https://example".into(),
+            source_name: "demo".into(),
+            language: "python".into(),
+            signals: vec![rules::ApprovedSignal {
+                id: "lint".into(),
+                strategy: "lint_proxy".into(),
+                description: "legacy text".into(),
+                weight: "required".into(),
+                match_pattern: None,
+                ast_query: None,
+                ast_scope: None,
+                lint: Some(rules::ApprovedLintBinding {
+                    tool: "ruff".into(),
+                    code: "B006".into(),
+                }),
+            }],
+            formatter: None,
+            tests: Vec::new(),
+            golden_examples: Vec::new(),
+            deterministic_pass_threshold: None,
+            deterministic_fail_threshold: None,
+        };
+
+        assert_eq!(extract_lint_proxy_codes(&[&rule], "ruff"), vec!["B006"]);
     }
 
     #[test]

@@ -412,6 +412,10 @@ fn approved_from_pack_rule(rule: &Rule, pack: &ResolvedConfigPack, language: &st
                 match_pattern: s.match_pattern.clone(),
                 ast_query: s.ast_query.clone(),
                 ast_scope: s.ast_scope.clone(),
+                lint: s.lint.as_ref().map(|lint| crate::rules::ApprovedLintBinding {
+                    tool: lint.tool.clone(),
+                    code: lint.code.clone(),
+                }),
             })
             .collect(),
         formatter: rule
@@ -421,6 +425,15 @@ fn approved_from_pack_rule(rule: &Rule, pack: &ResolvedConfigPack, language: &st
                 tool: f.tool.clone(),
                 options: f.options.clone(),
             }),
+        tests: rule
+            .tests
+            .iter()
+            .map(|t| crate::rules::ApprovedTestBinding {
+                runner: t.runner.clone(),
+                path: t.path.clone(),
+                selector: t.selector.clone(),
+            })
+            .collect(),
         golden_examples: rule
             .golden_examples
             .iter()
@@ -751,6 +764,7 @@ mod tests {
                     deterministic_fail_threshold: None,
                     signals: Vec::new(),
                     formatter: None,
+                    tests: Vec::new(),
                     golden_examples: Vec::new(),
                 }],
                 ..RulePackFile::default()

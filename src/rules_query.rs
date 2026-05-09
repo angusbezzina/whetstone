@@ -175,6 +175,10 @@ fn rule_to_json(lr: &LayeredRule, detail: Detail) -> Value {
                     "match": s.match_pattern,
                     "ast_query": s.ast_query,
                     "ast_scope": s.ast_scope,
+                    "lint": s.lint.as_ref().map(|lint| json!({
+                        "tool": lint.tool,
+                        "code": lint.code,
+                    })),
                 })
             })
             .collect::<Vec<_>>()
@@ -184,6 +188,20 @@ fn rule_to_json(lr: &LayeredRule, detail: Detail) -> Value {
                 "tool": formatter.tool,
                 "options": formatter.options,
             });
+        }
+        if !r.tests.is_empty() {
+            v["tests"] = r
+                .tests
+                .iter()
+                .map(|t| {
+                    json!({
+                        "runner": t.runner,
+                        "path": t.path,
+                        "selector": t.selector,
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into();
         }
         v["golden_examples"] = r
             .golden_examples

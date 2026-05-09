@@ -299,12 +299,17 @@ mod tests {
                 member_ids: vec![id.into()],
                 severity: "should".into(),
                 confidence: "high".into(),
+                category: "convention".into(),
                 languages: vec!["rust".into()],
                 dep: id.split('.').next().unwrap_or(id).into(),
                 layer: "project".into(),
                 source_name: id.split('.').next().unwrap_or(id).into(),
                 source_url: "https://example.com".into(),
                 description: "x".into(),
+                match_patterns: Vec::new(),
+                lint_bindings: Vec::new(),
+                formatter: None,
+                tests: Vec::new(),
             }
         }
         app.dashboard.rules = RulesView::Ready(Box::new(RulesData {

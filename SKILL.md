@@ -87,6 +87,29 @@ wh rules add acme.snake-case \
   --lang python \
   --dep acme
 
+# Or bind directly to a linter / formatter / specific test
+wh rules add acme.mutable-defaults \
+  --description "Mutable default args must be rejected" \
+  --lint-tool ruff \
+  --lint-code B006 \
+  --lang python \
+  --dep acme
+
+wh rules add acme.single-quotes \
+  --description "Use single quotes in TS" \
+  --formatter-tool biome \
+  --formatter-option quoteStyle=single \
+  --lang typescript \
+  --dep acme
+
+wh rules add acme.render-snapshot \
+  --description "Renderer output should stay snapshot-covered" \
+  --test-runner vitest \
+  --test-path tests/render/output.test.ts \
+  --test-selector render_output_contract \
+  --lang typescript \
+  --dep acme
+
 # Bump severity as taste matures
 wh rules edit acme.snake-case --severity must
 
@@ -197,6 +220,17 @@ rules:
         description: "pattern"
         weight: required
         match: '\bdef '
+      - id: mutable-defaults
+        strategy: lint_proxy
+        description: "Covered by Ruff"
+        weight: required
+        lint:
+          tool: ruff
+          code: B006
+    tests:
+      - runner: pytest
+        path: tests/style/test_fastapi_rules.py
+        selector: test_async_routes
     golden_examples: [...]
 ```
 

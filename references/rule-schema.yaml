@@ -70,7 +70,8 @@ rules:
                            #   stale   — source content has changed since rule was approved
                            #   unknown — not yet validated
 
-    signals:               # Required. At least one signal must have strategy: ast or pattern.
+    signals:               # Optional. Prefer ast/pattern/lint_proxy checks when possible.
+                           # Rules backed only by formatter or tests may leave this empty.
       - id: string         # Required. Unique within this rule (e.g., "is-sync-function").
         strategy: enum     # Required. One of: ast | pattern | lint_proxy
                            #   ast        — verifiable via syntax tree analysis
@@ -90,16 +91,24 @@ rules:
                            #   '(function_definition "async") @match'
                            # If absent, an `ast` signal falls back to regex (weaker).
         ast_scope: string  # Optional. AST node kind that scopes a `pattern` signal's regex.
-                            # When set, the regex is only applied inside nodes whose kind equals
-                            # this value (e.g. 'function_definition'), eliminating hits in
-                            # comments or module-level code. Requires tree-sitter parse success.
+                             # When set, the regex is only applied inside nodes whose kind equals
+                             # this value (e.g. 'function_definition'), eliminating hits in
+                             # comments or module-level code. Requires tree-sitter parse success.
+        lint:              # Optional. Structured lint binding for `lint_proxy` signals.
+          tool: string     # Required when present. Supported: ruff | biome | clippy
+          code: string     # Required when present. Example: B006 | suspicious/noExplicitAny
 
     formatter:            # Optional. Narrow formatter-backed enforcement surface.
       tool: string        # Required when present. Supported today: ruff | biome | rustfmt
-                          # Use only when the rule maps cleanly to a safe mechanical rewrite.
+                           # Use only when the rule maps cleanly to a safe mechanical rewrite.
       options: map        # Required when present. Key/value pairs written into the
-                          # generated formatter overlay. Values must be strings, numbers,
-                          # or booleans. Unsupported keys are ignored with validation warnings.
+                           # generated formatter overlay. Values must be strings, numbers,
+                           # or booleans. Unsupported keys are ignored with validation warnings.
+
+    tests:                # Optional. Explicit binding to an existing language-native test.
+      - runner: string    # Required. Supported: pytest | vitest | cargo
+        path: string      # Required. Relative path to the test file inside the repo.
+        selector: string  # Optional. Specific test name / selector inside the file.
 
     golden_examples:       # Required. 3-5 examples (mix of pass and fail).
       - code: string       # Required. Code snippet (use | for multiline YAML).

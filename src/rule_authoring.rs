@@ -10,11 +10,11 @@
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use serde_yaml::{Mapping, Value as YamlValue};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::rules::load_rule_files;
+use crate::rules::{self, load_rule_files};
 
 // ── Shared validation sets (mirrored from rules.rs private constants) ──
 
@@ -31,32 +31,50 @@ const VALID_LANGUAGES: &[&str] = &["python", "typescript", "rust"];
 
 // ── add ──
 
-pub struct AddOptions<'a> {
+#[derive(Debug, Clone)]
+pub enum EnforcementMode {
+    Advisory,
+    Pattern { regex: String },
+    Lint { tool: String, code: String },
+    Formatter {
+        tool: String,
+        options: BTreeMap<String, Value>,
+    },
+    Test {
+        runner: String,
+        path: String,
+        selector: Option<String>,
+    },
+}
+
+pub struct AddOptions {
     /// Full id (`dep.rule-name`) OR just `rule-name` with `dep` supplied.
-    pub rule_id: &'a str,
-    pub description: &'a str,
-    pub match_regex: Option<&'a str>,
-    pub severity: &'a str,
-    pub confidence: &'a str,
-    pub category: &'a str,
-    pub language: &'a str,
-    pub source_url: Option<&'a str>,
-    pub dep: Option<&'a str>,
+    pub rule_id: String,
+    pub description: String,
+    pub severity: String,
+    pub confidence: String,
+    pub category: String,
+    pub language: String,
+    pub source_url: Option<String>,
+    pub dep: Option<String>,
+    pub enforcement: EnforcementMode,
     /// Target the personal layer (gitignored) rather than the committed project layer.
     pub personal: bool,
 }
 
-pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
-    validate_enum("severity", opts.severity, VALID_SEVERITIES)?;
-    validate_enum("confidence", opts.confidence, VALID_CONFIDENCES)?;
-    validate_enum("category", opts.category, VALID_CATEGORIES)?;
-    validate_enum("language", opts.language, VALID_LANGUAGES)?;
+pub fn add(project_dir: &Path, opts: AddOptions) -> Result<Value> {
+    validate_enum("severity", &opts.severity, VALID_SEVERITIES)?;
+    validate_enum("confidence", &opts.confidence, VALID_CONFIDENCES)?;
+    validate_enum("category", &opts.category, VALID_CATEGORIES)?;
+    validate_enum("language", &opts.language, VALID_LANGUAGES)?;
 
     if opts.description.trim().is_empty() {
         return Err(anyhow!("--description is required and must be non-empty"));
     }
 
-    let (dep, full_id) = parse_id(opts.rule_id, opts.dep)?;
+    validate_enforcement(&opts.enforcement, &opts.language)?;
+
+    let (dep, full_id) = parse_id(&opts.rule_id, opts.dep.as_deref())?;
     let existing = collect_existing_rule_ids(project_dir);
     if existing.contains(&full_id) {
         return Err(anyhow!(
@@ -67,15 +85,14 @@ pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
     // Build the rule YAML mapping.
     let mut rule = Mapping::new();
     rule.insert(ystr("id"), ystr(&full_id));
-    rule.insert(ystr("severity"), ystr(opts.severity));
-    rule.insert(ystr("confidence"), ystr(opts.confidence));
-    rule.insert(ystr("category"), ystr(opts.category));
-    rule.insert(ystr("description"), ystr(opts.description));
+    rule.insert(ystr("severity"), ystr(&opts.severity));
+    rule.insert(ystr("confidence"), ystr(&opts.confidence));
+    rule.insert(ystr("category"), ystr(&opts.category));
+    rule.insert(ystr("description"), ystr(&opts.description));
     rule.insert(
         ystr("source_url"),
         ystr(
             opts.source_url
-                .map(String::from)
                 .unwrap_or_else(|| format!("personal://{dep}/{full_id}"))
                 .as_str(),
         ),
@@ -83,30 +100,60 @@ pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
     rule.insert(ystr("approved"), YamlValue::Bool(true));
     rule.insert(ystr("status"), ystr("approved"));
 
-    // Signals: at minimum one pattern signal when a match regex is given. If no
-    // regex is supplied, write a placeholder lint_proxy signal so `wh validate`
-    // accepts the rule but downstream check skips it until the user adds detail.
     let mut signals = Vec::new();
-    if let Some(regex) = opts.match_regex {
-        let mut sig = Mapping::new();
-        sig.insert(ystr("id"), ystr("authored-pattern"));
-        sig.insert(ystr("strategy"), ystr("pattern"));
-        sig.insert(ystr("description"), ystr("Authored regex"));
-        sig.insert(ystr("weight"), ystr("required"));
-        sig.insert(ystr("match"), ystr(regex));
-        signals.push(YamlValue::Mapping(sig));
-    } else {
-        let mut sig = Mapping::new();
-        sig.insert(ystr("id"), ystr("authored-placeholder"));
-        sig.insert(ystr("strategy"), ystr("lint_proxy"));
-        sig.insert(
-            ystr("description"),
-            ystr("Placeholder — add a `match` regex via `wh rules edit` to make this enforceable"),
-        );
-        sig.insert(ystr("weight"), ystr("optional"));
-        signals.push(YamlValue::Mapping(sig));
+    let mut tests = Vec::new();
+
+    match &opts.enforcement {
+        EnforcementMode::Advisory => {}
+        EnforcementMode::Pattern { regex } => {
+            let mut sig = Mapping::new();
+            sig.insert(ystr("id"), ystr("authored-pattern"));
+            sig.insert(ystr("strategy"), ystr("pattern"));
+            sig.insert(ystr("description"), ystr("Authored regex"));
+            sig.insert(ystr("weight"), ystr("required"));
+            sig.insert(ystr("match"), ystr(regex));
+            signals.push(YamlValue::Mapping(sig));
+        }
+        EnforcementMode::Lint { tool, code } => {
+            let mut lint = Mapping::new();
+            lint.insert(ystr("tool"), ystr(tool));
+            lint.insert(ystr("code"), ystr(code));
+
+            let mut sig = Mapping::new();
+            sig.insert(ystr("id"), ystr("authored-lint"));
+            sig.insert(ystr("strategy"), ystr("lint_proxy"));
+            sig.insert(
+                ystr("description"),
+                ystr(&format!("Structured lint binding for {tool} {code}")),
+            );
+            sig.insert(ystr("weight"), ystr("required"));
+            sig.insert(ystr("lint"), YamlValue::Mapping(lint));
+            signals.push(YamlValue::Mapping(sig));
+        }
+        EnforcementMode::Formatter { tool, options } => {
+            let mut formatter = Mapping::new();
+            formatter.insert(ystr("tool"), ystr(tool));
+            formatter.insert(ystr("options"), json_map_to_yaml(options));
+            rule.insert(ystr("formatter"), YamlValue::Mapping(formatter));
+        }
+        EnforcementMode::Test {
+            runner,
+            path,
+            selector,
+        } => {
+            let mut test = Mapping::new();
+            test.insert(ystr("runner"), ystr(runner));
+            test.insert(ystr("path"), ystr(path));
+            if let Some(selector) = selector {
+                test.insert(ystr("selector"), ystr(selector));
+            }
+            tests.push(YamlValue::Mapping(test));
+        }
     }
     rule.insert(ystr("signals"), YamlValue::Sequence(signals));
+    if !tests.is_empty() {
+        rule.insert(ystr("tests"), YamlValue::Sequence(tests));
+    }
 
     // Two golden examples: a pass+fail. The user can edit them later; this keeps
     // `wh validate` happy (it requires at least one example).
@@ -133,7 +180,7 @@ pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
     );
 
     // Append to the existing dep file when present, otherwise create it.
-    let dest = destination_path(project_dir, opts.personal, opts.language, &dep);
+    let dest = destination_path(project_dir, opts.personal, &opts.language, &dep);
     let dest_existed = dest.exists();
 
     let mut top = if dest_existed {
@@ -171,6 +218,61 @@ pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
         "layer": if opts.personal { "personal" } else { "project" },
         "next_command": "wh actions all",
     }))
+}
+
+fn validate_enforcement(enforcement: &EnforcementMode, language: &str) -> Result<()> {
+    match enforcement {
+        EnforcementMode::Advisory => Ok(()),
+        EnforcementMode::Pattern { regex } => {
+            if regex.trim().is_empty() {
+                Err(anyhow!("pattern enforcement requires a non-empty regex"))
+            } else {
+                Ok(())
+            }
+        }
+        EnforcementMode::Lint { tool, code } => {
+            if tool.trim().is_empty() || code.trim().is_empty() {
+                return Err(anyhow!("lint enforcement requires non-empty tool and code"));
+            }
+            if !rules::lint_tool_matches_language(tool, language) {
+                return Err(anyhow!(
+                    "lint tool `{tool}` is not supported for language `{language}`"
+                ));
+            }
+            Ok(())
+        }
+        EnforcementMode::Formatter { tool, options } => {
+            if tool.trim().is_empty() {
+                return Err(anyhow!("formatter enforcement requires a formatter tool"));
+            }
+            if options.is_empty() {
+                return Err(anyhow!(
+                    "formatter enforcement requires at least one formatter option"
+                ));
+            }
+            if !rules::formatter_tool_matches_language(tool, language) {
+                return Err(anyhow!(
+                    "formatter tool `{tool}` is not supported for language `{language}`"
+                ));
+            }
+            Ok(())
+        }
+        EnforcementMode::Test {
+            runner,
+            path,
+            selector: _,
+        } => {
+            if runner.trim().is_empty() || path.trim().is_empty() {
+                return Err(anyhow!("test enforcement requires a runner and path"));
+            }
+            if !rules::test_runner_matches_language(runner, language) {
+                return Err(anyhow!(
+                    "test runner `{runner}` is not supported for language `{language}`"
+                ));
+            }
+            Ok(())
+        }
+    }
 }
 
 // ── edit ──
@@ -429,6 +531,31 @@ fn matches_selector(
 
 // ── helpers ──
 
+fn json_map_to_yaml(map: &BTreeMap<String, Value>) -> YamlValue {
+    let mut out = Mapping::new();
+    for (key, value) in map {
+        out.insert(ystr(key), json_value_to_yaml(value));
+    }
+    YamlValue::Mapping(out)
+}
+
+fn json_value_to_yaml(value: &Value) -> YamlValue {
+    match value {
+        Value::Null => YamlValue::Null,
+        Value::Bool(v) => YamlValue::Bool(*v),
+        Value::Number(v) => serde_yaml::to_value(v).unwrap_or(YamlValue::Null),
+        Value::String(v) => ystr(v),
+        Value::Array(values) => YamlValue::Sequence(values.iter().map(json_value_to_yaml).collect()),
+        Value::Object(obj) => {
+            let mut out = Mapping::new();
+            for (key, inner) in obj {
+                out.insert(ystr(key), json_value_to_yaml(inner));
+            }
+            YamlValue::Mapping(out)
+        }
+    }
+}
+
 fn ystr(s: &str) -> YamlValue {
     YamlValue::String(s.to_string())
 }
@@ -515,7 +642,7 @@ fn collect_existing_rule_ids(project_dir: &Path) -> HashSet<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_id, validate_enum, VALID_SEVERITIES};
+    use super::{parse_id, validate_enum, AddOptions, EnforcementMode, VALID_SEVERITIES};
 
     #[test]
     fn parse_id_qualified() {
@@ -545,5 +672,77 @@ mod tests {
     fn severity_validation() {
         assert!(validate_enum("severity", "must", VALID_SEVERITIES).is_ok());
         assert!(validate_enum("severity", "always", VALID_SEVERITIES).is_err());
+    }
+
+    #[test]
+    fn add_lint_backed_rule_persists_structured_binding() {
+        let tmp = std::env::temp_dir().join(format!("wh_rule_authoring_lint_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::create_dir_all(&tmp);
+
+        super::add(
+            &tmp,
+            AddOptions {
+                rule_id: "custom.mutable-defaults".into(),
+                description: "Mutable defaults must be rejected".into(),
+                severity: "must".into(),
+                confidence: "high".into(),
+                category: "default".into(),
+                language: "python".into(),
+                source_url: None,
+                dep: Some("custom".into()),
+                enforcement: EnforcementMode::Lint {
+                    tool: "ruff".into(),
+                    code: "B006".into(),
+                },
+                personal: true,
+            },
+        )
+        .unwrap();
+
+        let paths = crate::layers::LayerPaths::for_project(&tmp);
+        let (rules, _) = crate::rules::load_approved_rules(&paths.personal_rules_dir, None);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].signals[0].lint.as_ref().map(|lint| lint.tool.as_str()), Some("ruff"));
+        assert_eq!(rules[0].signals[0].lint.as_ref().map(|lint| lint.code.as_str()), Some("B006"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn add_test_backed_rule_persists_linked_test() {
+        let tmp = std::env::temp_dir().join(format!("wh_rule_authoring_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::create_dir_all(&tmp);
+
+        super::add(
+            &tmp,
+            AddOptions {
+                rule_id: "custom.snapshot-contract".into(),
+                description: "Snapshots must stay covered".into(),
+                severity: "should".into(),
+                confidence: "high".into(),
+                category: "convention".into(),
+                language: "typescript".into(),
+                source_url: None,
+                dep: Some("custom".into()),
+                enforcement: EnforcementMode::Test {
+                    runner: "vitest".into(),
+                    path: "tests/render/output.test.ts".into(),
+                    selector: Some("snapshot_contract".into()),
+                },
+                personal: true,
+            },
+        )
+        .unwrap();
+
+        let paths = crate::layers::LayerPaths::for_project(&tmp);
+        let (rules, _) = crate::rules::load_approved_rules(&paths.personal_rules_dir, None);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].tests.len(), 1);
+        assert_eq!(rules[0].tests[0].runner, "vitest");
+        assert_eq!(rules[0].tests[0].path, "tests/render/output.test.ts");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

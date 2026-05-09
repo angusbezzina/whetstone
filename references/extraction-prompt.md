@@ -40,7 +40,7 @@ The documentation must clearly state or strongly imply the practice. "Best pract
 
 ### 2. Signal Requirement
 
-Every rule MUST have at least one deterministic signal with strategy `ast` or `pattern`. This ensures the rule can be checked without AI. Pure `ai`-only rules are rejected because they can't be reliably enforced in CI.
+Every rule MUST have at least one deterministic enforcement surface: an `ast`, `pattern`, or `lint_proxy` signal when possible, or an explicit `formatter` / `tests` binding when the rule is best enforced mechanically or through an existing test. Pure `ai`-only rules are rejected because they can't be reliably enforced in CI.
 
 **Passes**: Rule with an `ast` signal that checks for `FunctionDef` vs `AsyncFunctionDef`
 **Fails**: Rule with only an `ai` signal that says "check if the function should be async"
@@ -155,6 +155,23 @@ See [signal-strategies.md](signal-strategies.md) for detailed strategy descripti
 3. For each check, determine if it can be done via AST, regex, or linter rule
 4. Only use AI for what's left
 5. Assign weights: the most reliable signal is `required`, supporting signals are `strong` or `moderate`
+
+### Structured lint bindings
+
+When using `strategy: lint_proxy`, always include structured lint metadata instead of burying it in prose:
+
+```yaml
+signals:
+  - id: mutable-defaults
+    strategy: lint_proxy
+    description: "Covered by Ruff"
+    weight: required
+    lint:
+      tool: ruff
+      code: B006
+```
+
+This is the preferred format for agent-authored candidate bundles.
 
 ### Example Decomposition
 

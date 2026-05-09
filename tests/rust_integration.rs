@@ -3249,6 +3249,139 @@ rules:
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn test_check_reports_missing_formatter_binding_until_configured() {
+    let tmp = std::env::temp_dir().join(format!("wh_check_formatter_binding_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone").join("rules").join("python")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone")
+            .join("rules")
+            .join("python")
+            .join("example.yaml"),
+        r#"source:
+  name: example
+  docs_url: https://example.com/
+  version: "1.0"
+  content_hash: "sha256:test"
+  resolved_at: "2026-04-14T00:00:00Z"
+  registry: pypi
+
+rules:
+  - id: example.single-quotes
+    severity: should
+    confidence: high
+    category: convention
+    description: "Use single quotes in Python formatter output."
+    source_url: https://example.com/rule
+    approved: true
+    status: approved
+    formatter:
+      tool: ruff
+      options:
+        quote-style: single
+    golden_examples:
+      - code: ""
+        verdict: pass
+        reason: "placeholder"
+"#,
+    )
+    .unwrap();
+    std::fs::write(tmp.join("whetstone").join("whetstone.yaml"), "deny: []\n").unwrap();
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::write(tmp.join("src").join("noop.py"), "x = 1\n").unwrap();
+
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &["--json", "check", "src", "--lang", "python", "--no-fail"],
+        tmp.to_str().unwrap(),
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "config_issues_found", "{result}");
+    let issues = result["config_issues"].as_array().unwrap();
+    assert_eq!(issues[0]["tool"], "ruff");
+    assert_eq!(issues[0]["option"], "quote-style");
+
+    std::fs::write(tmp.join("ruff.toml"), "[format]\nquote-style = \"single\"\n").unwrap();
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &["--json", "check", "src", "--lang", "python", "--no-fail"],
+        tmp.to_str().unwrap(),
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok", "{result}");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_check_reports_missing_linked_test_file() {
+    let tmp = std::env::temp_dir().join(format!("wh_check_linked_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone").join("rules").join("typescript")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone")
+            .join("rules")
+            .join("typescript")
+            .join("example.yaml"),
+        r#"source:
+  name: example
+  docs_url: https://example.com/
+  version: "1.0"
+  content_hash: "sha256:test"
+  resolved_at: "2026-04-14T00:00:00Z"
+  registry: npm
+
+rules:
+  - id: example.snapshot-contract
+    severity: should
+    confidence: high
+    category: convention
+    description: "Snapshots must stay covered."
+    source_url: https://example.com/rule
+    approved: true
+    status: approved
+    tests:
+      - runner: vitest
+        path: tests/render/output.test.ts
+        selector: render_output_contract
+    golden_examples:
+      - code: ""
+        verdict: pass
+        reason: "placeholder"
+"#,
+    )
+    .unwrap();
+    std::fs::write(tmp.join("whetstone").join("whetstone.yaml"), "deny: []\n").unwrap();
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::write(tmp.join("src").join("noop.ts"), "export const x = 1;\n").unwrap();
+
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &["--json", "check", "src", "--lang", "typescript", "--no-fail"],
+        tmp.to_str().unwrap(),
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "config_issues_found", "{result}");
+    let issues = result["config_issues"].as_array().unwrap();
+    assert_eq!(issues[0]["runner"], "vitest");
+    assert_eq!(issues[0]["path"], "tests/render/output.test.ts");
+
+    std::fs::create_dir_all(tmp.join("tests").join("render")).unwrap();
+    std::fs::write(
+        tmp.join("tests").join("render").join("output.test.ts"),
+        "test('render_output_contract', () => {})\n",
+    )
+    .unwrap();
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &["--json", "check", "src", "--lang", "typescript", "--no-fail"],
+        tmp.to_str().unwrap(),
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "ok", "{result}");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
 #[test]
 fn test_check_finds_rust_unwrap_violation() {
     // Self-check: Whetstone's own built-in Rust rule flags `.unwrap()` calls.

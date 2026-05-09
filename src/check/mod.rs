@@ -87,7 +87,9 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
         }
     }
 
-    let config_issues = lint_proxy::verify_lint_proxies(project_dir, &rules);
+    let mut config_issues = lint_proxy::verify_lint_proxies(project_dir, &rules);
+    config_issues.extend(lint_proxy::verify_formatter_directives(project_dir, &rules));
+    config_issues.extend(lint_proxy::verify_test_bindings(project_dir, &rules));
 
     let files = discover_source_files(opts.scan_paths);
     for (path, lang) in &files {
@@ -219,10 +221,25 @@ pub fn format_human_output(result: &Value) -> String {
     if let Some(arr) = result.get("config_issues").and_then(|v| v.as_array()) {
         for v in arr {
             let id = v.get("rule_id").and_then(|v| v.as_str()).unwrap_or("?");
-            let linter = v.get("linter").and_then(|v| v.as_str()).unwrap_or("?");
-            let code = v.get("code").and_then(|v| v.as_str()).unwrap_or("?");
             let issue = v.get("issue").and_then(|v| v.as_str()).unwrap_or("?");
-            out.push_str(&format!("  config[{linter}:{code}] {id}: {issue}\n"));
+            if let (Some(linter), Some(code)) = (
+                v.get("linter").and_then(|v| v.as_str()),
+                v.get("code").and_then(|v| v.as_str()),
+            ) {
+                out.push_str(&format!("  config[{linter}:{code}] {id}: {issue}\n"));
+            } else if let (Some(tool), Some(option)) = (
+                v.get("tool").and_then(|v| v.as_str()),
+                v.get("option").and_then(|v| v.as_str()),
+            ) {
+                out.push_str(&format!("  formatter[{tool}:{option}] {id}: {issue}\n"));
+            } else if let (Some(runner), Some(path)) = (
+                v.get("runner").and_then(|v| v.as_str()),
+                v.get("path").and_then(|v| v.as_str()),
+            ) {
+                out.push_str(&format!("  test[{runner}:{path}] {id}: {issue}\n"));
+            } else {
+                out.push_str(&format!("  config {id}: {issue}\n"));
+            }
         }
     }
     out
@@ -562,8 +579,10 @@ mod tests {
                 match_pattern: None,
                 ast_query: None,
                 ast_scope: None,
+                lint: None,
             }],
             formatter: None,
+            tests: Vec::new(),
             golden_examples: Vec::new(),
             deterministic_pass_threshold: None,
             deterministic_fail_threshold: None,

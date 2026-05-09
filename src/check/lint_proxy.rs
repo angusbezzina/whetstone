@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::rules::ApprovedRule;
+use crate::rules::{self, ApprovedRule};
 
 pub fn verify_lint_proxies(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<Value> {
     let ruff = load_ruff_selects(project_dir);
@@ -31,10 +31,10 @@ pub fn verify_lint_proxies(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<V
             if sig.strategy != "lint_proxy" {
                 continue;
             }
-            for (linter, code) in parse_lint_codes(&sig.description) {
-                let verdict = match linter.as_str() {
-                    "ruff" => verify_ruff(&ruff, &code),
-                    "biome" => verify_biome(&biome, &code),
+            for binding in rules::approved_signal_lint_bindings(sig) {
+                let verdict = match binding.tool.as_str() {
+                    "ruff" => verify_ruff(&ruff, &binding.code),
+                    "biome" => verify_biome(&biome, &binding.code),
                     _ => Verdict::Unsupported,
                 };
                 match verdict {
@@ -42,8 +42,8 @@ pub fn verify_lint_proxies(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<V
                     Verdict::Missing => issues.push(json!({
                         "rule_id": rule.id,
                         "signal_id": sig.id,
-                        "linter": linter,
-                        "code": code,
+                        "linter": binding.tool,
+                        "code": binding.code,
                         "issue": "linter rule is not enabled in project config",
                         "fix": "run `wh tests` to generate the overlay config, or enable manually",
                         "config_files_checked": ruff.config_paths.iter().chain(biome.paths.iter()).map(|p| p.display().to_string()).collect::<Vec<_>>(),
@@ -51,8 +51,8 @@ pub fn verify_lint_proxies(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<V
                     Verdict::NoConfig => issues.push(json!({
                         "rule_id": rule.id,
                         "signal_id": sig.id,
-                        "linter": linter,
-                        "code": code,
+                        "linter": binding.tool,
+                        "code": binding.code,
                         "issue": "no linter config found to verify against",
                         "fix": "add ruff.toml / biome.json, or run `wh tests` for overlays",
                     })),
@@ -68,6 +68,106 @@ pub fn verify_lint_proxies(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<V
     issues
 }
 
+pub fn verify_formatter_directives(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<Value> {
+    let ruff = load_ruff_formatter(project_dir);
+    let biome = load_biome_formatter(project_dir);
+    let rustfmt = load_rustfmt_formatter(project_dir);
+    let mut issues = Vec::new();
+
+    for rule in rules {
+        let Some(formatter) = &rule.formatter else {
+            continue;
+        };
+
+        for (key, expected) in &formatter.options {
+            let (paths, verdict) = match formatter.tool.as_str() {
+                "ruff" => (
+                    ruff.paths.clone(),
+                    verify_formatter_value(&ruff.paths, ruff.options.get(key), expected),
+                ),
+                "biome" => (
+                    biome.paths.clone(),
+                    verify_formatter_value(&biome.paths, biome.options.get(key), expected),
+                ),
+                "rustfmt" => (
+                    rustfmt.paths.clone(),
+                    verify_formatter_value(&rustfmt.paths, rustfmt.options.get(key), expected),
+                ),
+                _ => (Vec::new(), Verdict::Unsupported),
+            };
+
+            match verdict {
+                Verdict::Verified => {}
+                Verdict::Missing => issues.push(json!({
+                    "rule_id": rule.id,
+                    "tool": formatter.tool,
+                    "option": key,
+                    "expected": expected,
+                    "issue": "formatter option is not configured",
+                    "fix": "run `wh actions lint` to generate the overlay config, or configure manually",
+                    "config_files_checked": paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+                })),
+                Verdict::NoConfig => issues.push(json!({
+                    "rule_id": rule.id,
+                    "tool": formatter.tool,
+                    "option": key,
+                    "expected": expected,
+                    "issue": "no formatter config found to verify against",
+                    "fix": "run `wh actions lint` to generate the overlay config, or configure manually",
+                })),
+                Verdict::Unsupported => {}
+            }
+        }
+    }
+
+    issues
+}
+
+pub fn verify_test_bindings(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<Value> {
+    let mut issues = Vec::new();
+
+    for rule in rules {
+        for test in &rule.tests {
+            let path = project_dir.join(&test.path);
+            if !path.exists() {
+                issues.push(json!({
+                    "rule_id": rule.id,
+                    "runner": test.runner,
+                    "path": test.path,
+                    "selector": test.selector,
+                    "issue": "linked test path does not exist",
+                    "fix": "create the referenced test file or update the rule binding",
+                }));
+                continue;
+            }
+
+            if let Some(selector) = &test.selector {
+                match fs::read_to_string(&path) {
+                    Ok(text) if text.contains(selector) => {}
+                    Ok(_) => issues.push(json!({
+                        "rule_id": rule.id,
+                        "runner": test.runner,
+                        "path": test.path,
+                        "selector": selector,
+                        "issue": "linked test selector was not found in the test file",
+                        "fix": "update the selector or the referenced test file",
+                    })),
+                    Err(err) => issues.push(json!({
+                        "rule_id": rule.id,
+                        "runner": test.runner,
+                        "path": test.path,
+                        "selector": selector,
+                        "issue": format!("failed to read linked test file: {err}"),
+                        "fix": "fix the test file path or file permissions",
+                    })),
+                }
+            }
+        }
+    }
+
+    issues
+}
+
 enum Verdict {
     Verified,
     Missing,
@@ -75,27 +175,12 @@ enum Verdict {
     Unsupported,
 }
 
-// ── Extraction of (linter, code) tuples from a signal description ──
-
-/// Mine `"ruff E501"` / `"biome suspicious/noExplicitAny"` pairs out of a
-/// signal description. Duplicates the logic used by `generate_tests.rs` so
-/// both sides agree on what a lint_proxy references.
-fn parse_lint_codes(description: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    let parts: Vec<&str> = description.split_whitespace().collect();
-    for (i, part) in parts.iter().enumerate() {
-        let normalized = part.to_ascii_lowercase();
-        if matches!(normalized.as_str(), "ruff" | "biome" | "clippy") && i + 1 < parts.len() {
-            out.push((
-                normalized,
-                parts[i + 1].trim_matches(&[',', '.', ';'][..]).to_string(),
-            ));
-        }
-    }
-    out
-}
-
 // ── Ruff ──
+
+struct FormatterConfig {
+    paths: Vec<PathBuf>,
+    options: std::collections::BTreeMap<String, Value>,
+}
 
 struct RuffConfig {
     config_paths: Vec<PathBuf>,
@@ -198,6 +283,51 @@ fn verify_ruff(cfg: &RuffConfig, code: &str) -> Verdict {
     }
 }
 
+fn load_ruff_formatter(project_dir: &Path) -> FormatterConfig {
+    let candidates = [
+        project_dir.join("ruff.toml"),
+        project_dir.join(".ruff.toml"),
+        project_dir.join("pyproject.toml"),
+        project_dir.join("whetstone").join("lint").join("ruff.whetstone.toml"),
+        project_dir
+            .join("whetstone")
+            .join(".personal")
+            .join("lint")
+            .join("ruff.whetstone.toml"),
+    ];
+    let mut paths = Vec::new();
+    let mut options = std::collections::BTreeMap::new();
+    for path in &candidates {
+        if !path.exists() {
+            continue;
+        }
+        paths.push(path.clone());
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(parsed) = toml::from_str::<toml::Value>(&text) else {
+            continue;
+        };
+        let root = if path
+            .file_name()
+            .map(|f| f == "pyproject.toml")
+            .unwrap_or(false)
+        {
+            parsed
+                .get("tool")
+                .and_then(|t| t.get("ruff"))
+                .cloned()
+                .unwrap_or_else(|| toml::Value::Table(Default::default()))
+        } else {
+            parsed
+        };
+        if let Some(formatter) = root.get("format") {
+            merge_toml_table_into_json_map(formatter, &mut options);
+        }
+    }
+    FormatterConfig { paths, options }
+}
+
 // ── Biome ──
 
 struct BiomeConfig {
@@ -274,6 +404,102 @@ fn verify_biome(cfg: &BiomeConfig, code: &str) -> Verdict {
     }
 }
 
+fn load_biome_formatter(project_dir: &Path) -> FormatterConfig {
+    let candidates = [
+        project_dir.join("biome.json"),
+        project_dir.join("biome.jsonc"),
+        project_dir.join("whetstone").join("lint").join("biome.whetstone.json"),
+        project_dir
+            .join("whetstone")
+            .join(".personal")
+            .join("lint")
+            .join("biome.whetstone.json"),
+    ];
+    let mut paths = Vec::new();
+    let mut options = std::collections::BTreeMap::new();
+    for path in &candidates {
+        if !path.exists() {
+            continue;
+        }
+        paths.push(path.clone());
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
+        let cleaned = strip_jsonc_comments(&text);
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&cleaned) else {
+            continue;
+        };
+        if let Some(formatter) = parsed.get("formatter").and_then(|v| v.as_object()) {
+            for (key, value) in formatter {
+                options.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    FormatterConfig { paths, options }
+}
+
+fn load_rustfmt_formatter(project_dir: &Path) -> FormatterConfig {
+    let candidates = [
+        project_dir.join("rustfmt.toml"),
+        project_dir.join(".rustfmt.toml"),
+        project_dir.join("whetstone").join("lint").join("rustfmt.whetstone.toml"),
+        project_dir
+            .join("whetstone")
+            .join(".personal")
+            .join("lint")
+            .join("rustfmt.whetstone.toml"),
+    ];
+    let mut paths = Vec::new();
+    let mut options = std::collections::BTreeMap::new();
+    for path in &candidates {
+        if !path.exists() {
+            continue;
+        }
+        paths.push(path.clone());
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(parsed) = toml::from_str::<toml::Value>(&text) else {
+            continue;
+        };
+        merge_toml_table_into_json_map(&parsed, &mut options);
+    }
+    FormatterConfig { paths, options }
+}
+
+fn merge_toml_table_into_json_map(
+    value: &toml::Value,
+    out: &mut std::collections::BTreeMap<String, Value>,
+) {
+    if let Some(table) = value.as_table() {
+        for (key, value) in table {
+            if let Some(json) = toml_to_json(value) {
+                out.insert(key.clone(), json);
+            }
+        }
+    }
+}
+
+fn toml_to_json(value: &toml::Value) -> Option<Value> {
+    match value {
+        toml::Value::String(v) => Some(Value::String(v.clone())),
+        toml::Value::Integer(v) => Some(json!(v)),
+        toml::Value::Float(v) => Some(json!(v)),
+        toml::Value::Boolean(v) => Some(Value::Bool(*v)),
+        _ => None,
+    }
+}
+
+fn verify_formatter_value(paths: &[PathBuf], actual: Option<&Value>, expected: &Value) -> Verdict {
+    if paths.is_empty() {
+        return Verdict::NoConfig;
+    }
+    match actual {
+        Some(actual) if actual == expected => Verdict::Verified,
+        _ => Verdict::Missing,
+    }
+}
+
 /// Minimal JSONC → JSON comment stripper: removes `//` line comments and
 /// `/* */` block comments while preserving strings. Good enough for biome
 /// configs, not a general-purpose JSONC parser.
@@ -341,10 +567,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_lint_codes_recognizes_ruff_and_biome() {
-        let got = parse_lint_codes("Covered by ruff B006 and biome suspicious/noExplicitAny.");
-        assert!(got.contains(&("ruff".into(), "B006".into())));
-        assert!(got.contains(&("biome".into(), "suspicious/noExplicitAny".into())));
+    fn legacy_lint_binding_parser_recognizes_ruff_and_biome() {
+        let got = rules::parse_legacy_lint_bindings(
+            "Covered by ruff B006 and biome suspicious/noExplicitAny.",
+        );
+        assert!(got.iter().any(|binding| binding.tool == "ruff" && binding.code == "B006"));
+        assert!(got.iter().any(|binding| {
+            binding.tool == "biome" && binding.code == "suspicious/noExplicitAny"
+        }));
     }
 
     #[test]
@@ -358,5 +588,18 @@ mod tests {
         let cleaned = strip_jsonc_comments(src);
         assert!(!cleaned.contains("trailing line"));
         assert!(cleaned.contains("has // inner"));
+    }
+
+    #[test]
+    fn formatter_value_verification_uses_exact_json_match() {
+        let paths = vec![PathBuf::from("ruff.toml")];
+        assert!(matches!(
+            verify_formatter_value(&paths, Some(&json!("single")), &json!("single")),
+            Verdict::Verified
+        ));
+        assert!(matches!(
+            verify_formatter_value(&paths, Some(&json!("double")), &json!("single")),
+            Verdict::Missing
+        ));
     }
 }
