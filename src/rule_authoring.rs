@@ -27,15 +27,20 @@ const VALID_CATEGORIES: &[&str] = &[
     "breaking-change",
     "semantic",
 ];
-const VALID_LANGUAGES: &[&str] = &["python", "typescript", "rust"];
+const VALID_LANGUAGES: &[&str] = &["python", "typescript", "rust", "all"];
 
 // ── add ──
 
 #[derive(Debug, Clone)]
 pub enum EnforcementMode {
     Advisory,
-    Pattern { regex: String },
-    Lint { tool: String, code: String },
+    Pattern {
+        regex: String,
+    },
+    Lint {
+        tool: String,
+        code: String,
+    },
     Formatter {
         tool: String,
         options: BTreeMap<String, Value>,
@@ -99,6 +104,12 @@ pub fn add(project_dir: &Path, opts: AddOptions) -> Result<Value> {
     );
     rule.insert(ystr("approved"), YamlValue::Bool(true));
     rule.insert(ystr("status"), ystr("approved"));
+    if opts.language == "all" {
+        rule.insert(
+            ystr("languages"),
+            YamlValue::Sequence(vec![ystr("python"), ystr("rust"), ystr("typescript")]),
+        );
+    }
 
     let mut signals = Vec::new();
     let mut tests = Vec::new();
@@ -545,7 +556,9 @@ fn json_value_to_yaml(value: &Value) -> YamlValue {
         Value::Bool(v) => YamlValue::Bool(*v),
         Value::Number(v) => serde_yaml::to_value(v).unwrap_or(YamlValue::Null),
         Value::String(v) => ystr(v),
-        Value::Array(values) => YamlValue::Sequence(values.iter().map(json_value_to_yaml).collect()),
+        Value::Array(values) => {
+            YamlValue::Sequence(values.iter().map(json_value_to_yaml).collect())
+        }
         Value::Object(obj) => {
             let mut out = Mapping::new();
             for (key, inner) in obj {
@@ -607,7 +620,12 @@ fn destination_path(project_dir: &Path, personal: bool, language: &str, dep: &st
     } else {
         paths.project_rules_dir
     };
-    base.join(language).join(format!("{dep}.yaml"))
+    let directory = if language == "all" {
+        "shared"
+    } else {
+        language
+    };
+    base.join(directory).join(format!("{dep}.yaml"))
 }
 
 fn read_yaml_mapping(path: &Path) -> Result<Mapping> {
@@ -676,7 +694,8 @@ mod tests {
 
     #[test]
     fn add_lint_backed_rule_persists_structured_binding() {
-        let tmp = std::env::temp_dir().join(format!("wh_rule_authoring_lint_{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("wh_rule_authoring_lint_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let _ = std::fs::create_dir_all(&tmp);
 
@@ -703,15 +722,28 @@ mod tests {
         let paths = crate::layers::LayerPaths::for_project(&tmp);
         let (rules, _) = crate::rules::load_approved_rules(&paths.personal_rules_dir, None);
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].signals[0].lint.as_ref().map(|lint| lint.tool.as_str()), Some("ruff"));
-        assert_eq!(rules[0].signals[0].lint.as_ref().map(|lint| lint.code.as_str()), Some("B006"));
+        assert_eq!(
+            rules[0].signals[0]
+                .lint
+                .as_ref()
+                .map(|lint| lint.tool.as_str()),
+            Some("ruff")
+        );
+        assert_eq!(
+            rules[0].signals[0]
+                .lint
+                .as_ref()
+                .map(|lint| lint.code.as_str()),
+            Some("B006")
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
     fn add_test_backed_rule_persists_linked_test() {
-        let tmp = std::env::temp_dir().join(format!("wh_rule_authoring_test_{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("wh_rule_authoring_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let _ = std::fs::create_dir_all(&tmp);
 

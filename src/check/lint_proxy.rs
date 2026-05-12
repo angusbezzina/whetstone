@@ -288,7 +288,10 @@ fn load_ruff_formatter(project_dir: &Path) -> FormatterConfig {
         project_dir.join("ruff.toml"),
         project_dir.join(".ruff.toml"),
         project_dir.join("pyproject.toml"),
-        project_dir.join("whetstone").join("lint").join("ruff.whetstone.toml"),
+        project_dir
+            .join("whetstone")
+            .join("lint")
+            .join("ruff.whetstone.toml"),
         project_dir
             .join("whetstone")
             .join(".personal")
@@ -408,7 +411,10 @@ fn load_biome_formatter(project_dir: &Path) -> FormatterConfig {
     let candidates = [
         project_dir.join("biome.json"),
         project_dir.join("biome.jsonc"),
-        project_dir.join("whetstone").join("lint").join("biome.whetstone.json"),
+        project_dir
+            .join("whetstone")
+            .join("lint")
+            .join("biome.whetstone.json"),
         project_dir
             .join("whetstone")
             .join(".personal")
@@ -442,7 +448,10 @@ fn load_rustfmt_formatter(project_dir: &Path) -> FormatterConfig {
     let candidates = [
         project_dir.join("rustfmt.toml"),
         project_dir.join(".rustfmt.toml"),
-        project_dir.join("whetstone").join("lint").join("rustfmt.whetstone.toml"),
+        project_dir
+            .join("whetstone")
+            .join("lint")
+            .join("rustfmt.whetstone.toml"),
         project_dir
             .join("whetstone")
             .join(".personal")
@@ -571,7 +580,9 @@ mod tests {
         let got = rules::parse_legacy_lint_bindings(
             "Covered by ruff B006 and biome suspicious/noExplicitAny.",
         );
-        assert!(got.iter().any(|binding| binding.tool == "ruff" && binding.code == "B006"));
+        assert!(got
+            .iter()
+            .any(|binding| binding.tool == "ruff" && binding.code == "B006"));
         assert!(got.iter().any(|binding| {
             binding.tool == "biome" && binding.code == "suspicious/noExplicitAny"
         }));

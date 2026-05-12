@@ -401,6 +401,7 @@ fn approved_from_pack_rule(rule: &Rule, pack: &ResolvedConfigPack, language: &st
             .unwrap_or_else(|| pack.metadata.name.as_deref().unwrap_or("pack"))
             .to_string(),
         language: language.to_string(),
+        languages: vec![language.to_string()],
         signals: rule
             .signals
             .iter()
@@ -412,10 +413,13 @@ fn approved_from_pack_rule(rule: &Rule, pack: &ResolvedConfigPack, language: &st
                 match_pattern: s.match_pattern.clone(),
                 ast_query: s.ast_query.clone(),
                 ast_scope: s.ast_scope.clone(),
-                lint: s.lint.as_ref().map(|lint| crate::rules::ApprovedLintBinding {
-                    tool: lint.tool.clone(),
-                    code: lint.code.clone(),
-                }),
+                lint: s
+                    .lint
+                    .as_ref()
+                    .map(|lint| crate::rules::ApprovedLintBinding {
+                        tool: lint.tool.clone(),
+                        code: lint.code.clone(),
+                    }),
             })
             .collect(),
         formatter: rule
@@ -766,6 +770,7 @@ mod tests {
                     formatter: None,
                     tests: Vec::new(),
                     golden_examples: Vec::new(),
+                    languages: Vec::new(),
                 }],
                 ..RulePackFile::default()
             },

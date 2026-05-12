@@ -6,6 +6,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.18] - 2026-05-10
+
+### Fixed
+- **The Rules workflow now better matches the operator model in the TUI.** Footer hints are split into navigation vs actions, form selectors wrap cyclically with clearer bottom-of-form guidance, all-language custom rules persist as one authored rule, and the Rules screen now treats all-language rules as their own bucket while allowing the detail pane to take focus and scroll independently.
+- **Sources and rule authoring feel more polished.** The add forms no longer pin their instructions at the top, the advisory rule mode no longer shows empty extra-field filler, and Sources and Rules now share more consistent interaction patterns.
+
 ## [0.8.17] - 2026-05-09
 
 ### Added

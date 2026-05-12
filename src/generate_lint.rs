@@ -418,6 +418,11 @@ mod tests {
                 "rustfmt" => "rust".into(),
                 _ => "python".into(),
             },
+            languages: vec![match tool {
+                "biome" => "typescript".into(),
+                "rustfmt" => "rust".into(),
+                _ => "python".into(),
+            }],
             signals: Vec::new(),
             formatter: Some(rules::ApprovedFormatterDirective {
                 tool: tool.into(),
@@ -444,6 +449,7 @@ mod tests {
             source_url: "https://example".into(),
             source_name: "demo".into(),
             language: "python".into(),
+            languages: vec!["python".into()],
             signals: vec![rules::ApprovedSignal {
                 id: "lint".into(),
                 strategy: "lint_proxy".into(),

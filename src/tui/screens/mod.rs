@@ -65,11 +65,12 @@ pub fn scroll_hint(screen: Screen, body: Rect, app: &App) -> Option<footer::Scro
             _ => None,
         },
         Screen::Sources => sources::scroll_hint(body, app),
+        Screen::Rules => rules::scroll_hint(body, app),
         Screen::Debt => match &app.dashboard.debt {
             crate::tui::app::DebtView::Ready(data) => debt::scroll_hint(body, data),
             _ => None,
         },
-        Screen::Rules | Screen::Check => None,
+        Screen::Check => None,
     }
 }
 

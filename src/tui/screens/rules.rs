@@ -117,7 +117,7 @@ pub fn load(project_dir: &Path) -> RulesView {
                 severity: lr.rule.severity.clone(),
                 confidence: lr.rule.confidence.clone(),
                 category: lr.rule.category.clone(),
-                languages: vec![lr.rule.language.clone()],
+                languages: lr.rule.languages.clone(),
                 dep,
                 layer: lr.layer.as_str().to_string(),
                 source_name: lr.rule.source_name.clone(),
@@ -165,6 +165,26 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     }
 }
 
+pub fn scroll_hint(area: Rect, app: &App) -> Option<footer::ScrollHint> {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
+        .split(area);
+
+    if app.rules_ui.detail_selected {
+        let max_offset = detail_max_scroll(cols[1], app)?;
+        return hint_from_offset(app.rules_ui.detail_scroll_y, max_offset);
+    }
+
+    hint_from_offset(
+        app.rules_ui.selected as u16,
+        app.dashboard
+            .rules
+            .row_count_for(app.rules_ui.language_filter)
+            .saturating_sub(1) as u16,
+    )
+}
+
 fn render_ready(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
@@ -181,8 +201,11 @@ fn render_list(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData) {
         .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(area);
     frame.render_widget(
-        Paragraph::new(language_tabs_line(app.rules_ui.language_filter, data))
-            .block(block("LANGUAGE", false)),
+        Paragraph::new(language_tabs_line(app.rules_ui.language_filter, data)).block(block(
+            "LANGUAGE",
+            !app.rules_ui.detail_selected,
+            false,
+        )),
         panes[0],
     );
 
@@ -195,7 +218,7 @@ fn render_list(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData) {
             Style::default().fg(theme::MUTED),
         ))];
         frame.render_widget(
-            Paragraph::new(lines).block(block("RULE SET", true)),
+            Paragraph::new(lines).block(block("RULE SET", !app.rules_ui.detail_selected, true)),
             panes[1],
         );
         return;
@@ -230,7 +253,7 @@ fn render_list(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData) {
         })
         .collect();
 
-    let list = List::new(items).block(block("RULE SET", true));
+    let list = List::new(items).block(block("RULE SET", !app.rules_ui.detail_selected, true));
     frame.render_widget(list, panes[1]);
 }
 
@@ -261,7 +284,6 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData)
             Style::default(),
         ),
         kv_line(area.width, "Source", &source_label(row), Style::default()),
-        kv_line(area.width, "Layer", &row.layer, Style::default()),
         kv_line(
             area.width,
             "Enforcement",
@@ -300,9 +322,15 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, app: &App, data: &RulesData)
         ]);
     }
 
+    let effective_scroll = app
+        .rules_ui
+        .detail_scroll_y
+        .min(crate::tui::paragraph_max_scroll(&lines, area));
+
     let paragraph = Paragraph::new(lines)
+        .scroll((effective_scroll, 0))
         .wrap(Wrap { trim: false })
-        .block(detail_block(row));
+        .block(detail_block(row, app.rules_ui.detail_selected));
     frame.render_widget(paragraph, area);
 }
 
@@ -314,7 +342,10 @@ fn render_placeholder(frame: &mut Frame<'_>, area: Rect, message: &str) {
             Style::default().fg(theme::MUTED),
         )),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("RULES", true)), area);
+    frame.render_widget(
+        Paragraph::new(lines).block(block("RULES", true, true)),
+        area,
+    );
 }
 
 fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
@@ -329,7 +360,10 @@ fn render_error(frame: &mut Frame<'_>, area: Rect, msg: &str) {
         )),
         Line::from(format!("  {msg}")),
     ];
-    frame.render_widget(Paragraph::new(lines).block(block("RULES", true)), area);
+    frame.render_widget(
+        Paragraph::new(lines).block(block("RULES", true, true)),
+        area,
+    );
 }
 
 fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -344,15 +378,6 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let severity = crate::tui::app::rule_form_severity(form.severity_idx).to_uppercase();
     let mode = crate::tui::app::rule_form_mode_label(form.mode_idx);
     let mut lines = vec![
-        Line::from(Span::styled(
-            if is_edit {
-                "Tab next field · ←/→ change scope/language/severity/mode · Enter save · Esc cancel"
-            } else {
-                "Tab next field · ←/→ change scope/language/severity/mode · Enter submit · Esc cancel"
-            },
-            Style::default().fg(theme::MUTED),
-        )),
-        Line::from(""),
         form_line(
             "Scope",
             if form.team_scope { "Team" } else { "Personal" },
@@ -378,9 +403,12 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
         )),
     ];
 
-    for (field_idx, label, value) in mode_specific_form_rows(form) {
-        lines.push(Line::from(""));
-        lines.push(form_line(label, &value, form.active_field == field_idx));
+    let mode_rows = mode_specific_form_rows(form);
+    if !mode_rows.is_empty() {
+        for (field_idx, label, value) in mode_rows {
+            lines.push(Line::from(""));
+            lines.push(form_line(label, &value, form.active_field == field_idx));
+        }
     }
 
     lines.extend([
@@ -393,7 +421,10 @@ fn render_add_rule_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
     frame.render_widget(
         Paragraph::new(lines)
-            .block(block(if is_edit { "EDIT RULE" } else { "ADD RULE" }, false))
+            .block(form_block(
+                if is_edit { "EDIT RULE" } else { "ADD RULE" },
+                "Tab next field · ←/→ wrap scope/language/severity/mode · Enter submit · Esc cancel",
+            ))
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -412,11 +443,15 @@ fn form_line(label: &str, value: &str, active: bool) -> Line<'static> {
     ])
 }
 
-fn block(title: &str, show_add_cta: bool) -> Block<'static> {
+fn block(title: &str, active: bool, show_add_cta: bool) -> Block<'static> {
     let mut block = Block::default()
         .title(Span::styled(format!(" {title} "), theme::header_title()))
         .borders(Borders::ALL)
-        .border_style(theme::border_inactive());
+        .border_style(if active {
+            theme::border_active()
+        } else {
+            theme::border_inactive()
+        });
     if show_add_cta {
         block = block.title_top(
             Line::from(Span::styled(
@@ -429,13 +464,23 @@ fn block(title: &str, show_add_cta: bool) -> Block<'static> {
     block
 }
 
-fn detail_block(row: &RuleRow) -> Block<'static> {
+fn form_block(title: &str, instructions: &str) -> Block<'static> {
+    block(title, true, false).title_bottom(
+        Line::from(Span::styled(
+            format!(" {instructions} "),
+            Style::default().fg(theme::AMBER).bold(),
+        ))
+        .centered(),
+    )
+}
+
+fn detail_block(row: &RuleRow, active: bool) -> Block<'static> {
     let title = if is_authored_rule(row) {
         " E Edit · D Delete "
     } else {
         " Read-only rule "
     };
-    block("DETAIL", false).title_top(
+    block("DETAIL", active, false).title_top(
         Line::from(Span::styled(
             title,
             Style::default().fg(theme::AMBER).bold(),
@@ -447,30 +492,29 @@ fn detail_block(row: &RuleRow) -> Block<'static> {
 fn group_custom_multi_language_rows(rows: Vec<RuleRow>) -> Vec<RuleRow> {
     let mut grouped: std::collections::BTreeMap<String, Vec<RuleRow>> =
         std::collections::BTreeMap::new();
-    let mut passthrough = Vec::new();
 
     for row in rows {
-        if let Some(base_id) = custom_multi_language_base_id(&row.id) {
-            grouped.entry(base_id).or_default().push(row);
-        } else {
-            passthrough.push(row);
-        }
+        grouped.entry(group_row_key(&row)).or_default().push(row);
     }
 
-    let mut combined = passthrough;
-    for (base_id, mut group) in grouped {
+    let mut combined = Vec::new();
+    for (group_id, mut group) in grouped {
         if group.len() == 1 {
-            combined.push(group.pop().expect("single-item group must contain a row"));
+            let mut row = group.pop().expect("single-item group must contain a row");
+            row.id = group_id;
+            combined.push(row);
             continue;
         }
 
         let first = group.remove(0);
-        let member_ids: Vec<String> = first
+        let mut member_ids: Vec<String> = first
             .member_ids
             .iter()
             .cloned()
             .chain(group.iter().flat_map(|row| row.member_ids.iter().cloned()))
             .collect();
+        member_ids.sort();
+        member_ids.dedup();
         let mut languages = first.languages.clone();
         for row in group {
             languages.extend(row.languages);
@@ -479,7 +523,7 @@ fn group_custom_multi_language_rows(rows: Vec<RuleRow>) -> Vec<RuleRow> {
         languages.dedup();
 
         combined.push(RuleRow {
-            id: base_id,
+            id: group_id,
             member_ids,
             severity: first.severity,
             confidence: first.confidence,
@@ -501,6 +545,10 @@ fn group_custom_multi_language_rows(rows: Vec<RuleRow>) -> Vec<RuleRow> {
     combined
 }
 
+fn group_row_key(row: &RuleRow) -> String {
+    custom_multi_language_base_id(&row.id).unwrap_or_else(|| row.id.clone())
+}
+
 fn custom_multi_language_base_id(id: &str) -> Option<String> {
     for language in ["python", "rust", "typescript"] {
         let suffix = format!("-{language}");
@@ -520,23 +568,32 @@ fn filtered_rows(data: &RulesData, filter: RulesLanguageFilter) -> Vec<&RuleRow>
 
 fn row_matches_filter(row: &RuleRow, filter: RulesLanguageFilter) -> bool {
     match filter {
-        RulesLanguageFilter::All => true,
-        RulesLanguageFilter::Python => row.languages.iter().any(|lang| lang == "python"),
-        RulesLanguageFilter::Rust => row.languages.iter().any(|lang| lang == "rust"),
-        RulesLanguageFilter::Typescript => row.languages.iter().any(|lang| lang == "typescript"),
+        RulesLanguageFilter::All => is_all_language_row(row),
+        RulesLanguageFilter::Python => row.languages.as_slice() == ["python"],
+        RulesLanguageFilter::Rust => row.languages.as_slice() == ["rust"],
+        RulesLanguageFilter::Typescript => row.languages.as_slice() == ["typescript"],
     }
 }
 
 fn language_tabs_line(active: RulesLanguageFilter, data: &RulesData) -> Line<'static> {
-    let tab = |label: String, is_active: bool| {
-        if is_active {
-            Span::styled(
-                format!("[{label}]"),
-                Style::default().fg(theme::AMBER).bold(),
-            )
+    let tab = |name: &str, count: usize, is_active: bool| -> Vec<Span<'static>> {
+        let label_style = if is_active {
+            Style::default().fg(theme::AMBER).bold()
         } else {
-            Span::styled(format!(" {label} "), Style::default().fg(theme::MUTED))
-        }
+            Style::default().fg(theme::MUTED)
+        };
+        let count_style = if is_active {
+            Style::default().fg(theme::AMBER).bold().italic()
+        } else {
+            Style::default().fg(theme::MUTED).italic()
+        };
+        vec![
+            Span::styled(if is_active { "[" } else { " " }, label_style),
+            Span::styled(name.to_string(), label_style),
+            Span::raw(" "),
+            Span::styled(format!("({count})"), count_style),
+            Span::styled(if is_active { "]" } else { " " }, label_style),
+        ]
     };
 
     let all = filtered_rows(data, RulesLanguageFilter::All).len();
@@ -544,29 +601,23 @@ fn language_tabs_line(active: RulesLanguageFilter, data: &RulesData) -> Line<'st
     let rust = filtered_rows(data, RulesLanguageFilter::Rust).len();
     let typescript = filtered_rows(data, RulesLanguageFilter::Typescript).len();
 
-    Line::from(vec![
-        tab(format!("All {all}"), active == RulesLanguageFilter::All),
-        Span::raw(" "),
-        tab(
-            format!("Python {python}"),
-            active == RulesLanguageFilter::Python,
-        ),
-        Span::raw(" "),
-        tab(format!("Rust {rust}"), active == RulesLanguageFilter::Rust),
-        Span::raw(" "),
-        tab(
-            format!("TS {typescript}"),
-            active == RulesLanguageFilter::Typescript,
-        ),
-    ])
+    let mut spans = Vec::new();
+    spans.extend(tab("All", all, active == RulesLanguageFilter::All));
+    spans.push(Span::raw(" "));
+    spans.extend(tab("Python", python, active == RulesLanguageFilter::Python));
+    spans.push(Span::raw(" "));
+    spans.extend(tab("Rust", rust, active == RulesLanguageFilter::Rust));
+    spans.push(Span::raw(" "));
+    spans.extend(tab(
+        "TS",
+        typescript,
+        active == RulesLanguageFilter::Typescript,
+    ));
+    Line::from(spans)
 }
 
 fn display_languages(languages: &[String]) -> String {
-    if languages.len() == 3
-        && languages.iter().any(|lang| lang == "python")
-        && languages.iter().any(|lang| lang == "rust")
-        && languages.iter().any(|lang| lang == "typescript")
-    {
+    if is_all_languages(languages) {
         return "all".to_string();
     }
 
@@ -580,6 +631,17 @@ fn sort_languages(languages: &mut [String]) {
         "typescript" => 2,
         _ => 3,
     });
+}
+
+fn is_all_language_row(row: &RuleRow) -> bool {
+    is_all_languages(&row.languages)
+}
+
+fn is_all_languages(languages: &[String]) -> bool {
+    languages.len() == 3
+        && languages.iter().any(|lang| lang == "python")
+        && languages.iter().any(|lang| lang == "rust")
+        && languages.iter().any(|lang| lang == "typescript")
 }
 
 fn source_label(row: &RuleRow) -> String {
@@ -646,7 +708,9 @@ fn enforcement_detail_lines(row: &RuleRow) -> Vec<Line<'static>> {
     lines
 }
 
-fn mode_specific_form_rows(form: &crate::tui::app::RulesFormState) -> Vec<(usize, &'static str, String)> {
+fn mode_specific_form_rows(
+    form: &crate::tui::app::RulesFormState,
+) -> Vec<(usize, &'static str, String)> {
     match form.mode_idx {
         1 => vec![(6, "Regex", form.detail_a.clone())],
         2 => vec![
@@ -663,7 +727,84 @@ fn mode_specific_form_rows(form: &crate::tui::app::RulesFormState) -> Vec<(usize
             (7, "Test Path", form.detail_b.clone()),
             (8, "Selector", form.detail_c.clone()),
         ],
-        _ => vec![(6, "Mode", "No additional fields".to_string())],
+        _ => Vec::new(),
+    }
+}
+
+fn detail_max_scroll(area: Rect, app: &App) -> Option<u16> {
+    let crate::tui::screens::LoadState::Ready(data) = &app.dashboard.rules else {
+        return None;
+    };
+    let rows = filtered_rows(data, app.rules_ui.language_filter);
+    let selected = app.rules_ui.selected.min(rows.len().saturating_sub(1));
+    let row = rows.get(selected)?;
+
+    let mut lines = vec![
+        kv_line(area.width, "ID", &row.id, Style::default().bold()),
+        kv_line(
+            area.width,
+            "Severity",
+            &row.severity.to_uppercase(),
+            Style::default()
+                .fg(theme::severity_color(&row.severity))
+                .bold(),
+        ),
+        kv_line(area.width, "Confidence", &row.confidence, Style::default()),
+        kv_line(area.width, "Category", &row.category, Style::default()),
+        kv_line(
+            area.width,
+            "Language",
+            &display_languages(&row.languages),
+            Style::default(),
+        ),
+        kv_line(area.width, "Source", &source_label(row), Style::default()),
+        kv_line(
+            area.width,
+            "Enforcement",
+            &enforcement_summary(row),
+            Style::default(),
+        ),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Description",
+            Style::default().fg(theme::MUTED),
+        )),
+        Line::from(""),
+        Line::from(row.description.clone()),
+    ];
+    let enforcement_lines = enforcement_detail_lines(row);
+    if !enforcement_lines.is_empty() {
+        lines.extend([
+            Line::from(""),
+            Line::from(Span::styled(
+                "Enforcement Details",
+                Style::default().fg(theme::MUTED),
+            )),
+            Line::from(""),
+        ]);
+        lines.extend(enforcement_lines);
+    }
+    if let Some(message) = &app.rules_ui.detail_message {
+        lines.extend([
+            Line::from(""),
+            Line::from(Span::styled(
+                message.clone(),
+                Style::default().fg(theme::STATUS_WARN),
+            )),
+        ]);
+    }
+
+    Some(crate::tui::paragraph_max_scroll(&lines, area))
+}
+
+fn hint_from_offset(offset: u16, max_offset: u16) -> Option<footer::ScrollHint> {
+    if max_offset == 0 {
+        None
+    } else {
+        Some(footer::ScrollHint {
+            up: offset > 0,
+            down: offset < max_offset,
+        })
     }
 }
 
@@ -765,6 +906,7 @@ mod tests {
             mk_row("pd.strict", "should", "personal"),
         ];
         app.dashboard.rules = RulesView::Ready(Box::new(RulesData { rows }));
+        app.rules_ui.language_filter = crate::tui::app::RulesLanguageFilter::Python;
 
         let backend = TestBackend::new(140, 24);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -829,6 +971,7 @@ mod tests {
         app.dashboard.rules = RulesView::Ready(Box::new(RulesData {
             rows: vec![mk_row("fa.async", "must", "project")],
         }));
+        app.rules_ui.language_filter = crate::tui::app::RulesLanguageFilter::Python;
 
         let backend = TestBackend::new(140, 24);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -888,6 +1031,11 @@ mod tests {
             "add-rule form should show severity field; got: {}",
             preview(&rendered, 400)
         );
+        assert!(
+            !rendered.contains("No additional fields"),
+            "advisory mode should omit placeholder extra fields; got: {}",
+            preview(&rendered, 400)
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -929,5 +1077,18 @@ mod tests {
         assert_eq!(display_languages(&data.rows[0].languages), "all");
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn all_filter_only_matches_all_language_rows() {
+        let mut all_row = mk_row("custom.all-rule", "should", "personal");
+        all_row.languages = vec!["python".into(), "rust".into(), "typescript".into()];
+        let python_row = mk_row("custom.python-rule", "should", "personal");
+        let data = RulesData {
+            rows: vec![all_row, python_row],
+        };
+
+        assert_eq!(filtered_rows(&data, RulesLanguageFilter::All).len(), 1);
+        assert_eq!(filtered_rows(&data, RulesLanguageFilter::Python).len(), 1);
     }
 }

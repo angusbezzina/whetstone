@@ -2477,7 +2477,10 @@ fn run_tests_command(
                 }
                 if let Some(linked) = gen.get("linked_tests").and_then(|v| v.as_array()) {
                     for binding in linked {
-                        let runner = binding.get("runner").and_then(|v| v.as_str()).unwrap_or("?");
+                        let runner = binding
+                            .get("runner")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?");
                         let path = binding.get("path").and_then(|v| v.as_str()).unwrap_or("?");
                         let selector = binding
                             .get("selector")
@@ -2879,7 +2882,9 @@ struct RuleEnforcementInput {
     advisory: bool,
 }
 
-fn build_rule_enforcement(input: RuleEnforcementInput) -> anyhow::Result<rule_authoring::EnforcementMode> {
+fn build_rule_enforcement(
+    input: RuleEnforcementInput,
+) -> anyhow::Result<rule_authoring::EnforcementMode> {
     let RuleEnforcementInput {
         match_regex,
         lint_tool,
@@ -2943,7 +2948,9 @@ fn build_rule_enforcement(input: RuleEnforcementInput) -> anyhow::Result<rule_au
     Ok(rule_authoring::EnforcementMode::Advisory)
 }
 
-fn parse_formatter_options(entries: &[String]) -> anyhow::Result<BTreeMap<String, serde_json::Value>> {
+fn parse_formatter_options(
+    entries: &[String],
+) -> anyhow::Result<BTreeMap<String, serde_json::Value>> {
     let mut options = BTreeMap::new();
     for entry in entries {
         let (key, raw) = entry.split_once('=').ok_or_else(|| {
@@ -3059,6 +3066,8 @@ mod tests {
             advisory: false,
         })
         .unwrap_err();
-        assert!(err.to_string().contains("choose exactly one enforcement mode"));
+        assert!(err
+            .to_string()
+            .contains("choose exactly one enforcement mode"));
     }
 }

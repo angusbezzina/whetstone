@@ -571,6 +571,7 @@ mod tests {
             source_url: "https://example".into(),
             source_name: "demo".into(),
             language: lang.into(),
+            languages: vec![lang.into()],
             signals: vec![crate::rules::ApprovedSignal {
                 id: "s1".into(),
                 strategy: strategy.into(),

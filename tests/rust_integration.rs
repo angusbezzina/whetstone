@@ -3252,7 +3252,8 @@ rules:
 
 #[test]
 fn test_check_reports_missing_formatter_binding_until_configured() {
-    let tmp = std::env::temp_dir().join(format!("wh_check_formatter_binding_{}", std::process::id()));
+    let tmp =
+        std::env::temp_dir().join(format!("wh_check_formatter_binding_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
     std::fs::create_dir_all(tmp.join("whetstone").join("rules").join("python")).unwrap();
@@ -3303,7 +3304,11 @@ rules:
     assert_eq!(issues[0]["tool"], "ruff");
     assert_eq!(issues[0]["option"], "quote-style");
 
-    std::fs::write(tmp.join("ruff.toml"), "[format]\nquote-style = \"single\"\n").unwrap();
+    std::fs::write(
+        tmp.join("ruff.toml"),
+        "[format]\nquote-style = \"single\"\n",
+    )
+    .unwrap();
     let (stdout, _stderr, _ok) = run_whetstone(
         &["--json", "check", "src", "--lang", "python", "--no-fail"],
         tmp.to_str().unwrap(),
@@ -3358,7 +3363,14 @@ rules:
     std::fs::write(tmp.join("src").join("noop.ts"), "export const x = 1;\n").unwrap();
 
     let (stdout, _stderr, _ok) = run_whetstone(
-        &["--json", "check", "src", "--lang", "typescript", "--no-fail"],
+        &[
+            "--json",
+            "check",
+            "src",
+            "--lang",
+            "typescript",
+            "--no-fail",
+        ],
         tmp.to_str().unwrap(),
     );
     let result = parse_json(&stdout);
@@ -3374,7 +3386,14 @@ rules:
     )
     .unwrap();
     let (stdout, _stderr, _ok) = run_whetstone(
-        &["--json", "check", "src", "--lang", "typescript", "--no-fail"],
+        &[
+            "--json",
+            "check",
+            "src",
+            "--lang",
+            "typescript",
+            "--no-fail",
+        ],
         tmp.to_str().unwrap(),
     );
     let result = parse_json(&stdout);

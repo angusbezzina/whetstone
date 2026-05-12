@@ -105,6 +105,8 @@ pub struct Rule {
     pub tests: Vec<TestBinding>,
     #[serde(default)]
     pub golden_examples: Vec<GoldenExample>,
+    #[serde(default)]
+    pub languages: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -682,7 +684,7 @@ fn infer_language_from_path(file_path: &Path, rules_dir: &Path) -> Option<String
         let components: Vec<_> = relative.components().collect();
         if components.len() >= 2 {
             let dir = components[0].as_os_str().to_string_lossy().to_string();
-            if matches!(dir.as_str(), "python" | "typescript" | "rust") {
+            if matches!(dir.as_str(), "python" | "typescript" | "rust" | "shared") {
                 return Some(dir);
             }
         }
@@ -750,71 +752,69 @@ pub fn load_approved_rules(
     let mut approved = Vec::new();
 
     for lrf in &loaded {
-        let language = lrf.language.as_deref().unwrap_or("generic");
-
-        if let Some(filter) = lang_filter {
-            if language != filter {
-                continue;
-            }
-        }
-
         for rule in &lrf.rule_file.rules {
             if !rule.approved {
                 continue;
             }
-
-            approved.push(ApprovedRule {
-                id: rule.id.clone(),
-                severity: rule.severity.clone().unwrap_or_default(),
-                confidence: rule.confidence.clone().unwrap_or_default(),
-                category: rule.category.clone().unwrap_or_default(),
-                description: rule.description.clone().unwrap_or_default(),
-                source_url: rule.source_url.clone().unwrap_or_default(),
-                source_name: lrf.rule_file.source.name.clone(),
-                language: language.to_string(),
-                signals: rule
-                    .signals
-                    .iter()
-                    .map(|s| ApprovedSignal {
-                        id: s.id.clone().unwrap_or_default(),
-                        strategy: s.strategy.clone(),
-                        description: s.description.clone().unwrap_or_default(),
-                        weight: s.weight.clone().unwrap_or_default(),
-                        match_pattern: s.match_pattern.clone(),
-                        ast_query: s.ast_query.clone(),
-                        ast_scope: s.ast_scope.clone(),
-                        lint: s.lint.as_ref().map(|lint| ApprovedLintBinding {
-                            tool: lint.tool.clone(),
-                            code: lint.code.clone(),
-                        }),
-                    })
-                    .collect(),
-                formatter: rule.formatter.as_ref().map(|f| ApprovedFormatterDirective {
-                    tool: f.tool.clone(),
-                    options: f.options.clone(),
-                }),
-                tests: rule
-                    .tests
-                    .iter()
-                    .map(|t| ApprovedTestBinding {
-                        runner: t.runner.clone(),
-                        path: t.path.clone(),
-                        selector: t.selector.clone(),
-                    })
-                    .collect(),
-                golden_examples: rule
-                    .golden_examples
-                    .iter()
-                    .map(|e| ApprovedExample {
-                        code: e.code.clone(),
-                        verdict: e.verdict.clone(),
-                        reason: e.reason.clone().unwrap_or_default(),
-                        language: e.language.clone(),
-                    })
-                    .collect(),
-                deterministic_pass_threshold: rule.deterministic_pass_threshold,
-                deterministic_fail_threshold: rule.deterministic_fail_threshold,
-            });
+            let target_languages = resolved_rule_languages(rule, lrf.language.as_deref());
+            if target_languages.is_empty() {
+                continue;
+            }
+            for language in target_languages_for_filter(&target_languages, lang_filter) {
+                approved.push(ApprovedRule {
+                    id: rule.id.clone(),
+                    severity: rule.severity.clone().unwrap_or_default(),
+                    confidence: rule.confidence.clone().unwrap_or_default(),
+                    category: rule.category.clone().unwrap_or_default(),
+                    description: rule.description.clone().unwrap_or_default(),
+                    source_url: rule.source_url.clone().unwrap_or_default(),
+                    source_name: lrf.rule_file.source.name.clone(),
+                    language,
+                    languages: target_languages.clone(),
+                    signals: rule
+                        .signals
+                        .iter()
+                        .map(|s| ApprovedSignal {
+                            id: s.id.clone().unwrap_or_default(),
+                            strategy: s.strategy.clone(),
+                            description: s.description.clone().unwrap_or_default(),
+                            weight: s.weight.clone().unwrap_or_default(),
+                            match_pattern: s.match_pattern.clone(),
+                            ast_query: s.ast_query.clone(),
+                            ast_scope: s.ast_scope.clone(),
+                            lint: s.lint.as_ref().map(|lint| ApprovedLintBinding {
+                                tool: lint.tool.clone(),
+                                code: lint.code.clone(),
+                            }),
+                        })
+                        .collect(),
+                    formatter: rule.formatter.as_ref().map(|f| ApprovedFormatterDirective {
+                        tool: f.tool.clone(),
+                        options: f.options.clone(),
+                    }),
+                    tests: rule
+                        .tests
+                        .iter()
+                        .map(|t| ApprovedTestBinding {
+                            runner: t.runner.clone(),
+                            path: t.path.clone(),
+                            selector: t.selector.clone(),
+                        })
+                        .collect(),
+                    golden_examples: rule
+                        .golden_examples
+                        .iter()
+                        .map(|e| ApprovedExample {
+                            code: e.code.clone(),
+                            verdict: e.verdict.clone(),
+                            reason: e.reason.clone().unwrap_or_default(),
+                            language: e.language.clone(),
+                        })
+                        .collect(),
+                    deterministic_pass_threshold: rule.deterministic_pass_threshold,
+                    deterministic_fail_threshold: rule.deterministic_fail_threshold,
+                });
+            }
         }
     }
 
@@ -831,72 +831,96 @@ pub fn approved_from_loaded(
     let mut approved = Vec::new();
 
     for lrf in loaded {
-        let language = lrf.language.as_deref().unwrap_or("generic");
-        if let Some(filter) = lang_filter {
-            if language != filter {
-                continue;
-            }
-        }
         for rule in &lrf.rule_file.rules {
             if !rule.approved {
                 continue;
             }
-            approved.push(ApprovedRule {
-                id: rule.id.clone(),
-                severity: rule.severity.clone().unwrap_or_default(),
-                confidence: rule.confidence.clone().unwrap_or_default(),
-                category: rule.category.clone().unwrap_or_default(),
-                description: rule.description.clone().unwrap_or_default(),
-                source_url: rule.source_url.clone().unwrap_or_default(),
-                source_name: lrf.rule_file.source.name.clone(),
-                language: language.to_string(),
-                signals: rule
-                    .signals
-                    .iter()
-                    .map(|s| ApprovedSignal {
-                        id: s.id.clone().unwrap_or_default(),
-                        strategy: s.strategy.clone(),
-                        description: s.description.clone().unwrap_or_default(),
-                        weight: s.weight.clone().unwrap_or_default(),
-                        match_pattern: s.match_pattern.clone(),
-                        ast_query: s.ast_query.clone(),
-                        ast_scope: s.ast_scope.clone(),
-                        lint: s.lint.as_ref().map(|lint| ApprovedLintBinding {
-                            tool: lint.tool.clone(),
-                            code: lint.code.clone(),
-                        }),
-                    })
-                    .collect(),
-                formatter: rule.formatter.as_ref().map(|f| ApprovedFormatterDirective {
-                    tool: f.tool.clone(),
-                    options: f.options.clone(),
-                }),
-                tests: rule
-                    .tests
-                    .iter()
-                    .map(|t| ApprovedTestBinding {
-                        runner: t.runner.clone(),
-                        path: t.path.clone(),
-                        selector: t.selector.clone(),
-                    })
-                    .collect(),
-                golden_examples: rule
-                    .golden_examples
-                    .iter()
-                    .map(|e| ApprovedExample {
-                        code: e.code.clone(),
-                        verdict: e.verdict.clone(),
-                        reason: e.reason.clone().unwrap_or_default(),
-                        language: e.language.clone(),
-                    })
-                    .collect(),
-                deterministic_pass_threshold: rule.deterministic_pass_threshold,
-                deterministic_fail_threshold: rule.deterministic_fail_threshold,
-            });
+            let target_languages = resolved_rule_languages(rule, lrf.language.as_deref());
+            if target_languages.is_empty() {
+                continue;
+            }
+            for language in target_languages_for_filter(&target_languages, lang_filter) {
+                approved.push(ApprovedRule {
+                    id: rule.id.clone(),
+                    severity: rule.severity.clone().unwrap_or_default(),
+                    confidence: rule.confidence.clone().unwrap_or_default(),
+                    category: rule.category.clone().unwrap_or_default(),
+                    description: rule.description.clone().unwrap_or_default(),
+                    source_url: rule.source_url.clone().unwrap_or_default(),
+                    source_name: lrf.rule_file.source.name.clone(),
+                    language,
+                    languages: target_languages.clone(),
+                    signals: rule
+                        .signals
+                        .iter()
+                        .map(|s| ApprovedSignal {
+                            id: s.id.clone().unwrap_or_default(),
+                            strategy: s.strategy.clone(),
+                            description: s.description.clone().unwrap_or_default(),
+                            weight: s.weight.clone().unwrap_or_default(),
+                            match_pattern: s.match_pattern.clone(),
+                            ast_query: s.ast_query.clone(),
+                            ast_scope: s.ast_scope.clone(),
+                            lint: s.lint.as_ref().map(|lint| ApprovedLintBinding {
+                                tool: lint.tool.clone(),
+                                code: lint.code.clone(),
+                            }),
+                        })
+                        .collect(),
+                    formatter: rule.formatter.as_ref().map(|f| ApprovedFormatterDirective {
+                        tool: f.tool.clone(),
+                        options: f.options.clone(),
+                    }),
+                    tests: rule
+                        .tests
+                        .iter()
+                        .map(|t| ApprovedTestBinding {
+                            runner: t.runner.clone(),
+                            path: t.path.clone(),
+                            selector: t.selector.clone(),
+                        })
+                        .collect(),
+                    golden_examples: rule
+                        .golden_examples
+                        .iter()
+                        .map(|e| ApprovedExample {
+                            code: e.code.clone(),
+                            verdict: e.verdict.clone(),
+                            reason: e.reason.clone().unwrap_or_default(),
+                            language: e.language.clone(),
+                        })
+                        .collect(),
+                    deterministic_pass_threshold: rule.deterministic_pass_threshold,
+                    deterministic_fail_threshold: rule.deterministic_fail_threshold,
+                });
+            }
         }
     }
 
     (approved, Vec::new())
+}
+
+fn resolved_rule_languages(rule: &Rule, inferred_language: Option<&str>) -> Vec<String> {
+    if !rule.languages.is_empty() {
+        return rule.languages.clone();
+    }
+
+    match inferred_language {
+        Some("shared") | Some("all") => vec!["python".into(), "rust".into(), "typescript".into()],
+        Some(language) => vec![language.to_string()],
+        None => Vec::new(),
+    }
+}
+
+fn target_languages_for_filter(languages: &[String], lang_filter: Option<&str>) -> Vec<String> {
+    match lang_filter {
+        Some(filter) => languages
+            .iter()
+            .filter(|language| language.as_str() == filter)
+            .cloned()
+            .collect(),
+        None => languages.to_vec(),
+    }
 }
 
 #[derive(Clone)]
@@ -910,6 +934,7 @@ pub struct ApprovedRule {
     pub source_url: String,
     pub source_name: String,
     pub language: String,
+    pub languages: Vec<String>,
     pub signals: Vec<ApprovedSignal>,
     pub formatter: Option<ApprovedFormatterDirective>,
     pub tests: Vec<ApprovedTestBinding>,

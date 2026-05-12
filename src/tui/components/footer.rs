@@ -40,26 +40,14 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, hints: &[Hint], scroll_hint: Op
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(55),
-            Constraint::Percentage(20),
-            Constraint::Percentage(25),
-        ])
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(inner);
 
-    let left = Paragraph::new(Line::from(render_menu_spans(hints)));
-    let middle = Paragraph::new(Line::from(render_scroll_spans(scroll_hint)));
-    let right = Paragraph::new(Line::from(vec![
-        Span::styled("?", theme::key_hint_accent()),
-        Span::styled(": HELP, ", theme::key_hint_label()),
-        Span::styled("ESC", theme::key_hint_accent()),
-        Span::styled(": Quit", theme::key_hint_label()),
-    ]))
-    .right_aligned();
+    let left = Paragraph::new(Line::from(render_nav_spans(hints)));
+    let right = Paragraph::new(Line::from(render_action_spans(scroll_hint))).right_aligned();
 
     frame.render_widget(left, cols[0]);
-    frame.render_widget(middle, cols[1]);
-    frame.render_widget(right, cols[2]);
+    frame.render_widget(right, cols[1]);
 }
 
 pub fn render_form(frame: &mut Frame<'_>, area: Rect, hints: &[Hint]) {
@@ -80,50 +68,35 @@ pub fn render_form(frame: &mut Frame<'_>, area: Rect, hints: &[Hint]) {
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(55),
-            Constraint::Percentage(20),
-            Constraint::Percentage(25),
-        ])
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(inner);
 
-    let left = Paragraph::new(Line::from(render_menu_spans(hints)));
-    let middle = Paragraph::new(Line::from(vec![
-        Span::styled("ENTER", theme::key_hint_accent()),
-        Span::styled(": Submit", theme::key_hint_label()),
-    ]));
-    let right = Paragraph::new(Line::from(vec![
-        Span::styled("ESC", theme::key_hint_accent()),
-        Span::styled(": Cancel", theme::key_hint_label()),
-    ]))
-    .right_aligned();
+    let left = Paragraph::new(Line::from(render_nav_spans(hints)));
+    let right = Paragraph::new(Line::from(render_form_action_spans())).right_aligned();
 
     frame.render_widget(left, cols[0]);
-    frame.render_widget(middle, cols[1]);
-    frame.render_widget(right, cols[2]);
+    frame.render_widget(right, cols[1]);
 }
 
 fn render_scroll_spans(scroll_hint: Option<ScrollHint>) -> Vec<Span<'static>> {
-    let Some(scroll_hint) = scroll_hint else {
-        return vec![Span::raw("")];
-    };
-
     let mut spans = Vec::new();
-    if scroll_hint.up {
-        spans.push(Span::styled("↑", theme::key_hint_accent()));
-        spans.push(Span::styled(" Up", Style::default().fg(theme::MUTED)));
-    }
-    if scroll_hint.up && scroll_hint.down {
-        spans.push(Span::raw("  "));
-    }
-    if scroll_hint.down {
-        spans.push(Span::styled("↓", theme::key_hint_accent()));
-        spans.push(Span::styled(" Down", Style::default().fg(theme::MUTED)));
+    if let Some(scroll_hint) = scroll_hint {
+        if scroll_hint.up {
+            spans.push(Span::styled("↑", theme::key_hint_accent()));
+            spans.push(Span::styled(" Up", Style::default().fg(theme::MUTED)));
+        }
+        if scroll_hint.up && scroll_hint.down {
+            spans.push(Span::raw("   "));
+        }
+        if scroll_hint.down {
+            spans.push(Span::styled("↓", theme::key_hint_accent()));
+            spans.push(Span::styled(" Down", Style::default().fg(theme::MUTED)));
+        }
     }
     spans
 }
 
-fn render_menu_spans(hints: &[Hint]) -> Vec<Span<'static>> {
+fn render_nav_spans(hints: &[Hint]) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     for (idx, (key, label)) in hints.iter().enumerate() {
         if idx > 0 {
@@ -136,4 +109,29 @@ fn render_menu_spans(hints: &[Hint]) -> Vec<Span<'static>> {
         spans.push(Span::styled(format!(" {label}"), theme::key_hint_label()));
     }
     spans
+}
+
+fn render_action_spans(scroll_hint: Option<ScrollHint>) -> Vec<Span<'static>> {
+    let mut spans = render_scroll_spans(scroll_hint);
+    if !spans.is_empty() {
+        spans.push(Span::raw("      "));
+    }
+    spans.extend([
+        Span::styled("?", theme::key_hint_accent()),
+        Span::styled(": HELP", theme::key_hint_label()),
+        Span::raw("      "),
+        Span::styled("ESC", theme::key_hint_accent()),
+        Span::styled(": Quit", theme::key_hint_label()),
+    ]);
+    spans
+}
+
+fn render_form_action_spans() -> Vec<Span<'static>> {
+    vec![
+        Span::styled("ENTER", theme::key_hint_accent()),
+        Span::styled(": Submit", theme::key_hint_label()),
+        Span::raw("      "),
+        Span::styled("ESC", theme::key_hint_accent()),
+        Span::styled(": Cancel", theme::key_hint_label()),
+    ]
 }

@@ -304,10 +304,6 @@ fn render_add_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
             format!("Adding to the {scope} source list."),
             Style::default().fg(theme::MUTED),
         )),
-        Line::from(Span::styled(
-            "Tab next field · ←/→ change language · Enter submit · Esc cancel",
-            Style::default().fg(theme::MUTED),
-        )),
         Line::from(""),
         form_line("URL", &form.url, form.active_field == 0),
         form_line("Language", language, form.active_field == 1),
@@ -320,7 +316,10 @@ fn render_add_form(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
     frame.render_widget(
         Paragraph::new(lines)
-            .block(block("DETAIL", true))
+            .block(form_block(
+                "DETAIL",
+                "Tab next field · ←/→ wrap language · Enter submit · Esc cancel",
+            ))
             .wrap(Wrap { trim: false }),
         area,
     );
@@ -556,6 +555,16 @@ fn block(title: &str, active: bool) -> Block<'static> {
         } else {
             theme::border_inactive()
         })
+}
+
+fn form_block(title: &str, instructions: &str) -> Block<'static> {
+    block(title, true).title_bottom(
+        Line::from(Span::styled(
+            format!(" {instructions} "),
+            Style::default().fg(theme::AMBER).bold(),
+        ))
+        .centered(),
+    )
 }
 
 fn truncate(value: &str, max: usize) -> String {

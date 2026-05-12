@@ -315,6 +315,7 @@ mod tests {
         app.dashboard.rules = RulesView::Ready(Box::new(RulesData {
             rows: vec![row("a.one"), row("b.two"), row("c.three")],
         }));
+        app.rules_ui.language_filter = app::RulesLanguageFilter::Rust;
 
         app.update(Msg::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));
         app.update(Msg::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)));

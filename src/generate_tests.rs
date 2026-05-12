@@ -185,7 +185,10 @@ fn generate_python(
 
         let mut ctx = Context::new();
         ctx.insert("source_name", source_name);
-        let tmpl_rules: Vec<TemplateRule> = renderable_rules.iter().map(|r| to_template_rule(r)).collect();
+        let tmpl_rules: Vec<TemplateRule> = renderable_rules
+            .iter()
+            .map(|r| to_template_rule(r))
+            .collect();
         let needs_re = tmpl_rules
             .iter()
             .any(|r| r.signals.iter().any(|s| s.match_pattern.is_some()));
@@ -244,7 +247,10 @@ fn generate_typescript(
         let test_path = evals_dir.join(&test_filename);
 
         let mut ctx = Context::new();
-        let tmpl_rules: Vec<TemplateRule> = renderable_rules.iter().map(|r| to_template_rule(r)).collect();
+        let tmpl_rules: Vec<TemplateRule> = renderable_rules
+            .iter()
+            .map(|r| to_template_rule(r))
+            .collect();
         ctx.insert("rules", &tmpl_rules);
 
         let content = render(tera, "typescript_test.ts.tera", &ctx);
@@ -291,7 +297,10 @@ fn generate_rust(
 
         let mut ctx = Context::new();
         ctx.insert("source_name", source_name);
-        let tmpl_rules: Vec<TemplateRule> = renderable_rules.iter().map(|r| to_template_rule(r)).collect();
+        let tmpl_rules: Vec<TemplateRule> = renderable_rules
+            .iter()
+            .map(|r| to_template_rule(r))
+            .collect();
         ctx.insert("rules", &tmpl_rules);
 
         let content = render(tera, "rust_test.rs.tera", &ctx);
@@ -400,6 +409,7 @@ mod tests {
             source_url: "https://example".into(),
             source_name: "demo".into(),
             language: "python".into(),
+            languages: vec!["python".into()],
             signals: vec![rules::ApprovedSignal {
                 id: "s1".into(),
                 strategy: strategy.into(),
@@ -429,6 +439,7 @@ mod tests {
             source_url: "https://example".into(),
             source_name: "demo".into(),
             language: "python".into(),
+            languages: vec!["python".into()],
             signals: Vec::new(),
             formatter: None,
             tests: vec![rules::ApprovedTestBinding {

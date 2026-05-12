@@ -3,8 +3,8 @@
 //! `update(&mut self, msg)` mutates state; `view(&self, frame)` renders.
 //! Screen-specific state lives on sub-structs under `App`.
 
-use std::path::{Path, PathBuf};
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde_json::Value;
@@ -121,6 +121,8 @@ pub struct SourcesUiState {
 pub struct RulesUiState {
     pub language_filter: RulesLanguageFilter,
     pub selected: usize,
+    pub detail_selected: bool,
+    pub detail_scroll_y: u16,
     pub detail_message: Option<String>,
     pub editing: Option<RulesEditState>,
     pub form: RulesFormState,
@@ -366,6 +368,12 @@ impl App {
                     data.detail_selected = !data.detail_selected;
                 }
             }
+            KeyCode::Tab if self.screen == Screen::Rules => {
+                self.rules_ui.detail_selected = !self.rules_ui.detail_selected;
+            }
+            KeyCode::BackTab if self.screen == Screen::Rules => {
+                self.rules_ui.detail_selected = !self.rules_ui.detail_selected;
+            }
             KeyCode::Char('d') | KeyCode::Char('D') if self.screen == Screen::Sources => {
                 self.sources_ui.dataset = SourcesDataset::Dependencies;
                 self.sources_ui.selected = 0;
@@ -395,14 +403,20 @@ impl App {
                 self.sources_ui.selected = 0;
                 self.sources_ui.detail_scroll_y = 0;
             }
-            KeyCode::Left | KeyCode::Char('h') if self.screen == Screen::Rules => {
+            KeyCode::Left | KeyCode::Char('h')
+                if self.screen == Screen::Rules && !self.rules_ui.detail_selected =>
+            {
                 self.rules_ui.language_filter = self.rules_ui.language_filter.prev();
                 self.rules_ui.selected = 0;
+                self.rules_ui.detail_scroll_y = 0;
                 self.rules_ui.detail_message = None;
             }
-            KeyCode::Right | KeyCode::Char('l') if self.screen == Screen::Rules => {
+            KeyCode::Right | KeyCode::Char('l')
+                if self.screen == Screen::Rules && !self.rules_ui.detail_selected =>
+            {
                 self.rules_ui.language_filter = self.rules_ui.language_filter.next();
                 self.rules_ui.selected = 0;
+                self.rules_ui.detail_scroll_y = 0;
                 self.rules_ui.detail_message = None;
             }
             KeyCode::Up | KeyCode::Char('k') => self.select_prev_on_current_screen(1),
@@ -446,8 +460,14 @@ impl App {
                     }
                 },
                 Screen::Rules => {
-                    self.rules_ui.selected = self.rules_ui.selected.saturating_sub(1);
-                    self.rules_ui.detail_message = None;
+                    if self.rules_ui.detail_selected {
+                        self.rules_ui.detail_scroll_y =
+                            self.rules_ui.detail_scroll_y.saturating_sub(1);
+                    } else {
+                        self.rules_ui.selected = self.rules_ui.selected.saturating_sub(1);
+                        self.rules_ui.detail_scroll_y = 0;
+                        self.rules_ui.detail_message = None;
+                    }
                 }
                 Screen::Check => self.dashboard.check.select_prev(),
             }
@@ -513,15 +533,21 @@ impl App {
                     }
                 },
                 Screen::Rules => {
-                    let max = self
-                        .dashboard
-                        .rules
-                        .row_count_for(self.rules_ui.language_filter)
-                        .saturating_sub(1);
-                    if self.rules_ui.selected < max {
-                        self.rules_ui.selected += 1;
+                    if self.rules_ui.detail_selected {
+                        self.rules_ui.detail_scroll_y =
+                            self.rules_ui.detail_scroll_y.saturating_add(1);
+                    } else {
+                        let max = self
+                            .dashboard
+                            .rules
+                            .row_count_for(self.rules_ui.language_filter)
+                            .saturating_sub(1);
+                        if self.rules_ui.selected < max {
+                            self.rules_ui.selected += 1;
+                        }
+                        self.rules_ui.detail_scroll_y = 0;
+                        self.rules_ui.detail_message = None;
                     }
-                    self.rules_ui.detail_message = None;
                 }
                 Screen::Check => self.dashboard.check.select_next(),
             }
@@ -565,6 +591,8 @@ impl App {
         };
         self.rules_ui.editing = None;
         self.rules_ui.detail_message = None;
+        self.rules_ui.detail_selected = true;
+        self.rules_ui.detail_scroll_y = 0;
         self.input_mode = InputMode::RulesAdd;
     }
 
@@ -587,6 +615,8 @@ impl App {
         };
         self.rules_ui.editing = Some(RulesEditState { original_row: row });
         self.rules_ui.detail_message = None;
+        self.rules_ui.detail_selected = true;
+        self.rules_ui.detail_scroll_y = 0;
         self.input_mode = InputMode::RulesEdit;
     }
 
@@ -617,11 +647,10 @@ impl App {
             }
             KeyCode::Enter => self.submit_sources_form(),
             KeyCode::Left | KeyCode::Char('h') if self.sources_ui.form.active_field == 1 => {
-                self.sources_ui.form.language_idx =
-                    self.sources_ui.form.language_idx.saturating_sub(1);
+                self.sources_ui.form.language_idx = wrap_prev(self.sources_ui.form.language_idx, 4);
             }
             KeyCode::Right | KeyCode::Char('l') if self.sources_ui.form.active_field == 1 => {
-                self.sources_ui.form.language_idx = (self.sources_ui.form.language_idx + 1).min(3);
+                self.sources_ui.form.language_idx = wrap_next(self.sources_ui.form.language_idx, 4);
             }
             KeyCode::Char(c) if self.sources_ui.form.active_field == 0 => {
                 self.current_sources_field_mut().push(c);
@@ -638,8 +667,8 @@ impl App {
                 self.rules_ui.editing = None;
             }
             KeyCode::Tab => {
-                self.rules_ui.form.active_field =
-                    (self.rules_ui.form.active_field + 1) % rule_form_field_count(self.rules_ui.form.mode_idx);
+                self.rules_ui.form.active_field = (self.rules_ui.form.active_field + 1)
+                    % rule_form_field_count(self.rules_ui.form.mode_idx);
             }
             KeyCode::BackTab => {
                 self.rules_ui.form.active_field = if self.rules_ui.form.active_field == 0 {
@@ -666,23 +695,23 @@ impl App {
                 self.rules_ui.form.team_scope = !self.rules_ui.form.team_scope;
             }
             KeyCode::Left | KeyCode::Char('h') if self.rules_ui.form.active_field == 2 => {
-                self.rules_ui.form.language_idx = self.rules_ui.form.language_idx.saturating_sub(1);
+                self.rules_ui.form.language_idx = wrap_prev(self.rules_ui.form.language_idx, 4);
             }
             KeyCode::Right | KeyCode::Char('l') if self.rules_ui.form.active_field == 2 => {
-                self.rules_ui.form.language_idx = (self.rules_ui.form.language_idx + 1).min(3);
+                self.rules_ui.form.language_idx = wrap_next(self.rules_ui.form.language_idx, 4);
             }
             KeyCode::Left | KeyCode::Char('h') if self.rules_ui.form.active_field == 3 => {
-                self.rules_ui.form.severity_idx = self.rules_ui.form.severity_idx.saturating_sub(1);
+                self.rules_ui.form.severity_idx = wrap_prev(self.rules_ui.form.severity_idx, 3);
             }
             KeyCode::Right | KeyCode::Char('l') if self.rules_ui.form.active_field == 3 => {
-                self.rules_ui.form.severity_idx = (self.rules_ui.form.severity_idx + 1).min(2);
+                self.rules_ui.form.severity_idx = wrap_next(self.rules_ui.form.severity_idx, 3);
             }
             KeyCode::Left | KeyCode::Char('h') if self.rules_ui.form.active_field == 4 => {
-                self.rules_ui.form.mode_idx = self.rules_ui.form.mode_idx.saturating_sub(1);
+                self.rules_ui.form.mode_idx = wrap_prev(self.rules_ui.form.mode_idx, 5);
                 clamp_rule_form_active_field(&mut self.rules_ui.form);
             }
             KeyCode::Right | KeyCode::Char('l') if self.rules_ui.form.active_field == 4 => {
-                self.rules_ui.form.mode_idx = (self.rules_ui.form.mode_idx + 1).min(4);
+                self.rules_ui.form.mode_idx = wrap_next(self.rules_ui.form.mode_idx, 5);
                 clamp_rule_form_active_field(&mut self.rules_ui.form);
             }
             KeyCode::Char(c) if matches!(self.rules_ui.form.active_field, 1 | 5 | 6 | 7 | 8) => {
@@ -760,23 +789,27 @@ impl App {
             crate::rule_authoring::EnforcementMode::Lint { .. }
                 | crate::rule_authoring::EnforcementMode::Formatter { .. }
                 | crate::rule_authoring::EnforcementMode::Test { .. }
-        ) && languages.len() != 1
+        ) && !is_single_concrete_language_selection(self.rules_ui.form.language_idx)
         {
             self.rules_ui.form.error = Some(
                 "This enforcement mode requires a single language selection in the TUI.".into(),
             );
             return;
         }
-        let planned_ids: Vec<String> = languages
-            .iter()
-            .map(|language| {
-                if languages.len() == 1 {
-                    format!("custom.{slug}")
-                } else {
-                    format!("custom.{slug}-{language}")
-                }
-            })
-            .collect();
+        let planned_ids: Vec<String> = if languages == ["all"] {
+            vec![format!("custom.{slug}")]
+        } else {
+            languages
+                .iter()
+                .map(|language| {
+                    if languages.len() == 1 {
+                        format!("custom.{slug}")
+                    } else {
+                        format!("custom.{slug}-{language}")
+                    }
+                })
+                .collect()
+        };
         if let Some(existing) = first_existing_rule_id(&self.project_dir, &planned_ids) {
             self.rules_ui.form.error = Some(format!(
                 "Rule `{existing}` already exists. Choose a different name or remove the existing rule first."
@@ -812,6 +845,8 @@ impl App {
             self.rules_ui.form = RulesFormState::default();
             self.rules_ui.language_filter = RulesLanguageFilter::All;
             self.rules_ui.selected = 0;
+            self.rules_ui.detail_selected = false;
+            self.rules_ui.detail_scroll_y = 0;
             self.rules_ui.detail_message = None;
         } else {
             self.rules_ui.form.error = Some(errors.join("\n"));
@@ -850,23 +885,27 @@ impl App {
             crate::rule_authoring::EnforcementMode::Lint { .. }
                 | crate::rule_authoring::EnforcementMode::Formatter { .. }
                 | crate::rule_authoring::EnforcementMode::Test { .. }
-        ) && languages.len() != 1
+        ) && !is_single_concrete_language_selection(self.rules_ui.form.language_idx)
         {
             self.rules_ui.form.error = Some(
                 "This enforcement mode requires a single language selection in the TUI.".into(),
             );
             return;
         }
-        let planned_ids: Vec<String> = languages
-            .iter()
-            .map(|language| {
-                if languages.len() == 1 {
-                    format!("custom.{slug}")
-                } else {
-                    format!("custom.{slug}-{language}")
-                }
-            })
-            .collect();
+        let planned_ids: Vec<String> = if languages == ["all"] {
+            vec![format!("custom.{slug}")]
+        } else {
+            languages
+                .iter()
+                .map(|language| {
+                    if languages.len() == 1 {
+                        format!("custom.{slug}")
+                    } else {
+                        format!("custom.{slug}-{language}")
+                    }
+                })
+                .collect()
+        };
 
         if let Some(existing) = first_existing_rule_id_except(
             &self.project_dir,
@@ -944,6 +983,8 @@ impl App {
         self.rules_ui.detail_message = None;
         self.rules_ui.language_filter = RulesLanguageFilter::All;
         self.rules_ui.selected = 0;
+        self.rules_ui.detail_selected = false;
+        self.rules_ui.detail_scroll_y = 0;
     }
 
     fn delete_selected_rule(&mut self) {
@@ -975,6 +1016,7 @@ impl App {
                 .row_count_for(self.rules_ui.language_filter)
                 .saturating_sub(1);
             self.rules_ui.selected = self.rules_ui.selected.min(max);
+            self.rules_ui.detail_scroll_y = 0;
             self.rules_ui.detail_message = None;
         } else {
             self.rules_ui.detail_message = Some(errors.join("\n"));
@@ -1021,6 +1063,24 @@ fn clamp_rule_form_active_field(form: &mut RulesFormState) {
     form.active_field = form.active_field.min(max);
 }
 
+fn wrap_prev(idx: usize, len: usize) -> usize {
+    if len == 0 {
+        0
+    } else if idx == 0 {
+        len - 1
+    } else {
+        idx - 1
+    }
+}
+
+fn wrap_next(idx: usize, len: usize) -> usize {
+    if len == 0 {
+        0
+    } else {
+        (idx + 1) % len
+    }
+}
+
 fn rule_form_severity_idx(severity: &str) -> usize {
     match severity {
         "must" => 0,
@@ -1046,13 +1106,15 @@ fn rules_form_languages(idx: usize) -> &'static [&'static str] {
         0 => &["typescript"],
         1 => &["rust"],
         2 => &["python"],
-        _ => &["python", "rust", "typescript"],
+        _ => &["all"],
     }
 }
 
-fn rules_form_enforcement(
-    form: &RulesFormState,
-) -> Result<crate::rule_authoring::EnforcementMode> {
+fn is_single_concrete_language_selection(idx: usize) -> bool {
+    idx <= 2
+}
+
+fn rules_form_enforcement(form: &RulesFormState) -> Result<crate::rule_authoring::EnforcementMode> {
     match form.mode_idx {
         1 => {
             if form.detail_a.trim().is_empty() {
@@ -1095,7 +1157,9 @@ fn rules_form_enforcement(
         }
         4 => {
             if form.detail_a.trim().is_empty() || form.detail_b.trim().is_empty() {
-                Err(anyhow::anyhow!("Test mode requires a runner and test path."))
+                Err(anyhow::anyhow!(
+                    "Test mode requires a runner and test path."
+                ))
             } else {
                 Ok(crate::rule_authoring::EnforcementMode::Test {
                     runner: form.detail_a.trim().to_string(),
@@ -1283,6 +1347,17 @@ fn authored_rule_language<'a>(rule_id: &str, fallback_languages: &'a [String]) -
     if let Some(language) = rule_id.strip_suffix("-typescript") {
         let _ = language;
         return Ok("typescript");
+    }
+    if fallback_languages.len() == 3
+        && fallback_languages
+            .iter()
+            .any(|language| language == "python")
+        && fallback_languages.iter().any(|language| language == "rust")
+        && fallback_languages
+            .iter()
+            .any(|language| language == "typescript")
+    {
+        return Ok("all");
     }
 
     fallback_languages
@@ -1585,6 +1660,38 @@ mod tests {
     }
 
     #[test]
+    fn submit_all_language_rule_creates_one_persisted_rule() {
+        let tmp = std::env::temp_dir().join(format!("wh_tui_rules_all_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::create_dir_all(&tmp);
+
+        let mut app = App::new(&tmp).unwrap();
+        app.rules_ui.form = RulesFormState {
+            name: "Cross Language Rule".into(),
+            language_idx: 3,
+            severity_idx: 1,
+            mode_idx: 1,
+            rule_text: "Avoid this pattern everywhere.".into(),
+            detail_a: "TODO".into(),
+            ..RulesFormState::default()
+        };
+
+        app.submit_rules_form();
+
+        let paths = crate::layers::LayerPaths::for_project(&tmp);
+        let (files, _warnings) = crate::rules::load_rule_files(&paths.personal_rules_dir);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].rule_file.rules.len(), 1);
+        assert_eq!(files[0].rule_file.rules[0].id, "custom.cross-language-rule");
+        assert_eq!(
+            files[0].rule_file.rules[0].languages,
+            vec!["python", "rust", "typescript"]
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn rules_screen_left_right_cycles_language_filters() {
         let tmp = std::env::temp_dir().join(format!("wh_tui_rules_filter_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
@@ -1668,6 +1775,7 @@ mod tests {
         let mut app = App::new(&tmp).unwrap();
         app.screen = Screen::Rules;
         app.dashboard.rules = crate::tui::screens::rules::load(&tmp);
+        app.rules_ui.language_filter = RulesLanguageFilter::Python;
 
         app.open_rules_edit_form();
         app.rules_ui.form.team_scope = true;
@@ -1691,8 +1799,20 @@ mod tests {
         assert_eq!(project_rules[0].language, "rust");
         assert_eq!(project_rules[0].severity, "must");
         assert_eq!(project_rules[0].description, "Updated rule text");
-        assert_eq!(project_rules[0].signals[0].lint.as_ref().map(|lint| lint.tool.as_str()), Some("clippy"));
-        assert_eq!(project_rules[0].signals[0].lint.as_ref().map(|lint| lint.code.as_str()), Some("unwrap_used"));
+        assert_eq!(
+            project_rules[0].signals[0]
+                .lint
+                .as_ref()
+                .map(|lint| lint.tool.as_str()),
+            Some("clippy")
+        );
+        assert_eq!(
+            project_rules[0].signals[0]
+                .lint
+                .as_ref()
+                .map(|lint| lint.code.as_str()),
+            Some("unwrap_used")
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -1706,5 +1826,48 @@ mod tests {
         };
 
         assert_eq!(debt_snippet(&evidence), "line one\nline two");
+    }
+
+    #[test]
+    fn sources_form_language_wraps_both_directions() {
+        let tmp = std::env::temp_dir().join(format!("wh_tui_sources_wrap_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.input_mode = InputMode::SourcesAdd;
+        app.sources_ui.form.active_field = 1;
+        app.sources_ui.form.language_idx = 3;
+
+        app.handle_sources_form_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.sources_ui.form.language_idx, 0);
+
+        app.handle_sources_form_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(app.sources_ui.form.language_idx, 3);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn rules_form_option_selectors_wrap() {
+        let tmp = std::env::temp_dir().join(format!("wh_tui_rules_wrap_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.input_mode = InputMode::RulesAdd;
+
+        app.rules_ui.form.active_field = 2;
+        app.rules_ui.form.language_idx = 3;
+        app.handle_rules_form_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.rules_ui.form.language_idx, 0);
+
+        app.rules_ui.form.active_field = 3;
+        app.rules_ui.form.severity_idx = 2;
+        app.handle_rules_form_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.rules_ui.form.severity_idx, 0);
+
+        app.rules_ui.form.active_field = 4;
+        app.rules_ui.form.mode_idx = 4;
+        app.handle_rules_form_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.rules_ui.form.mode_idx, 0);
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
