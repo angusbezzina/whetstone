@@ -6,6 +6,16 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.19] - 2026-05-23
+
+### Added
+- **Trusted second-brain knowledge graph sources are now supported.** Whetstone can index local markdown vaults under `sources.vaults`, parse frontmatter and wikilinks, persist a `knowledge-graph.json` artifact, and feed those graph-backed pages into extraction workflows with explicit provenance.
+- **The TUI now has a first-run animated intro screen.** Interactive launches start with a lightweight Whetstone-branded intro that auto-dismisses quickly or can be skipped immediately with any key.
+
+### Changed
+- **Rules can now carry richer validator and provenance metadata.** Rule schema/runtime support validator adapters, graph-derived provenance, and upstream-link context through query, review, and reporting surfaces.
+- **Language and source support is broader and more flexible.** The shared language registry now models aliases, file extensions, capability metadata, HTML/CSS/JavaScript profiles, regex-backed non-AST scanning, and safer command-validator execution during `wh scan`.
+
 ## [0.8.18] - 2026-05-10
 
 ### Fixed
