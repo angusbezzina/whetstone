@@ -10,6 +10,7 @@ pub mod dashboard;
 pub mod debt;
 pub mod extract;
 pub mod help;
+pub mod intro;
 pub mod result;
 pub mod rules;
 pub mod sources;
@@ -31,6 +32,7 @@ impl<T> LoadState<T> {
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     match app.screen {
+        Screen::Intro => intro::render(frame, area, app),
         Screen::Dashboard => dashboard::render(frame, area, app),
         Screen::Result => result::render(frame, area, app),
         Screen::Sources => sources::render(frame, area, app),
@@ -43,7 +45,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
 pub fn ensure_loaded(screen: Screen, app: &mut App) {
     match screen {
-        Screen::Result | Screen::Dashboard | Screen::Help => {}
+        Screen::Intro | Screen::Result | Screen::Dashboard | Screen::Help => {}
         Screen::Debt => app.ensure_debt_loaded(),
         Screen::Sources => app.ensure_sources_loaded(),
         Screen::Rules => app.ensure_rules_loaded(),
@@ -53,6 +55,7 @@ pub fn ensure_loaded(screen: Screen, app: &mut App) {
 
 pub fn scroll_hint(screen: Screen, body: Rect, app: &App) -> Option<footer::ScrollHint> {
     match screen {
+        Screen::Intro => None,
         Screen::Dashboard => hint_from_offset(
             app.dashboard_ui.scroll as u16,
             dashboard::max_scroll(body, app),

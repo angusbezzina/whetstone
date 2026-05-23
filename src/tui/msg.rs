@@ -9,6 +9,7 @@ use crossterm::event::KeyEvent;
 /// through the centralized screen registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
+    Intro,
     Dashboard,
     Result,
     Sources,
@@ -29,6 +30,7 @@ impl Screen {
 
     pub fn title(&self) -> &'static str {
         match self {
+            Screen::Intro => "INTRO",
             Screen::Dashboard => "HOME",
             Screen::Result => "RESULT",
             Screen::Sources => "SOURCES",
@@ -59,6 +61,8 @@ impl Screen {
 pub enum Msg {
     /// Raw key event — the update function decodes it into higher-level messages.
     Key(KeyEvent),
+    /// Animation / timer tick for lightweight screen updates.
+    Tick,
     /// Jump to a specific top-level screen.
     GoToScreen(Screen),
 }

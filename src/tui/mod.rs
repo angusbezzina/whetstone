@@ -45,6 +45,8 @@ pub enum LaunchTarget {
 /// Minimum usable terminal size. Below this we render a "please resize" notice.
 const MIN_WIDTH: u16 = 50;
 const MIN_HEIGHT: u16 = 15;
+const INTRO_TICK_MS: u64 = 33;
+const NORMAL_TICK_MS: u64 = 100;
 
 /// Check whether stdout is a TTY. `wh` with no args uses this to decide
 /// whether to launch the TUI or dump the CLI help.
@@ -56,6 +58,7 @@ pub fn stdout_is_tty() -> bool {
 /// Blocking entry point. Sets up the terminal, runs the main loop, restores.
 pub fn run(project_dir: &Path) -> Result<()> {
     let mut app = App::new(project_dir).context("failed to load project data")?;
+    app.start_intro();
 
     let mut terminal = setup_terminal()?;
     let result = run_loop(&mut terminal, &mut app);
@@ -115,9 +118,12 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
     while !app.quit {
         terminal.draw(|frame| view(frame, app))?;
 
-        // Tight poll interval keeps input latency low while letting us do
-        // future background work (drift polling, spinner ticks) cheaply.
-        if event::poll(Duration::from_millis(100))? {
+        let tick = if app.screen == Screen::Intro {
+            Duration::from_millis(INTRO_TICK_MS)
+        } else {
+            Duration::from_millis(NORMAL_TICK_MS)
+        };
+        if event::poll(tick)? {
             match event::read()? {
                 Event::Key(key) if key.kind == event::KeyEventKind::Press => {
                     app.update(Msg::Key(key));
@@ -125,6 +131,8 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 Event::Resize(_, _) => {}
                 _ => {}
             }
+        } else if app.screen == Screen::Intro {
+            app.update(Msg::Tick);
         }
     }
     Ok(())
@@ -137,6 +145,11 @@ pub fn view(frame: &mut Frame<'_>, app: &App) {
 
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         render_too_small(frame, area);
+        return;
+    }
+
+    if app.screen == Screen::Intro {
+        screens::render(frame, area, app);
         return;
     }
 
@@ -433,6 +446,29 @@ mod tests {
             .map(|cell| cell.symbol().to_owned())
             .collect();
         assert!(rendered.contains("Terminal too small"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn intro_screen_renders_when_active() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let tmp = std::env::temp_dir().join(format!("wh_tui_intro_active_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.start_intro();
+
+        terminal.draw(|frame| view(frame, &app)).unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol().to_owned())
+            .collect();
+
+        assert!(rendered.contains("WHETSTONE"));
+
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
