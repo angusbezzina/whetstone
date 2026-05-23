@@ -53,7 +53,6 @@ pub fn write_extraction_handoff(
         .get("extraction_subsets")
         .cloned()
         .unwrap_or(Value::Null);
-    let ready_names = extract_name_set(&subsets, "ready_now");
     let pending_names = extract_name_set(&subsets, "pending");
     let failed_subset = extract_name_map(&subsets, "failed");
     let existing_rules = load_approved_counts(project_dir);
@@ -71,7 +70,12 @@ pub fn write_extraction_handoff(
             .map(String::from)
             .unwrap_or_else(|| infer_language_from_sections(source));
 
-        let priority = if ready_names.contains(&name) {
+        let priority = if source
+            .get("freshness")
+            .and_then(|v| v.get("confidence"))
+            .and_then(|v| v.as_str())
+            == Some("high")
+        {
             "ready_now"
         } else {
             "resolved_low"
@@ -82,6 +86,13 @@ pub fn write_extraction_handoff(
             "language": language,
             "version": source.get("version").cloned().unwrap_or(Value::Null),
             "source_type": source.get("source_type").cloned().unwrap_or(Value::Null),
+            "source_origin": source.get("source_origin").cloned().unwrap_or(Value::Null),
+            "source_kind": source.get("source_kind").cloned().unwrap_or(Value::Null),
+            "source_ref": source.get("source_ref").cloned().unwrap_or(Value::Null),
+            "authority": source.get("authority").cloned().unwrap_or(Value::Null),
+            "dep_names": source.get("dep_names").cloned().unwrap_or(Value::Null),
+            "upstream_urls": source.get("upstream_urls").cloned().unwrap_or(Value::Null),
+            "related_pages": source.get("related_pages").cloned().unwrap_or(Value::Null),
             "source_url": source.get("docs_url")
                 .or_else(|| source.get("source_url"))
                 .cloned()
@@ -350,10 +361,20 @@ pub fn write_refresh_diff(
             if meta.dep != entry_name || meta.language != entry_lang {
                 continue;
             }
-            let mut drift_types: Vec<&str> = vec!["version"];
-            if let Some(stored) = &meta.stored_content_hash {
-                if !current_hash.is_empty() && stored != current_hash {
-                    drift_types.push("content_hash");
+            let mut drift_types: Vec<&str> = Vec::new();
+            if entry
+                .get("drift_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("version")
+                == "content_hash"
+            {
+                drift_types.push("content_hash");
+            } else {
+                drift_types.push("version");
+                if let Some(stored) = &meta.stored_content_hash {
+                    if !current_hash.is_empty() && stored != current_hash {
+                        drift_types.push("content_hash");
+                    }
                 }
             }
             re_extraction_candidates.push(json!({
@@ -487,12 +508,7 @@ fn infer_language_from_sections(source: &Value) -> String {
     source
         .get("registry")
         .and_then(|v| v.as_str())
-        .map(|r| match r {
-            "pypi" => "python",
-            "npm" => "typescript",
-            "crates_io" => "rust",
-            _ => "generic",
-        })
+        .and_then(crate::types::language_for_registry)
         .unwrap_or("generic")
         .to_string()
 }

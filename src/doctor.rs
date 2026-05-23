@@ -59,21 +59,48 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
     let detect_start = Instant::now();
     let deps_result = detect::detect_deps(project_dir, false, &[], &[], true)?;
     let deps_time = detect_start.elapsed().as_secs_f64();
+    let config = crate::config::WhetstoneConfig::load(project_dir);
+    let mut configured_sources = config.sources.resolved_inputs();
+    let second_brain = crate::second_brain::build(project_dir, &config.sources.vaults, trigger);
+    let second_brain_page_count = second_brain
+        .graph
+        .get("page_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if !second_brain.graph.is_null() {
+        crate::second_brain::write_graph(project_dir, &second_brain.graph);
+    }
+    warnings.extend(second_brain.warnings.clone());
+    configured_sources.extend(second_brain.inputs.clone());
 
     if deps_result.get("error").is_some() {
         let error_msg = deps_result
             .get("error")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error detecting dependencies");
-        return Ok(serde_json::json!({
-            "status": "error",
-            "error": error_msg,
-            "step": "detect-deps",
-            "steps": steps,
-            "recommendations": [],
-            "source_details": [],
-            "next_command": "Check project directory has manifest files (pyproject.toml, package.json, Cargo.toml)",
-        }));
+        if configured_sources.is_empty() || error_msg != "No manifest files found" {
+            return Ok(serde_json::json!({
+                "status": "error",
+                "error": error_msg,
+                "step": "detect-deps",
+                "steps": steps,
+                "recommendations": [],
+                "source_details": [],
+                "next_command": format!(
+                    "Check project directory has manifest files ({})",
+                    crate::types::supported_manifest_display_list()
+                ),
+            }));
+        }
+
+        log(
+            &format!(
+                "  No manifests found; continuing with {} configured source(s)  [{:.1}s]",
+                configured_sources.len(),
+                deps_time
+            ),
+            json_mode,
+        );
     }
 
     let deps_count = deps_result
@@ -88,7 +115,7 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
         .and_then(|r| r.get("_all"))
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
-    let languages: Vec<String> = deps_result
+    let mut languages: Vec<String> = deps_result
         .get("languages")
         .and_then(|v| v.as_array())
         .map(|arr| {
@@ -146,6 +173,15 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
         all_deps.clone()
     };
 
+    for language in configured_sources
+        .iter()
+        .filter_map(|source| source.language.clone())
+    {
+        if !languages.iter().any(|existing| existing == &language) {
+            languages.push(language);
+        }
+    }
+
     if let Some(filter) = deps_filter {
         let filter_set: Vec<&str> = filter.split(',').collect();
         target_deps.retain(|d| {
@@ -156,7 +192,7 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
         });
     }
 
-    if target_deps.is_empty() {
+    if target_deps.is_empty() && configured_sources.is_empty() {
         let result = serde_json::json!({
             "status": "ok",
             "warning": "No dependencies to extract rules for",
@@ -386,7 +422,7 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
         "name": "resolve-sources",
         "status": "ok",
         "elapsed_seconds": (resolve_time * 10.0).round() / 10.0,
-        "summary": format!("Resolved docs for {}/{} deps ({} with llms.txt)", sources.len(), target_deps.len(), llms_txt_count),
+        "summary": format!("Resolved docs for {}/{} deps ({} with llms.txt)", sources.len(), resolve_deps.len(), llms_txt_count),
     }));
 
     for err in &errors {
@@ -402,7 +438,7 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
         &format!(
             "  Resolved {}/{} deps ({} with llms.txt)  [{:.1}s]",
             sources.len(),
-            target_deps.len(),
+            resolve_deps.len(),
             llms_txt_count,
             resolve_time
         ),
@@ -429,15 +465,15 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
     let resolved_low: Vec<&Value> = sources.iter().filter(|s| !ready_now.contains(s)).collect();
 
     let resolution_buckets = serde_json::json!({
-        "ready_now": ready_now.iter().map(|s| serde_json::json!({"name": s.get("name"), "source_type": s.get("source_type")})).collect::<Vec<_>>(),
-        "resolved_low": resolved_low.iter().map(|s| serde_json::json!({"name": s.get("name"), "source_type": s.get("source_type")})).collect::<Vec<_>>(),
+        "ready_now": ready_now.iter().map(|s| serde_json::json!({"name": s.get("name"), "source_type": s.get("source_type"), "source_ref": s.get("source_ref")})).collect::<Vec<_>>(),
+        "resolved_low": resolved_low.iter().map(|s| serde_json::json!({"name": s.get("name"), "source_type": s.get("source_type"), "source_ref": s.get("source_ref")})).collect::<Vec<_>>(),
         "failed": errors.iter().map(|e| serde_json::json!({"name": e.get("name"), "error": e.get("error")})).collect::<Vec<_>>(),
         "cached": cache_buckets.cached.iter().map(|d| serde_json::json!({"name": d.get("name")})).collect::<Vec<_>>(),
     });
 
     let extraction_subsets = serde_json::json!({
-        "ready_now": ready_now.iter().map(|s| serde_json::json!({"name": s.get("name"), "source_type": s.get("source_type")})).collect::<Vec<_>>(),
-        "resolved_not_ready": resolved_low.iter().map(|s| serde_json::json!({"name": s.get("name"), "reason": s.get("source_type")})).collect::<Vec<_>>(),
+        "ready_now": ready_now.iter().map(|s| serde_json::json!({"name": s.get("name"), "source_type": s.get("source_type"), "source_ref": s.get("source_ref")})).collect::<Vec<_>>(),
+        "resolved_not_ready": resolved_low.iter().map(|s| serde_json::json!({"name": s.get("name"), "reason": s.get("source_type"), "source_ref": s.get("source_ref")})).collect::<Vec<_>>(),
         "pending": cache_buckets.missing.iter().map(|d| serde_json::json!({"name": d.get("name")})).collect::<Vec<_>>(),
         "failed": errors.iter().map(|e| serde_json::json!({"name": e.get("name")})).collect::<Vec<_>>(),
     });
@@ -449,16 +485,32 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
     };
 
     // Resolve custom sources from config
-    let config = crate::config::WhetstoneConfig::load(project_dir);
-    if !config.sources.custom.is_empty() {
+    if !configured_sources.is_empty() {
         let custom_timeout = config.resolve.timeout_seconds.unwrap_or(15);
         let custom_ttl = config
             .resolve
             .cache_ttl_seconds
             .unwrap_or(crate::state::cache::DEFAULT_TTL);
-        let custom = crate::resolve::resolve_custom_sources(&config.sources.custom, custom_timeout);
+        let mut custom = Vec::new();
+        let mut to_resolve = Vec::new();
+        for source in &configured_sources {
+            if !refresh && source.url.contains("://") {
+                if let Some(entry) = sm.cache.get_by_source_ref(&source.source_ref_id) {
+                    if crate::state::cache::entry_is_fresh(&entry, Some(custom_ttl)) {
+                        custom.push(entry);
+                        continue;
+                    }
+                }
+            }
+            to_resolve.push(source.clone());
+        }
+        custom.extend(crate::resolve::resolve_source_inputs(
+            project_dir,
+            &to_resolve,
+            custom_timeout,
+        ));
         if !custom.is_empty() {
-            eprintln!("  Resolved {} custom source(s)", custom.len());
+            eprintln!("  Resolved {} configured source(s)", custom.len());
             for item in &custom {
                 let mut cache_entry = item.clone();
                 cache_entry["fetch_timestamp"] = serde_json::json!(crate::state::now_iso());
@@ -475,6 +527,10 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
         "patterns": [],
         "languages": languages,
         "dep_names": extraction_sources.iter().filter_map(|s| s.get("name").and_then(|v| v.as_str())).collect::<Vec<_>>(),
+        "knowledge_graph": {
+            "path": crate::second_brain::graph_path(project_dir).display().to_string(),
+            "page_count": second_brain_page_count,
+        },
     });
 
     steps.push(serde_json::json!({
@@ -523,6 +579,7 @@ pub fn doctor(options: DoctorOptions<'_>) -> Result<Value> {
             "sources_resolved": sources.len(),
             "sources_with_llms_txt": llms_txt_count,
             "patterns_found": patterns_count,
+            "second_brain_pages": second_brain_page_count,
             "languages": languages,
             "elapsed_seconds": (total_elapsed * 10.0).round() / 10.0,
         },

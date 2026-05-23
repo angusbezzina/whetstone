@@ -143,6 +143,44 @@ wh sources remove py-tips
 
 `--kind` is free-form but conventionally one of `blog`, `official_docs`, `team_guide`, `community`, `custom`. `--lang any` (or omitting `--lang`) scopes the source to all languages. After adding, run `wh init` (or `wh sources verify <name>`) to pull the content, then follow the normal `wh extract` → `wh rules approve` flow. `wh reinit` re-fetches subscribed sources and flags content-hash drift just like it does for detected deps.
 
+## Trusted second-brain / wiki vaults
+
+For richer internal knowledge, Whetstone can also index a local markdown vault as
+a **trusted second-brain source graph**. Configure it in
+`whetstone/whetstone.yaml`:
+
+```yaml
+sources:
+  vaults:
+    - id: team-brain
+      path: docs/brain
+      include: ["**/*.md"]
+      language: any
+      source_kind: second_brain
+      authority: reviewed
+```
+
+Pages may carry frontmatter like:
+
+```yaml
+---
+whetstone:
+  authority: canonical
+  languages: [javascript, html]
+  deps: [react]
+  upstream:
+    - https://react.dev/
+  tags: [frontend]
+  aliases: [React Patterns]
+---
+```
+
+Whetstone indexes headings, wikilinks, tags, authority, dependency/language
+annotations, and upstream URLs into `whetstone/.state/knowledge-graph.json`.
+Those pages then appear in extraction context and worklists as
+`source_origin: second_brain_page` entries, with related-page metadata available
+to the agent.
+
 ## Canonical shareability story
 
 The default shareable entrypoint is a committed `whetstone/whetstone.yaml`.
@@ -192,8 +230,9 @@ wh extract submit  ───▶  status: candidate
               wh rules approve --all
 ```
 
-Only `candidate` and `approved` exist. To retire a rule, delete the file or
-the rule entry directly — there is no denied/deprecated state to maintain.
+Only `candidate` and `approved` exist. To retire a rule, prefer
+`wh rules remove <id>` so the change goes through the supported CLI surface —
+there is no denied/deprecated state to maintain.
 
 ## Bundles
 
@@ -240,16 +279,19 @@ colliding file or rename the new candidate, then resubmit.
 
 ## Generation
 
-`wh actions` chains three commands:
+`wh actions` chains three canonical subcommands:
 
-- `wh context` — writes `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.
-- `wh tests` — writes pytest / vitest / cargo test scaffolds under `whetstone/evals/`
-- `wh lint` — writes `ruff.whetstone.toml` / `biome.whetstone.json` /
+- `wh actions context` — writes `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, etc.
+- `wh actions test` — writes pytest / vitest / cargo test scaffolds under `whetstone/evals/`
+- `wh actions lint` — writes `ruff.whetstone.toml` / `biome.whetstone.json` /
   `clippy.whetstone.toml` plus formatter-backed overlays like
   `rustfmt.whetstone.toml` when rules opt into safe mechanical formatting
   under `whetstone/lint/`
 
-Run them individually for finer control, or chain them with `wh actions`.
+Compatibility aliases still exist for `wh context`, `wh tests`, and `wh lint`,
+but docs and automation should prefer the grouped `wh actions ...` surface.
+
+Run them individually for finer control, or chain them with `wh actions all`.
 Every generator accepts `--lang`, `--dry-run`, and `--personal`.
 
 ## Personal layer

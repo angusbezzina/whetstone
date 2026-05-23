@@ -13,6 +13,32 @@ use crate::config::WhetstoneConfig;
 use crate::state::manifest::ManifestStore;
 use crate::state::StateManager;
 
+type ManifestParseFn = fn(&Path, &str) -> Result<Vec<Value>>;
+
+struct ManifestParser {
+    manifest_name: &'static str,
+    parse: ManifestParseFn,
+}
+
+const MANIFEST_PARSERS: &[ManifestParser] = &[
+    ManifestParser {
+        manifest_name: "pyproject.toml",
+        parse: python::parse_pyproject_toml,
+    },
+    ManifestParser {
+        manifest_name: "requirements.txt",
+        parse: python::parse_requirements_txt,
+    },
+    ManifestParser {
+        manifest_name: "package.json",
+        parse: typescript::parse_package_json,
+    },
+    ManifestParser {
+        manifest_name: "Cargo.toml",
+        parse: rust_lang::parse_cargo_toml,
+    },
+];
+
 /// Main detection logic. Returns structured JSON matching the Python contract.
 pub fn detect_deps(
     project_dir: &Path,
@@ -31,6 +57,7 @@ pub fn detect_deps(
 
     if manifest_files.is_empty() {
         let effective_excluded = effective_excluded_list(&merged_excludes);
+        let manifest_help = crate::types::supported_manifest_display_list();
         return Ok(serde_json::json!({
             "languages": [],
             "dependencies": [],
@@ -42,7 +69,7 @@ pub fn detect_deps(
                 "workspaces": [],
             },
             "error": "No manifest files found",
-            "next_command": "Ensure project has pyproject.toml, package.json, or Cargo.toml",
+            "next_command": format!("Ensure project has one of: {manifest_help}"),
         }));
     }
 
@@ -58,12 +85,9 @@ pub fn detect_deps(
         manifests_found.push(rel_path.clone());
 
         let filename = filepath.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        let parse_result = match filename {
-            "pyproject.toml" => python::parse_pyproject_toml(filepath, source),
-            "requirements.txt" => python::parse_requirements_txt(filepath, source),
-            "package.json" => typescript::parse_package_json(filepath, source),
-            "Cargo.toml" => rust_lang::parse_cargo_toml(filepath, source),
-            _ => continue,
+        let parse_result = match parser_for_manifest(filename) {
+            Some(parser) => (parser.parse)(filepath, source),
+            None => continue,
         };
 
         match parse_result {
@@ -230,6 +254,12 @@ pub fn detect_deps(
     }
 
     Ok(result)
+}
+
+fn parser_for_manifest(file_name: &str) -> Option<&'static ManifestParser> {
+    MANIFEST_PARSERS
+        .iter()
+        .find(|parser| parser.manifest_name == file_name)
 }
 
 /// Format detect-deps result as a human-readable summary with scoped package grouping.

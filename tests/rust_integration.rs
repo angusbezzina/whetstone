@@ -747,6 +747,48 @@ fn test_source_add_rejects_bad_url() {
 }
 
 #[test]
+fn test_init_succeeds_with_source_pack_and_no_manifests() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_source_pack_only_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("docs")).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::write(
+        tmp.join("docs/frontend-guidelines.md"),
+        "# Frontend\n\nPrefer explicit event handlers over inline HTML attributes.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "sources:\n  packs:\n    - id: frontend-guidelines\n      name: frontend-guidelines\n      language: html\n      source_kind: team_guide\n      members:\n        - url: docs/frontend-guidelines.md\n          name: frontend-guidelines-doc\n",
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) = run_whetstone(
+        &["init", "--json", "--project-dir", tmp.to_str().unwrap()],
+        tmp.to_str().unwrap(),
+    );
+    assert!(ok, "wh init should succeed for source-pack-only projects");
+
+    let result = parse_json(&stdout);
+    let sources = result["extraction_context"]["sources"]
+        .as_array()
+        .expect("sources array");
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0]["source_origin"], "pack_member");
+    assert_eq!(sources[0]["source_type"], "local_file");
+    assert_eq!(sources[0]["source_ref"]["pack_id"], "frontend-guidelines");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
 fn test_personal_only_project_still_gets_adherence_score() {
     // Regression: earlier, `wh rule add --personal` without an explicit init
     // would leave wh status returning adherence_score=null because the
@@ -3427,6 +3469,332 @@ fn test_check_finds_rust_unwrap_violation() {
         has_unwrap,
         "expected an unwrap-related violation: {violations:?}"
     );
+}
+
+#[test]
+fn test_scan_finds_html_pattern_violation() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_html_scan_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone/rules/html")).unwrap();
+    std::fs::write(
+        tmp.join("src/index.html"),
+        "<button onclick=\"alert('x')\">Click</button>\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("whetstone/rules/html/frontend.yaml"),
+        r#"source:
+  name: frontend
+  docs_url: https://example.com/frontend
+  version: custom
+  content_hash: sha256:test
+  resolved_at: 2026-05-20T00:00:00Z
+  registry: manual
+rules:
+  - id: frontend.no-inline-handlers
+    severity: should
+    confidence: high
+    category: convention
+    description: Inline event handlers SHOULD be avoided.
+    source_url: https://example.com/frontend
+    approved: true
+    status: approved
+    signals:
+      - id: inline-handler
+        strategy: pattern
+        description: HTML attribute starts an inline event handler
+        weight: required
+        match: 'onclick\s*='
+    golden_examples:
+      - code: "<button>Click</button>"
+        verdict: pass
+        reason: No inline handler
+      - code: "<button onclick=\"alert(1)\">Click</button>"
+        verdict: fail
+        reason: Uses inline handler
+"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &[
+            "--json",
+            "scan",
+            "src",
+            "--lang",
+            "html",
+            "--no-fail",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "violations_found", "{result}");
+    assert_eq!(result["violations_count"], 1);
+    assert_eq!(result["violations"][0]["language"], "html");
+    assert_eq!(
+        result["violations"][0]["rule_id"],
+        "frontend.no-inline-handlers"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_scan_executes_command_validator() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_command_validator_scan_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::create_dir_all(tmp.join("scripts")).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone/rules/html")).unwrap();
+    std::fs::write(
+        tmp.join("src/index.html"),
+        "<button onclick=\"alert('x')\">Click</button>\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("scripts/check-inline-handlers.sh"),
+        "#!/bin/sh\ncat >/dev/null\nprintf '{\"violations\":[{\"line\":1,\"column\":9,\"message\":\"Command validator detected inline handler\",\"match\":\"onclick=\"}]}'\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(tmp.join("scripts/check-inline-handlers.sh"))
+            .unwrap()
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(tmp.join("scripts/check-inline-handlers.sh"), perms).unwrap();
+    }
+    std::fs::write(
+        tmp.join("whetstone/rules/html/frontend.yaml"),
+        r#"source:
+  name: frontend
+  docs_url: https://example.com/frontend
+  version: custom
+  content_hash: sha256:test
+  resolved_at: 2026-05-20T00:00:00Z
+  registry: manual
+rules:
+  - id: frontend.inline-handler-command
+    severity: should
+    confidence: high
+    category: convention
+    description: Inline event handlers SHOULD be avoided.
+    source_url: https://example.com/frontend
+    approved: true
+    status: approved
+    validators:
+      - adapter: command
+        rule: custom.inline-handlers
+        config:
+          path: scripts/check-inline-handlers.sh
+    golden_examples:
+      - code: "<button>Click</button>"
+        verdict: pass
+        reason: No inline handler
+      - code: "<button onclick=\"alert(1)\">Click</button>"
+        verdict: fail
+        reason: Uses inline handler
+"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &[
+            "--json",
+            "scan",
+            "src",
+            "--lang",
+            "html",
+            "--no-fail",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "violations_found", "{result}");
+    assert_eq!(result["violations_count"], 1);
+    assert_eq!(result["violations"][0]["validator_adapter"], "command");
+    assert_eq!(
+        result["violations"][0]["validator_rule"],
+        "custom.inline-handlers"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_scan_command_validator_invalid_json_reports_config_issue() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_bad_command_validator_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::create_dir_all(tmp.join("scripts")).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone/rules/html")).unwrap();
+    std::fs::write(tmp.join("src/index.html"), "<button>Click</button>\n").unwrap();
+    std::fs::write(
+        tmp.join("scripts/bad-validator.sh"),
+        "#!/bin/sh\ncat >/dev/null\nprintf 'not-json'\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(tmp.join("scripts/bad-validator.sh"))
+            .unwrap()
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(tmp.join("scripts/bad-validator.sh"), perms).unwrap();
+    }
+    std::fs::write(
+        tmp.join("whetstone/rules/html/frontend.yaml"),
+        r#"source:
+  name: frontend
+  docs_url: https://example.com/frontend
+  version: custom
+  content_hash: sha256:test
+  resolved_at: 2026-05-20T00:00:00Z
+  registry: manual
+rules:
+  - id: frontend.bad-command-validator
+    severity: should
+    confidence: high
+    category: convention
+    description: Custom validator should emit JSON.
+    source_url: https://example.com/frontend
+    approved: true
+    status: approved
+    validators:
+      - adapter: command
+        rule: custom.bad-validator
+        config:
+          path: scripts/bad-validator.sh
+    golden_examples:
+      - code: "<button>Click</button>"
+        verdict: pass
+        reason: No issue
+"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &[
+            "--json",
+            "scan",
+            "src",
+            "--lang",
+            "html",
+            "--no-fail",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "config_issues_found", "{result}");
+    assert!(result["config_issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|issue| issue["validator_rule"] == "custom.bad-validator"));
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn test_scan_command_validator_requires_allow_shell_for_shell_commands() {
+    let tmp = std::env::temp_dir().join(format!(
+        "whetstone_shell_command_validator_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone/rules/html")).unwrap();
+    std::fs::write(tmp.join("src/index.html"), "<button>Click</button>\n").unwrap();
+    std::fs::write(
+        tmp.join("whetstone/rules/html/frontend.yaml"),
+        r#"source:
+  name: frontend
+  docs_url: https://example.com/frontend
+  version: custom
+  content_hash: sha256:test
+  resolved_at: 2026-05-20T00:00:00Z
+  registry: manual
+rules:
+  - id: frontend.shell-command-validator
+    severity: should
+    confidence: high
+    category: convention
+    description: Shell commands require explicit allow_shell.
+    source_url: https://example.com/frontend
+    approved: true
+    status: approved
+    validators:
+      - adapter: command
+        rule: custom.shell-validator
+        config:
+          command: printf bad
+    golden_examples:
+      - code: "<button>Click</button>"
+        verdict: pass
+        reason: No issue
+"#,
+    )
+    .unwrap();
+
+    let (stdout, _stderr, _ok) = run_whetstone(
+        &[
+            "--json",
+            "scan",
+            "src",
+            "--lang",
+            "html",
+            "--no-fail",
+            "--project-dir",
+            tmp.to_str().unwrap(),
+        ],
+        tmp.to_str().unwrap(),
+    );
+    let result = parse_json(&stdout);
+    assert_eq!(result["status"], "config_issues_found", "{result}");
+    assert!(result["config_issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|issue| issue["issue"]
+            .as_str()
+            .unwrap_or("")
+            .contains("allow_shell")));
+
+    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]

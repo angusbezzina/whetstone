@@ -255,7 +255,7 @@ Shipped commands (canonical surface first):
 | `validate` | Validate the rule schema and rule fixtures | `--project-dir` |
 | `update` | Update the `whetstone` binary to the latest release | `--check`, `--force` |
 
-Project-scoped commands accept `--project-dir` (default: `.`), and all commands support `--json` (auto-enabled when piped). Human-readable progress goes to stderr. JSON responses include a `next_command` field suggesting what to run next.
+Project-scoped commands accept `--project-dir` (default: `.`), and all commands support `--json` (auto-enabled when piped). Human-readable progress goes to stderr. Many JSON responses include a `next_command` field suggesting what to run next.
 
 For existing users migrating older scripts and habits to the canonical surface,
 see [`references/cli-vnext-migration.md`](references/cli-vnext-migration.md).
@@ -500,14 +500,31 @@ sources:
 
 Custom sources appear in `wh init`, `wh sources list`, and the extraction worklist. Each rule you extract from them keeps source provenance for filtering and review.
 
+You can also point Whetstone at a local markdown second brain / wiki vault:
+
+```yaml
+sources:
+  vaults:
+    - id: team-brain
+      path: docs/brain
+      include: ["**/*.md"]
+      source_kind: second_brain
+      authority: reviewed
+```
+
+Vault pages can carry frontmatter with authority, language, dependency, and
+upstream-link metadata. Whetstone indexes the vault into
+`whetstone/.state/knowledge-graph.json`, preserves page provenance on derived
+rules, and surfaces related pages in extraction context.
+
 **What happens if I don't install Whetstone?**
 Nothing breaks. The generated tests, lint configs, and agent context files are standard files in your repo. They run with your existing CI, and the generated agent context lives under `whetstone/context/` (or `whetstone/.personal/context/` for personal-only output).
 
 **How do I update rules when dependencies change?**
 Run `wh status` or `wh ci` to see which dependencies have drifted. Then run `wh reinit` (or `wh init --changed-only`) to re-resolve only what changed, and re-extract rules against the new content. Use `wh reinit --check` in CI to fail a build when drift is detected.
 
-**What's the `next_command` field in every output?**
-Every command suggests what to do next. Agent clients can use this to chain canonical commands automatically without rereading documentation.
+**What's the `next_command` field in some outputs?**
+Many workflow-driving commands suggest what to do next. Agent clients can use this to chain canonical commands automatically without rereading documentation.
 
 ## Self-Hosting (Dogfooding)
 
@@ -534,10 +551,12 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - 4-tier content resolution: llms.txt → registry README → HTML docs → GitHub changelog
 - Changelog fetching with 18-month recency filtering
 - Custom source URLs in `whetstone.yaml` (blogs, team guides, any public URL)
+- Local second-brain / markdown vault ingestion with authority metadata and graph indexing
 - Agent-mediated rule extraction via `wh extract` + bundle submission (`wh extract submit`)
 - Bulk approval via `wh rules approve --all [--dep] [--confidence]`
 - Tree-sitter-backed `wh scan` across Python, TypeScript, and Rust, including AST-query and AST-scoped regex enforcement
-- Rule listing and per-rule context via `wh review` / `wh review show`
+- Regex-backed `wh scan` for HTML/CSS/JavaScript profiles and command-validator execution for custom checks
+- Rule listing and per-rule context via `wh review` / `wh rules show`
 - Test generation with real regex checks (via `match` field on signals) for Python, TypeScript, and Rust
 - Lint overlay generation (ruff, biome, clippy) via `wh lint`
 - One-shot generation chain via `wh actions all` (context + tests + lint)
@@ -553,7 +572,6 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 - `wh promote` / `wh layers` — team and built-in layers were removed.
 - `wh propose` / `wh apply` / `wh review queue|diff` — replaced by extract + approve.
 - `wh bench` / `wh eval` / `wh patterns` — benchmark corpus, AI eval, and pattern mining are parked.
-- `wh config show|validate` — config still loads; the inspector UI is deferred.
 - Built-in rules and team `extends:`.
 
 **Planned:**

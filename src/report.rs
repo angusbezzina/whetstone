@@ -1,7 +1,7 @@
 //! Report generation — integrated human-readable project summary.
 //!
 //! Composes `wh status` (adherence + rule-system scores), the top-10
-//! `wh check` violations, and the last refresh-diff drift summary into a
+//! `wh scan` violations, and the last refresh-diff drift summary into a
 //! single one-page markdown report. Suitable for PR comments, issue
 //! bodies, or a quick "what's the state of my repo?" read.
 //!
@@ -157,14 +157,20 @@ pub fn to_markdown(data: &Value) -> String {
             TOP_VIOLATIONS.min(total as usize)
         ));
         if let Some(top) = vi.and_then(|v| v.get("top")).and_then(|t| t.as_array()) {
-            out.push_str("| Severity | Rule | File | Line |\n");
-            out.push_str("|---|---|---|---|\n");
+            out.push_str("| Severity | Rule | File | Line | Source |\n");
+            out.push_str("|---|---|---|---|---|\n");
             for item in top {
                 let sev = item.get("severity").and_then(|s| s.as_str()).unwrap_or("");
                 let rule = item.get("rule_id").and_then(|s| s.as_str()).unwrap_or("");
                 let file = item.get("file").and_then(|s| s.as_str()).unwrap_or("");
                 let line = item.get("line").and_then(|s| s.as_u64()).unwrap_or(0);
-                out.push_str(&format!("| {sev} | `{rule}` | `{file}` | {line} |\n"));
+                let source = item
+                    .get("source_url")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("—");
+                out.push_str(&format!(
+                    "| {sev} | `{rule}` | `{file}` | {line} | {source} |\n"
+                ));
             }
             out.push('\n');
         }

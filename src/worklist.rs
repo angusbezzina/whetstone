@@ -78,7 +78,6 @@ pub fn build_from_doctor(
         .get("extraction_subsets")
         .cloned()
         .unwrap_or(Value::Null);
-    let ready_names = name_set(&subsets, "ready_now");
     let failed_entries = name_reason_map(&subsets, "failed");
     let pending_entries = name_reason_map(&subsets, "pending");
 
@@ -106,7 +105,7 @@ pub fn build_from_doctor(
             .map(String::from)
             .unwrap_or_else(|| infer_language(source));
 
-        if !config.extraction_allows(&name) {
+        if !source_matches_extraction(&config, &name, source) {
             entries.push(build_entry(
                 &name,
                 &language,
@@ -118,11 +117,16 @@ pub fn build_from_doctor(
                 &config,
                 0.0,
             ));
-            seen.insert(format!("{language}:{name}"));
+            seen.insert(source_identity(source, &language, &name));
             continue;
         }
 
-        let priority = if ready_names.contains(&name) {
+        let priority = if source
+            .get("freshness")
+            .and_then(|value| value.get("confidence"))
+            .and_then(|value| value.as_str())
+            == Some("high")
+        {
             Priority::ReadyNow
         } else {
             Priority::ResolvedLow
@@ -152,7 +156,7 @@ pub fn build_from_doctor(
             &config,
             score,
         ));
-        seen.insert(format!("{language}:{name}"));
+        seen.insert(source_identity(source, &language, &name));
     }
 
     // Pending entries: dep detected but source not resolved this run.
@@ -244,13 +248,24 @@ pub fn filter(worklist: &[Value], dep: Option<&str>, lang: Option<&str>) -> Vec<
         .filter(|entry| {
             if let Some(d) = dep {
                 let n = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                if !n.eq_ignore_ascii_case(d) {
+                let dep_names_match = entry
+                    .get("dep_names")
+                    .and_then(|v| v.as_array())
+                    .map(|items| {
+                        items.iter().any(|item| {
+                            item.as_str()
+                                .map(|value| value.eq_ignore_ascii_case(d))
+                                .unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(false);
+                if !n.eq_ignore_ascii_case(d) && !dep_names_match {
                     return false;
                 }
             }
             if let Some(l) = lang {
                 let el = entry.get("language").and_then(|v| v.as_str()).unwrap_or("");
-                if !el.eq_ignore_ascii_case(l) {
+                if !crate::types::language_matches_language(el, l) {
                     return false;
                 }
             }
@@ -312,6 +327,29 @@ fn build_entry(
         }
         if let Some(v) = src.get("content_hash") {
             entry["content_hash"] = v.clone();
+        }
+        if let Some(v) = src.get("source_kind") {
+            entry["source_kind"] = v.clone();
+        }
+        if let Some(v) = src.get("source_origin") {
+            entry["source_origin"] = v.clone();
+        }
+        if let Some(v) = src.get("source_ref") {
+            entry["source_ref"] = v.clone();
+        }
+        for key in [
+            "authority",
+            "authority_score",
+            "dep_names",
+            "upstream_urls",
+            "related_pages",
+            "tags",
+            "page_id",
+            "vault_id",
+        ] {
+            if let Some(v) = src.get(key) {
+                entry[key] = v.clone();
+            }
         }
         if let Some(v) = src.get("registry") {
             entry["registry"] = v.clone();
@@ -404,6 +442,8 @@ fn score_entry(
         .and_then(|v| v.as_str())
         .unwrap_or("");
     score += match source_type {
+        "second_brain_page" => 12.0,
+        "local_file" => 20.0,
         "llms_full_txt" => 25.0,
         "llms_txt" => 15.0,
         "readme" => 10.0,
@@ -435,6 +475,21 @@ fn score_entry(
         }
     }
 
+    if let Some(authority_score) = source.get("authority_score").and_then(|v| v.as_f64()) {
+        score += authority_score * 15.0;
+    }
+    if source
+        .get("upstream_urls")
+        .and_then(|v| v.as_array())
+        .map(|arr| !arr.is_empty())
+        .unwrap_or(false)
+    {
+        score += 5.0;
+    }
+    if let Some(related_pages) = source.get("related_pages").and_then(|v| v.as_array()) {
+        score += (related_pages.len().min(5) as f64) * 1.5;
+    }
+
     score
 }
 
@@ -462,7 +517,7 @@ fn next_step_hint(priority: Priority, remaining_quota: u32, source: Option<&Valu
             "Resolve with `wh init --resume` or add a stronger trusted source via `wh sources add`".into()
         }
         Priority::Failed => {
-            "Add a manual entry under `sources.custom` in whetstone.yaml and re-run".into()
+            "Add a trusted source under `sources.custom` or `sources.packs` in whetstone/whetstone.yaml and re-run".into()
         }
         Priority::Skipped => {
             "Dependency filtered out by config — adjust extraction.include / exclude if this was unintended".into()
@@ -489,7 +544,20 @@ fn workflow_stage(priority: Priority) -> &'static str {
 fn source_confidence(source: &Value) -> Option<&'static str> {
     let source_type = source.get("source_type").and_then(|v| v.as_str())?;
     Some(match source_type {
-        "llms_txt" | "llms_full_txt" => "high",
+        "llms_txt" | "llms_full_txt" | "local_file" => "high",
+        "second_brain_page" => match source.get("authority").and_then(|v| v.as_str()) {
+            Some("canonical")
+                if source
+                    .get("upstream_urls")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| !arr.is_empty())
+                    .unwrap_or(false) =>
+            {
+                "high"
+            }
+            Some("canonical" | "reviewed") => "medium",
+            _ => "low",
+        },
         "docs_url" | "readme" => "medium",
         _ => "low",
     })
@@ -516,18 +584,6 @@ fn fetch_health(source: &Value) -> &'static str {
     }
 }
 
-fn name_set(subsets: &Value, key: &str) -> BTreeSet<String> {
-    subsets
-        .get(key)
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|e| e.get("name").and_then(|v| v.as_str()).map(String::from))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 fn name_reason_map(subsets: &Value, key: &str) -> Vec<(String, String)> {
     subsets
         .get(key)
@@ -549,16 +605,39 @@ fn name_reason_map(subsets: &Value, key: &str) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
+fn source_identity(source: &Value, language: &str, name: &str) -> String {
+    source
+        .get("source_ref")
+        .and_then(|v| v.get("id"))
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| format!("{language}:{name}"))
+}
+
+fn source_matches_extraction(config: &WhetstoneConfig, name: &str, source: &Value) -> bool {
+    let dep_names = source
+        .get("dep_names")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if dep_names.is_empty() {
+        return config.extraction_allows(name);
+    }
+    dep_names
+        .iter()
+        .any(|dep_name| config.extraction_allows(dep_name))
+}
+
 fn infer_language(source: &Value) -> String {
     source
         .get("registry")
         .and_then(|v| v.as_str())
-        .map(|r| match r {
-            "pypi" => "python",
-            "npm" => "typescript",
-            "crates_io" => "rust",
-            _ => "generic",
-        })
+        .and_then(crate::types::language_for_registry)
         .unwrap_or("generic")
         .to_string()
 }

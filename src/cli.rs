@@ -324,6 +324,18 @@ enum RulesAction {
         #[arg(long)]
         test_selector: Option<String>,
 
+        /// Validator adapter name for adapter-backed enforcement (e.g. command, lint_rule, linked_test)
+        #[arg(long)]
+        validator_adapter: Option<String>,
+
+        /// Validator rule / policy identifier for adapter-backed enforcement
+        #[arg(long)]
+        validator_rule: Option<String>,
+
+        /// Validator config option(s) as key=value. Repeat for multiple options.
+        #[arg(long = "validator-config")]
+        validator_configs: Vec<String>,
+
         /// Explicitly create an advisory rule with no concrete enforcement binding
         #[arg(long)]
         advisory: bool,
@@ -1780,6 +1792,9 @@ pub fn run() -> i32 {
                 test_runner,
                 test_path,
                 test_selector,
+                validator_adapter,
+                validator_rule,
+                validator_configs,
                 advisory,
                 severity,
                 confidence,
@@ -1801,6 +1816,9 @@ pub fn run() -> i32 {
                     test_runner,
                     test_path,
                     test_selector,
+                    validator_adapter,
+                    validator_rule,
+                    validator_configs,
                     advisory,
                 }) {
                     Ok(enforcement) => enforcement,
@@ -2879,6 +2897,9 @@ struct RuleEnforcementInput {
     test_runner: Option<String>,
     test_path: Option<String>,
     test_selector: Option<String>,
+    validator_adapter: Option<String>,
+    validator_rule: Option<String>,
+    validator_configs: Vec<String>,
     advisory: bool,
 }
 
@@ -2894,6 +2915,9 @@ fn build_rule_enforcement(
         test_runner,
         test_path,
         test_selector,
+        validator_adapter,
+        validator_rule,
+        validator_configs,
         advisory,
     } = input;
     let mut chosen = Vec::new();
@@ -2909,13 +2933,16 @@ fn build_rule_enforcement(
     if test_runner.is_some() || test_path.is_some() || test_selector.is_some() {
         chosen.push("test");
     }
+    if validator_adapter.is_some() || validator_rule.is_some() || !validator_configs.is_empty() {
+        chosen.push("validator");
+    }
     if advisory {
         chosen.push("advisory");
     }
 
     if chosen.len() != 1 {
         return Err(anyhow::anyhow!(
-            "choose exactly one enforcement mode: --match, --lint-tool/--lint-code, --formatter-tool/--formatter-option, --test-runner/--test-path, or --advisory"
+            "choose exactly one enforcement mode: --match, --lint-tool/--lint-code, --formatter-tool/--formatter-option, --test-runner/--test-path, --validator-adapter/--validator-rule, or --advisory"
         ));
     }
 
@@ -2945,22 +2972,47 @@ fn build_rule_enforcement(
         });
     }
 
+    if validator_adapter.is_some() || validator_rule.is_some() || !validator_configs.is_empty() {
+        let adapter =
+            validator_adapter.ok_or_else(|| anyhow::anyhow!("--validator-adapter is required"))?;
+        let rule = validator_rule.ok_or_else(|| anyhow::anyhow!("--validator-rule is required"))?;
+        let config = parse_validator_options(&validator_configs)?;
+        return Ok(rule_authoring::EnforcementMode::Validator {
+            adapter,
+            rule,
+            config,
+        });
+    }
+
     Ok(rule_authoring::EnforcementMode::Advisory)
 }
 
 fn parse_formatter_options(
     entries: &[String],
 ) -> anyhow::Result<BTreeMap<String, serde_json::Value>> {
+    parse_key_value_options(entries, "formatter options")
+}
+
+fn parse_validator_options(
+    entries: &[String],
+) -> anyhow::Result<BTreeMap<String, serde_json::Value>> {
+    parse_key_value_options(entries, "validator config")
+}
+
+fn parse_key_value_options(
+    entries: &[String],
+    label: &str,
+) -> anyhow::Result<BTreeMap<String, serde_json::Value>> {
     let mut options = BTreeMap::new();
     for entry in entries {
-        let (key, raw) = entry.split_once('=').ok_or_else(|| {
-            anyhow::anyhow!("formatter options must use key=value syntax (got `{entry}`)")
-        })?;
+        let (key, raw) = entry
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("{label} must use key=value syntax (got `{entry}`)"))?;
         let key = key.trim();
         let raw = raw.trim();
         if key.is_empty() || raw.is_empty() {
             return Err(anyhow::anyhow!(
-                "formatter options must use non-empty key=value syntax (got `{entry}`)"
+                "{label} must use non-empty key=value syntax (got `{entry}`)"
             ));
         }
         options.insert(key.to_string(), formatter_option_value(raw));
@@ -2995,7 +3047,7 @@ fn formatter_option_value(raw: &str) -> serde_json::Value {
 mod tests {
     use super::{
         build_rule_enforcement, formatter_option_value, parse_formatter_options, parse_since_days,
-        worklist_sort_key, RuleEnforcementInput,
+        parse_validator_options, worklist_sort_key, RuleEnforcementInput,
     };
     use serde_json::json;
 
@@ -3053,6 +3105,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_validator_options_requires_key_value_pairs() {
+        assert!(parse_validator_options(&["command=python3 scripts/check.py".into()]).is_ok());
+        assert!(parse_validator_options(&["broken".into()]).is_err());
+    }
+
+    #[test]
     fn rule_enforcement_builder_rejects_multiple_modes() {
         let err = build_rule_enforcement(RuleEnforcementInput {
             match_regex: Some("foo".into()),
@@ -3063,11 +3121,48 @@ mod tests {
             test_runner: None,
             test_path: None,
             test_selector: None,
+            validator_adapter: None,
+            validator_rule: None,
+            validator_configs: Vec::new(),
             advisory: false,
         })
         .unwrap_err();
         assert!(err
             .to_string()
             .contains("choose exactly one enforcement mode"));
+    }
+
+    #[test]
+    fn rule_enforcement_builder_accepts_validator_mode() {
+        let enforcement = build_rule_enforcement(RuleEnforcementInput {
+            match_regex: None,
+            lint_tool: None,
+            lint_code: None,
+            formatter_tool: None,
+            formatter_options: Vec::new(),
+            test_runner: None,
+            test_path: None,
+            test_selector: None,
+            validator_adapter: Some("command".into()),
+            validator_rule: Some("custom.inline-handlers".into()),
+            validator_configs: vec!["path=scripts/check-inline-handlers.py".into()],
+            advisory: false,
+        })
+        .unwrap();
+        match enforcement {
+            crate::rule_authoring::EnforcementMode::Validator {
+                adapter,
+                rule,
+                config,
+            } => {
+                assert_eq!(adapter, "command");
+                assert_eq!(rule, "custom.inline-handlers");
+                assert_eq!(
+                    config.get("path"),
+                    Some(&json!("scripts/check-inline-handlers.py"))
+                );
+            }
+            _ => panic!("expected validator enforcement mode"),
+        }
     }
 }

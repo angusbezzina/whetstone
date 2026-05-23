@@ -39,6 +39,12 @@ const VALID_FORMATTER_TOOLS: &[&str] = &["ruff", "biome", "rustfmt"];
 /// Supported explicit test runners for test-backed custom rules.
 const VALID_TEST_RUNNERS: &[&str] = &["pytest", "vitest", "cargo"];
 
+/// Supported validator modes for adapter-backed rules.
+const VALID_VALIDATOR_MODES: &[&str] = &["enforce", "monitor"];
+
+/// Supported validator adapters.
+const VALID_VALIDATOR_ADAPTERS: &[&str] = &["command", "lint_rule", "linked_test"];
+
 // --- Serde deserialization types ---
 
 #[allow(dead_code)]
@@ -104,6 +110,10 @@ pub struct Rule {
     #[serde(default)]
     pub tests: Vec<TestBinding>,
     #[serde(default)]
+    pub validators: Vec<ValidatorBinding>,
+    #[serde(default)]
+    pub provenance: Option<RuleProvenance>,
+    #[serde(default)]
     pub golden_examples: Vec<GoldenExample>,
     #[serde(default)]
     pub languages: Vec<String>,
@@ -135,6 +145,34 @@ pub struct TestBinding {
     pub selector: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ValidatorBinding {
+    #[serde(default)]
+    pub adapter: String,
+    #[serde(default)]
+    pub rule: String,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub config: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RuleProvenance {
+    #[serde(default)]
+    pub source_page_id: Option<String>,
+    #[serde(default)]
+    pub source_page_path: Option<String>,
+    #[serde(default)]
+    pub source_authority: Option<String>,
+    #[serde(default)]
+    pub source_line_start: Option<u32>,
+    #[serde(default)]
+    pub source_line_end: Option<u32>,
+    #[serde(default)]
+    pub upstream_urls: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Signal {
     #[serde(default)]
@@ -151,7 +189,7 @@ pub struct Signal {
     pub match_pattern: Option<String>,
     /// Raw tree-sitter query (S-expression) for `ast` signals. Every node
     /// captured by `@match` is reported as a violation. When present, the
-    /// `wh check` runner uses the project's tree-sitter grammar for the
+    /// `wh scan` runner uses the project's tree-sitter grammar for the
     /// rule's language; when absent, an `ast` signal falls back to regex
     /// scanning of the file text.
     #[serde(default)]
@@ -274,20 +312,25 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
             .iter()
             .any(|s| matches!(s.strategy.as_str(), "ast" | "pattern" | "lint_proxy"))
             || rule.formatter.is_some()
-            || !rule.tests.is_empty();
+            || !rule.tests.is_empty()
+            || !rule.validators.is_empty();
         if !has_enforcement_surface {
             warnings.push(ValidationWarning {
                 file: file_path.to_string(),
                 message: format!(
-                    "{rule_ctx}: no enforceable signal or binding (expected ast, pattern, lint_proxy, formatter, or tests)"
+                    "{rule_ctx}: no enforceable signal or binding (expected ast, pattern, lint_proxy, formatter, tests, or validators)"
                 ),
             });
         }
 
-        if rule.signals.is_empty() && rule.formatter.is_none() && rule.tests.is_empty() {
+        if rule.signals.is_empty()
+            && rule.formatter.is_none()
+            && rule.tests.is_empty()
+            && rule.validators.is_empty()
+        {
             warnings.push(ValidationWarning {
                 file: file_path.to_string(),
-                message: format!("{rule_ctx}: no signals, formatter, or tests defined"),
+                message: format!("{rule_ctx}: no signals, formatter, tests, or validators defined"),
             });
         }
 
@@ -391,6 +434,134 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
                     file: file_path.to_string(),
                     message: format!("{rule_ctx}: tests[].path is empty"),
                 });
+            }
+        }
+
+        for validator in &rule.validators {
+            if validator.adapter.trim().is_empty() {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!("{rule_ctx}: validators[].adapter is empty"),
+                });
+            } else if !VALID_VALIDATOR_ADAPTERS.contains(&validator.adapter.as_str()) {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!(
+                        "{rule_ctx}: validators[].adapter `{}` is unsupported",
+                        validator.adapter
+                    ),
+                });
+            }
+            if validator.rule.trim().is_empty() {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!("{rule_ctx}: validators[].rule is empty"),
+                });
+            }
+            if let Some(mode) = &validator.mode {
+                if !VALID_VALIDATOR_MODES.contains(&mode.as_str()) {
+                    warnings.push(ValidationWarning {
+                        file: file_path.to_string(),
+                        message: format!("{rule_ctx}: validators[].mode `{mode}` is unsupported"),
+                    });
+                }
+            }
+            match validator.adapter.as_str() {
+                "command" => {
+                    let has_path = validator
+                        .config
+                        .get("path")
+                        .and_then(|v| v.as_str())
+                        .is_some();
+                    let has_command = validator
+                        .config
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .is_some();
+                    if !has_path && !has_command {
+                        warnings.push(ValidationWarning {
+                            file: file_path.to_string(),
+                            message: format!(
+                                "{rule_ctx}: command validator requires config.path or config.command"
+                            ),
+                        });
+                    }
+                    if let Some(path) = validator.config.get("path").and_then(|v| v.as_str()) {
+                        if !is_safe_repo_relative(path) {
+                            warnings.push(ValidationWarning {
+                                file: file_path.to_string(),
+                                message: format!(
+                                    "{rule_ctx}: command validator path must stay within the repo"
+                                ),
+                            });
+                        }
+                    }
+                    if has_command
+                        && validator
+                            .config
+                            .get("allow_shell")
+                            .and_then(|v| v.as_bool())
+                            != Some(true)
+                    {
+                        warnings.push(ValidationWarning {
+                            file: file_path.to_string(),
+                            message: format!(
+                                "{rule_ctx}: command validator using config.command requires config.allow_shell=true"
+                            ),
+                        });
+                    }
+                }
+                "lint_rule" => {
+                    if validator
+                        .config
+                        .get("tool")
+                        .and_then(|v| v.as_str())
+                        .is_none()
+                        || validator
+                            .config
+                            .get("code")
+                            .and_then(|v| v.as_str())
+                            .is_none()
+                    {
+                        warnings.push(ValidationWarning {
+                            file: file_path.to_string(),
+                            message: format!(
+                                "{rule_ctx}: lint_rule validator requires config.tool and config.code"
+                            ),
+                        });
+                    }
+                }
+                "linked_test" => {
+                    if validator
+                        .config
+                        .get("runner")
+                        .and_then(|v| v.as_str())
+                        .is_none()
+                        || validator
+                            .config
+                            .get("path")
+                            .and_then(|v| v.as_str())
+                            .is_none()
+                    {
+                        warnings.push(ValidationWarning {
+                            file: file_path.to_string(),
+                            message: format!(
+                                "{rule_ctx}: linked_test validator requires config.runner and config.path"
+                            ),
+                        });
+                    }
+                    if let Some(path) = validator.config.get("path").and_then(|v| v.as_str()) {
+                        if !is_safe_repo_relative(path) {
+                            warnings.push(ValidationWarning {
+                                file: file_path.to_string(),
+                                message: format!(
+                                    "{rule_ctx}: linked_test validator path must stay within the repo"
+                                ),
+                            });
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -684,12 +855,22 @@ fn infer_language_from_path(file_path: &Path, rules_dir: &Path) -> Option<String
         let components: Vec<_> = relative.components().collect();
         if components.len() >= 2 {
             let dir = components[0].as_os_str().to_string_lossy().to_string();
-            if matches!(dir.as_str(), "python" | "typescript" | "rust" | "shared") {
+            if crate::types::canonical_language(&dir).is_some()
+                || dir == crate::types::SHARED_LANGUAGE_DIR
+            {
                 return Some(dir);
             }
         }
     }
     None
+}
+
+fn is_safe_repo_relative(path: &str) -> bool {
+    let path = Path::new(path);
+    !path.is_absolute()
+        && !path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
 }
 
 /// A loaded rule file with metadata.
@@ -711,6 +892,8 @@ pub fn rule_files_to_json(loaded: &[LoadedRuleFile]) -> Vec<Value> {
                 .map(|r| {
                     let signal_strategies: Vec<String> =
                         r.signals.iter().map(|s| s.strategy.clone()).collect();
+                    let validator_adapters: Vec<String> =
+                        r.validators.iter().map(|v| v.adapter.clone()).collect();
                     serde_json::json!({
                         "id": r.id,
                         "severity": r.severity,
@@ -720,6 +903,15 @@ pub fn rule_files_to_json(loaded: &[LoadedRuleFile]) -> Vec<Value> {
                         "source_url": r.source_url,
                         "approved": r.approved,
                         "signals": signal_strategies,
+                        "validators": validator_adapters,
+                        "provenance": r.provenance.as_ref().map(|provenance| serde_json::json!({
+                            "source_page_id": provenance.source_page_id,
+                            "source_page_path": provenance.source_page_path,
+                            "source_authority": provenance.source_authority,
+                            "source_line_start": provenance.source_line_start,
+                            "source_line_end": provenance.source_line_end,
+                            "upstream_urls": provenance.upstream_urls,
+                        })),
                         "status": r.status,
                     })
                 })
@@ -801,6 +993,27 @@ pub fn load_approved_rules(
                             selector: t.selector.clone(),
                         })
                         .collect(),
+                    validators: rule
+                        .validators
+                        .iter()
+                        .map(|validator| ApprovedValidatorBinding {
+                            adapter: validator.adapter.clone(),
+                            rule: validator.rule.clone(),
+                            mode: validator.mode.clone(),
+                            config: validator.config.clone(),
+                        })
+                        .collect(),
+                    provenance: rule
+                        .provenance
+                        .as_ref()
+                        .map(|provenance| ApprovedRuleProvenance {
+                            source_page_id: provenance.source_page_id.clone(),
+                            source_page_path: provenance.source_page_path.clone(),
+                            source_authority: provenance.source_authority.clone(),
+                            source_line_start: provenance.source_line_start,
+                            source_line_end: provenance.source_line_end,
+                            upstream_urls: provenance.upstream_urls.clone(),
+                        }),
                     golden_examples: rule
                         .golden_examples
                         .iter()
@@ -880,6 +1093,27 @@ pub fn approved_from_loaded(
                             selector: t.selector.clone(),
                         })
                         .collect(),
+                    validators: rule
+                        .validators
+                        .iter()
+                        .map(|validator| ApprovedValidatorBinding {
+                            adapter: validator.adapter.clone(),
+                            rule: validator.rule.clone(),
+                            mode: validator.mode.clone(),
+                            config: validator.config.clone(),
+                        })
+                        .collect(),
+                    provenance: rule
+                        .provenance
+                        .as_ref()
+                        .map(|provenance| ApprovedRuleProvenance {
+                            source_page_id: provenance.source_page_id.clone(),
+                            source_page_path: provenance.source_page_path.clone(),
+                            source_authority: provenance.source_authority.clone(),
+                            source_line_start: provenance.source_line_start,
+                            source_line_end: provenance.source_line_end,
+                            upstream_urls: provenance.upstream_urls.clone(),
+                        }),
                     golden_examples: rule
                         .golden_examples
                         .iter()
@@ -906,7 +1140,7 @@ fn resolved_rule_languages(rule: &Rule, inferred_language: Option<&str>) -> Vec<
     }
 
     match inferred_language {
-        Some("shared") | Some("all") => vec!["python".into(), "rust".into(), "typescript".into()],
+        Some("shared") | Some("all") => crate::types::all_supported_languages(),
         Some(language) => vec![language.to_string()],
         None => Vec::new(),
     }
@@ -916,7 +1150,7 @@ fn target_languages_for_filter(languages: &[String], lang_filter: Option<&str>) 
     match lang_filter {
         Some(filter) => languages
             .iter()
-            .filter(|language| language.as_str() == filter)
+            .filter(|language| crate::types::language_matches_language(language, filter))
             .cloned()
             .collect(),
         None => languages.to_vec(),
@@ -938,6 +1172,8 @@ pub struct ApprovedRule {
     pub signals: Vec<ApprovedSignal>,
     pub formatter: Option<ApprovedFormatterDirective>,
     pub tests: Vec<ApprovedTestBinding>,
+    pub validators: Vec<ApprovedValidatorBinding>,
+    pub provenance: Option<ApprovedRuleProvenance>,
     pub golden_examples: Vec<ApprovedExample>,
     pub deterministic_pass_threshold: Option<u32>,
     pub deterministic_fail_threshold: Option<u32>,
@@ -965,6 +1201,26 @@ pub struct ApprovedTestBinding {
     pub selector: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ApprovedValidatorBinding {
+    pub adapter: String,
+    pub rule: String,
+    pub mode: Option<String>,
+    pub config: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ApprovedRuleProvenance {
+    pub source_page_id: Option<String>,
+    pub source_page_path: Option<String>,
+    pub source_authority: Option<String>,
+    pub source_line_start: Option<u32>,
+    pub source_line_end: Option<u32>,
+    pub upstream_urls: Vec<String>,
+}
+
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct ApprovedSignal {
@@ -988,24 +1244,15 @@ pub struct ApprovedExample {
 }
 
 pub fn lint_tool_matches_language(tool: &str, language: &str) -> bool {
-    matches!(
-        (tool, language),
-        ("ruff", "python") | ("biome", "typescript") | ("clippy", "rust")
-    )
+    crate::types::language_supports_lint_tool(language, tool)
 }
 
 pub fn formatter_tool_matches_language(tool: &str, language: &str) -> bool {
-    matches!(
-        (tool, language),
-        ("ruff", "python") | ("biome", "typescript") | ("rustfmt", "rust")
-    )
+    crate::types::language_supports_formatter_tool(language, tool)
 }
 
 pub fn test_runner_matches_language(runner: &str, language: &str) -> bool {
-    matches!(
-        (runner, language),
-        ("pytest", "python") | ("vitest", "typescript") | ("cargo", "rust")
-    )
+    crate::types::language_supports_test_runner(language, runner)
 }
 
 pub fn parse_legacy_lint_bindings(description: &str) -> Vec<ApprovedLintBinding> {

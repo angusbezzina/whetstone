@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::rules::{self, ApprovedRule};
+use crate::rules::{self, ApprovedRule, ApprovedValidatorBinding};
 
 pub fn verify_lint_proxies(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<Value> {
     let ruff = load_ruff_selects(project_dir);
@@ -55,6 +55,14 @@ pub fn verify_lint_proxies(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<V
                         "code": binding.code,
                         "issue": "no linter config found to verify against",
                         "fix": "add ruff.toml / biome.json, or run `wh tests` for overlays",
+                    })),
+                    Verdict::InvalidConfig(err) => issues.push(json!({
+                        "rule_id": rule.id,
+                        "signal_id": sig.id,
+                        "linter": binding.tool,
+                        "code": binding.code,
+                        "issue": format!("linter config could not be parsed: {err}"),
+                        "fix": "fix the linter config syntax before relying on lint_proxy verification",
                     })),
                     Verdict::Unsupported => {
                         // Silently skip unsupported linters (e.g. clippy until
@@ -115,6 +123,14 @@ pub fn verify_formatter_directives(project_dir: &Path, rules: &[&ApprovedRule]) 
                     "issue": "no formatter config found to verify against",
                     "fix": "run `wh actions lint` to generate the overlay config, or configure manually",
                 })),
+                Verdict::InvalidConfig(err) => issues.push(json!({
+                    "rule_id": rule.id,
+                    "tool": formatter.tool,
+                    "option": key,
+                    "expected": expected,
+                    "issue": format!("formatter config could not be parsed: {err}"),
+                    "fix": "fix the formatter config syntax before relying on formatter verification",
+                })),
                 Verdict::Unsupported => {}
             }
         }
@@ -168,11 +184,331 @@ pub fn verify_test_bindings(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<
     issues
 }
 
+pub fn verify_validator_bindings(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<Value> {
+    let ruff = load_ruff_selects(project_dir);
+    let biome = load_biome_enabled(project_dir);
+    let mut issues = Vec::new();
+
+    for rule in rules {
+        for validator in &rule.validators {
+            match validator.adapter.as_str() {
+                "lint_rule" => {
+                    let Some(tool) = validator_config_str(validator, "tool") else {
+                        issues.push(json!({
+                            "rule_id": rule.id,
+                            "adapter": validator.adapter,
+                            "validator_rule": validator.rule,
+                            "issue": "validator config is missing `tool`",
+                            "fix": "set validators[].config.tool to a supported linter name",
+                        }));
+                        continue;
+                    };
+                    let Some(code) = validator_config_str(validator, "code") else {
+                        issues.push(json!({
+                            "rule_id": rule.id,
+                            "adapter": validator.adapter,
+                            "validator_rule": validator.rule,
+                            "issue": "validator config is missing `code`",
+                            "fix": "set validators[].config.code to the linter rule code",
+                        }));
+                        continue;
+                    };
+
+                    let verdict = match tool {
+                        "ruff" => verify_ruff(&ruff, code),
+                        "biome" => verify_biome(&biome, code),
+                        _ => Verdict::Unsupported,
+                    };
+
+                    match verdict {
+                        Verdict::Verified => {}
+                        Verdict::Missing => issues.push(json!({
+                            "rule_id": rule.id,
+                            "adapter": validator.adapter,
+                            "validator_rule": validator.rule,
+                            "linter": tool,
+                            "code": code,
+                            "issue": "validator-backed linter rule is not enabled in project config",
+                            "fix": "enable the rule in project config or switch to a different validator adapter",
+                        })),
+                        Verdict::NoConfig => issues.push(json!({
+                            "rule_id": rule.id,
+                            "adapter": validator.adapter,
+                            "validator_rule": validator.rule,
+                            "linter": tool,
+                            "code": code,
+                            "issue": "no linter config found to verify validator binding against",
+                            "fix": "add the relevant linter config or use a different validator adapter",
+                        })),
+                        Verdict::InvalidConfig(err) => issues.push(json!({
+                            "rule_id": rule.id,
+                            "adapter": validator.adapter,
+                            "validator_rule": validator.rule,
+                            "linter": tool,
+                            "code": code,
+                            "issue": format!("linter config could not be parsed: {err}"),
+                            "fix": "fix the linter config syntax before relying on validator-backed lint verification",
+                        })),
+                        Verdict::Unsupported => issues.push(json!({
+                            "rule_id": rule.id,
+                            "adapter": validator.adapter,
+                            "validator_rule": validator.rule,
+                            "linter": tool,
+                            "code": code,
+                            "issue": "validator-backed linter tool is unsupported by Whetstone",
+                            "fix": "use a supported tool or the `command` adapter for custom validation",
+                        })),
+                    }
+                }
+                "linked_test" => {
+                    let Some(path) = validator_config_str(validator, "path") else {
+                        issues.push(json!({
+                            "rule_id": rule.id,
+                            "adapter": validator.adapter,
+                            "validator_rule": validator.rule,
+                            "issue": "validator config is missing `path`",
+                            "fix": "set validators[].config.path to a repo-relative test file",
+                        }));
+                        continue;
+                    };
+                    let runner = validator_config_str(validator, "runner").unwrap_or("unknown");
+                    let selector = validator_config_str(validator, "selector");
+                    if !is_safe_repo_relative(path) {
+                        issues.push(json!({
+                            "rule_id": rule.id,
+                            "adapter": validator.adapter,
+                            "validator_rule": validator.rule,
+                            "path": path,
+                            "issue": "linked_test validator path must stay within the repo",
+                            "fix": "use a repo-relative test path without absolute or parent-directory traversal",
+                        }));
+                        continue;
+                    }
+                    let full = project_dir.join(path);
+                    if !full.exists() {
+                        issues.extend(verify_linked_test_path(
+                            project_dir,
+                            &rule.id,
+                            runner,
+                            path,
+                            selector,
+                            Some((&validator.adapter, &validator.rule)),
+                        ));
+                        continue;
+                    }
+                    if !path_resolves_within_repo(project_dir, &full) {
+                        issues.push(json!({
+                            "rule_id": rule.id,
+                            "adapter": validator.adapter,
+                            "validator_rule": validator.rule,
+                            "path": path,
+                            "issue": "linked_test validator path resolves outside the repo",
+                            "fix": "remove symlink/path indirection that escapes the repository",
+                        }));
+                        continue;
+                    }
+                    issues.extend(verify_linked_test_path(
+                        project_dir,
+                        &rule.id,
+                        runner,
+                        path,
+                        selector,
+                        Some((&validator.adapter, &validator.rule)),
+                    ));
+                }
+                "command" => {
+                    let path = validator_config_str(validator, "path");
+                    let command = validator_config_str(validator, "command");
+                    if path.is_none() && command.is_none() {
+                        issues.push(json!({
+                            "rule_id": rule.id,
+                            "adapter": validator.adapter,
+                            "validator_rule": validator.rule,
+                            "issue": "command validator requires either config.path or config.command",
+                            "fix": "set validators[].config.path to a repo-relative executable or config.command to a shell command",
+                        }));
+                        continue;
+                    }
+                    if command.is_some()
+                        && validator
+                            .config
+                            .get("allow_shell")
+                            .and_then(|value| value.as_bool())
+                            != Some(true)
+                    {
+                        issues.push(json!({
+                            "rule_id": rule.id,
+                            "adapter": validator.adapter,
+                            "validator_rule": validator.rule,
+                            "issue": "command validator using config.command requires config.allow_shell=true",
+                            "fix": "set config.allow_shell=true or prefer config.path for repo-local executables",
+                        }));
+                    }
+                    if command.is_none() {
+                        if let Some(path) = path {
+                            if !is_safe_repo_relative(path) {
+                                issues.push(json!({
+                                    "rule_id": rule.id,
+                                    "adapter": validator.adapter,
+                                    "validator_rule": validator.rule,
+                                    "path": path,
+                                    "issue": "command validator path must stay within the repo",
+                                    "fix": "use a repo-relative validator path without absolute or parent-directory traversal",
+                                }));
+                                continue;
+                            }
+                            let full = project_dir.join(path);
+                            if !full.exists() {
+                                issues.push(json!({
+                                "rule_id": rule.id,
+                                "adapter": validator.adapter,
+                                "validator_rule": validator.rule,
+                                "path": path,
+                                "issue": "command validator path does not exist",
+                                "fix": "create the referenced validator script or update validators[].config.path",
+                            }));
+                                continue;
+                            }
+                            if !path_resolves_within_repo(project_dir, &full) {
+                                issues.push(json!({
+                                "rule_id": rule.id,
+                                "adapter": validator.adapter,
+                                "validator_rule": validator.rule,
+                                    "path": path,
+                                    "issue": "command validator path resolves outside the repo",
+                                "fix": "remove symlink/path indirection that escapes the repository",
+                            }));
+                                continue;
+                            }
+                            if !path_is_executable(&full) {
+                                issues.push(json!({
+                                "rule_id": rule.id,
+                                "adapter": validator.adapter,
+                                    "validator_rule": validator.rule,
+                                    "path": path,
+                                    "issue": "command validator path is not executable",
+                                    "fix": "mark the validator script executable or use config.command with allow_shell=true",
+                                }));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    issues
+}
+
 enum Verdict {
     Verified,
     Missing,
     NoConfig,
+    InvalidConfig(String),
     Unsupported,
+}
+
+fn validator_config_str<'a>(validator: &'a ApprovedValidatorBinding, key: &str) -> Option<&'a str> {
+    validator.config.get(key).and_then(|value| value.as_str())
+}
+
+fn is_safe_repo_relative(path: &str) -> bool {
+    let path = Path::new(path);
+    !path.is_absolute()
+        && !path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+}
+
+fn path_resolves_within_repo(project_dir: &Path, full_path: &Path) -> bool {
+    let Ok(repo_root) = std::fs::canonicalize(project_dir) else {
+        return false;
+    };
+    let Ok(resolved) = std::fs::canonicalize(full_path) else {
+        return false;
+    };
+    resolved.starts_with(repo_root)
+}
+
+fn path_is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        path.is_file()
+    }
+}
+
+fn verify_linked_test_path(
+    project_dir: &Path,
+    rule_id: &str,
+    runner: &str,
+    path: &str,
+    selector: Option<&str>,
+    validator_context: Option<(&str, &str)>,
+) -> Vec<Value> {
+    let mut issues = Vec::new();
+    let full_path = project_dir.join(path);
+    if !full_path.exists() {
+        let mut issue = json!({
+            "rule_id": rule_id,
+            "runner": runner,
+            "path": path,
+            "selector": selector,
+            "issue": "linked test path does not exist",
+            "fix": "create the referenced test file or update the rule binding",
+        });
+        if let Some((adapter, validator_rule)) = validator_context {
+            issue["adapter"] = Value::String(adapter.to_string());
+            issue["validator_rule"] = Value::String(validator_rule.to_string());
+        }
+        issues.push(issue);
+        return issues;
+    }
+
+    if let Some(selector) = selector {
+        match fs::read_to_string(&full_path) {
+            Ok(text) if text.contains(selector) => {}
+            Ok(_) => {
+                let mut issue = json!({
+                    "rule_id": rule_id,
+                    "runner": runner,
+                    "path": path,
+                    "selector": selector,
+                    "issue": "linked test selector was not found in the test file",
+                    "fix": "update the selector or the referenced test file",
+                });
+                if let Some((adapter, validator_rule)) = validator_context {
+                    issue["adapter"] = Value::String(adapter.to_string());
+                    issue["validator_rule"] = Value::String(validator_rule.to_string());
+                }
+                issues.push(issue);
+            }
+            Err(err) => {
+                let mut issue = json!({
+                    "rule_id": rule_id,
+                    "runner": runner,
+                    "path": path,
+                    "selector": selector,
+                    "issue": format!("failed to read linked test file: {err}"),
+                    "fix": "fix the test file path or file permissions",
+                });
+                if let Some((adapter, validator_rule)) = validator_context {
+                    issue["adapter"] = Value::String(adapter.to_string());
+                    issue["validator_rule"] = Value::String(validator_rule.to_string());
+                }
+                issues.push(issue);
+            }
+        }
+    }
+
+    issues
 }
 
 // ── Ruff ──
@@ -185,10 +521,19 @@ struct FormatterConfig {
 struct RuffConfig {
     config_paths: Vec<PathBuf>,
     selects: Vec<String>,
+    ignores: Vec<String>,
+    parse_errors: Vec<String>,
 }
 
 impl RuffConfig {
     fn has_code(&self, code: &str) -> bool {
+        if self
+            .ignores
+            .iter()
+            .any(|ignore| code_matches_ruff_select(ignore, code))
+        {
+            return false;
+        }
         if self.selects.iter().any(|s| s.eq_ignore_ascii_case("ALL")) {
             return true;
         }
@@ -203,19 +548,33 @@ fn load_ruff_selects(project_dir: &Path) -> RuffConfig {
         project_dir.join("ruff.toml"),
         project_dir.join(".ruff.toml"),
         project_dir.join("pyproject.toml"),
+        project_dir
+            .join("whetstone")
+            .join("lint")
+            .join("ruff.whetstone.toml"),
+        project_dir
+            .join("whetstone")
+            .join(".personal")
+            .join("lint")
+            .join("ruff.whetstone.toml"),
     ];
     let mut selects: Vec<String> = Vec::new();
+    let mut ignores: Vec<String> = Vec::new();
     let mut config_paths: Vec<PathBuf> = Vec::new();
+    let mut parse_errors: Vec<String> = Vec::new();
     for path in &candidates {
         if !path.exists() {
             continue;
         }
-        config_paths.push(path.clone());
         if let Ok(text) = fs::read_to_string(path) {
             let parsed: toml::Value = match toml::from_str(&text) {
                 Ok(v) => v,
-                Err(_) => continue,
+                Err(err) => {
+                    parse_errors.push(format!("{}: {err}", path.display()));
+                    continue;
+                }
             };
+            config_paths.push(path.clone());
             let root = if path
                 .file_name()
                 .map(|f| f == "pyproject.toml")
@@ -253,11 +612,37 @@ fn load_ruff_selects(project_dir: &Path) -> RuffConfig {
                     }
                 }
             }
+            if let Some(arr) = root
+                .get("lint")
+                .and_then(|l| l.get("ignore"))
+                .or_else(|| root.get("ignore"))
+                .and_then(|v| v.as_array())
+            {
+                for v in arr {
+                    if let Some(s) = v.as_str() {
+                        ignores.push(s.to_string());
+                    }
+                }
+            }
+            if let Some(arr) = root
+                .get("lint")
+                .and_then(|l| l.get("extend-ignore"))
+                .or_else(|| root.get("extend-ignore"))
+                .and_then(|v| v.as_array())
+            {
+                for v in arr {
+                    if let Some(s) = v.as_str() {
+                        ignores.push(s.to_string());
+                    }
+                }
+            }
         }
     }
     RuffConfig {
         config_paths,
         selects,
+        ignores,
+        parse_errors,
     }
 }
 
@@ -273,6 +658,9 @@ fn code_matches_ruff_select(select: &str, code: &str) -> bool {
 }
 
 fn verify_ruff(cfg: &RuffConfig, code: &str) -> Verdict {
+    if !cfg.parse_errors.is_empty() {
+        return Verdict::InvalidConfig(cfg.parse_errors.join("; "));
+    }
     if cfg.config_paths.is_empty() {
         return Verdict::NoConfig;
     }
@@ -336,20 +724,30 @@ fn load_ruff_formatter(project_dir: &Path) -> FormatterConfig {
 struct BiomeConfig {
     paths: Vec<PathBuf>,
     enabled: std::collections::BTreeSet<String>,
+    parse_errors: Vec<String>,
 }
 
 fn load_biome_enabled(project_dir: &Path) -> BiomeConfig {
     let candidates = [
         project_dir.join("biome.json"),
         project_dir.join("biome.jsonc"),
+        project_dir
+            .join("whetstone")
+            .join("lint")
+            .join("biome.whetstone.json"),
+        project_dir
+            .join("whetstone")
+            .join(".personal")
+            .join("lint")
+            .join("biome.whetstone.json"),
     ];
     let mut paths = Vec::new();
     let mut enabled = std::collections::BTreeSet::new();
+    let mut parse_errors = Vec::new();
     for path in &candidates {
         if !path.exists() {
             continue;
         }
-        paths.push(path.clone());
         let Ok(text) = fs::read_to_string(path) else {
             continue;
         };
@@ -357,8 +755,12 @@ fn load_biome_enabled(project_dir: &Path) -> BiomeConfig {
         let cleaned = strip_jsonc_comments(&text);
         let parsed: serde_json::Value = match serde_json::from_str(&cleaned) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(err) => {
+                parse_errors.push(format!("{}: {err}", path.display()));
+                continue;
+            }
         };
+        paths.push(path.clone());
         let linter = parsed.get("linter");
         if linter
             .and_then(|l| l.get("enabled"))
@@ -393,10 +795,17 @@ fn load_biome_enabled(project_dir: &Path) -> BiomeConfig {
             }
         }
     }
-    BiomeConfig { paths, enabled }
+    BiomeConfig {
+        paths,
+        enabled,
+        parse_errors,
+    }
 }
 
 fn verify_biome(cfg: &BiomeConfig, code: &str) -> Verdict {
+    if !cfg.parse_errors.is_empty() {
+        return Verdict::InvalidConfig(cfg.parse_errors.join("; "));
+    }
     if cfg.paths.is_empty() {
         return Verdict::NoConfig;
     }
@@ -567,6 +976,31 @@ fn strip_jsonc_comments(src: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+
+    fn validator_rule(
+        binding: crate::rules::ApprovedValidatorBinding,
+    ) -> crate::rules::ApprovedRule {
+        crate::rules::ApprovedRule {
+            id: "demo.validator".into(),
+            severity: "should".into(),
+            confidence: "high".into(),
+            category: "convention".into(),
+            description: "desc".into(),
+            source_url: "https://example.com".into(),
+            source_name: "demo".into(),
+            language: "javascript".into(),
+            languages: vec!["javascript".into()],
+            signals: Vec::new(),
+            formatter: None,
+            tests: Vec::new(),
+            validators: vec![binding],
+            provenance: None,
+            golden_examples: Vec::new(),
+            deterministic_pass_threshold: None,
+            deterministic_fail_threshold: None,
+        }
+    }
 
     #[test]
     fn ruff_prefix_select_matches_subcode() {
@@ -612,5 +1046,39 @@ mod tests {
             verify_formatter_value(&paths, Some(&json!("double")), &json!("single")),
             Verdict::Missing
         ));
+    }
+
+    #[test]
+    fn validator_command_requires_path_or_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rule = validator_rule(crate::rules::ApprovedValidatorBinding {
+            adapter: "command".into(),
+            rule: "custom.inline-handlers".into(),
+            mode: None,
+            config: Default::default(),
+        });
+
+        let issues = verify_validator_bindings(tmp.path(), &[&rule]);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0]["adapter"], "command");
+    }
+
+    #[test]
+    fn validator_linked_test_checks_path_presence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rule = validator_rule(crate::rules::ApprovedValidatorBinding {
+            adapter: "linked_test".into(),
+            rule: "custom.inline-handlers".into(),
+            mode: None,
+            config: BTreeMap::from([
+                ("runner".into(), json!("vitest")),
+                ("path".into(), json!("tests/inline-handlers.test.ts")),
+            ]),
+        });
+
+        let issues = verify_validator_bindings(tmp.path(), &[&rule]);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0]["adapter"], "linked_test");
+        assert_eq!(issues[0]["path"], "tests/inline-handlers.test.ts");
     }
 }

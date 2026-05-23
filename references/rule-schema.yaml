@@ -7,13 +7,13 @@
 
 # --- Source metadata ---
 source:
-  name: string            # Required. Dependency name (e.g., "fastapi")
-  docs_url: string        # Required. Primary documentation URL
+  name: string            # Required. Dependency/source name (e.g., "fastapi")
+  docs_url: string        # Required for extracted/source-backed rules; loader tolerates omission in some authored fixtures
   llms_txt: string        # Optional. URL to llms.txt or llms-full.txt if available
-  version: string         # Required. Dependency version at time of extraction
-  content_hash: string    # Required. SHA-256 hash of source content (sha256:...)
-  resolved_at: string     # Required. ISO 8601 timestamp of when source was resolved
-  registry: enum          # Required. One of: pypi | npm | crates_io | manual
+  version: string         # Required for extracted/source-backed rules; loader tolerates omission in some authored fixtures
+  content_hash: string    # Required for extracted/source-backed rules; loader tolerates omission in some authored fixtures
+  resolved_at: string     # Required for extracted/source-backed rules; loader tolerates omission in some authored fixtures
+  registry: enum          # Required for extracted/source-backed rules. One of: pypi | npm | crates_io | manual
                            #   pypi     — Python Package Index
                            #   npm      — Node Package Manager
                            #   crates_io — Rust crate registry
@@ -53,12 +53,13 @@ rules:
     source_quote: string   # Optional. Verbatim excerpt from documentation supporting
                            # this rule. Shown during approval to build confidence.
 
-    approved: boolean      # Required. Whether the user has approved this rule.
-                           # Only approved rules are used for generation.
+    approved: boolean      # Required for new writes; loader defaults omitted values to false for backward compatibility.
+                            # Only approved rules are used for generation.
 
     # --- Lifecycle state ---
 
-    status: enum           # Required. One of: candidate | approved
+    status: enum           # Required for new writes; loader tolerates omission for backward compatibility.
+                           # One of: candidate | approved
                            #   candidate  — proposed by `wh extract submit` but not yet approved
                            #   approved   — reviewed and accepted for enforcement
 
@@ -86,7 +87,7 @@ rules:
                            # When present, generated tests use this regex for actual checking
                            # instead of producing TODO stubs. Example: '\.unwrap\s*\(\)'
         ast_query: string  # Optional. Raw tree-sitter S-expression query for `ast` signals.
-                           # Every node captured by `@match` becomes a violation when `wh check`
+                           # Every node captured by `@match` becomes a violation when `wh scan`
                            # parses a file of the rule's language. Example for Python:
                            #   '(function_definition "async") @match'
                            # If absent, an `ast` signal falls back to regex (weaker).
@@ -110,7 +111,26 @@ rules:
         path: string      # Required. Relative path to the test file inside the repo.
         selector: string  # Optional. Specific test name / selector inside the file.
 
-    golden_examples:       # Required. 3-5 examples (mix of pass and fail).
+    validators:           # Optional. Explicit validator-adapter bindings beyond signals/formatter/tests.
+      - adapter: string   # Required. Supported today: lint_rule | linked_test | command
+        rule: string      # Required. Adapter-specific rule or policy identifier.
+        mode: string      # Optional. One of: enforce | monitor
+        config: map       # Optional. Adapter-specific configuration map.
+                         # Common examples:
+                         # - lint_rule: { tool: biome, code: suspicious/noExplicitAny }
+                         # - linked_test: { runner: vitest, path: tests/rules/js.test.ts, selector: no_inline_handlers }
+                         # - command: { path: scripts/check-inline-handlers.py }
+
+    provenance:           # Optional. Explicit provenance for graph-/knowledge-derived rules.
+      source_page_id: string   # Optional. Stable page/node id in a second-brain graph.
+      source_page_path: string # Optional. Repo-relative page path.
+      source_authority: string # Optional. Example: draft | synthesized | reviewed | canonical
+      source_line_start: integer # Optional. Start line in the source page supporting this rule.
+      source_line_end: integer   # Optional. End line in the source page supporting this rule.
+      upstream_urls: [string]    # Optional. Upstream docs linked from the internal page and preferred for external citation.
+
+    golden_examples:       # Required before approval. Candidate/legacy fixtures may omit temporarily.
+                           # Target 3-5 examples (mix of pass and fail).
       - code: string       # Required. Code snippet (use | for multiline YAML).
         verdict: enum      # Required. One of: pass | fail
         reason: string     # Required. Brief explanation of why this is pass/fail.

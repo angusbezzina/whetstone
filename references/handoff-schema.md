@@ -34,7 +34,20 @@ dependencies that still need rule extraction.
       "name": "reqwest",
       "language": "rust",
       "version": "0.12.0",
-      "source_type": "readme | llms_txt | llms_full_txt | html_converted | changelog | docs_url_only",
+      "source_type": "readme | llms_txt | llms_full_txt | html_converted | changelog | docs_url_only | local_file | second_brain_page",
+      "source_origin": "dependency | custom | pack_member | second_brain_page",
+      "source_kind": "official_docs | team_guide | custom | ...",
+      "source_ref": {
+        "kind": "custom | pack_member | second_brain_page",
+        "id": "stable-source-ref",
+        "pack_id": "optional-pack-id",
+        "pack_name": "optional-pack-name",
+        "member_id": "optional-member-id"
+      },
+      "authority": "draft | synthesized | reviewed | canonical",
+      "dep_names": ["reqwest"],
+      "upstream_urls": ["https://docs.rs/reqwest"],
+      "related_pages": ["vault:team-brain:http-client-notes"],
       "source_url": "https://docs.rs/reqwest",
       "content_hash": "sha256:...",
       "sections": [
@@ -80,6 +93,13 @@ by a configuration-aware score (`preferred_source_kinds`, `recency_window_days`)
     "score": 132.0,
     "version": "0.110",
     "source_type": "llms_full_txt",
+    "source_origin": "dependency",
+    "source_kind": "official_docs",
+    "source_ref": { "kind": "custom", "id": "..." },
+    "authority": "reviewed",
+    "dep_names": ["fastapi"],
+    "upstream_urls": ["https://fastapi.tiangolo.com/"],
+    "related_pages": ["vault:team-brain:async-patterns"],
     "source_url": "https://fastapi.tiangolo.com/llms-full.txt",
     "content_hash": "sha256:...",
     "freshness": { "confidence": "high" },
@@ -118,6 +138,28 @@ metadata:
 ```
 
 Older readers that don't know these additive fields may ignore them.
+
+The extraction context may also carry a second-brain graph summary:
+
+```json
+"knowledge_graph": {
+  "path": ".../whetstone/.state/knowledge-graph.json",
+  "page_count": 42
+}
+```
+
+### Source-pack provenance (language-expansion tranche)
+
+Configured trusted sources are no longer limited to flat `sources.custom[]`
+entries. State artifacts may now carry:
+
+- `source_origin: custom` for standalone configured sources
+- `source_origin: pack_member` for sources expanded from `sources.packs[]`
+- `source_origin: second_brain_page` for markdown-vault / knowledge-graph pages
+- `source_ref.*` identifiers so caches and worklists can distinguish multiple
+  configured sources that share the same `name` / `language`
+
+Readers MUST treat these fields as additive provenance metadata.
 
 ---
 
@@ -178,7 +220,7 @@ against the delta instead of re-reading every source.
   "failed": [
     { "name": "obscurelib", "language": "python", "error": "HTTP 404" }
   ],
-  "next_action": "Read re_extraction_candidates, then for each entry decide: keep / `wh rules edit` severity / delete rule YAML / `wh extract submit <bundle>` a re-authored version. Finish with `wh actions all`."
+  "next_action": "Read re_extraction_candidates, then for each entry decide: keep / `wh rules edit` severity / `wh rules remove <id>` / `wh extract submit <bundle>` a re-authored version. Finish with `wh actions all`."
 }
 ```
 
@@ -196,8 +238,8 @@ against the delta instead of re-reading every source.
   Agents should iterate this list rather than re-deriving it from `changed`.
 - `extraction_prompt` (added 0.4.0) is a canned agent-facing instruction that
   lists the affected rule ids and tells the agent the workflow:
-  `wh rules edit` for severity bumps, delete for deprecation, `wh extract submit`
-  for a fresh re-authoring. Use it as a drop-in prompt.
+  `wh rules edit` for severity bumps, `wh rules remove <id>` for retirement,
+  `wh extract submit` for a fresh re-authoring. Use it as a drop-in prompt.
 - `previous_version` and `previous_content_hash` are **optional** — the
   shipped writer leaves them `null` because the cache is overwritten during
   refresh before the diff is assembled. A future enhancement can snapshot the

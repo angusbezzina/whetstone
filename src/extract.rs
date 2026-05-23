@@ -91,12 +91,14 @@ pub fn submit(project_dir: &Path, bundle_path: &Path) -> Result<Value> {
     if bundle.language.trim().is_empty() {
         return Err(anyhow!("bundle missing `language`"));
     }
-    if !matches!(bundle.language.as_str(), "python" | "typescript" | "rust") {
-        return Err(anyhow!(
-            "bundle language must be one of python|typescript|rust (got `{}`)",
-            bundle.language
-        ));
-    }
+    let canonical_language =
+        crate::types::canonical_language(&bundle.language).ok_or_else(|| {
+            anyhow!(
+                "bundle language must be one of {} (got `{}`)",
+                crate::types::supported_language_display_list(&[]),
+                bundle.language
+            )
+        })?;
     if bundle.rules.is_empty() {
         return Err(anyhow!("bundle carries zero rules"));
     }
@@ -119,7 +121,7 @@ pub fn submit(project_dir: &Path, bundle_path: &Path) -> Result<Value> {
     }
 
     // Assemble the destination file in YAML form.
-    let dest = destination_path(project_dir, &bundle.language, &bundle.dependency);
+    let dest = destination_path(project_dir, canonical_language, &bundle.dependency);
 
     let mut rules_out: Vec<YamlValue> = Vec::with_capacity(bundle.rules.len());
     for raw in &bundle.rules {

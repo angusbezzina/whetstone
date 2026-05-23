@@ -14,6 +14,7 @@
 //! produce warnings surfaced by `wh config show`.
 
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -31,6 +32,8 @@ const SUPPORTED_KEYS: &[&str] = &[
     "discovery.include",
     "generate.formats",
     "sources.custom",
+    "sources.packs",
+    "sources.vaults",
     "deny",
     "extraction.include",
     "extraction.exclude",
@@ -136,6 +139,10 @@ pub struct GenerateConfig {
 pub struct SourcesConfig {
     #[serde(default)]
     pub custom: Vec<CustomSource>,
+    #[serde(default)]
+    pub packs: Vec<SourcePack>,
+    #[serde(default)]
+    pub vaults: Vec<VaultSource>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -147,6 +154,146 @@ pub struct CustomSource {
     pub language: Option<String>,
     #[serde(default)]
     pub source_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SourcePack {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub source_kind: Option<String>,
+    #[serde(default)]
+    pub members: Vec<CustomSource>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VaultSource {
+    pub id: String,
+    pub path: String,
+    #[serde(default)]
+    pub include: Vec<String>,
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub source_kind: Option<String>,
+    #[serde(default)]
+    pub authority: Option<String>,
+    #[serde(default)]
+    pub max_pages: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedSourceInput {
+    pub url: String,
+    pub name: Option<String>,
+    pub language: Option<String>,
+    pub source_kind: Option<String>,
+    pub source_origin: &'static str,
+    pub source_ref_id: String,
+    pub pack_id: Option<String>,
+    pub pack_name: Option<String>,
+    pub member_id: Option<String>,
+    pub content_override: Option<String>,
+    pub source_type_override: Option<String>,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+impl SourcesConfig {
+    pub fn resolved_inputs(&self) -> Vec<ResolvedSourceInput> {
+        let mut out = Vec::new();
+
+        for source in &self.custom {
+            out.push(ResolvedSourceInput {
+                url: source.url.clone(),
+                name: source.name.clone(),
+                language: source.language.clone(),
+                source_kind: source.source_kind.clone(),
+                source_origin: "custom",
+                source_ref_id: source_ref_id(
+                    "custom",
+                    source.language.as_deref(),
+                    source.name.as_deref().unwrap_or(source.url.as_str()),
+                ),
+                pack_id: None,
+                pack_name: None,
+                member_id: None,
+                content_override: None,
+                source_type_override: None,
+                metadata: BTreeMap::new(),
+            });
+        }
+
+        for pack in &self.packs {
+            let pack_name = pack.name.clone().unwrap_or_else(|| pack.id.clone());
+            for (idx, member) in pack.members.iter().enumerate() {
+                let member_name = member
+                    .name
+                    .clone()
+                    .or_else(|| Some(format!("{pack_name}-member-{}", idx + 1)));
+                let member_language = member.language.clone().or_else(|| pack.language.clone());
+                let member_source_kind = member
+                    .source_kind
+                    .clone()
+                    .or_else(|| pack.source_kind.clone());
+                let member_id = format!(
+                    "member-{}-{}",
+                    idx + 1,
+                    source_ref_segment(member_name.as_deref().unwrap_or(member.url.as_str()))
+                );
+
+                out.push(ResolvedSourceInput {
+                    url: member.url.clone(),
+                    name: member_name,
+                    language: member_language.clone(),
+                    source_kind: member_source_kind,
+                    source_origin: "pack_member",
+                    source_ref_id: format!("pack:{}:{member_id}", source_ref_segment(&pack.id)),
+                    pack_id: Some(pack.id.clone()),
+                    pack_name: Some(pack_name.clone()),
+                    member_id: Some(member_id),
+                    content_override: None,
+                    source_type_override: None,
+                    metadata: BTreeMap::new(),
+                });
+            }
+        }
+
+        out
+    }
+}
+
+fn source_ref_id(origin: &str, language: Option<&str>, name: &str) -> String {
+    let language = language.unwrap_or("any");
+    format!(
+        "{origin}:{}:{}",
+        source_ref_segment(language),
+        source_ref_segment(name)
+    )
+}
+
+fn source_ref_segment(input: &str) -> String {
+    let mut out = String::new();
+    let mut last_was_sep = false;
+    for ch in input.chars() {
+        let normalized = if ch.is_ascii_alphanumeric() {
+            last_was_sep = false;
+            Some(ch.to_ascii_lowercase())
+        } else if !last_was_sep {
+            last_was_sep = true;
+            Some('-')
+        } else {
+            None
+        };
+        if let Some(ch) = normalized {
+            out.push(ch);
+        }
+    }
+    out.trim_matches('-').to_string()
 }
 
 /// Controls over which dependencies and proposals the extraction workflow
@@ -990,6 +1137,22 @@ impl ConfigSnapshot {
             snap.sources
                 .insert("sources.custom".into(), ProvenanceSource::Global);
         }
+        if !global_cfg.sources.packs.is_empty() {
+            snap.effective
+                .sources
+                .packs
+                .extend(global_cfg.sources.packs.clone());
+            snap.sources
+                .insert("sources.packs".into(), ProvenanceSource::Global);
+        }
+        if !global_cfg.sources.vaults.is_empty() {
+            snap.effective
+                .sources
+                .vaults
+                .extend(global_cfg.sources.vaults.clone());
+            snap.sources
+                .insert("sources.vaults".into(), ProvenanceSource::Global);
+        }
         if !global_cfg.deny.is_empty() {
             snap.effective.deny.extend(global_cfg.deny.clone());
             snap.sources.insert("deny".into(), ProvenanceSource::Global);
@@ -1122,6 +1285,16 @@ impl ConfigSnapshot {
                 snap.sources
                     .insert("sources.custom".into(), ProvenanceSource::Project);
             }
+            if !cfg.sources.packs.is_empty() {
+                snap.effective.sources.packs.extend(cfg.sources.packs);
+                snap.sources
+                    .insert("sources.packs".into(), ProvenanceSource::Project);
+            }
+            if !cfg.sources.vaults.is_empty() {
+                snap.effective.sources.vaults.extend(cfg.sources.vaults);
+                snap.sources
+                    .insert("sources.vaults".into(), ProvenanceSource::Project);
+            }
             apply_extraction(
                 &mut snap.effective.extraction,
                 &cfg.extraction,
@@ -1182,6 +1355,22 @@ impl ConfigSnapshot {
                     .extend(personal_cfg.sources.custom);
                 snap.sources
                     .insert("sources.custom".into(), ProvenanceSource::Personal);
+            }
+            if !personal_cfg.sources.packs.is_empty() {
+                snap.effective
+                    .sources
+                    .packs
+                    .extend(personal_cfg.sources.packs);
+                snap.sources
+                    .insert("sources.packs".into(), ProvenanceSource::Personal);
+            }
+            if !personal_cfg.sources.vaults.is_empty() {
+                snap.effective
+                    .sources
+                    .vaults
+                    .extend(personal_cfg.sources.vaults);
+                snap.sources
+                    .insert("sources.vaults".into(), ProvenanceSource::Personal);
             }
             apply_extraction(
                 &mut snap.effective.extraction,
@@ -1347,6 +1536,32 @@ fn effective_to_json(cfg: &WhetstoneConfig) -> serde_json::Value {
                     "source_kind": c.source_kind,
                 })
             }).collect::<Vec<_>>(),
+            "packs": cfg.sources.packs.iter().map(|pack| {
+                serde_json::json!({
+                    "id": pack.id,
+                    "name": pack.name,
+                    "language": pack.language,
+                    "source_kind": pack.source_kind,
+                    "members": pack.members.iter().map(|member| serde_json::json!({
+                        "url": member.url,
+                        "name": member.name,
+                        "language": member.language,
+                        "source_kind": member.source_kind,
+                    })).collect::<Vec<_>>(),
+                })
+            }).collect::<Vec<_>>(),
+            "vaults": cfg.sources.vaults.iter().map(|vault| {
+                serde_json::json!({
+                    "id": vault.id,
+                    "path": vault.path,
+                    "include": vault.include,
+                    "exclude": vault.exclude,
+                    "language": vault.language,
+                    "source_kind": vault.source_kind,
+                    "authority": vault.authority,
+                    "max_pages": vault.max_pages,
+                })
+            }).collect::<Vec<_>>(),
         },
         "deny": cfg.deny,
         "extraction": {
@@ -1422,6 +1637,26 @@ fn apply_pack_config(snapshot: &mut ConfigSnapshot, pack: &ResolvedConfigPack) {
         snapshot
             .sources
             .insert("sources.custom".into(), provenance.clone());
+    }
+    if !overlay.sources.packs.is_empty() {
+        snapshot
+            .effective
+            .sources
+            .packs
+            .extend(overlay.sources.packs.clone());
+        snapshot
+            .sources
+            .insert("sources.packs".into(), provenance.clone());
+    }
+    if !overlay.sources.vaults.is_empty() {
+        snapshot
+            .effective
+            .sources
+            .vaults
+            .extend(overlay.sources.vaults.clone());
+        snapshot
+            .sources
+            .insert("sources.vaults".into(), provenance.clone());
     }
     apply_extraction(
         &mut snapshot.effective.extraction,
@@ -1665,6 +1900,37 @@ mod tests {
         cfg2.extraction.exclude = vec!["django".into()];
         assert!(cfg2.extraction_allows("fastapi"));
         assert!(!cfg2.extraction_allows("django"));
+    }
+
+    #[test]
+    fn source_packs_expand_members_with_inherited_metadata() {
+        let cfg: WhetstoneConfig = serde_yaml::from_str(
+            r#"sources:
+  packs:
+    - id: frontend-guidelines
+      name: frontend-guidelines
+      language: javascript
+      source_kind: team_guide
+      members:
+        - url: https://example.com/frontend/js.md
+          name: js-guide
+        - url: https://example.com/frontend/css.md
+          name: css-guide
+          language: css
+"#,
+        )
+        .unwrap();
+
+        let inputs = cfg.sources.resolved_inputs();
+        assert_eq!(inputs.len(), 2);
+        assert_eq!(inputs[0].source_origin, "pack_member");
+        assert_eq!(inputs[0].pack_id.as_deref(), Some("frontend-guidelines"));
+        assert_eq!(inputs[0].language.as_deref(), Some("javascript"));
+        assert_eq!(inputs[0].source_kind.as_deref(), Some("team_guide"));
+        assert_eq!(inputs[1].language.as_deref(), Some("css"));
+        assert!(inputs[0]
+            .source_ref_id
+            .starts_with("pack:frontend-guidelines:"));
     }
 
     #[test]

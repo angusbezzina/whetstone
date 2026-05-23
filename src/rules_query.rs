@@ -47,13 +47,7 @@ pub struct QueryResult {
 
 /// Infer language from a source file path's extension.
 pub fn detect_language_from_path(path: &Path) -> Option<&'static str> {
-    let ext = path.extension()?.to_str()?.to_lowercase();
-    match ext.as_str() {
-        "py" | "pyi" => Some("python"),
-        "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" => Some("typescript"),
-        "rs" => Some("rust"),
-        _ => None,
-    }
+    crate::types::source_language_for_path(path)
 }
 
 /// Run the query. Returns matching LayeredRules in load order.
@@ -130,6 +124,11 @@ pub fn to_human(result: &QueryResult, detail: Detail) -> String {
                     sig.description.chars().take(80).collect::<String>()
                 ));
             }
+            if let Some(provenance) = &lr.rule.provenance {
+                let authority = provenance.source_authority.as_deref().unwrap_or("unknown");
+                let page = provenance.source_page_id.as_deref().unwrap_or("n/a");
+                out.push_str(&format!("      provenance [{authority}] {page}\n"));
+            }
         }
         out.push('\n');
     }
@@ -161,6 +160,17 @@ fn rule_to_json(lr: &LayeredRule, detail: Detail) -> Value {
         "layer": lr.layer.as_str(),
         "match_patterns": match_patterns,
     });
+
+    if let Some(provenance) = &r.provenance {
+        v["provenance"] = json!({
+            "source_authority": provenance.source_authority,
+            "source_page_id": provenance.source_page_id,
+            "source_page_path": provenance.source_page_path,
+            "source_line_start": provenance.source_line_start,
+            "source_line_end": provenance.source_line_end,
+            "upstream_urls": provenance.upstream_urls,
+        });
+    }
 
     if matches!(detail, Detail::Full) {
         v["signals"] = r
@@ -202,6 +212,31 @@ fn rule_to_json(lr: &LayeredRule, detail: Detail) -> Value {
                 })
                 .collect::<Vec<_>>()
                 .into();
+        }
+        if !r.validators.is_empty() {
+            v["validators"] = r
+                .validators
+                .iter()
+                .map(|validator| {
+                    json!({
+                        "adapter": validator.adapter,
+                        "rule": validator.rule,
+                        "mode": validator.mode,
+                        "config": validator.config,
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into();
+        }
+        if let Some(provenance) = &r.provenance {
+            v["provenance"] = json!({
+                "source_page_id": provenance.source_page_id,
+                "source_page_path": provenance.source_page_path,
+                "source_authority": provenance.source_authority,
+                "source_line_start": provenance.source_line_start,
+                "source_line_end": provenance.source_line_end,
+                "upstream_urls": provenance.upstream_urls,
+            });
         }
         v["golden_examples"] = r
             .golden_examples
@@ -315,11 +350,22 @@ mod tests {
 
     #[test]
     fn detects_typescript_variants() {
-        for path in ["a.ts", "a.tsx", "a.js", "a.jsx", "a.mjs", "a.cjs"] {
+        for path in ["a.ts", "a.tsx"] {
             assert_eq!(
                 detect_language_from_path(&PathBuf::from(path)),
                 Some("typescript"),
                 "path {path} should be typescript"
+            );
+        }
+    }
+
+    #[test]
+    fn detects_javascript_variants() {
+        for path in ["a.js", "a.jsx", "a.mjs", "a.cjs"] {
+            assert_eq!(
+                detect_language_from_path(&PathBuf::from(path)),
+                Some("javascript"),
+                "path {path} should be javascript"
             );
         }
     }

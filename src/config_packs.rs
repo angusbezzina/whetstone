@@ -15,7 +15,6 @@ use crate::state::{atomic_write, load_json, now_iso};
 
 const PACK_CACHE_VERSION: i64 = 1;
 const VALID_SCOPES: &[&str] = &["org", "team", "project", "personal"];
-const VALID_PACK_LANGUAGES: &[&str] = &["python", "typescript", "rust"];
 
 #[derive(Debug, Default, Clone, Deserialize)]
 pub struct PackMetadata {
@@ -278,7 +277,7 @@ pub fn merge_pack_rules(
         };
 
         if let Some(filter) = lang_filter {
-            if pack_language != filter {
+            if !crate::types::language_matches_language(&pack_language, filter) {
                 continue;
             }
         }
@@ -374,10 +373,10 @@ fn validate_pack_shape(
     }
     if !pack.rules.is_empty() {
         match pack.language.as_deref() {
-            Some(lang) if VALID_PACK_LANGUAGES.contains(&lang) => {}
+            Some(lang) if crate::types::canonical_language(lang).is_some() => {}
             Some(lang) => out.errors.push(format!(
                 "pack `{ref_spec}` declares unsupported language `{lang}`; expected one of {:?}",
-                VALID_PACK_LANGUAGES
+                crate::types::supported_language_ids()
             )),
             None => out.errors.push(format!(
                 "pack `{ref_spec}` contains rules but has no top-level `language`"
@@ -438,6 +437,26 @@ fn approved_from_pack_rule(rule: &Rule, pack: &ResolvedConfigPack, language: &st
                 selector: t.selector.clone(),
             })
             .collect(),
+        validators: rule
+            .validators
+            .iter()
+            .map(|validator| crate::rules::ApprovedValidatorBinding {
+                adapter: validator.adapter.clone(),
+                rule: validator.rule.clone(),
+                mode: validator.mode.clone(),
+                config: validator.config.clone(),
+            })
+            .collect(),
+        provenance: rule.provenance.as_ref().map(|provenance| {
+            crate::rules::ApprovedRuleProvenance {
+                source_page_id: provenance.source_page_id.clone(),
+                source_page_path: provenance.source_page_path.clone(),
+                source_authority: provenance.source_authority.clone(),
+                source_line_start: provenance.source_line_start,
+                source_line_end: provenance.source_line_end,
+                upstream_urls: provenance.upstream_urls.clone(),
+            }
+        }),
         golden_examples: rule
             .golden_examples
             .iter()
@@ -463,12 +482,12 @@ fn pack_rule_language(pack: &ResolvedConfigPack) -> Result<Option<String>, Strin
             pack_display_name(pack)
         ));
     };
-    if !VALID_PACK_LANGUAGES.contains(&language) {
+    let Some(language) = crate::types::canonical_language(language) else {
         return Err(format!(
             "pack `{}` declares unsupported rule language `{language}`",
             pack_display_name(pack)
         ));
-    }
+    };
     Ok(Some(language.to_string()))
 }
 
@@ -769,6 +788,8 @@ mod tests {
                     signals: Vec::new(),
                     formatter: None,
                     tests: Vec::new(),
+                    validators: Vec::new(),
+                    provenance: None,
                     golden_examples: Vec::new(),
                     languages: Vec::new(),
                 }],
@@ -804,5 +825,52 @@ mod tests {
         assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].severity, "must");
+    }
+
+    #[test]
+    fn pack_rule_language_accepts_aliases() {
+        let pack = ResolvedConfigPack {
+            scope: "team".into(),
+            ref_spec: "path:./packs/team.yaml".into(),
+            resolved_ref: "/tmp/team.yaml".into(),
+            source_kind: "path".into(),
+            cache_status: "direct".into(),
+            content_hash: "sha256:2".into(),
+            fetched_at: now_iso(),
+            metadata: PackMetadata {
+                name: Some("acme.team".into()),
+                ..PackMetadata::default()
+            },
+            language: Some("javascript".into()),
+            pack: RulePackFile {
+                language: Some("javascript".into()),
+                rules: vec![Rule {
+                    id: "frontend.no-inline-handler".into(),
+                    severity: Some("should".into()),
+                    confidence: Some("high".into()),
+                    category: Some("convention".into()),
+                    description: Some("Inline handlers should be avoided.".into()),
+                    source_url: Some("https://example.com/frontend".into()),
+                    source_quote: None,
+                    approved: true,
+                    status: Some("approved".into()),
+                    deterministic_pass_threshold: None,
+                    deterministic_fail_threshold: None,
+                    signals: Vec::new(),
+                    formatter: None,
+                    tests: Vec::new(),
+                    validators: Vec::new(),
+                    provenance: None,
+                    golden_examples: Vec::new(),
+                    languages: Vec::new(),
+                }],
+                ..RulePackFile::default()
+            },
+        };
+
+        assert_eq!(
+            pack_rule_language(&pack).unwrap(),
+            Some("javascript".into())
+        );
     }
 }

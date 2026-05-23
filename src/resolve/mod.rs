@@ -8,7 +8,7 @@ use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -433,11 +433,14 @@ fn resolve_single_dep(
     stored_hash: Option<&str>,
     timeout: u64,
 ) -> Value {
-    let result = match language {
-        "python" => pypi::resolve(name, version, timeout),
-        "typescript" => npm::resolve(name, version, timeout),
-        "rust" => crates_io::resolve(name, version, timeout),
-        _ => serde_json::json!({"error": format!("Unsupported language: {language}")}),
+    let result = match crate::types::registry_for_language(language) {
+        Some("pypi") => pypi::resolve(name, version, timeout),
+        Some("npm") => npm::resolve(name, version, timeout),
+        Some("crates_io") => crates_io::resolve(name, version, timeout),
+        Some(registry) => {
+            serde_json::json!({"error": format!("Unsupported registry for language `{language}`: {registry}")})
+        }
+        None => serde_json::json!({"error": format!("Unsupported language: {language}")}),
     };
 
     if result.get("error").is_some() {
@@ -556,12 +559,12 @@ pub fn format_human_output(result: &Value) -> String {
     let mut lines = Vec::new();
 
     let total = result
-        .get("resolved")
+        .get("sources")
         .and_then(|v| v.as_array())
         .map(|a| a.len())
         .unwrap_or(0);
     let llms_count = result
-        .get("resolved")
+        .get("sources")
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
@@ -575,7 +578,7 @@ pub fn format_human_output(result: &Value) -> String {
         })
         .unwrap_or(0);
     let failed = result
-        .get("failed")
+        .get("errors")
         .and_then(|v| v.as_array())
         .map(|a| a.len())
         .unwrap_or(0);
@@ -587,7 +590,7 @@ pub fn format_human_output(result: &Value) -> String {
         lines.push(format!("{failed} failed to resolve"));
     }
 
-    if let Some(resolved) = result.get("resolved").and_then(|v| v.as_array()) {
+    if let Some(resolved) = result.get("sources").and_then(|v| v.as_array()) {
         for dep in resolved {
             let name = dep.get("name").and_then(|v| v.as_str()).unwrap_or("?");
             let src = dep
@@ -614,64 +617,129 @@ pub fn format_human_output(result: &Value) -> String {
 
 /// Resolve custom sources from config. Each custom URL is fetched directly
 /// (llms.txt probe first, then HTML conversion fallback).
-pub fn resolve_custom_sources(custom: &[crate::config::CustomSource], timeout: u64) -> Vec<Value> {
-    let mut resolved = custom
+#[allow(dead_code)]
+pub fn resolve_custom_sources(
+    project_dir: &Path,
+    custom: &[crate::config::CustomSource],
+    timeout: u64,
+) -> Vec<Value> {
+    let inputs = custom
+        .iter()
+        .map(|src| crate::config::ResolvedSourceInput {
+            url: src.url.clone(),
+            name: src.name.clone(),
+            language: src.language.clone(),
+            source_kind: src.source_kind.clone(),
+            source_origin: "custom",
+            source_ref_id: format!(
+                "custom:{}:{}",
+                src.language.as_deref().unwrap_or("any"),
+                src.name.as_deref().unwrap_or(src.url.as_str())
+            ),
+            pack_id: None,
+            pack_name: None,
+            member_id: None,
+            content_override: None,
+            source_type_override: None,
+            metadata: BTreeMap::new(),
+        })
+        .collect::<Vec<_>>();
+    resolve_source_inputs(project_dir, &inputs, timeout)
+}
+
+pub fn resolve_source_inputs(
+    project_dir: &Path,
+    sources: &[crate::config::ResolvedSourceInput],
+    timeout: u64,
+) -> Vec<Value> {
+    let mut resolved = sources
         .iter()
         .filter_map(|src| {
             let url = &src.url;
             let name = src.name.as_deref().unwrap_or(url.as_str());
 
+            if let Some(content) = &src.content_override {
+                let hash = content_hash(content);
+                return Some(source_input_result(
+                    src,
+                    name,
+                    url,
+                    None,
+                    src.source_type_override.as_deref().unwrap_or("local_file"),
+                    content.clone(),
+                    hash,
+                    if src.source_origin == "second_brain_page" {
+                        "medium"
+                    } else {
+                        "high"
+                    },
+                ));
+            }
+
+            if !url.contains("://") {
+                let path = project_dir.join(url);
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    if !text.trim().is_empty() {
+                        let hash = content_hash(&text);
+                        return Some(source_input_result(
+                            src,
+                            name,
+                            url,
+                            None,
+                            "local_file",
+                            text,
+                            hash,
+                            "high",
+                        ));
+                    }
+                }
+            }
+
             // Try llms.txt first
             let (content, llms_url, source_type) = probe_llms_txt(url, timeout);
             if let Some(content) = content {
                 let hash = content_hash(&content);
-                return Some(serde_json::json!({
-                    "name": name,
-                    "language": src.language.as_deref().unwrap_or("any"),
-                    "version": "custom",
-                    "docs_url": url,
-                    "llms_txt_url": llms_url,
-                    "source_type": source_type,
-                    "content": content,
-                    "content_hash": hash,
-                    "source_kind": src.source_kind.as_deref().unwrap_or("custom"),
-                    "freshness": { "confidence": "high" },
-                }));
+                return Some(source_input_result(
+                    src,
+                    name,
+                    url,
+                    llms_url,
+                    &source_type,
+                    content,
+                    hash,
+                    "high",
+                ));
             }
 
             // Try HTML conversion
             if let Some(text) = http::http_get_html_as_text(url, timeout) {
                 let hash = content_hash(&text);
-                return Some(serde_json::json!({
-                    "name": name,
-                    "language": src.language.as_deref().unwrap_or("any"),
-                    "version": "custom",
-                    "docs_url": url,
-                    "llms_txt_url": null,
-                    "source_type": "custom_url",
-                    "content": text,
-                    "content_hash": hash,
-                    "source_kind": src.source_kind.as_deref().unwrap_or("custom"),
-                    "freshness": { "confidence": "medium" },
-                }));
+                return Some(source_input_result(
+                    src,
+                    name,
+                    url,
+                    None,
+                    "custom_url",
+                    text,
+                    hash,
+                    "medium",
+                ));
             }
 
             // Try plain text
             if let Some(text) = http::http_get(url, timeout) {
                 if text.len() > 100 && !text.trim_start().to_lowercase().starts_with("<!doctype") {
                     let hash = content_hash(&text);
-                    return Some(serde_json::json!({
-                        "name": name,
-                        "language": src.language.as_deref().unwrap_or("any"),
-                        "version": "custom",
-                        "docs_url": url,
-                        "llms_txt_url": null,
-                        "source_type": "custom_url",
-                        "content": text,
-                        "content_hash": hash,
-                        "source_kind": src.source_kind.as_deref().unwrap_or("custom"),
-                        "freshness": { "confidence": "medium" },
-                    }));
+                    return Some(source_input_result(
+                        src,
+                        name,
+                        url,
+                        None,
+                        "custom_url",
+                        text,
+                        hash,
+                        "medium",
+                    ));
                 }
             }
 
@@ -686,6 +754,45 @@ pub fn resolve_custom_sources(custom: &[crate::config::CustomSource], timeout: u
         a_lang.cmp(b_lang).then_with(|| a_name.cmp(b_name))
     });
     resolved
+}
+
+#[allow(clippy::too_many_arguments)]
+fn source_input_result(
+    source: &crate::config::ResolvedSourceInput,
+    name: &str,
+    url: &str,
+    llms_txt_url: Option<String>,
+    source_type: &str,
+    content: String,
+    hash: String,
+    confidence: &str,
+) -> Value {
+    let mut out = serde_json::json!({
+        "name": name,
+        "language": source.language.as_deref().unwrap_or("any"),
+        "version": "custom",
+        "docs_url": url,
+        "llms_txt_url": llms_txt_url,
+        "source_type": source_type,
+        "content": content,
+        "content_hash": hash,
+        "source_kind": source.source_kind.as_deref().unwrap_or("custom"),
+        "source_origin": source.source_origin,
+        "source_ref": {
+            "kind": source.source_origin,
+            "id": source.source_ref_id,
+            "pack_id": source.pack_id,
+            "pack_name": source.pack_name,
+            "member_id": source.member_id,
+        },
+        "freshness": { "confidence": confidence },
+    });
+    if let Some(obj) = out.as_object_mut() {
+        for (key, value) in &source.metadata {
+            obj.insert(key.clone(), value.clone());
+        }
+    }
+    out
 }
 
 pub fn content_hash(content: &str) -> String {

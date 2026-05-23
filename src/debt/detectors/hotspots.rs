@@ -112,14 +112,16 @@ fn git_churn(project_dir: &Path, since_days: u32) -> Option<HashMap<String, u32>
 
 fn is_source_like(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
-    for ext in [
-        ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".java", ".rb",
-    ] {
-        if lower.ends_with(ext) {
-            return true;
-        }
+    if matches!(
+        Path::new(&lower).extension().and_then(|ext| ext.to_str()),
+        Some("go" | "java" | "rb")
+    ) {
+        return true;
     }
-    false
+    crate::types::source_language_for_path(Path::new(&lower))
+        .and_then(crate::types::language_capabilities)
+        .map(|capabilities| capabilities.source_files)
+        .unwrap_or(false)
 }
 
 fn collect_violations(project_dir: &Path) -> HashMap<String, u32> {

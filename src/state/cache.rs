@@ -20,6 +20,19 @@ pub struct SourceCacheStore {
     loaded: bool,
 }
 
+pub fn entry_is_fresh(entry: &Value, ttl_seconds: Option<u64>) -> bool {
+    let fetch_ts = match entry.get("fetch_timestamp").and_then(|v| v.as_str()) {
+        Some(ts) => ts,
+        None => return false,
+    };
+    let ttl = ttl_seconds
+        .or_else(|| entry.get("ttl_seconds").and_then(|v| v.as_u64()))
+        .unwrap_or(DEFAULT_TTL);
+    parse_age_seconds(fetch_ts)
+        .map(|age| age < ttl as f64)
+        .unwrap_or(false)
+}
+
 impl SourceCacheStore {
     pub fn new(path: PathBuf) -> Self {
         Self {
@@ -56,6 +69,20 @@ impl SourceCacheStore {
         format!("{language}:{name}:{version}")
     }
 
+    fn key_for_entry(entry: &Value) -> String {
+        entry
+            .get("source_ref")
+            .and_then(|v| v.get("id"))
+            .and_then(|v| v.as_str())
+            .map(|id| format!("source:{id}"))
+            .unwrap_or_else(|| {
+                let language = entry.get("language").and_then(|v| v.as_str()).unwrap_or("");
+                let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let version = entry.get("version").and_then(|v| v.as_str()).unwrap_or("");
+                Self::key(language, name, version)
+            })
+    }
+
     fn entries_map(&mut self) -> HashMap<String, Value> {
         self.ensure_loaded();
         self.data
@@ -76,6 +103,11 @@ impl SourceCacheStore {
     pub fn get(&mut self, language: &str, name: &str, version: &str) -> Option<Value> {
         let entries = self.entries_map();
         entries.get(&Self::key(language, name, version)).cloned()
+    }
+
+    pub fn get_by_source_ref(&mut self, source_ref_id: &str) -> Option<Value> {
+        let entries = self.entries_map();
+        entries.get(&format!("source:{source_ref_id}")).cloned()
     }
 
     pub fn is_fresh(
@@ -99,22 +131,12 @@ impl SourceCacheStore {
             return false;
         }
 
-        let fetch_ts = match entry.get("fetch_timestamp").and_then(|v| v.as_str()) {
-            Some(ts) => ts,
-            None => return false,
-        };
-
         let ttl = ttl_seconds.unwrap_or(DEFAULT_TTL);
-        parse_age_seconds(fetch_ts)
-            .map(|age| age < ttl as f64)
-            .unwrap_or(false)
+        entry_is_fresh(&entry, Some(ttl))
     }
 
     pub fn upsert(&mut self, entry: Value) {
-        let language = entry.get("language").and_then(|v| v.as_str()).unwrap_or("");
-        let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let version = entry.get("version").and_then(|v| v.as_str()).unwrap_or("");
-        let key = Self::key(language, name, version);
+        let key = Self::key_for_entry(&entry);
         self.entries_mut().insert(key, entry);
     }
 

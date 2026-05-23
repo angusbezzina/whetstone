@@ -28,9 +28,9 @@ pub enum AstLang {
 impl AstLang {
     /// Parse the language name used in rule YAML (`python | typescript | rust`).
     pub fn from_str(s: &str) -> Option<Self> {
-        match s {
+        match crate::types::canonical_language(s)? {
             "python" => Some(AstLang::Python),
-            "typescript" | "ts" | "javascript" | "js" => Some(AstLang::TypeScript),
+            "typescript" | "javascript" => Some(AstLang::TypeScript),
             "rust" => Some(AstLang::Rust),
             _ => None,
         }
@@ -38,10 +38,10 @@ impl AstLang {
 
     /// Infer language from a source-file extension (`py | ts | tsx | rs`).
     pub fn from_extension(ext: &str) -> Option<Self> {
-        match ext {
-            "py" => Some(AstLang::Python),
-            "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" => Some(AstLang::TypeScript),
-            "rs" => Some(AstLang::Rust),
+        match crate::types::source_language_for_extension(ext)? {
+            "python" => Some(AstLang::Python),
+            "typescript" | "javascript" => Some(AstLang::TypeScript),
+            "rust" => Some(AstLang::Rust),
             _ => None,
         }
     }
@@ -178,6 +178,7 @@ mod tests {
     fn from_extension_maps_common_suffixes() {
         assert_eq!(AstLang::from_extension("py"), Some(AstLang::Python));
         assert_eq!(AstLang::from_extension("tsx"), Some(AstLang::TypeScript));
+        assert_eq!(AstLang::from_extension("js"), Some(AstLang::TypeScript));
         assert_eq!(AstLang::from_extension("rs"), Some(AstLang::Rust));
         assert_eq!(AstLang::from_extension("md"), None);
     }

@@ -18,7 +18,10 @@ use anyhow::Result;
 use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 use tree_sitter::{Query, QueryCursor, Tree};
 
 use crate::ast::{self, AstLang};
@@ -90,11 +93,17 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
     let mut config_issues = lint_proxy::verify_lint_proxies(project_dir, &rules);
     config_issues.extend(lint_proxy::verify_formatter_directives(project_dir, &rules));
     config_issues.extend(lint_proxy::verify_test_bindings(project_dir, &rules));
+    config_issues.extend(lint_proxy::verify_validator_bindings(project_dir, &rules));
+    let validator_default_timeout = crate::config::WhetstoneConfig::load(project_dir)
+        .resolve
+        .timeout_seconds
+        .unwrap_or(15);
+    let mut seen_validator_runtime_issues: BTreeSet<String> = BTreeSet::new();
 
     let files = discover_source_files(opts.scan_paths);
-    for (path, lang) in &files {
+    for (path, language, ast_lang) in &files {
         if let Some(filter) = opts.lang_filter {
-            if lang.as_str() != filter {
+            if !crate::types::language_matches_language(language, filter) {
                 continue;
             }
         }
@@ -109,7 +118,7 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
 
         let applicable: Vec<&CompiledRule> = compiled
             .iter()
-            .filter(|cr| rule_applies_to_language(&cr.rule.language, lang))
+            .filter(|cr| rule_applies_to_language(&cr.rule.language, language))
             .collect();
         if applicable.is_empty() {
             continue;
@@ -119,12 +128,15 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
             .iter()
             .any(|cr| cr.signals.iter().any(|s| s.needs_tree()))
         {
-            match ast::parse(*lang, &text) {
-                Some(t) => Some(t),
-                None => {
-                    warnings.push(format!("tree-sitter parse failed for {}", path.display()));
-                    None
-                }
+            match ast_lang {
+                Some(lang) => match ast::parse(*lang, &text) {
+                    Some(t) => Some(t),
+                    None => {
+                        warnings.push(format!("tree-sitter parse failed for {}", path.display()));
+                        None
+                    }
+                },
+                None => None,
             }
         } else {
             None
@@ -132,7 +144,7 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
 
         for crule in applicable {
             for sig in &crule.signals {
-                let hits = apply_signal(sig, *lang, &text, tree.as_ref());
+                let hits = apply_signal(sig, *ast_lang, &text, tree.as_ref());
                 for hit in hits {
                     violations.push(json!({
                         "rule_id": crule.rule.id,
@@ -140,7 +152,7 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
                         "category": crule.rule.category,
                         "description": first_line(&crule.rule.description),
                         "source_url": crule.rule.source_url,
-                        "language": lang.as_str(),
+                        "language": language,
                         "signal_id": sig.signal_id,
                         "signal_strategy": sig.strategy,
                         "signal_description": sig.description,
@@ -150,6 +162,57 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
                         "column": hit.column,
                         "match": hit.text,
                     }));
+                }
+            }
+
+            for validator in &crule.rule.validators {
+                if validator.adapter != "command" {
+                    continue;
+                }
+                match run_command_validator(
+                    project_dir,
+                    path,
+                    language,
+                    crule.rule,
+                    validator,
+                    validator_default_timeout,
+                ) {
+                    Ok(result) => {
+                        warnings.extend(result.warnings);
+                        for hit in result.violations {
+                            violations.push(json!({
+                                "rule_id": crule.rule.id,
+                                "severity": crule.rule.severity,
+                                "category": crule.rule.category,
+                                "description": first_line(&crule.rule.description),
+                                "source_url": crule.rule.source_url,
+                                "language": language,
+                                "signal_id": validator.rule,
+                                "signal_strategy": format!("validator:{}", validator.adapter),
+                                "signal_description": hit.message,
+                                "signal_check_type": "validator",
+                                "file": path.display().to_string(),
+                                "line": hit.line,
+                                "column": hit.column,
+                                "match": hit.text.unwrap_or_default(),
+                                "validator_adapter": validator.adapter,
+                                "validator_rule": validator.rule,
+                            }));
+                        }
+                    }
+                    Err(issue) => {
+                        let key = format!("{}:{}:{}", crule.rule.id, validator.rule, issue);
+                        if seen_validator_runtime_issues.insert(key) {
+                            config_issues.push(json!({
+                                "rule_id": crule.rule.id,
+                                "adapter": validator.adapter,
+                                "validator_rule": validator.rule,
+                                "path": path.display().to_string(),
+                                "issue": issue,
+                                "fix": "fix the command validator configuration or executable output contract",
+                            }));
+                        }
+                    }
                 }
             }
         }
@@ -296,6 +359,18 @@ struct SignalHit {
     text: String,
 }
 
+struct ValidatorViolation {
+    line: usize,
+    column: usize,
+    text: Option<String>,
+    message: String,
+}
+
+struct CommandValidatorResult {
+    violations: Vec<ValidatorViolation>,
+    warnings: Vec<String>,
+}
+
 fn compile_rules<'a>(rules: &[&'a ApprovedRule]) -> Vec<CompiledRule<'a>> {
     let mut out = Vec::new();
     for rule in rules {
@@ -366,7 +441,7 @@ fn compile_rules<'a>(rules: &[&'a ApprovedRule]) -> Vec<CompiledRule<'a>> {
 
 fn apply_signal(
     sig: &CompiledSignal,
-    lang: AstLang,
+    lang: Option<AstLang>,
     text: &str,
     tree: Option<&Tree>,
 ) -> Vec<SignalHit> {
@@ -375,7 +450,7 @@ fn apply_signal(
     // so a `match:` regex can still enforce the rule rather than silently
     // letting violations slip past.
     if let Some(query_src) = &sig.ast_query {
-        if let Some(tree) = tree {
+        if let (Some(lang), Some(tree)) = (lang, tree) {
             return run_ast_query(query_src, lang, tree, text);
         }
     }
@@ -396,7 +471,7 @@ fn apply_signal(
 fn scan_lines(re: &Regex, text: &str) -> Vec<SignalHit> {
     let mut hits = Vec::new();
     for (i, line) in text.lines().enumerate() {
-        if let Some(m) = re.find(line) {
+        for m in re.find_iter(line) {
             hits.push(SignalHit {
                 line: i + 1,
                 column: m.start() + 1,
@@ -405,6 +480,207 @@ fn scan_lines(re: &Regex, text: &str) -> Vec<SignalHit> {
         }
     }
     hits
+}
+
+fn run_command_validator(
+    project_dir: &Path,
+    file_path: &Path,
+    language: &str,
+    rule: &ApprovedRule,
+    validator: &crate::rules::ApprovedValidatorBinding,
+    default_timeout_seconds: u64,
+) -> Result<CommandValidatorResult, String> {
+    let timeout_seconds = validator
+        .config
+        .get("timeout_seconds")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(default_timeout_seconds);
+    let payload = json!({
+        "rule_id": rule.id,
+        "validator_rule": validator.rule,
+        "adapter": validator.adapter,
+        "language": language,
+        "project_dir": project_dir.display().to_string(),
+        "file": {
+            "path": file_path.display().to_string(),
+            "relative_path": file_path
+                .strip_prefix(project_dir)
+                .ok()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| file_path.display().to_string()),
+        },
+        "config": validator.config,
+    });
+
+    let mut command = if let Some(command_str) = validator
+        .config
+        .get("command")
+        .and_then(|value| value.as_str())
+    {
+        if validator
+            .config
+            .get("allow_shell")
+            .and_then(|value| value.as_bool())
+            != Some(true)
+        {
+            return Err(
+                "command validator using config.command requires config.allow_shell=true".into(),
+            );
+        }
+        let mut command = Command::new("/bin/sh");
+        command.arg("-c").arg(command_str);
+        command
+    } else if let Some(path) = validator
+        .config
+        .get("path")
+        .and_then(|value| value.as_str())
+    {
+        if !is_safe_repo_relative(path) {
+            return Err("command validator path must stay within the repo".into());
+        }
+        let full_path = project_dir.join(path);
+        if !full_path.exists() {
+            return Err("command validator path does not exist".into());
+        }
+        if !path_resolves_within_repo(project_dir, &full_path) {
+            return Err("command validator path resolves outside the repo".into());
+        }
+        Command::new(full_path)
+    } else {
+        return Err("command validator requires config.path or config.command".into());
+    };
+
+    let mut child = command
+        .current_dir(project_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("failed to spawn command validator: {err}"))?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(payload.to_string().as_bytes())
+            .map_err(|err| format!("failed to write command validator payload: {err}"))?;
+    }
+    drop(child.stdin.take());
+
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|err| format!("failed waiting for command validator: {err}"))?
+        {
+            let output = child
+                .wait_with_output()
+                .map_err(|err| format!("failed to read command validator output: {err}"))?;
+            if !status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                return Err(if stderr.is_empty() {
+                    format!("command validator exited with status {status}")
+                } else {
+                    format!("command validator exited with status {status}: {stderr}")
+                });
+            }
+            return parse_command_validator_output(&output.stdout);
+        }
+        if started.elapsed() > Duration::from_secs(timeout_seconds.max(1)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "command validator timed out after {} second(s)",
+                timeout_seconds.max(1)
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn parse_command_validator_output(stdout: &[u8]) -> Result<CommandValidatorResult, String> {
+    if stdout.is_empty() {
+        return Ok(CommandValidatorResult {
+            violations: Vec::new(),
+            warnings: Vec::new(),
+        });
+    }
+
+    let parsed: Value = serde_json::from_slice(stdout)
+        .map_err(|err| format!("command validator returned invalid JSON: {err}"))?;
+    let violations_value = if parsed.is_array() {
+        &parsed
+    } else {
+        parsed.get("violations").unwrap_or(&Value::Null)
+    };
+    let warnings = parsed
+        .get("warnings")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let Some(violations_array) = violations_value.as_array() else {
+        return Err(
+            "command validator JSON must contain a `violations` array or be a JSON array".into(),
+        );
+    };
+
+    let mut violations = Vec::new();
+    for violation in violations_array {
+        let line = violation
+            .get("line")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(1)
+            .max(1) as usize;
+        let column = violation
+            .get("column")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(1)
+            .max(1) as usize;
+        let message = violation
+            .get("message")
+            .and_then(|value| value.as_str())
+            .unwrap_or("command validator reported a violation")
+            .to_string();
+        let text = violation
+            .get("match")
+            .or_else(|| violation.get("text"))
+            .and_then(|value| value.as_str())
+            .map(String::from);
+
+        violations.push(ValidatorViolation {
+            line,
+            column,
+            text,
+            message,
+        });
+    }
+
+    Ok(CommandValidatorResult {
+        violations,
+        warnings,
+    })
+}
+
+fn is_safe_repo_relative(path: &str) -> bool {
+    let path = Path::new(path);
+    !path.is_absolute()
+        && !path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+}
+
+fn path_resolves_within_repo(project_dir: &Path, full_path: &Path) -> bool {
+    let Ok(repo_root) = std::fs::canonicalize(project_dir) else {
+        return false;
+    };
+    let Ok(resolved) = std::fs::canonicalize(full_path) else {
+        return false;
+    };
+    resolved.starts_with(repo_root)
 }
 
 /// Run a raw tree-sitter query and turn every `@match` capture into a hit.
@@ -470,7 +746,7 @@ fn walk_nodes(
         let start_byte = node.start_byte();
         let start_line = node.start_position().row;
         let span = source.get(node.byte_range()).unwrap_or("");
-        if let Some(m) = re.find(span) {
+        for m in re.find_iter(span) {
             let offset = m.start();
             let (line_offset, col) = line_col_within(span, offset);
             let absolute_line = start_line + line_offset;
@@ -513,7 +789,7 @@ fn line_col_within(span: &str, offset: usize) -> (usize, usize) {
 
 // ── File discovery ──
 
-fn discover_source_files(roots: &[PathBuf]) -> Vec<(PathBuf, AstLang)> {
+fn discover_source_files(roots: &[PathBuf]) -> Vec<(PathBuf, String, Option<AstLang>)> {
     let mut out = Vec::new();
     for root in roots {
         for entry in walkdir::WalkDir::new(root)
@@ -530,26 +806,21 @@ fn discover_source_files(roots: &[PathBuf]) -> Vec<(PathBuf, AstLang)> {
             if !entry.file_type().is_file() {
                 continue;
             }
-            if let Some(ext) = entry.path().extension().and_then(|e| e.to_str()) {
-                if let Some(lang) = AstLang::from_extension(ext) {
-                    out.push((entry.into_path(), lang));
-                }
+            if let Some(language) = crate::types::source_language_for_path(entry.path()) {
+                let ast_lang = entry
+                    .path()
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .and_then(AstLang::from_extension);
+                out.push((entry.into_path(), language.to_string(), ast_lang));
             }
         }
     }
     out
 }
 
-fn rule_applies_to_language(rule_lang: &str, file_lang: &AstLang) -> bool {
-    let normalized = rule_lang.to_ascii_lowercase();
-    match file_lang {
-        AstLang::Python => matches!(normalized.as_str(), "python" | "py"),
-        AstLang::TypeScript => matches!(
-            normalized.as_str(),
-            "typescript" | "javascript" | "ts" | "tsx" | "js" | "jsx"
-        ),
-        AstLang::Rust => matches!(normalized.as_str(), "rust" | "rs"),
-    }
+fn rule_applies_to_language(rule_lang: &str, file_lang: &str) -> bool {
+    crate::types::language_matches_language(rule_lang, file_lang)
 }
 
 fn first_line(text: &str) -> String {
@@ -584,6 +855,8 @@ mod tests {
             }],
             formatter: None,
             tests: Vec::new(),
+            validators: Vec::new(),
+            provenance: None,
             golden_examples: Vec::new(),
             deterministic_pass_threshold: None,
             deterministic_fail_threshold: None,
@@ -598,7 +871,7 @@ mod tests {
         let compiled = compile_rules(&rules);
         let hits = apply_signal(
             &compiled[0].signals[0],
-            AstLang::Rust,
+            Some(AstLang::Rust),
             "let v = x.unwrap();\n",
             None,
         );
@@ -631,7 +904,7 @@ mod tests {
         let tree = ast::parse(AstLang::Python, source).unwrap();
         let hits = apply_signal(
             &compiled[0].signals[0],
-            AstLang::Python,
+            Some(AstLang::Python),
             source,
             Some(&tree),
         );
@@ -653,7 +926,7 @@ mod tests {
         let tree = ast::parse(AstLang::Python, source).unwrap();
         let hits = apply_signal(
             &compiled[0].signals[0],
-            AstLang::Python,
+            Some(AstLang::Python),
             source,
             Some(&tree),
         );
@@ -674,7 +947,7 @@ mod tests {
             ast_query: Some("(call_expression) @match".into()),
             ast_scope: None,
         };
-        let hits = apply_signal(&sig, AstLang::Rust, "let x = y.unwrap();\n", None);
+        let hits = apply_signal(&sig, Some(AstLang::Rust), "let x = y.unwrap();\n", None);
         assert_eq!(
             hits.len(),
             1,
@@ -697,13 +970,18 @@ mod tests {
         write_file(&tmp.join("src/a.py"), "x = 1\n");
         write_file(&tmp.join("src/b.rs"), "fn main() {}\n");
         write_file(&tmp.join("node_modules/c.ts"), "const x = 1;\n");
+        write_file(
+            &tmp.join("src/index.html"),
+            "<button onclick=\"x()\"></button>\n",
+        );
         let files = discover_source_files(std::slice::from_ref(&tmp));
         let names: Vec<_> = files
             .iter()
-            .map(|(p, _)| p.file_name().unwrap().to_string_lossy().to_string())
+            .map(|(p, _, _)| p.file_name().unwrap().to_string_lossy().to_string())
             .collect();
         assert!(names.contains(&"a.py".to_string()));
         assert!(names.contains(&"b.rs".to_string()));
+        assert!(names.contains(&"index.html".to_string()));
         assert!(!names.contains(&"c.ts".to_string()));
     }
 

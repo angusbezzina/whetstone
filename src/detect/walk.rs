@@ -36,13 +36,6 @@ pub const SKIP_DIRS: &[&str] = &[
     "third-party",
 ];
 
-const MANIFEST_NAMES: &[&str] = &[
-    "pyproject.toml",
-    "requirements.txt",
-    "package.json",
-    "Cargo.toml",
-];
-
 /// Recursively find all manifest files under project_dir.
 /// Returns (absolute_path, source_dir) tuples.
 pub fn find_manifests(
@@ -50,7 +43,9 @@ pub fn find_manifests(
     extra_excludes: &[String],
     extra_includes: &[String],
 ) -> Vec<(PathBuf, String)> {
-    let manifest_set: HashSet<&str> = MANIFEST_NAMES.iter().copied().collect();
+    let manifest_set: HashSet<&str> = crate::types::supported_manifest_names()
+        .into_iter()
+        .collect();
     let mut results: Vec<(PathBuf, String)> = Vec::new();
 
     // Split skip dirs into single-segment and multi-segment

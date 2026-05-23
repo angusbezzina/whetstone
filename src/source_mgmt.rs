@@ -20,9 +20,7 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use serde_yaml::{Mapping, Value as YamlValue};
 
-use crate::config::{CustomSource, PersonalConfig, WhetstoneConfig};
-
-const VALID_LANGUAGES: &[&str] = &["python", "typescript", "rust", "any"];
+use crate::config::{PersonalConfig, ResolvedSourceInput, SourcesConfig, WhetstoneConfig};
 
 // ── options ──
 
@@ -52,14 +50,7 @@ pub struct EditOptions<'a> {
 
 pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
     validate_source_reference(project_dir, opts.url)?;
-    if let Some(lang) = opts.language {
-        if !VALID_LANGUAGES.contains(&lang) {
-            return Err(anyhow!(
-                "invalid --lang `{lang}`. Must be one of: {}",
-                VALID_LANGUAGES.join(", ")
-            ));
-        }
-    }
+    let normalized_language = opts.language.map(normalize_source_language).transpose()?;
 
     let path = target_config_path(project_dir, opts.personal);
     let mut top = read_yaml_mapping_or_empty(&path)?;
@@ -111,7 +102,7 @@ pub fn add(project_dir: &Path, opts: AddOptions<'_>) -> Result<Value> {
     if let Some(name) = opts.name {
         entry.insert(ystr("name"), ystr(name));
     }
-    if let Some(lang) = opts.language {
+    if let Some(lang) = normalized_language {
         entry.insert(ystr("language"), ystr(lang));
     }
     if let Some(kind) = opts.source_kind {
@@ -138,37 +129,39 @@ pub fn list(project_dir: &Path) -> Result<Value> {
     let project_cfg = WhetstoneConfig::load_project_only(project_dir);
     let paths = crate::layers::LayerPaths::for_project(project_dir);
     let personal_cfg = PersonalConfig::load(&paths.personal_config);
-    let status_by_key = custom_source_statuses(project_dir);
+    let status_by_key = configured_source_statuses(project_dir);
+    let (project_sources, mut project_warnings) =
+        collect_source_inputs(project_dir, &project_cfg.sources, "sources_list_project");
+    let (personal_sources, mut personal_warnings) =
+        collect_source_inputs(project_dir, &personal_cfg.sources, "sources_list_personal");
 
-    let project_entries: Vec<Value> = project_cfg
-        .sources
-        .custom
+    let project_entries: Vec<Value> = project_sources
         .iter()
         .map(|s| entry_json(s, "project", status_by_key.get(&source_status_key(s))))
         .collect();
-    let personal_entries: Vec<Value> = personal_cfg
-        .sources
-        .custom
+    let personal_entries: Vec<Value> = personal_sources
         .iter()
         .map(|s| entry_json(s, "personal", status_by_key.get(&source_status_key(s))))
         .collect();
 
     let total = project_entries.len() + personal_entries.len();
+    project_warnings.append(&mut personal_warnings);
 
     Ok(json!({
         "status": "ok",
         "total": total,
         "project": project_entries,
         "personal": personal_entries,
+        "warnings": project_warnings,
     }))
 }
 
 pub fn format_list_human(result: &Value) -> String {
     let total = result.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
     if total == 0 {
-        return "No custom sources subscribed. Add one with `wh sources add <url>`.\n".to_string();
+        return "No configured sources subscribed. Add one with `wh sources add <url>` or define `sources.packs` in config.\n".to_string();
     }
-    let mut out = format!("{total} custom source(s):\n\n");
+    let mut out = format!("{total} configured source(s):\n\n");
     for layer_key in ["project", "personal"] {
         let empty: Vec<Value> = Vec::new();
         let entries = result
@@ -201,6 +194,15 @@ pub fn format_list_human(result: &Value) -> String {
             out.push_str(&format!(
                 "  {name}  [{lang} · {kind} · {fetch_state}]\n    {url}\n    last fetched: {fetched}\n"
             ));
+            if let Some(origin) = e.get("source_origin").and_then(|v| v.as_str()) {
+                out.push_str(&format!("    origin: {origin}\n"));
+            }
+            if let Some(pack_id) = e.get("pack_id").and_then(|v| v.as_str()) {
+                out.push_str(&format!("    pack: {pack_id}\n"));
+            }
+            if let Some(authority) = e.get("authority").and_then(|v| v.as_str()) {
+                out.push_str(&format!("    authority: {authority}\n"));
+            }
             if let Some(conf) = e.get("source_confidence").and_then(|v| v.as_str()) {
                 out.push_str(&format!("    source confidence: {conf}\n"));
             }
@@ -213,7 +215,7 @@ pub fn format_list_human(result: &Value) -> String {
     out
 }
 
-fn entry_json(s: &CustomSource, layer: &str, status: Option<&SourceStatus>) -> Value {
+fn entry_json(s: &ResolvedSourceInput, layer: &str, status: Option<&SourceStatus>) -> Value {
     let last_source_type = status.and_then(|s| s.last_source_type.clone());
     let confidence = last_source_type
         .as_deref()
@@ -224,6 +226,14 @@ fn entry_json(s: &CustomSource, layer: &str, status: Option<&SourceStatus>) -> V
         "name": s.name,
         "language": s.language,
         "source_kind": s.source_kind,
+        "source_origin": s.source_origin,
+        "source_ref_id": s.source_ref_id,
+        "pack_id": s.pack_id,
+        "pack_name": s.pack_name,
+        "member_id": s.member_id,
+        "authority": s.metadata.get("authority"),
+        "dep_names": s.metadata.get("dep_names"),
+        "upstream_urls": s.metadata.get("upstream_urls"),
         "layer": layer,
         "fetch_state": status.map(|s| s.fetch_state.clone()).unwrap_or_else(|| "never_fetched".to_string()),
         "last_fetched": status.and_then(|s| s.last_fetched.clone()),
@@ -235,7 +245,8 @@ fn entry_json(s: &CustomSource, layer: &str, status: Option<&SourceStatus>) -> V
 
 fn source_type_confidence(source_type: &str) -> &'static str {
     match source_type {
-        "llms_txt" | "llms_full_txt" => "high",
+        "llms_txt" | "llms_full_txt" | "local_file" => "high",
+        "second_brain_page" => "medium",
         "docs_url" | "readme" => "medium",
         _ => "low",
     }
@@ -248,6 +259,16 @@ fn source_confidence_guidance(confidence: &str) -> &'static str {
         "low" => "Low-confidence source; prefer source verification before extraction.",
         _ => "Source has not been fetched yet; run `wh sources verify <name-or-url>`.",
     }
+}
+
+fn normalize_source_language(language: &str) -> Result<&'static str> {
+    crate::types::normalize_language_or_meta(language, &[crate::types::ANY_LANGUAGE_META])
+        .ok_or_else(|| {
+            anyhow!(
+                "invalid --lang `{language}`. Must be one of: {}",
+                crate::types::supported_language_display_list(&[crate::types::ANY_LANGUAGE_META])
+            )
+        })
 }
 
 // ── edit ──
@@ -265,14 +286,7 @@ pub fn edit(project_dir: &Path, opts: EditOptions<'_>) -> Result<Value> {
     if let Some(url) = opts.url {
         validate_source_reference(project_dir, url)?;
     }
-    if let Some(lang) = opts.language {
-        if !VALID_LANGUAGES.contains(&lang) {
-            return Err(anyhow!(
-                "invalid --lang `{lang}`. Must be one of: {}",
-                VALID_LANGUAGES.join(", ")
-            ));
-        }
-    }
+    let normalized_language = opts.language.map(normalize_source_language).transpose()?;
 
     let path = target_config_path(project_dir, opts.personal);
     if !path.exists() {
@@ -369,7 +383,7 @@ pub fn edit(project_dir: &Path, opts: EditOptions<'_>) -> Result<Value> {
     if let Some(name) = opts.name {
         entry.insert(ystr("name"), ystr(name));
     }
-    if let Some(lang) = opts.language {
+    if let Some(lang) = normalized_language {
         entry.insert(ystr("language"), ystr(lang));
     }
     if let Some(kind) = opts.source_kind {
@@ -386,7 +400,7 @@ pub fn edit(project_dir: &Path, opts: EditOptions<'_>) -> Result<Value> {
         "updated": {
             "url": opts.url,
             "name": opts.name,
-            "language": opts.language,
+            "language": normalized_language,
             "source_kind": opts.source_kind,
         },
         "next_command": "wh sources verify",
@@ -421,6 +435,35 @@ pub fn remove(project_dir: &Path, opts: RemoveOptions<'_>) -> Result<Value> {
             path.display()
         ));
     };
+
+    let matches: Vec<usize> = custom_seq
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, entry)| {
+            let m = entry.as_mapping()?;
+            let url = m
+                .get(ystr("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let name = m
+                .get(ystr("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            if url == opts.target || name == opts.target {
+                Some(idx)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if matches.len() > 1 {
+        return Err(anyhow!(
+            "source target `{}` matched multiple entries in {}. Re-run with the full URL.",
+            opts.target,
+            path.display()
+        ));
+    }
 
     let original_len = custom_seq.len();
     let mut removed_url: Option<String> = None;
@@ -494,7 +537,7 @@ fn citing_rule_ids(project_dir: &Path, url: &str) -> Vec<Value> {
         for lrf in files {
             for r in &lrf.rule_file.rules {
                 if let Some(src) = &r.source_url {
-                    if src == url || src.starts_with(url) {
+                    if source_url_matches_reference(src, url) {
                         out.push(json!({
                             "rule_id": r.id,
                             "file": lrf.file_path,
@@ -507,24 +550,44 @@ fn citing_rule_ids(project_dir: &Path, url: &str) -> Vec<Value> {
     out
 }
 
+fn source_url_matches_reference(source_url: &str, reference: &str) -> bool {
+    if source_url == reference {
+        return true;
+    }
+    source_url
+        .strip_prefix(reference)
+        .and_then(|suffix| suffix.chars().next())
+        .map(|next| matches!(next, '/' | '#' | '?'))
+        .unwrap_or(false)
+}
+
 // ── fetch ──
 
 pub fn fetch(project_dir: &Path, target: &str) -> Result<Value> {
-    let project_cfg = WhetstoneConfig::load(project_dir);
+    let project_cfg = WhetstoneConfig::load_project_only(project_dir);
     let paths = crate::layers::LayerPaths::for_project(project_dir);
     let personal_cfg = PersonalConfig::load(&paths.personal_config);
 
-    let mut all: Vec<(&CustomSource, &'static str)> = Vec::new();
-    for s in &project_cfg.sources.custom {
+    let mut all: Vec<(ResolvedSourceInput, &'static str)> = Vec::new();
+    let (project_sources, _) =
+        collect_source_inputs(project_dir, &project_cfg.sources, "sources_fetch_project");
+    for s in project_sources {
         all.push((s, "project"));
     }
-    for s in &personal_cfg.sources.custom {
+    let (personal_sources, _) =
+        collect_source_inputs(project_dir, &personal_cfg.sources, "sources_fetch_personal");
+    for s in personal_sources {
         all.push((s, "personal"));
     }
 
-    let matched: Vec<(&CustomSource, &'static str)> = all
+    let matched: Vec<(ResolvedSourceInput, &'static str)> = all
         .into_iter()
-        .filter(|(s, _)| s.url == target || s.name.as_deref() == Some(target))
+        .filter(|(s, _)| {
+            s.url == target
+                || s.name.as_deref() == Some(target)
+                || s.pack_id.as_deref() == Some(target)
+                || s.pack_name.as_deref() == Some(target)
+        })
         .collect();
 
     if matched.is_empty() {
@@ -543,7 +606,8 @@ pub fn fetch(project_dir: &Path, target: &str) -> Result<Value> {
     sm.load_all();
     let mut results = Vec::new();
     for (src, layer) in matched {
-        let fetched = crate::resolve::resolve_custom_sources(std::slice::from_ref(src), timeout);
+        let fetched =
+            crate::resolve::resolve_source_inputs(project_dir, std::slice::from_ref(&src), timeout);
         for item in fetched {
             let mut cache_entry = item.clone();
             if let Value::Object(ref mut m) = cache_entry {
@@ -649,13 +713,49 @@ struct SourceStatus {
     last_source_type: Option<String>,
 }
 
-fn source_status_key(source: &CustomSource) -> String {
-    let language = source.language.as_deref().unwrap_or("any");
-    let name = source.name.as_deref().unwrap_or(source.url.as_str());
-    format!("{language}:{name}:custom")
+fn source_entry_is_fresh(entry: &Value) -> bool {
+    let Some(fetch_timestamp) = entry
+        .get("fetch_timestamp")
+        .or_else(|| entry.get("fetched_at"))
+        .and_then(|v| v.as_str())
+    else {
+        return false;
+    };
+    let ttl = entry
+        .get("ttl_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(crate::state::cache::DEFAULT_TTL);
+    let Some(parsed) = chrono::DateTime::parse_from_rfc3339(fetch_timestamp)
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+    else {
+        return false;
+    };
+    (chrono::Utc::now() - parsed).num_seconds() < ttl as i64
 }
 
-fn custom_source_statuses(project_dir: &Path) -> BTreeMap<String, SourceStatus> {
+fn source_status_key(source: &ResolvedSourceInput) -> String {
+    if source.source_origin == "custom" {
+        let language = source.language.as_deref().unwrap_or("any");
+        let name = source.name.as_deref().unwrap_or(source.url.as_str());
+        format!("{language}:{name}:custom")
+    } else {
+        source.source_ref_id.clone()
+    }
+}
+
+fn collect_source_inputs(
+    project_dir: &Path,
+    sources: &SourcesConfig,
+    trigger: &str,
+) -> (Vec<ResolvedSourceInput>, Vec<String>) {
+    let mut inputs = sources.resolved_inputs();
+    let second_brain = crate::second_brain::build(project_dir, &sources.vaults, trigger);
+    inputs.extend(second_brain.inputs);
+    (inputs, second_brain.warnings)
+}
+
+fn configured_source_statuses(project_dir: &Path) -> BTreeMap<String, SourceStatus> {
     let mut sm = crate::state::StateManager::new(project_dir);
     sm.load_all();
     let mut out = BTreeMap::new();
@@ -672,26 +772,37 @@ fn custom_source_statuses(project_dir: &Path) -> BTreeMap<String, SourceStatus> 
         if name.is_empty() {
             continue;
         }
-        let key = format!("{language}:{name}:custom");
-        out.insert(
-            key,
-            SourceStatus {
-                fetch_state: if sm.cache.is_fresh(language, name, version, None) {
-                    "fresh".to_string()
-                } else {
-                    "stale".to_string()
-                },
-                last_fetched: entry
-                    .get("fetch_timestamp")
-                    .or_else(|| entry.get("fetched_at"))
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                last_source_type: entry
-                    .get("source_type")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
+        let key = entry
+            .get("source_ref")
+            .and_then(|v| v.get("id"))
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| format!("{language}:{name}:custom"));
+        let status = SourceStatus {
+            fetch_state: if source_entry_is_fresh(&entry) {
+                "fresh".to_string()
+            } else {
+                "stale".to_string()
             },
-        );
+            last_fetched: entry
+                .get("fetch_timestamp")
+                .or_else(|| entry.get("fetched_at"))
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            last_source_type: entry
+                .get("source_type")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+        };
+        out.insert(key.clone(), status.clone());
+        if entry
+            .get("source_origin")
+            .and_then(|v| v.as_str())
+            .unwrap_or("custom")
+            == "custom"
+        {
+            out.insert(format!("{language}:{name}:custom"), status);
+        }
     }
     out
 }
@@ -773,6 +884,58 @@ mod tests {
         assert_eq!(project.len(), 1);
         assert_eq!(project[0]["fetch_state"], "fresh");
         assert_eq!(project[0]["last_source_type"], "llms_txt");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn list_surfaces_pack_member_sources() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wh_source_pack_state_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("whetstone/.state")).unwrap();
+        std::fs::write(
+            tmp.join("whetstone/whetstone.yaml"),
+            "sources:\n  packs:\n    - id: frontend-guidelines\n      name: frontend-guidelines\n      language: javascript\n      source_kind: team_guide\n      members:\n        - url: https://example.com/frontend/js\n          name: js-guide\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("whetstone/.state/source-cache.json"),
+            r#"{
+  "version": 1,
+  "entries": {
+    "source:pack:frontend-guidelines:member-1-js-guide": {
+      "name": "js-guide",
+      "language": "javascript",
+      "version": "custom",
+      "source_origin": "pack_member",
+      "source_ref": {
+        "kind": "pack_member",
+        "id": "pack:frontend-guidelines:member-1-js-guide",
+        "pack_id": "frontend-guidelines",
+        "pack_name": "frontend-guidelines",
+        "member_id": "member-1-js-guide"
+      },
+      "source_type": "llms_txt",
+      "fetch_timestamp": "2099-01-01T00:00:00Z"
+    }
+  }
+}"#,
+        )
+        .unwrap();
+
+        let result = list(&tmp).unwrap();
+        let project = result["project"].as_array().unwrap();
+        assert_eq!(project.len(), 1);
+        assert_eq!(project[0]["source_origin"], "pack_member");
+        assert_eq!(project[0]["pack_id"], "frontend-guidelines");
+        assert_eq!(project[0]["fetch_state"], "fresh");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

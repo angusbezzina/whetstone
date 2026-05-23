@@ -68,7 +68,12 @@ fn collect(
 ) {
     for lrf in files {
         if let Some(filter) = lang_filter {
-            if lrf.language.as_deref() != Some(filter) {
+            if !lrf
+                .language
+                .as_deref()
+                .map(|language| crate::types::language_matches_language(language, filter))
+                .unwrap_or(false)
+            {
                 continue;
             }
         }
@@ -131,9 +136,24 @@ pub fn show(project_dir: &Path, rule_id: &str) -> Result<Value> {
                 "reason": e.reason,
                 "code": e.code,
             })).collect::<Vec<_>>(),
+            "provenance": rule.provenance.as_ref().map(|provenance| json!({
+                "source_page_id": provenance.source_page_id,
+                "source_page_path": provenance.source_page_path,
+                "source_authority": provenance.source_authority,
+                "source_line_start": provenance.source_line_start,
+                "source_line_end": provenance.source_line_end,
+                "upstream_urls": provenance.upstream_urls,
+            })),
         },
         "file": found.path.display().to_string(),
         "source_name": found.file.source.name,
+        "source_metadata": {
+            "docs_url": found.file.source.docs_url,
+            "content_hash": found.file.source.content_hash,
+            "resolved_at": found.file.source.resolved_at,
+            "content_origin": found.file.source.content_origin,
+            "registry": found.file.source.registry,
+        },
     }))
 }
 
@@ -206,6 +226,24 @@ pub fn format_worklist(result: &Value) -> String {
             ));
             if let Some(guidance) = entry.get("confidence_guidance").and_then(|v| v.as_str()) {
                 out.push_str(&format!("    guidance: {guidance}\n"));
+            }
+            let origin = entry.get("source_origin").and_then(|v| v.as_str());
+            let authority = entry.get("authority").and_then(|v| v.as_str());
+            let source_url = entry.get("source_url").and_then(|v| v.as_str());
+            let related_count = entry
+                .get("related_pages")
+                .and_then(|v| v.as_array())
+                .map(|items| items.len())
+                .unwrap_or(0);
+            if origin.is_some() || authority.is_some() || source_url.is_some() || related_count > 0
+            {
+                out.push_str(&format!(
+                    "    provenance: origin={} authority={} related={} url={}\n",
+                    origin.unwrap_or("n/a"),
+                    authority.unwrap_or("n/a"),
+                    related_count,
+                    source_url.unwrap_or("n/a")
+                ));
             }
         }
     }

@@ -27,7 +27,6 @@ const VALID_CATEGORIES: &[&str] = &[
     "breaking-change",
     "semantic",
 ];
-const VALID_LANGUAGES: &[&str] = &["python", "typescript", "rust", "all"];
 
 // ── add ──
 
@@ -50,6 +49,11 @@ pub enum EnforcementMode {
         path: String,
         selector: Option<String>,
     },
+    Validator {
+        adapter: String,
+        rule: String,
+        config: BTreeMap<String, Value>,
+    },
 }
 
 pub struct AddOptions {
@@ -71,13 +75,13 @@ pub fn add(project_dir: &Path, opts: AddOptions) -> Result<Value> {
     validate_enum("severity", &opts.severity, VALID_SEVERITIES)?;
     validate_enum("confidence", &opts.confidence, VALID_CONFIDENCES)?;
     validate_enum("category", &opts.category, VALID_CATEGORIES)?;
-    validate_enum("language", &opts.language, VALID_LANGUAGES)?;
+    let normalized_language = normalize_rule_language(&opts.language)?;
 
     if opts.description.trim().is_empty() {
         return Err(anyhow!("--description is required and must be non-empty"));
     }
 
-    validate_enforcement(&opts.enforcement, &opts.language)?;
+    validate_enforcement(&opts.enforcement, normalized_language)?;
 
     let (dep, full_id) = parse_id(&opts.rule_id, opts.dep.as_deref())?;
     let existing = collect_existing_rule_ids(project_dir);
@@ -104,15 +108,21 @@ pub fn add(project_dir: &Path, opts: AddOptions) -> Result<Value> {
     );
     rule.insert(ystr("approved"), YamlValue::Bool(true));
     rule.insert(ystr("status"), ystr("approved"));
-    if opts.language == "all" {
+    if normalized_language == crate::types::ALL_LANGUAGE_META {
         rule.insert(
             ystr("languages"),
-            YamlValue::Sequence(vec![ystr("python"), ystr("rust"), ystr("typescript")]),
+            YamlValue::Sequence(
+                crate::types::all_supported_languages()
+                    .into_iter()
+                    .map(|language| ystr(&language))
+                    .collect(),
+            ),
         );
     }
 
     let mut signals = Vec::new();
     let mut tests = Vec::new();
+    let mut validators = Vec::new();
 
     match &opts.enforcement {
         EnforcementMode::Advisory => {}
@@ -160,10 +170,26 @@ pub fn add(project_dir: &Path, opts: AddOptions) -> Result<Value> {
             }
             tests.push(YamlValue::Mapping(test));
         }
+        EnforcementMode::Validator {
+            adapter,
+            rule,
+            config,
+        } => {
+            let mut validator = Mapping::new();
+            validator.insert(ystr("adapter"), ystr(adapter));
+            validator.insert(ystr("rule"), ystr(rule));
+            if !config.is_empty() {
+                validator.insert(ystr("config"), json_map_to_yaml(config));
+            }
+            validators.push(YamlValue::Mapping(validator));
+        }
     }
     rule.insert(ystr("signals"), YamlValue::Sequence(signals));
     if !tests.is_empty() {
         rule.insert(ystr("tests"), YamlValue::Sequence(tests));
+    }
+    if !validators.is_empty() {
+        rule.insert(ystr("validators"), YamlValue::Sequence(validators));
     }
 
     // Two golden examples: a pass+fail. The user can edit them later; this keeps
@@ -191,7 +217,7 @@ pub fn add(project_dir: &Path, opts: AddOptions) -> Result<Value> {
     );
 
     // Append to the existing dep file when present, otherwise create it.
-    let dest = destination_path(project_dir, opts.personal, &opts.language, &dep);
+    let dest = destination_path(project_dir, opts.personal, normalized_language, &dep);
     let dest_existed = dest.exists();
 
     let mut top = if dest_existed {
@@ -279,6 +305,18 @@ fn validate_enforcement(enforcement: &EnforcementMode, language: &str) -> Result
             if !rules::test_runner_matches_language(runner, language) {
                 return Err(anyhow!(
                     "test runner `{runner}` is not supported for language `{language}`"
+                ));
+            }
+            Ok(())
+        }
+        EnforcementMode::Validator {
+            adapter,
+            rule,
+            config: _,
+        } => {
+            if adapter.trim().is_empty() || rule.trim().is_empty() {
+                return Err(anyhow!(
+                    "validator enforcement requires non-empty adapter and rule"
                 ));
             }
             Ok(())
@@ -620,12 +658,22 @@ fn destination_path(project_dir: &Path, personal: bool, language: &str, dep: &st
     } else {
         paths.project_rules_dir
     };
-    let directory = if language == "all" {
-        "shared"
+    let directory = if language == crate::types::ALL_LANGUAGE_META {
+        crate::types::SHARED_LANGUAGE_DIR
     } else {
         language
     };
     base.join(directory).join(format!("{dep}.yaml"))
+}
+
+fn normalize_rule_language(language: &str) -> Result<&'static str> {
+    crate::types::normalize_language_or_meta(language, &[crate::types::ALL_LANGUAGE_META])
+        .ok_or_else(|| {
+            anyhow!(
+                "invalid language `{language}`. Must be one of: {}",
+                crate::types::supported_language_display_list(&[crate::types::ALL_LANGUAGE_META])
+            )
+        })
 }
 
 fn read_yaml_mapping(path: &Path) -> Result<Mapping> {
@@ -661,6 +709,8 @@ fn collect_existing_rule_ids(project_dir: &Path) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::{parse_id, validate_enum, AddOptions, EnforcementMode, VALID_SEVERITIES};
+    use serde_json::Value;
+    use std::collections::BTreeMap;
 
     #[test]
     fn parse_id_qualified() {
@@ -774,6 +824,86 @@ mod tests {
         assert_eq!(rules[0].tests.len(), 1);
         assert_eq!(rules[0].tests[0].runner, "vitest");
         assert_eq!(rules[0].tests[0].path, "tests/render/output.test.ts");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn add_accepts_language_aliases_and_normalizes_storage() {
+        let tmp =
+            std::env::temp_dir().join(format!("wh_rule_authoring_alias_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::create_dir_all(&tmp);
+
+        super::add(
+            &tmp,
+            AddOptions {
+                rule_id: "custom.render-snapshot".into(),
+                description: "Snapshots must stay covered".into(),
+                severity: "should".into(),
+                confidence: "high".into(),
+                category: "convention".into(),
+                language: "js".into(),
+                source_url: None,
+                dep: Some("custom".into()),
+                enforcement: EnforcementMode::Test {
+                    runner: "vitest".into(),
+                    path: "tests/render/output.test.ts".into(),
+                    selector: Some("snapshot_contract".into()),
+                },
+                personal: true,
+            },
+        )
+        .unwrap();
+
+        let paths = crate::layers::LayerPaths::for_project(&tmp);
+        let (rules, _) = crate::rules::load_approved_rules(&paths.personal_rules_dir, None);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].language, "javascript");
+        assert_eq!(rules[0].languages, vec!["javascript"]);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn add_validator_backed_rule_persists_validators() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wh_rule_authoring_validator_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::create_dir_all(&tmp);
+
+        super::add(
+            &tmp,
+            AddOptions {
+                rule_id: "custom.inline-handlers".into(),
+                description: "Inline handlers should be checked by a custom validator".into(),
+                severity: "should".into(),
+                confidence: "high".into(),
+                category: "convention".into(),
+                language: "html".into(),
+                source_url: None,
+                dep: Some("custom".into()),
+                enforcement: EnforcementMode::Validator {
+                    adapter: "command".into(),
+                    rule: "custom.inline-handlers".into(),
+                    config: BTreeMap::from([(
+                        "path".into(),
+                        Value::String("scripts/check-inline-handlers.py".into()),
+                    )]),
+                },
+                personal: true,
+            },
+        )
+        .unwrap();
+
+        let paths = crate::layers::LayerPaths::for_project(&tmp);
+        let (rules, _) = crate::rules::load_approved_rules(&paths.personal_rules_dir, None);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].validators.len(), 1);
+        assert_eq!(rules[0].validators[0].adapter, "command");
+        assert_eq!(rules[0].validators[0].rule, "custom.inline-handlers");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

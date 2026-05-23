@@ -7,10 +7,6 @@ use crate::detect::walk::SKIP_DIRS;
 
 use super::types::SourceInventory;
 
-const PY_EXTS: &[&str] = &["py"];
-const TS_EXTS: &[&str] = &["ts", "tsx", "js", "jsx", "mjs", "cjs"];
-const RS_EXTS: &[&str] = &["rs"];
-
 /// Collect all source files under `project_dir`, bucketed by language.
 /// Ignores test-fixture dirs, vendored code, build outputs, and
 /// whetstone's own working directory.
@@ -77,16 +73,15 @@ fn walk_dir(
 }
 
 fn classify(path: &Path, out: &mut SourceInventory) {
-    let ext = match path.extension().and_then(|e| e.to_str()) {
-        Some(e) => e,
-        None => return,
+    let Some(language) = crate::types::source_language_for_path(path) else {
+        return;
     };
     let pb: PathBuf = path.to_path_buf();
-    if PY_EXTS.contains(&ext) {
+    if crate::types::language_matches_language(language, "python") {
         out.python.push(pb);
-    } else if TS_EXTS.contains(&ext) {
+    } else if crate::types::language_matches_language(language, "typescript") {
         out.typescript.push(pb);
-    } else if RS_EXTS.contains(&ext) {
+    } else if crate::types::language_matches_language(language, "rust") {
         out.rust.push(pb);
     }
 }
@@ -103,7 +98,7 @@ mod tests {
         let root = tmp.path();
         fs::create_dir_all(root.join("pkg")).unwrap();
         fs::write(root.join("pkg/a.py"), "x = 1\n").unwrap();
-        fs::write(root.join("pkg/b.ts"), "export const x = 1;\n").unwrap();
+        fs::write(root.join("pkg/b.js"), "export const x = 1;\n").unwrap();
         fs::write(root.join("pkg/c.rs"), "fn x() {}\n").unwrap();
         fs::write(root.join("README.md"), "not source\n").unwrap();
 
