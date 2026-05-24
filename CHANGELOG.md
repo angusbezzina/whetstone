@@ -6,6 +6,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.20] - 2026-05-23
+
+### Fixed
+- **The TUI intro splash now uses the final Whetstone mark and simpler loading copy.** The animated top stone is centered as a fixed-width block, hovers slightly above the base, and now presents only a concise welcome message plus loading state.
+
 ## [0.8.19] - 2026-05-23
 
 ### Added

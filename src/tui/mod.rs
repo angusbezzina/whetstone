@@ -467,7 +467,7 @@ mod tests {
             .map(|cell| cell.symbol().to_owned())
             .collect();
 
-        assert!(rendered.contains("WHETSTONE"));
+        assert!(rendered.contains("Welcome to Whetstone"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
