@@ -64,3 +64,6 @@
 # - linear.api-key
 # - github.org
 # - github.repo
+
+# Beads Dolt SQL server port. Keep explicit so bd never falls back to port 0.
+dolt.port: 63487

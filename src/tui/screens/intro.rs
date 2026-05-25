@@ -1,8 +1,8 @@
 use ratatui::{
     layout::Rect,
-    style::Style,
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
     Frame,
 };
 
@@ -33,12 +33,6 @@ const LOGO: &[&str] = &[
     r#"                          "|||'"#,
 ];
 
-const WORDMARK: &[&str] = &[
-    "██     ██ ▄▄ ▄▄ ▄▄▄▄▄ ▄▄▄▄▄▄ ▄▄▄▄ ▄▄▄▄▄▄ ▄▄▄  ▄▄  ▄▄ ▄▄▄▄▄",
-    "██ ▄█▄ ██ ██▄██ ██▄▄    ██  ███▄▄   ██  ██▀██ ███▄██ ██▄▄",
-    " ▀██▀██▀  ██ ██ ██▄▄▄   ██  ▄▄██▀   ██  ▀███▀ ██ ▀██ ██▄▄▄",
-];
-
 #[allow(dead_code)]
 pub fn hints() -> &'static [footer::Hint] {
     &[]
@@ -47,10 +41,17 @@ pub fn hints() -> &'static [footer::Hint] {
 pub fn render(frame: &mut Frame<'_>, area: Rect, _app: &App) {
     let mut content = Vec::new();
     content.extend(centered_group(LOGO, theme::header_title()));
-    content.push(Line::from(""));
-    content.push(Line::from(""));
-    content.extend(centered_group(WORDMARK, theme::header_title()));
-    content.push(Line::from(""));
+    content.extend(spacer_lines(area.height, LOGO.len() + 2));
+    content.push(
+        Line::from(Span::styled(
+            "Whetstone",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .centered(),
+    );
+    content.extend(spacer_lines(area.height, LOGO.len() + 2));
     content.push(
         Line::from(Span::styled(
             "Press any key to continue",
@@ -59,26 +60,25 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, _app: &App) {
         .centered(),
     );
 
-    let top_padding = vertical_padding(area, content.len());
+    let top_padding = vertical_padding(area.height, content.len());
     let mut lines = Vec::with_capacity(top_padding + content.len());
     lines.extend(std::iter::repeat(Line::from("")).take(top_padding));
     lines.extend(content);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::border_inactive());
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
-fn vertical_padding(area: Rect, content_height: usize) -> usize {
-    area.height
-        .saturating_sub(2)
+fn spacer_lines(height: u16, minimum_content_height: usize) -> impl Iterator<Item = Line<'static>> {
+    let spacer_count = if height as usize > minimum_content_height {
+        1
+    } else {
+        0
+    };
+    std::iter::repeat(Line::from("")).take(spacer_count)
+}
+
+fn vertical_padding(height: u16, content_height: usize) -> usize {
+    height
         .saturating_sub(content_height as u16)
         .saturating_div(2) as usize
 }
@@ -153,10 +153,11 @@ mod tests {
             .collect();
 
         assert!(rendered.contains("Press any key to continue"));
-        assert!(rendered.contains("██     ██"));
+        assert!(rendered.contains("Whetstone"));
         assert!(rendered.contains("fvcc"));
         assert!(!rendered.contains("gentle hover"));
         assert!(!rendered.contains("Loading"));
+        assert!(!rendered.contains("██"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -176,5 +177,32 @@ mod tests {
         assert!(
             joined.contains(r#"                          "|||'"#) || joined.contains(r#""|||'"#)
         );
+    }
+
+    #[test]
+    fn intro_content_fits_twenty_four_rows() {
+        let tmp = std::env::temp_dir().join(format!("wh_intro_24_rows_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.screen = Screen::Intro;
+
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), &app))
+            .unwrap();
+
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol().to_owned())
+            .collect();
+
+        assert!(rendered.contains("Whetstone"));
+        assert!(rendered.contains("Press any key to continue"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -6,6 +6,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.22] - 2026-05-25
+
+### Fixed
+- **The TUI intro is now a simple static screen.** The animated splash and block wordmark are gone; interactive `wh` now shows only the ASCII logo, `Whetstone`, and `Press any key to continue`.
+- **Beads/Dolt setup no longer falls back to port 0.** The repo now carries an explicit Dolt SQL port, the repair script preserves that setting, and the Beads integration test initializes with an explicit server port.
+
 ## [0.8.21] - 2026-05-24
 
 ### Changed

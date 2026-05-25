@@ -256,7 +256,7 @@ mod tests {
             .map(|cell| cell.symbol().to_owned())
             .collect();
         assert!(rendered.contains("Press any key to continue"));
-        assert!(rendered.contains("██     ██"));
+        assert!(rendered.contains("Whetstone"));
         assert!(!rendered.contains("HOME"));
         let _ = std::fs::remove_dir_all(&tmp);
     }

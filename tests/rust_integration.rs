@@ -115,6 +115,15 @@ fn run_bd(args: &[&str], current_dir: &Path) -> (String, String, bool) {
     (stdout, stderr, output.status.success())
 }
 
+fn beads_test_port() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos();
+    let offset = (std::process::id() + nanos) % 2000;
+    (62000 + offset).to_string()
+}
+
 fn bd_available() -> bool {
     Command::new("bd")
         .arg("--version")
@@ -4098,8 +4107,18 @@ dependencies = ["definitely-unused"]
     )
     .unwrap();
 
-    let (_bd_init_out, bd_init_err, bd_ok) =
-        run_bd(&["init", "--skip-agents", "--skip-hooks", "-q"], &tmp);
+    let port = beads_test_port();
+    let (_bd_init_out, bd_init_err, bd_ok) = run_bd(
+        &[
+            "init",
+            "--skip-agents",
+            "--skip-hooks",
+            "--server-port",
+            port.as_str(),
+            "-q",
+        ],
+        &tmp,
+    );
     assert!(
         bd_ok,
         "bd init should succeed for debt integration test: {bd_init_err}"
