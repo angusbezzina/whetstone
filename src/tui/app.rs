@@ -22,7 +22,6 @@ pub struct App {
     pub dashboard: DashboardState,
     pub sources_ui: SourcesUiState,
     pub rules_ui: RulesUiState,
-    pub intro_ui: IntroUiState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -107,11 +106,6 @@ pub struct HelpState {
 #[derive(Debug, Default, Clone)]
 pub struct DashboardUiState {
     pub scroll: usize,
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct IntroUiState {
-    pub frame: u16,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -262,7 +256,6 @@ impl App {
             dashboard: DashboardState::default(),
             sources_ui: SourcesUiState::default(),
             rules_ui: RulesUiState::default(),
-            intro_ui: IntroUiState::default(),
         };
         app.load_dashboard();
         Ok(app)
@@ -274,9 +267,12 @@ impl App {
         self.dashboard = collect_dashboard(&self.project_dir);
     }
 
+    pub fn start_intro(&mut self) {
+        self.screen = Screen::Intro;
+    }
+
     pub fn update(&mut self, msg: Msg) {
         match msg {
-            Msg::Tick => self.handle_tick(),
             Msg::GoToScreen(s) => {
                 self.screen = s;
                 self.ensure_current_screen_loaded();
@@ -289,11 +285,6 @@ impl App {
     /// Screens that don't have a loader (Dashboard, Help) are no-ops.
     pub fn ensure_current_screen_loaded(&mut self) {
         crate::tui::screens::ensure_loaded(self.screen, self);
-    }
-
-    pub fn start_intro(&mut self) {
-        self.intro_ui.frame = 0;
-        self.screen = Screen::Intro;
     }
 
     /// Each ensure_*_loaded method transitions `NotComputed` → `Loading` →
@@ -447,15 +438,35 @@ impl App {
         }
     }
 
+    fn handle_intro_key(&mut self, ev: KeyEvent) {
+        match ev.code {
+            KeyCode::Char('q') | KeyCode::Char('Q') => self.quit = true,
+            KeyCode::Char('?') => self.finish_intro(Screen::Help),
+            KeyCode::Char(c) => {
+                if let Some(screen) = Screen::from_nav_key(c) {
+                    self.finish_intro(screen);
+                } else {
+                    self.finish_intro(Screen::Dashboard);
+                }
+            }
+            _ => self.finish_intro(Screen::Dashboard),
+        }
+    }
+
+    fn finish_intro(&mut self, next_screen: Screen) {
+        self.screen = next_screen;
+        self.ensure_current_screen_loaded();
+    }
+
     /// Move selection one step backward on whichever list-oriented screen is
     /// active. No-op on screens without a selectable list.
     fn select_prev_on_current_screen(&mut self, steps: usize) {
         for _ in 0..steps {
             match self.screen {
-                Screen::Intro => {}
                 Screen::Dashboard => {
                     self.dashboard_ui.scroll = self.dashboard_ui.scroll.saturating_sub(1)
                 }
+                Screen::Intro => {}
                 Screen::Help => self.help.scroll_y = self.help.scroll_y.saturating_sub(1),
                 Screen::Result => self.dashboard.result.scroll_up(1),
                 Screen::Debt => self.dashboard.debt.select_prev(),
@@ -496,10 +507,10 @@ impl App {
     fn select_next_on_current_screen(&mut self, steps: usize) {
         for _ in 0..steps {
             match self.screen {
-                Screen::Intro => {}
                 Screen::Dashboard => {
                     self.dashboard_ui.scroll = self.dashboard_ui.scroll.saturating_add(1)
                 }
+                Screen::Intro => {}
                 Screen::Help => self.help.scroll_y = self.help.scroll_y.saturating_add(1),
                 Screen::Result => self.dashboard.result.scroll_down(1),
                 Screen::Debt => self.dashboard.debt.select_next(),
@@ -1047,37 +1058,6 @@ impl App {
         self.dashboard
             .rules
             .selected_row(self.rules_ui.language_filter, self.rules_ui.selected)
-    }
-
-    fn handle_tick(&mut self) {
-        if self.screen != Screen::Intro {
-            return;
-        }
-        self.intro_ui.frame = self.intro_ui.frame.saturating_add(1);
-        if self.intro_ui.frame >= crate::tui::screens::intro::AUTO_DISMISS_TICKS {
-            self.finish_intro(Screen::Dashboard);
-        }
-    }
-
-    fn handle_intro_key(&mut self, ev: KeyEvent) {
-        let target = match ev.code {
-            KeyCode::Char(c) if Screen::from_nav_key(c).is_some() => {
-                Screen::from_nav_key(c).unwrap_or(Screen::Dashboard)
-            }
-            KeyCode::Char('?') => Screen::Help,
-            KeyCode::Char('q') | KeyCode::Char('Q') => {
-                self.quit = true;
-                return;
-            }
-            _ => Screen::Dashboard,
-        };
-        self.finish_intro(target);
-    }
-
-    fn finish_intro(&mut self, next_screen: Screen) {
-        self.intro_ui.frame = 0;
-        self.screen = next_screen;
-        self.ensure_current_screen_loaded();
     }
 }
 
@@ -1759,6 +1739,35 @@ mod tests {
     }
 
     #[test]
+    fn intro_any_key_opens_dashboard() {
+        let tmp = std::env::temp_dir().join(format!("wh_tui_intro_key_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.start_intro();
+
+        app.update(Msg::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+
+        assert_eq!(app.screen, Screen::Dashboard);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn intro_nav_key_opens_requested_screen() {
+        let tmp = std::env::temp_dir().join(format!("wh_tui_intro_nav_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.start_intro();
+
+        app.update(Msg::Key(KeyEvent::new(
+            KeyCode::Char('3'),
+            KeyModifiers::NONE,
+        )));
+
+        assert_eq!(app.screen, Screen::Rules);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn delete_selected_custom_rule_removes_grouped_rules() {
         let tmp = std::env::temp_dir().join(format!("wh_tui_rules_delete_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1919,37 +1928,6 @@ mod tests {
         app.handle_rules_form_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
         assert_eq!(app.rules_ui.form.mode_idx, 0);
 
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn intro_tick_auto_dismisses_to_dashboard() {
-        let tmp = std::env::temp_dir().join(format!("wh_tui_intro_tick_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&tmp);
-        let mut app = App::new(&tmp).unwrap();
-        app.start_intro();
-
-        for _ in 0..crate::tui::screens::intro::AUTO_DISMISS_TICKS {
-            app.update(Msg::Tick);
-        }
-
-        assert_eq!(app.screen, Screen::Dashboard);
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn intro_nav_key_skips_to_requested_screen() {
-        let tmp = std::env::temp_dir().join(format!("wh_tui_intro_nav_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&tmp);
-        let mut app = App::new(&tmp).unwrap();
-        app.start_intro();
-
-        app.update(Msg::Key(KeyEvent::new(
-            KeyCode::Char('3'),
-            KeyModifiers::NONE,
-        )));
-
-        assert_eq!(app.screen, Screen::Rules);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

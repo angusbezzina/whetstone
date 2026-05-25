@@ -6,6 +6,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.21] - 2026-05-24
+
+### Changed
+- **The TUI intro splash is now static and exact.** Interactive `wh` launches render the final ASCII logo and Whetstone wordmark as centered fixed-width blocks, with only a concise `Press any key to continue` prompt.
+
 ## [0.8.20] - 2026-05-23
 
 ### Fixed

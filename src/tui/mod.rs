@@ -45,7 +45,6 @@ pub enum LaunchTarget {
 /// Minimum usable terminal size. Below this we render a "please resize" notice.
 const MIN_WIDTH: u16 = 50;
 const MIN_HEIGHT: u16 = 15;
-const INTRO_TICK_MS: u64 = 33;
 const NORMAL_TICK_MS: u64 = 100;
 
 /// Check whether stdout is a TTY. `wh` with no args uses this to decide
@@ -118,12 +117,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
     while !app.quit {
         terminal.draw(|frame| view(frame, app))?;
 
-        let tick = if app.screen == Screen::Intro {
-            Duration::from_millis(INTRO_TICK_MS)
-        } else {
-            Duration::from_millis(NORMAL_TICK_MS)
-        };
-        if event::poll(tick)? {
+        if event::poll(Duration::from_millis(NORMAL_TICK_MS))? {
             match event::read()? {
                 Event::Key(key) if key.kind == event::KeyEventKind::Press => {
                     app.update(Msg::Key(key));
@@ -131,8 +125,6 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
                 Event::Resize(_, _) => {}
                 _ => {}
             }
-        } else if app.screen == Screen::Intro {
-            app.update(Msg::Tick);
         }
     }
     Ok(())
@@ -244,6 +236,28 @@ mod tests {
             .map(|cell| cell.symbol().to_owned())
             .collect();
         assert!(rendered.contains("WHETSTONE"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn intro_screen_renders_full_frame() {
+        let backend = TestBackend::new(100, 36);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let tmp = std::env::temp_dir().join(format!("wh_tui_intro_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.start_intro();
+        terminal.draw(|frame| view(frame, &app)).unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol().to_owned())
+            .collect();
+        assert!(rendered.contains("Press any key to continue"));
+        assert!(rendered.contains("██     ██"));
+        assert!(!rendered.contains("HOME"));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -446,29 +460,6 @@ mod tests {
             .map(|cell| cell.symbol().to_owned())
             .collect();
         assert!(rendered.contains("Terminal too small"));
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn intro_screen_renders_when_active() {
-        let backend = TestBackend::new(100, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let tmp = std::env::temp_dir().join(format!("wh_tui_intro_active_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        let mut app = App::new(&tmp).unwrap();
-        app.start_intro();
-
-        terminal.draw(|frame| view(frame, &app)).unwrap();
-        let rendered: String = terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|cell| cell.symbol().to_owned())
-            .collect();
-
-        assert!(rendered.contains("Welcome to Whetstone"));
-
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -61,8 +61,6 @@ impl Screen {
 pub enum Msg {
     /// Raw key event — the update function decodes it into higher-level messages.
     Key(KeyEvent),
-    /// Animation / timer tick for lightweight screen updates.
-    Tick,
     /// Jump to a specific top-level screen.
     GoToScreen(Screen),
 }
