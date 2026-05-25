@@ -1,36 +1,20 @@
 use ratatui::{
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
 
 use crate::tui::{app::App, components::footer, theme};
 
 const LOGO: &[&str] = &[
-    r#"                                         .fvcc]`"#,
-    r#"                                       }vvvcccccv1"#,
-    r#"                                    ivvvccvcccccccccv."#,
-    r#"                                 I\vvvccccccccccccccccu^"#,
-    r#"                               (vvcccccvcccccccccccn"vv;"#,
-    r#"                            >vvvccccccccccccccccu}]vvvc;"#,
-    r#"                         ;tccccccccccccccccccc{+uvccccc;"#,
-    r#"                      `}vvcccccccccccccccccui)vccccccc! )\"#,
-    r#"                    _uvcccccccccccccccccc?[xvccccccn  ,xvv"#,
-    r#"                 .nvccccccccccccccccccc.vcvcccccv_  rvcccc"#,
-    r#"                ]?vvcccccccccccccccc)<vccccccc\' "vvvcccc;"#,
-    r#"                xccu'ccccccccccccc^xcccccccc>  }vvc/'xc."#,
-    r#"                xccccc(l|cccccc(!vccccccc)' Iuvcr""#,
-    r#"               )nccccccccxliu;/cccccccc:  (ccc}"#,
-    r#"             [t  .fccccccccc'ccccccc/  lvvcf;"#,
-    r#"             vvcv(  I/cccccc'cccccI  \vcc<"#,
-    r#"             xcccccc-.  xccc'ccx  ^vccn"#,
-    r#"              _cccccccc|' `]._  1vcct"#,
-    r#"                 .ccccccccx   vvccc|"#,
-    r#"                    ~jcccccccvcccc/'"#,
-    r#"                       ^cvcccccc<"#,
-    r#"                          "|||'"#,
+    r#"██╗    ██╗██╗  ██╗███████╗████████╗███████╗████████╗ ██████╗ ███╗   ██╗███████╗"#,
+    r#"██║    ██║██║  ██║██╔════╝╚══██╔══╝██╔════╝╚══██╔══╝██╔═══██╗████╗  ██║██╔════╝"#,
+    r#"██║ █╗ ██║███████║█████╗     ██║   ███████╗   ██║   ██║   ██║██╔██╗ ██║█████╗  "#,
+    r#"██║███╗██║██╔══██║██╔══╝     ██║   ╚════██║   ██║   ██║   ██║██║╚██╗██║██╔══╝  "#,
+    r#"╚███╔███╔╝██║  ██║███████╗   ██║   ███████║   ██║   ╚██████╔╝██║ ╚████║███████╗"#,
+    r#" ╚══╝╚══╝ ╚═╝  ╚═╝╚══════╝   ╚═╝   ╚══════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚══════╝"#,
 ];
 
 #[allow(dead_code)]
@@ -40,32 +24,33 @@ pub fn hints() -> &'static [footer::Hint] {
 
 pub fn render(frame: &mut Frame<'_>, area: Rect, _app: &App) {
     let mut content = Vec::new();
-    content.extend(centered_group(LOGO, theme::header_title()));
-    content.extend(spacer_lines(area.height, LOGO.len() + 2));
+    content.extend(centered_group(
+        LOGO,
+        Style::default()
+            .fg(theme::AMBER)
+            .add_modifier(Modifier::BOLD),
+    ));
+    content.extend(spacer_lines(area.height, LOGO.len() + 1));
     content.push(
         Line::from(Span::styled(
-            "Whetstone",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ))
-        .centered(),
-    );
-    content.extend(spacer_lines(area.height, LOGO.len() + 2));
-    content.push(
-        Line::from(Span::styled(
-            "Press any key to continue",
+            "Press enter to start",
             Style::default().fg(theme::MUTED),
         ))
         .centered(),
     );
 
-    let top_padding = vertical_padding(area.height, content.len());
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::AMBER));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let top_padding = vertical_padding(inner.height, content.len());
     let mut lines = Vec::with_capacity(top_padding + content.len());
     lines.extend(std::iter::repeat(Line::from("")).take(top_padding));
     lines.extend(content);
 
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 fn spacer_lines(height: u16, minimum_content_height: usize) -> impl Iterator<Item = Line<'static>> {
@@ -152,12 +137,15 @@ mod tests {
             .map(|cell| cell.symbol().to_owned())
             .collect();
 
-        assert!(rendered.contains("Press any key to continue"));
-        assert!(rendered.contains("Whetstone"));
-        assert!(rendered.contains("fvcc"));
+        assert!(rendered.contains("Press enter to start"));
+        assert!(rendered.contains("██╗    ██╗"));
+        assert!(rendered.contains("███████╗"));
+        assert!(rendered.contains("┌"));
+        assert!(rendered.contains("┘"));
+        assert!(!rendered.contains("Press any key to continue"));
+        assert!(!rendered.contains("fvcc"));
         assert!(!rendered.contains("gentle hover"));
         assert!(!rendered.contains("Loading"));
-        assert!(!rendered.contains("██"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -172,11 +160,9 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(joined.contains(r#"`}vvcccccccccccccccccui)vccccccc! )\"#));
-        assert!(joined.contains(r#"]?vvcccccccccccccccc)<vccccccc\' "vvvcccc;"#));
-        assert!(
-            joined.contains(r#"                          "|||'"#) || joined.contains(r#""|||'"#)
-        );
+        assert!(joined.contains("██╗    ██╗██╗  ██╗"));
+        assert!(joined.contains("╚███╔███╔╝██║  ██║"));
+        assert!(joined.contains("╚═══╝╚══════╝"));
     }
 
     #[test]
@@ -200,8 +186,8 @@ mod tests {
             .map(|cell| cell.symbol().to_owned())
             .collect();
 
-        assert!(rendered.contains("Whetstone"));
-        assert!(rendered.contains("Press any key to continue"));
+        assert!(rendered.contains("██╗    ██╗"));
+        assert!(rendered.contains("Press enter to start"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
