@@ -6,6 +6,8 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.23] - 2026-05-27
+
 ### Changed
 - **The TUI intro now uses the orange Whetstone block wordmark.** The prior ASCII icon is removed, the intro is framed with an orange border, and the prompt now reads `Press enter to start`.
 
