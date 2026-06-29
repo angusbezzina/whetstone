@@ -82,6 +82,14 @@ jobs:
       - name: Eval rules against their golden examples (rule-quality bar)
         run: ./target/release/whetstone eval
 
+      - name: Dogfood — Whetstone passes its own Rust rules (0 self-violations)
+        run: |
+          set -euo pipefail
+          ./target/release/whetstone scan src --lang rust --json --no-fail \
+            | jq -e '.violations_count == 0' >/dev/null \
+            || { echo "FAIL: Whetstone violates its own rules"; \
+                 ./target/release/whetstone scan src --lang rust; exit 1; }
+
       - name: Validate action.yml outputs match wh ci fields
         shell: bash
         run: |

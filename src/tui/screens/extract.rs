@@ -1,6 +1,7 @@
 //! Shared source->rule worklist helpers used by the Sources screen and related
 //! command-result flows.
 
+use anyhow::Context;
 use std::path::Path;
 
 use ratatui::{
@@ -50,9 +51,8 @@ pub struct SectionRow {
 }
 
 pub fn load_data(project_dir: &Path) -> anyhow::Result<ExtractData> {
-    let value = crate::worklist::load(project_dir).map_err(|e| {
-        anyhow::anyhow!("{e}\nRun `wh init` (or `wh reinit`) to generate a worklist.")
-    })?;
+    let value = crate::worklist::load(project_dir)
+        .with_context(|| "Run `wh init` (or `wh reinit`) to generate a worklist.")?;
     let entries = project_entries(&value);
     Ok(ExtractData {
         entries,

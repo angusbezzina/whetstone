@@ -33,7 +33,7 @@
 //! On id collision with an existing rule (any status), the command errors
 //! out naming the colliding id and stops — no partial writes.
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
@@ -81,9 +81,9 @@ pub fn show_worklist(project_dir: &Path, dep: Option<&str>, lang: Option<&str>) 
 /// Submit a bundle of candidate rules to the project rules tree.
 pub fn submit(project_dir: &Path, bundle_path: &Path) -> Result<Value> {
     let text = fs::read_to_string(bundle_path)
-        .map_err(|e| anyhow!("cannot read bundle {}: {e}", bundle_path.display()))?;
+        .with_context(|| format!("cannot read bundle {}", bundle_path.display()))?;
     let bundle: Bundle = serde_yaml::from_str(&text)
-        .map_err(|e| anyhow!("invalid bundle YAML {}: {e}", bundle_path.display()))?;
+        .with_context(|| format!("invalid bundle YAML {}", bundle_path.display()))?;
 
     if bundle.dependency.trim().is_empty() {
         return Err(anyhow!("bundle missing `dependency`"));

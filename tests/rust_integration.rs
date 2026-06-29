@@ -3459,35 +3459,25 @@ rules:
     let _ = std::fs::remove_dir_all(&tmp);
 }
 #[test]
-fn test_check_finds_rust_violations_on_own_sources() {
-    // Self-check / dogfood after the skill/CLI reorientation (epic whetstone-4xw):
-    //  - `anyhow.context-over-map-err` is now an AST rule (strategy: ast +
-    //    ast_query) and fires on the repo's own `map_err(|e| anyhow!(...))`
-    //    usages — a scan-time violation that the old brittle regex couldn't
-    //    express precisely.
-    //  - `anyhow.expect-over-unwrap` is now a `lint_proxy` to clippy's
-    //    `unwrap_used`, so it is NOT a scan-time violation; it surfaces as a
-    //    config issue when the project's Cargo.toml doesn't enable the lint.
+fn test_whetstone_dogfoods_its_own_rust_rules() {
+    // Dogfood compliance (whetstone-xau): Whetstone scans clean against its own
+    // Rust rules. `anyhow.context-over-map-err` is an AST rule; the repo's source
+    // was migrated off `map_err(|e| anyhow!(...))` to `.with_context(...)`, so it
+    // must produce ZERO scan-time violations. `anyhow.expect-over-unwrap` is a
+    // lint_proxy to clippy `unwrap_used`, so it never scan-fires; it surfaces as
+    // a config issue (the repo's Cargo.toml does not enable the restriction lint).
     let (stdout, _stderr, _ok) = run_whetstone(
         &["--json", "scan", "src", "--lang", "rust", "--no-fail"],
         env!("CARGO_MANIFEST_DIR"),
     );
     let result = parse_json(&stdout);
+    let violations = result["violations"].as_array().cloned().unwrap_or_default();
     assert_eq!(
-        result["status"], "violations_found",
-        "expected the AST rule to fire on Whetstone's own sources: {result}"
+        result["violations_count"], 0,
+        "Whetstone must pass its own Rust rules (dogfood): {violations:?}"
     );
-    let violations = result["violations"].as_array().unwrap();
-    let has_map_err = violations.iter().any(|v| {
-        v.get("rule_id").and_then(|r| r.as_str()) == Some("anyhow.context-over-map-err")
-    });
-    assert!(
-        has_map_err,
-        "expected an anyhow.context-over-map-err AST violation: {violations:?}"
-    );
-    // The unwrap rule is now a lint_proxy: it must appear as a clippy config
-    // issue (the repo's Cargo.toml has no [lints.clippy]) rather than a scan
-    // violation. This proves the bucket-1 "drop -> native config" path.
+    // The lint_proxy path still surfaces unwrap_used as a config issue (not a
+    // scan violation) — proving the bucket-1 "drop -> native config" path.
     let config_issues = result["config_issues"].as_array().cloned().unwrap_or_default();
     let has_clippy_unwrap = config_issues.iter().any(|c| {
         c.get("linter").and_then(|t| t.as_str()) == Some("clippy")
@@ -3496,14 +3486,6 @@ fn test_check_finds_rust_violations_on_own_sources() {
     assert!(
         has_clippy_unwrap,
         "expected a clippy unwrap_used config issue: {config_issues:?}"
-    );
-    // And the unwrap rule must NOT produce a scan-time violation anymore.
-    let has_unwrap_violation = violations.iter().any(|v| {
-        v.get("rule_id").and_then(|r| r.as_str()) == Some("anyhow.expect-over-unwrap")
-    });
-    assert!(
-        !has_unwrap_violation,
-        "expect-over-unwrap is a lint_proxy now; it must not be a scan violation: {violations:?}"
     );
 }
 

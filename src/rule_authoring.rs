@@ -7,7 +7,7 @@
 //! - `wh rules edit` bumps severity / confidence on existing approved rules
 //!   as taste matures. Bulk via `--all` + selectors.
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use serde_yaml::{Mapping, Value as YamlValue};
 use std::collections::{BTreeMap, HashSet};
@@ -521,12 +521,12 @@ pub fn remove(project_dir: &Path, opts: RemoveOptions<'_>) -> Result<Value> {
         rules_seq.remove(remove_idx);
         if rules_seq.is_empty() {
             fs::remove_file(&file_path)
-                .map_err(|e| anyhow!("failed to remove {}: {e}", file_path.display()))?;
+                .with_context(|| format!("failed to remove {}", file_path.display()))?;
             deleted_file = true;
         } else {
             let body = serde_yaml::to_string(&YamlValue::Mapping(top))?;
             fs::write(&file_path, body)
-                .map_err(|e| anyhow!("failed to write {}: {e}", file_path.display()))?;
+                .with_context(|| format!("failed to write {}", file_path.display()))?;
         }
     }
 
@@ -685,9 +685,9 @@ fn normalize_rule_language(language: &str) -> Result<&'static str> {
 
 fn read_yaml_mapping(path: &Path) -> Result<Mapping> {
     let text =
-        fs::read_to_string(path).map_err(|e| anyhow!("failed to read {}: {e}", path.display()))?;
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
     let value: YamlValue = serde_yaml::from_str(&text)
-        .map_err(|e| anyhow!("failed to parse {} as YAML: {e}", path.display()))?;
+        .with_context(|| format!("failed to parse {} as YAML", path.display()))?;
     match value {
         YamlValue::Mapping(m) => Ok(m),
         _ => Err(anyhow!("{} must be a YAML mapping", path.display())),

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -580,7 +580,7 @@ fn fetch_pack_content(
     match target {
         PackTarget::Path { path, .. } => {
             let content = std::fs::read_to_string(path)
-                .map_err(|e| anyhow!("cannot read {}: {e}", path.display()))?;
+                .with_context(|| format!("cannot read {}", path.display()))?;
             let fetched_at = now_iso();
             let content_hash = resolve::content_hash(&content);
             cache_entries_mut(cache).insert(
@@ -597,7 +597,7 @@ fn fetch_pack_content(
             );
             Ok(FetchOutcome {
                 content: std::fs::read_to_string(path)
-                    .map_err(|e| anyhow!("cannot read {}: {e}", path.display()))?,
+                    .with_context(|| format!("cannot read {}", path.display()))?,
                 content_hash,
                 fetched_at,
                 cache_status: "direct".to_string(),

@@ -10,7 +10,7 @@
 //! underlying YAML. Only `status:` and `approved:` lines are touched; no
 //! other fields are added or removed.
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -149,9 +149,9 @@ fn is_already_approved(found: &FoundRule, rule_id: &str) -> bool {
 fn rewrite_rule_to_approved(path: &Path, rule_id: &str) -> Result<bool> {
     // Silent check that the file still parses before we mutate.
     let text =
-        fs::read_to_string(path).map_err(|e| anyhow!("cannot read {}: {e}", path.display()))?;
+        fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
     let _ = serde_yaml::from_str::<serde_yaml::Value>(&text)
-        .map_err(|e| anyhow!("failed to parse {}: {e}", path.display()))?;
+        .with_context(|| format!("failed to parse {}", path.display()))?;
 
     let (block_start, block_end, field_indent) = match locate_rule_block(&text, rule_id) {
         Some(t) => t,

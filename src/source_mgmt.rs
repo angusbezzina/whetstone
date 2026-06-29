@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use serde_yaml::{Mapping, Value as YamlValue};
 
@@ -670,12 +670,12 @@ fn read_yaml_mapping_or_empty(path: &Path) -> Result<Mapping> {
         return Ok(Mapping::new());
     }
     let text =
-        fs::read_to_string(path).map_err(|e| anyhow!("failed to read {}: {e}", path.display()))?;
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
     if text.trim().is_empty() {
         return Ok(Mapping::new());
     }
     let value: YamlValue = serde_yaml::from_str(&text)
-        .map_err(|e| anyhow!("failed to parse {} as YAML: {e}", path.display()))?;
+        .with_context(|| format!("failed to parse {} as YAML", path.display()))?;
     match value {
         YamlValue::Mapping(m) => Ok(m),
         _ => Err(anyhow!("{} must be a YAML mapping", path.display())),
@@ -687,7 +687,7 @@ fn write_yaml_mapping(path: &Path, top: &Mapping) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     let body = serde_yaml::to_string(&YamlValue::Mapping(top.clone()))?;
-    fs::write(path, body).map_err(|e| anyhow!("failed to write {}: {e}", path.display()))
+    fs::write(path, body).with_context(|| format!("failed to write {}", path.display()))
 }
 
 fn ystr(s: &str) -> YamlValue {

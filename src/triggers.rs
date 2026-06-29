@@ -4,7 +4,7 @@
 //! auto-extracts, nothing phones home. The generated files surface freshness
 //! information and let the user decide whether to act.
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -109,7 +109,7 @@ fn install_post_merge_hook(project_dir: &Path) -> Result<PathBuf> {
                     .args(["config", "core.hooksPath", ".githooks"])
                     .current_dir(project_dir)
                     .status()
-                    .map_err(|e| anyhow!("git config failed: {e}"))?;
+                    .with_context(|| "git config failed")?;
                 if !status.success() {
                     return Err(anyhow!("git config core.hooksPath returned non-zero"));
                 }
