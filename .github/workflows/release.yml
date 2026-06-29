@@ -42,7 +42,10 @@ jobs:
 
       - name: Install cross (aarch64-linux)
         if: matrix.use_cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        # Pin to the last stable release. Installing from git HEAD (unpinned)
+        # broke the v0.9.0 release when a cross main regression failed the
+        # `cargo metadata` preflight ("unable to get metadata for package").
+        run: cargo install cross --locked --version 0.2.5
 
       - name: Build binary
         run: |
