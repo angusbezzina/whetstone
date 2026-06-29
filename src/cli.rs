@@ -830,8 +830,9 @@ enum Commands {
         #[arg(long)]
         pr_comment: bool,
 
-        /// Exit with error on status
-        #[arg(long, default_value = "none")]
+        /// Exit non-zero when freshness is at/below this level: none | stale | needs_review.
+        /// Defaults to `needs_review` so the gate is ON (content/version drift fails CI).
+        #[arg(long, default_value = "needs_review")]
         fail_on: String,
 
         /// Skip drift check

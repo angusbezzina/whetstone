@@ -400,13 +400,19 @@ fn test_generate_tests_parity_snapshot() {
 #[test]
 fn test_ci_check_json() {
     let dir = fixtures_dir();
-    let (stdout, _stderr, success) = run_whetstone(&["ci", "--json"], dir.to_str().unwrap());
+    // `wh ci` now defaults to `--fail-on needs_review` (the gate is ON), so it
+    // intentionally exits non-zero on a stale/drifted fixture. This test only
+    // checks the JSON output shape, so opt out of gating with --fail-on none.
+    let (stdout, _stderr, success) =
+        run_whetstone(&["ci", "--json", "--fail-on", "none"], dir.to_str().unwrap());
     assert!(success);
 
     let result = parse_json(&stdout);
     assert!(result.get("score").is_some());
     assert!(result.get("label").is_some());
     assert!(result.get("freshness_status").is_some());
+    // The drift gate surfaces content drift offline.
+    assert!(result.get("content_drift_count").is_some());
 }
 
 #[test]
@@ -3499,6 +3505,61 @@ fn test_check_finds_rust_violations_on_own_sources() {
         !has_unwrap_violation,
         "expect-over-unwrap is a lint_proxy now; it must not be a scan violation: {violations:?}"
     );
+}
+
+#[test]
+fn test_ci_fails_on_content_hash_drift() {
+    // whetstone-25r: an offline content-hash drift — the cached resolved docs no
+    // longer hash to the rule's authored `source.content_hash` — must mark the
+    // project as requiring review and make `wh ci` exit non-zero with an
+    // actionable message. No network needed; it reads the persisted source cache.
+    let tmp = std::env::temp_dir().join(format!(
+        "wh_ci_drift_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone/.state")).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone/rules/python")).unwrap();
+    // Mark the project initialized so ci does not short-circuit.
+    std::fs::write(tmp.join("whetstone/whetstone.yaml"), "version: 1\n").unwrap();
+    // Cached docs whose hash will NOT match the rule's authored content_hash.
+    std::fs::write(
+        tmp.join("whetstone/.state/source-cache.json"),
+        r#"{"version":1,"entries":{"python:widget:1.0":{"name":"widget","language":"python","version":"1.0","content":"updated documentation text"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("whetstone/rules/python/widget.yaml"),
+        "source:\n  name: widget\n  version: '1.0'\n  content_hash: 'sha256:0000000000000000000000000000000000000000000000000000000000000000'\n  resolved_at: '2026-06-01T00:00:00Z'\nrules:\n  - id: widget.async\n    severity: should\n    confidence: high\n    category: convention\n    description: x\n    source_url: https://example.com\n    approved: true\n    status: approved\n    signals:\n      - id: s\n        strategy: ast\n        weight: required\n        ast_query: '(function_definition) @match'\n",
+    )
+    .unwrap();
+
+    let (stdout, _stderr, ok) =
+        run_whetstone(&["--json", "ci", "--fail-on", "needs_review"], tmp.to_str().unwrap());
+    let result = parse_json(&stdout);
+    assert!(
+        result["content_drift_count"].as_i64().unwrap_or(0) >= 1,
+        "expected content drift to be detected: {result}"
+    );
+    assert_eq!(result["requires_review"], true, "{result}");
+    let drift = result["content_drift"].as_array().cloned().unwrap_or_default();
+    assert!(
+        drift
+            .first()
+            .and_then(|d| d["message"].as_str())
+            .map(|m| m.contains("changed since its rules were authored"))
+            .unwrap_or(false),
+        "expected an actionable drift message: {result}"
+    );
+    assert!(
+        !ok,
+        "wh ci must exit non-zero on content drift with --fail-on needs_review"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]
