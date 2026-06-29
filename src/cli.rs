@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     approve, check, ci_check, config, debt, detect, doctor, extract, gen, generate_context,
-    generate_lint, generate_tests, output, personal, report, resolve, review, rule_authoring,
+    generate_lint, generate_tests, mcp, output, personal, report, resolve, review, rule_authoring,
     rules, rules_query, source_mgmt, status, triggers, tui, update, worklist,
 };
 
@@ -803,6 +803,14 @@ enum Commands {
         project_dir: PathBuf,
     },
 
+    /// Run an MCP (Model Context Protocol) stdio server exposing rules_query + scan to agents
+    #[command(name = "mcp")]
+    Mcp {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+
     /// Run every rule's golden examples through the scanner and score them (the rule-quality bar)
     #[command(name = "eval")]
     Eval {
@@ -1480,6 +1488,14 @@ pub fn run() -> i32 {
                 1
             }
         }
+
+        Commands::Mcp { project_dir } => match mcp::serve(&project_dir) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("whetstone mcp: {e}");
+                1
+            }
+        },
 
         Commands::Eval {
             project_dir,
@@ -2821,6 +2837,7 @@ fn command_title(command: &Commands) -> &'static str {
         Commands::Approve { .. } => "APPROVE",
         Commands::Extract { .. } => "EXTRACT",
         Commands::Validate { .. } => "VALIDATE",
+        Commands::Mcp { .. } => "MCP",
         Commands::Eval { .. } => "EVAL",
         Commands::Scan { .. } => "SCAN",
         Commands::Ci { .. } => "CI",
@@ -2906,6 +2923,7 @@ fn project_dir_for_command(command: &Commands) -> PathBuf {
             ActionsAction::Lint(args) | ActionsAction::Test(args) => args.project_dir.clone(),
         },
         Commands::Scan { project_dir, .. } => project_dir.clone(),
+        Commands::Mcp { project_dir, .. } => project_dir.clone(),
         Commands::Eval { project_dir, .. } => project_dir.clone(),
         Commands::Rules { action } => match action {
             RulesAction::List { project_dir, .. }

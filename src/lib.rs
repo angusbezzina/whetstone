@@ -16,6 +16,7 @@ mod generate_lint;
 mod generate_tests;
 mod handoff;
 mod layers;
+mod mcp;
 mod output;
 mod personal;
 mod report;

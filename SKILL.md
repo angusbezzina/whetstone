@@ -69,6 +69,12 @@ The response is a JSON envelope: `{ total, filters, warnings, rules: [...] }`. E
 
 `AGENTS.md` remains the bootstrap context that loads at session start; `wh rules query` is the per-turn lookup that avoids re-scanning it.
 
+**Prefer the MCP server when available.** `wh mcp` runs a local Model Context
+Protocol stdio server exposing `rules_query` and `scan` as tools, so an
+MCP-capable agent can look up applicable rules mid-edit and self-check without
+shelling out. Register it once (`claude mcp add whetstone -- whetstone mcp`); it
+returns the same JSON as the CLI.
+
 ### Cheaper bootstrap: `--terse` and per-language sidecars
 
 `wh actions all --terse` (or `wh context --terse`) emits a one-line-per-rule `AGENTS.md` (~50% smaller) that agents can load at session start without consuming much context. Use it when you prefer to rely on `wh rules query` for the details.

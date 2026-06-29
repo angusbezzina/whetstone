@@ -417,6 +417,35 @@ wh debt --beads --json         # file a bd epic + child tasks and return created
 wh debt --since=90d --top=10   # tune hotspot window + list length
 ```
 
+## Use with coding agents (MCP)
+
+`whetstone mcp` runs a local [Model Context Protocol](https://modelcontextprotocol.io)
+stdio server that exposes two deterministic tools to any MCP-capable agent
+(Claude Code, Cursor, …) — no bespoke wiring:
+
+- **`rules_query`** — the rules that apply to a file/dep/language (call it before editing a file).
+- **`scan`** — scan paths for violations of the approved rules (self-check before finishing).
+
+Register it with Claude Code:
+
+```bash
+claude mcp add whetstone -- whetstone mcp --project-dir /path/to/your/repo
+```
+
+or in an MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "whetstone": { "command": "whetstone", "args": ["mcp", "--project-dir", "."] }
+  }
+}
+```
+
+The agent then gets JIT, deterministic, doc-cited rules mid-edit and can self-check
+its own output — the same JSON the CLI produces, with no tokens spent re-deriving
+conventions each session.
+
 ## CI Integration
 
 `wh init --ci` generates `.github/workflows/whetstone-check.yml` with two
