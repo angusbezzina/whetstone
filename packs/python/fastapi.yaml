@@ -1,0 +1,53 @@
+apiVersion: whetstone/v1alpha1
+kind: RulePack
+language: python
+metadata:
+  name: whetstone.fastapi
+  version: 0.1.0
+  scope: project
+  owner: whetstone
+rules:
+  - id: fastapi.annotated-depends
+    severity: should
+    confidence: high
+    category: convention
+    description: >
+      SHOULD declare dependencies with Annotated[X, Depends(...)] instead of the
+      default-value style (param: X = Depends(...)). FastAPI recommends the
+      Annotated form since 0.95.0; it keeps the parameter's real default usable
+      and reads correctly with type checkers.
+    source_url: "https://fastapi.tiangolo.com/tutorial/dependencies/"
+    source_quote: "Prefer to use the `Annotated` version if possible."
+    approved: true
+    status: approved
+    signals:
+      - id: depends-as-default
+        strategy: ast
+        description: "A function parameter whose default value is a Depends(...) call"
+        weight: required
+        ast_query: |
+          (typed_default_parameter
+            value: (call function: (identifier) @_f (#eq? @_f "Depends"))) @match
+          (default_parameter
+            value: (call function: (identifier) @_g (#eq? @_g "Depends"))) @match
+    golden_examples:
+      - code: |
+          async def read_items(commons: Annotated[dict, Depends(common_parameters)]):
+              return commons
+        verdict: pass
+        reason: Uses the recommended Annotated form
+      - code: |
+          async def read_items(commons: dict = Depends(common_parameters)):
+              return commons
+        verdict: fail
+        reason: Uses the default-value style instead of Annotated
+      - code: |
+          def read_items(commons=Depends(common_parameters)):
+              return commons
+        verdict: fail
+        reason: Untyped default-value Depends, also discouraged
+      - code: |
+          async def read_items(q: str = "default"):
+              return q
+        verdict: pass
+        reason: A non-Depends default value is unrelated to this rule
