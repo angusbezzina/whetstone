@@ -240,6 +240,238 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
     }))
 }
 
+// ── Golden eval (the rule-quality bar) ──
+
+/// Run every approved rule's golden examples through the REAL scanner and report
+/// mismatches (a PASS example that fires a signal, or a FAIL example that does
+/// not), plus a per-rule scorecard. This is the deterministic trust gate for the
+/// corpus: a rule whose own examples don't behave as claimed is not high-confidence.
+///
+/// Source-fidelity is split per planning/skill-cli-boundary.md §2: STRUCTURAL
+/// fidelity (the `source_quote` appears verbatim in the cached source docs) IS
+/// gated here; SEMANTIC fidelity ("the doc actually supports the rule + merits its
+/// severity") is judgment, so it is recorded as a skill-attested scorecard field,
+/// never adjudicated by this deterministic command.
+pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Result<Value> {
+    let project_initialized = layers::project_is_initialized(project_dir);
+    let rules: Vec<ApprovedRule> = if project_initialized {
+        let merged = layers::resolve_merged(project_dir, lang_filter, true, true, false);
+        merged.merged.into_iter().map(|lr| lr.rule).collect()
+    } else {
+        let paths = layers::LayerPaths::for_project(project_dir);
+        let (r, _) = crate::rules::load_approved_rules(&paths.project_rules_dir, lang_filter);
+        r
+    };
+
+    let quote_map = load_source_quotes(project_dir);
+    let content_map = load_cached_contents(project_dir);
+
+    let mut mismatches: Vec<Value> = Vec::new();
+    let mut fidelity_failures: Vec<Value> = Vec::new();
+    let mut scorecards: Vec<Value> = Vec::new();
+
+    for rule in &rules {
+        let compiled = compile_rules(&[rule]);
+        let crule = &compiled[0];
+        let scanner_enforced = !crule.signals.is_empty();
+
+        let mut golden_total = 0usize;
+        let mut golden_checked = 0usize;
+        let mut golden_pass = 0usize;
+        for g in &rule.golden_examples {
+            golden_total += 1;
+            let lang_str = g.language.clone().unwrap_or_else(|| rule.language.clone());
+            let Some(ast_lang) = AstLang::from_str(&lang_str) else {
+                continue;
+            };
+            if !scanner_enforced {
+                continue; // lint_proxy/formatter/tests-only rule: not scanner-checkable
+            }
+            let needs_tree = crule.signals.iter().any(|s| s.needs_tree());
+            let tree = if needs_tree {
+                ast::parse(ast_lang, &g.code)
+            } else {
+                None
+            };
+            let fires = crule
+                .signals
+                .iter()
+                .any(|sig| !apply_signal(sig, Some(ast_lang), &g.code, tree.as_ref()).is_empty());
+            let expected_fire = g.verdict.eq_ignore_ascii_case("fail");
+            golden_checked += 1;
+            if fires == expected_fire {
+                golden_pass += 1;
+            } else {
+                mismatches.push(json!({
+                    "rule_id": rule.id,
+                    "verdict": g.verdict,
+                    "expected_fire": expected_fire,
+                    "actually_fired": fires,
+                    "code": g.code,
+                    "issue": if expected_fire {
+                        "FAIL example did not trigger any signal"
+                    } else {
+                        "PASS example incorrectly triggered a signal"
+                    },
+                }));
+            }
+        }
+
+        // Structural source-fidelity: the cited quote must appear in the cached docs.
+        let mut source_quote_present = false;
+        let mut source_quote_found: Option<bool> = None;
+        if let Some(quote) = quote_map.get(&rule.id) {
+            let quote = quote.trim();
+            if !quote.is_empty() {
+                source_quote_present = true;
+                let key = (rule.language.to_lowercase(), rule.source_name.to_lowercase());
+                let content = content_map.get(&key).or_else(|| {
+                    content_map
+                        .iter()
+                        .find(|((_, n), _)| *n == rule.source_name.to_lowercase())
+                        .map(|(_, c)| c)
+                });
+                if let Some(content) = content {
+                    let found = content.contains(quote);
+                    source_quote_found = Some(found);
+                    if !found {
+                        fidelity_failures.push(json!({
+                            "rule_id": rule.id,
+                            "issue": "source_quote not found verbatim in the cached source documentation",
+                            "fix": "fix the quote to match the source, or re-resolve docs (wh reinit)",
+                        }));
+                    }
+                }
+                // No cached content -> cannot verify offline; left as null (not a failure).
+            }
+        }
+
+        let deterministic = rule
+            .signals
+            .iter()
+            .any(|s| matches!(s.strategy.as_str(), "ast" | "lint_proxy"))
+            || rule.formatter.is_some()
+            || !rule.tests.is_empty()
+            || !rule.validators.is_empty();
+
+        scorecards.push(json!({
+            "rule_id": rule.id,
+            "language": rule.language,
+            "deterministic": deterministic,
+            "scanner_enforced": scanner_enforced,
+            "golden_total": golden_total,
+            "golden_checked": golden_checked,
+            "golden_passed": golden_pass,
+            "source_url_present": !rule.source_url.is_empty(),
+            "source_quote_present": source_quote_present,
+            "source_quote_found_in_docs": source_quote_found,
+            "semantic_source_fidelity": "unattested",
+        }));
+    }
+
+    let ok = mismatches.is_empty() && fidelity_failures.is_empty();
+    Ok(json!({
+        "status": if ok { "ok" } else { "eval_failed" },
+        "ok": ok,
+        "rules_evaluated": rules.len(),
+        "golden_mismatches": mismatches,
+        "golden_mismatch_count": mismatches.len(),
+        "source_fidelity_failures": fidelity_failures,
+        "source_fidelity_failure_count": fidelity_failures.len(),
+        "scorecards": scorecards,
+    }))
+}
+
+fn load_cached_contents(project_dir: &Path) -> std::collections::HashMap<(String, String), String> {
+    let mut sm = crate::state::StateManager::new(project_dir);
+    let mut map = std::collections::HashMap::new();
+    for entry in sm.cache.all_entries() {
+        let name = entry
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_lowercase();
+        let lang = entry
+            .get("language")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_lowercase();
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(content) = entry.get("content").and_then(|v| v.as_str()) {
+            map.insert((lang, name), content.to_string());
+        }
+    }
+    map
+}
+
+fn load_source_quotes(project_dir: &Path) -> std::collections::HashMap<String, String> {
+    let paths = layers::LayerPaths::for_project(project_dir);
+    let mut map = std::collections::HashMap::new();
+    for dir in [paths.project_rules_dir, paths.personal_rules_dir] {
+        if !dir.exists() {
+            continue;
+        }
+        let (files, _) = crate::rules::load_rule_files(&dir);
+        for lf in files {
+            for r in &lf.rule_file.rules {
+                if r.id.is_empty() {
+                    continue;
+                }
+                if let Some(q) = &r.source_quote {
+                    map.insert(r.id.clone(), q.clone());
+                }
+            }
+        }
+    }
+    map
+}
+
+pub fn format_eval_output(result: &Value) -> String {
+    let ok = result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    let evaluated = result
+        .get("rules_evaluated")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let mism = result
+        .get("golden_mismatch_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let fid = result
+        .get("source_fidelity_failure_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let mut out = format!(
+        "Whetstone eval: {} rule(s) — {} golden mismatch(es), {} source-fidelity failure(s)\n",
+        evaluated, mism, fid
+    );
+    if let Some(arr) = result.get("golden_mismatches").and_then(|v| v.as_array()) {
+        for m in arr {
+            out.push_str(&format!(
+                "  GOLDEN  {}: {}\n",
+                m.get("rule_id").and_then(|v| v.as_str()).unwrap_or("?"),
+                m.get("issue").and_then(|v| v.as_str()).unwrap_or("")
+            ));
+        }
+    }
+    if let Some(arr) = result.get("source_fidelity_failures").and_then(|v| v.as_array()) {
+        for f in arr {
+            out.push_str(&format!(
+                "  SOURCE  {}: {}\n",
+                f.get("rule_id").and_then(|v| v.as_str()).unwrap_or("?"),
+                f.get("issue").and_then(|v| v.as_str()).unwrap_or("")
+            ));
+        }
+    }
+    out.push_str(if ok {
+        "All rules pass their golden examples and structural source-fidelity.\n"
+    } else {
+        "Eval FAILED — fix the rules above.\n"
+    });
+    out
+}
+
 // ── Human formatter ──
 
 pub fn format_human_output(result: &Value) -> String {
@@ -418,12 +650,6 @@ fn compile_rules<'a>(rules: &[&'a ApprovedRule]) -> Vec<CompiledRule<'a>> {
                 "lint_proxy" => {
                     notes.push(format!(
                         "signal {}: lint_proxy checked via linter config; see config_issues",
-                        sig.id
-                    ));
-                }
-                "ai" => {
-                    notes.push(format!(
-                        "signal {}: ai signal evaluated via `wh eval run` only",
                         sig.id
                     ));
                 }
@@ -1027,5 +1253,53 @@ mod tests {
     fn write_file(path: &Path, body: &str) {
         let mut f = std::fs::File::create(path).unwrap();
         f.write_all(body.as_bytes()).unwrap();
+    }
+
+    const GOOD_RULE: &str = "source:\n  name: good\nrules:\n  - id: good.snake\n    severity: should\n    confidence: high\n    category: convention\n    description: snake_case function names\n    source_url: https://example.com\n    approved: true\n    status: approved\n    signals:\n      - id: s\n        strategy: ast\n        weight: required\n        ast_query: '((function_definition name: (identifier) @match) (#match? @match \"[A-Z]\"))'\n    golden_examples:\n      - code: \"def read_config():\\n    pass\\n\"\n        verdict: pass\n        reason: snake ok\n      - code: \"def ReadConfig():\\n    pass\\n\"\n        verdict: fail\n        reason: pascal bad\n";
+
+    #[test]
+    fn eval_passes_correct_goldens() {
+        let tmp = tempdir();
+        let dir = tmp.join("whetstone").join("rules").join("python");
+        std::fs::create_dir_all(&dir).unwrap();
+        write_file(&dir.join("good.yaml"), GOOD_RULE);
+        let res = eval(&tmp, None).unwrap();
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(res["golden_mismatch_count"], 0);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn eval_fails_on_mislabeled_golden() {
+        let tmp = tempdir();
+        let dir = tmp.join("whetstone").join("rules").join("python");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Same signal, but the PASS example is PascalCase -> it actually fires.
+        let bad = GOOD_RULE.replace(
+            "      - code: \"def read_config():\\n    pass\\n\"\n        verdict: pass\n        reason: snake ok\n",
+            "      - code: \"def ReadConfig():\\n    pass\\n\"\n        verdict: pass\n        reason: MISLABELED\n",
+        );
+        write_file(&dir.join("bad.yaml"), &bad);
+        let res = eval(&tmp, None).unwrap();
+        assert_eq!(res["ok"], false, "{res}");
+        assert!(res["golden_mismatch_count"].as_i64().unwrap() >= 1, "{res}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn eval_skips_lint_proxy_rules_from_golden_scan() {
+        // A lint_proxy-only rule is not scanner-enforced; its goldens are not
+        // run through the scanner (golden_checked == 0) and it must not fail eval.
+        let tmp = tempdir();
+        let dir = tmp.join("whetstone").join("rules").join("rust");
+        std::fs::create_dir_all(&dir).unwrap();
+        let rule = "source:\n  name: anyhow\nrules:\n  - id: anyhow.unwrap\n    severity: should\n    confidence: high\n    category: convention\n    description: prefer expect\n    source_url: https://example.com\n    approved: true\n    status: approved\n    signals:\n      - id: s\n        strategy: lint_proxy\n        weight: required\n        lint:\n          tool: clippy\n          code: unwrap_used\n    golden_examples:\n      - code: \"let x = y.unwrap();\"\n        verdict: fail\n        reason: bare unwrap\n";
+        write_file(&dir.join("anyhow.yaml"), rule);
+        let res = eval(&tmp, None).unwrap();
+        assert_eq!(res["ok"], true, "{res}");
+        let card = &res["scorecards"][0];
+        assert_eq!(card["golden_checked"], 0, "{res}");
+        assert_eq!(card["scanner_enforced"], false);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

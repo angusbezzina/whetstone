@@ -79,6 +79,9 @@ jobs:
       - name: Validate rule schema fields
         run: ./target/release/whetstone validate
 
+      - name: Eval rules against their golden examples (rule-quality bar)
+        run: ./target/release/whetstone eval
+
       - name: Validate action.yml outputs match wh ci fields
         shell: bash
         run: |

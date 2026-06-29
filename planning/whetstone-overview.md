@@ -216,6 +216,7 @@ The complete canonical surface, grouped by concern. All commands accept
 |---------|---------|
 | `wh scan <path>` | Deterministic rule scan (tree-sitter + regex + lint_proxy). |
 | `wh validate` | Schema + fixture validation. |
+| `wh eval` | Rule-quality bar: runs every rule's golden examples through the scanner + structural source-fidelity + scorecards. |
 | `wh status` | Rule-system health + adherence score. |
 | `wh report` | One-page markdown summary. |
 | `wh debt` | Deterministic technical-debt triage. |

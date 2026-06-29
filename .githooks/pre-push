@@ -4,22 +4,25 @@ set -euo pipefail
 # Runs the exact gate suite that CI runs. If any step fails the push is aborted.
 # To install: `git config core.hooksPath .githooks && chmod +x .githooks/pre-push`
 
-echo "[1/6] cargo clippy --all-targets --all-features -- -D warnings"
+echo "[1/7] cargo clippy --all-targets --all-features -- -D warnings"
 cargo clippy --all-targets --all-features -- -D warnings
 
-echo "[2/6] cargo test"
+echo "[2/7] cargo test"
 cargo test
 
-echo "[3/6] python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501"
+echo "[3/7] python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501"
 python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
 
-echo "[4/6] python3 -m ruff format --check scripts/ tests/"
+echo "[4/7] python3 -m ruff format --check scripts/ tests/"
 python3 -m ruff format --check scripts/ tests/
 
-echo "[5/6] cargo run --quiet --release -- validate"
+echo "[5/7] cargo run --quiet --release -- validate"
 cargo run --quiet --release -- validate
 
-echo "[6/6] python3 -m pytest -q"
+echo "[6/7] cargo run --quiet --release -- eval"
+cargo run --quiet --release -- eval
+
+echo "[7/7] python3 -m pytest -q"
 python3 -m pytest -q
 
 echo "All gates passed. Pushing."

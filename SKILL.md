@@ -372,6 +372,13 @@ stale rules with `wh extract submit`.
 `wh status` prints a score + dimension breakdown, drift summary, and an
 extraction-readiness list. `wh ci` is the lightweight freshness gate for CI.
 
+`wh eval` is the rule-quality bar: it runs every rule's golden examples through
+the real scanner (a `pass` example must not fire, a `fail` example must fire),
+checks structural source-fidelity (the `source_quote` appears verbatim in the
+cached docs), and emits per-rule scorecards. Semantic source-fidelity — whether
+the cited doc actually supports the rule — is judgment and stays skill-attested,
+not gated by `wh eval`.
+
 ## Architecture
 
 Whetstone is **skill-first with a thin deterministic CLI**. This skill is the

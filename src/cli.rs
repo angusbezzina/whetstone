@@ -803,6 +803,22 @@ enum Commands {
         project_dir: PathBuf,
     },
 
+    /// Run every rule's golden examples through the scanner and score them (the rule-quality bar)
+    #[command(name = "eval")]
+    Eval {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Filter by language (python, typescript, rust)
+        #[arg(long)]
+        lang: Option<String>,
+
+        /// Exit zero even when goldens mismatch (for preview runs)
+        #[arg(long)]
+        no_fail: bool,
+    },
+
     /// Scan source files for rule violations using tree-sitter and regex signals
     #[command(name = "scan", alias = "check")]
     Scan {
@@ -1464,6 +1480,33 @@ pub fn run() -> i32 {
                 1
             }
         }
+
+        Commands::Eval {
+            project_dir,
+            lang,
+            no_fail,
+        } => match check::eval(&project_dir, lang.as_deref()) {
+            Ok(result) => {
+                let ok = result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+                if json_mode {
+                    output::print_json(&result);
+                } else {
+                    print!("{}", check::format_eval_output(&result));
+                }
+                if ok || no_fail {
+                    0
+                } else {
+                    1
+                }
+            }
+            Err(e) => {
+                output::print_json(&output::error_json(
+                    &e.to_string(),
+                    "Check whetstone/rules/ contents and golden examples",
+                ));
+                1
+            }
+        },
 
         Commands::Scan {
             paths,
@@ -2778,6 +2821,7 @@ fn command_title(command: &Commands) -> &'static str {
         Commands::Approve { .. } => "APPROVE",
         Commands::Extract { .. } => "EXTRACT",
         Commands::Validate { .. } => "VALIDATE",
+        Commands::Eval { .. } => "EVAL",
         Commands::Scan { .. } => "SCAN",
         Commands::Ci { .. } => "CI",
         Commands::Reinit { .. } => "REINIT",
@@ -2862,6 +2906,7 @@ fn project_dir_for_command(command: &Commands) -> PathBuf {
             ActionsAction::Lint(args) | ActionsAction::Test(args) => args.project_dir.clone(),
         },
         Commands::Scan { project_dir, .. } => project_dir.clone(),
+        Commands::Eval { project_dir, .. } => project_dir.clone(),
         Commands::Rules { action } => match action {
             RulesAction::List { project_dir, .. }
             | RulesAction::Show { project_dir, .. }
