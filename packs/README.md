@@ -27,7 +27,7 @@ through `wh eval`. See epic `whetstone-5ox` and `planning/skill-cli-boundary.md`
 |------|----------|-------|
 | `python/fastapi.yaml` | python | `fastapi.annotated-depends`, `fastapi.lifespan-over-on-event` |
 | `python/httpx.yaml` | python | `httpx.use-client-not-top-level-api`, `httpx.proxies-argument-removed`, `httpx.app-argument-removed`, `httpx.verify-string-deprecated`, `httpx.cert-argument-deprecated` |
-| `python/pydantic.yaml` | python | `pydantic.deprecated-config-class`, `pydantic.deprecated-parse-methods` |
+| `python/pydantic.yaml` | python | `pydantic.deprecated-config-class`, `pydantic.deprecated-parse-obj` |
 | `python/sqlalchemy.yaml` | python | `sqlalchemy.declarative-base-class` |
 | `rust/axum.yaml` | rust | `axum.path-param-braces` |
 | `rust/serde.yaml` | rust | `serde.derive-import-from-serde` |

@@ -44,7 +44,7 @@ findings were entirely generic Python hygiene:
 
 Whetstone, on the same file, reported the **10 things that actually matter**:
 deprecated `@app.on_event` (use lifespan), deprecated Pydantic `class Config`
-(use `model_config`), deprecated `parse_obj/parse_raw/parse_file`, legacy
+(use `model_config`), deprecated `parse_obj` (use `model_validate`), legacy
 `declarative_base()`, and **removed** httpx arguments (`proxies=`, `app=`) that
 raise `TypeError` at runtime on current versions.
 

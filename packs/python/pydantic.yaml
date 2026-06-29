@@ -55,12 +55,14 @@ rules:
               debug = True
     verdict: pass
     reason: Not a pydantic model (no BaseModel/BaseSettings base), so the nested Config class is not flagged.
-- id: pydantic.deprecated-parse-methods
+- id: pydantic.deprecated-parse-obj
   severity: should
-  confidence: medium
+  confidence: high
   category: migration
-  description: Use model_validate()/model_validate_json() instead of the deprecated V1 classmethods parse_obj(),
-    parse_raw(), and parse_file().
+  description: Use model_validate() instead of the deprecated V1 classmethod parse_obj(). (parse_raw/parse_file
+    are deprecated too, but are intentionally not flagged here — those method names are generic enough to
+    appear on non-Pydantic objects, so matching them without type resolution risks false positives. parse_obj
+    is effectively Pydantic-specific.)
   source_url: https://pydantic.dev/docs/validation/latest/get-started/migration/
   source_quote: Some of the built-in data-loading functionality has been slated for removal. In particular,
     `parse_raw` and `parse_file` are now deprecated.
@@ -69,20 +71,15 @@ rules:
   signals:
   - id: ast-signal
     strategy: ast
-    description: Migration guide states parse_raw/parse_file are deprecated and the method-rename table
-      maps parse_ob
+    description: A .parse_obj(...) call — the deprecated V1 loader, renamed to model_validate in V2.
     weight: required
     ast_query: |
-      (call function: (attribute attribute: (identifier) @method) (#match? @method "^(parse_obj|parse_raw|parse_file)$")) @match
+      (call function: (attribute attribute: (identifier) @method) (#eq? @method "parse_obj")) @match
   golden_examples:
   - code: |
       user = User.parse_obj(data)
     verdict: fail
     reason: parse_obj is the deprecated V1 method; use model_validate.
-  - code: |
-      user = User.parse_raw(raw_json)
-    verdict: fail
-    reason: parse_raw is deprecated in V2; use model_validate_json.
   - code: |
       user = User.model_validate(data)
     verdict: pass
@@ -91,3 +88,7 @@ rules:
       user = User.model_validate_json(raw_json)
     verdict: pass
     reason: Uses the current V2 model_validate_json classmethod.
+  - code: |
+      result = my_xml_parser.parse_file("data.xml")
+    verdict: pass
+    reason: parse_file on a non-Pydantic object must NOT fire (false-positive guard).
