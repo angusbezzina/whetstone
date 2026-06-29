@@ -1153,6 +1153,7 @@ fn rules_form_enforcement(form: &RulesFormState) -> Result<crate::rule_authoring
             } else {
                 Ok(crate::rule_authoring::EnforcementMode::Pattern {
                     regex: form.detail_a.trim().to_string(),
+                    ast_scope: None,
                 })
             }
         }
@@ -1787,6 +1788,7 @@ mod tests {
                     dep: Some("custom".into()),
                     enforcement: crate::rule_authoring::EnforcementMode::Pattern {
                         regex: "temporary_rule".into(),
+                        ast_scope: None,
                     },
                     personal: true,
                 },
@@ -1826,6 +1828,7 @@ mod tests {
                 dep: Some("custom".into()),
                 enforcement: crate::rule_authoring::EnforcementMode::Pattern {
                     regex: "initial_rule".into(),
+                    ast_scope: None,
                 },
                 personal: true,
             },

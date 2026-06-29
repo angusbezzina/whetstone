@@ -120,6 +120,8 @@ wh rules edit --all --dep fastapi --category convention --severity must --dry-ru
 
 `--project` routes to the committed layer instead of personal. `wh rules edit` refuses candidate rules — approve first (`wh rules approve <id>`). Use `wh rules remove <id>` to delete one cleanly.
 
+> `--match` mints a raw-regex (`strategy: pattern`) signal, which is **deprecated**. A bare `--match` is allowed only on the personal layer (advisory); for a `--project` rule, `wh rules add` refuses it (`wh validate` would reject it too). Bound it to a parsed node with `--ast-scope <node>` (e.g. `--ast-scope function_definition`) — the only sanctioned form of `pattern` — or, better, use the `--lint-tool` / `--formatter-tool` / `--test-runner` bindings for anything a linter/formatter/test already expresses.
+
 ## Subscribe to custom sources (blogs, wikis, llms.txt, internal docs)
 
 `wh extract` normally walks dependencies detected from manifests. To extract rules from a blog post, a wiki page, an internal style guide, or a custom `llms.txt` endpoint, subscribe it as a **trusted source** — it appears in the extraction worklist alongside detected deps.
@@ -197,13 +199,15 @@ wh config validate
 
 ## Roles
 
-The binary does deterministic work. The agent does judgment. The user
-has the final say.
+The skill is the front door and owns judgment; it calls the binary for
+deterministic work. The user has the final say.
 
 | Task | Handled by | Why |
 |------|-----------|-----|
 | Dependency detection, source resolution, content fetching | Binary | Deterministic |
-| Reading docs + drafting candidate rules | Agent | Requires judgment |
+| Reading docs + drafting candidate rules | Skill (agent) | Requires judgment |
+| Taste / type-aware guidance with no deterministic signal | Skill (agent) | Not gateable; tree-sitter has no type resolution |
+| Orchestrating extract → approve → generate | Skill (agent) | Front door |
 | Approving candidates | User (via `wh rules approve`) | Policy decision |
 | Writing generated tests / lint / context / signal checks | Binary | Deterministic |
 
@@ -211,11 +215,57 @@ has the final say.
 
 Five rules you trust completely beats fifty you have to review.
 
-- Every rule **must** have at least one `ast`, `pattern`, or `lint_proxy`
-  signal. The `ai` strategy is gone.
+- Every **CLI rule** must have a deterministic backing: a `strategy: ast`
+  signal (with a real `ast_query`) or a `strategy: lint_proxy` signal, or a
+  `formatter` / `tests` / `validators` binding. `strategy: pattern` (raw regex)
+  is deprecated; the only allowed form is regex bounded by `ast_scope` inside an
+  `ast` signal.
+- Guidance that needs **taste or type resolution** (so it can't get a
+  deterministic signal) does NOT become a signal-less rule. It lives in this
+  skill as agent guidance — see "Taste / type-aware guidance" below. This is how
+  "every rule needs a signal" reconciles with the schema treating signals as
+  optional: signal-less *judgment* belongs in the skill, not the ruleset.
 - Every rule must cite a specific documentation URL.
 - If you are not 90%+ confident in a rule, do not submit it.
 - Maximum 5 rules per dependency.
+
+### The three-bucket signal audit
+
+Before drafting a rule, place each candidate in exactly one bucket:
+
+1. **Duplicates a linter** (ruff/biome/clippy) → `strategy: lint_proxy` with
+   `lint: {tool, code}`; `wh actions lint` emits the native config. For tools
+   `lint_proxy` doesn't cover (cargo-audit/RUSTSEC, pip-audit, type-checkers),
+   document "use that tool" or bind via `validators: command`. Don't reimplement
+   it as regex.
+2. **Needs taste or type resolution** → skill guidance, no signal, no CLI rule.
+   tree-sitter matches syntax, not types — it can't tell `reqwest::Client` from
+   `std::process::Command`, so type-dependent rules belong here.
+3. **No linter expresses it AND it's type-independent** → `strategy: ast` with a
+   real `ast_query`. The CLI's narrow moat: decorator shape, async-vs-sync form,
+   import structure, presence of a node in a clearly-identified construct.
+
+## Taste / type-aware guidance (bucket 2 — lives here, not in the ruleset)
+
+Some of the most valuable dependency advice can't be a CLI rule because enforcing
+it would require knowing a value's **type**, and the scanner (tree-sitter) has no
+type resolution. These belong in the skill: surface them to the user as guidance
+and apply them yourself when reading or writing code, but do **not** submit them
+as signal-less rules.
+
+Carry guidance like this in your turn-by-turn judgment:
+
+- **reqwest** — construct clients with an explicit `.timeout(...)`; default is no
+  timeout, so a request can hang forever. Also check the response status (e.g.
+  `error_for_status()`) before reading the body. (Not a CLI rule: the scanner
+  can't confirm the receiver is a `reqwest::Client` vs some other builder, nor
+  that a `.timeout()` call is *absent* from the chain.)
+- **clap** — prefer the derive API over the builder for typical CLIs. (Not a CLI
+  rule: `Command::new(...)` can't be distinguished from `std::process::Command`
+  without type resolution.)
+
+When a candidate "rule" turns out to need a type, move it here. Document the
+why so the next agent doesn't try to re-add it as a regex.
 
 ## Rule lifecycle
 
@@ -255,10 +305,11 @@ rules:
     source_url: "..."
     signals:
       - id: sync-def
-        strategy: pattern
-        description: "pattern"
+        strategy: ast
+        description: "Route handler declared with sync def instead of async def"
         weight: required
-        match: '\bdef '
+        ast_query: |
+          (function_definition name: (identifier)) @fn
       - id: mutable-defaults
         strategy: lint_proxy
         description: "Covered by Ruff"
@@ -323,8 +374,17 @@ extraction-readiness list. `wh ci` is the lightweight freshness gate for CI.
 
 ## Architecture
 
-The Rust binary (`src/`) is the sole runtime. Archived Python scripts under
-`scripts/legacy/` exist only as parity references for contract tests.
+Whetstone is **skill-first with a thin deterministic CLI**. This skill is the
+front door — it owns judgment (reading docs, drafting rules, carrying taste/type-
+aware guidance) and orchestrates the workflow. The Rust binary (`src/`) is the
+deterministic substrate the skill calls: detection, resolution + content-hashing,
+schema validation, native lint/test/context generation, the AST/lint scanner, and
+the drift gate. "Thin" means role + discipline, not line count — no deterministic
+command is removed; only the read-docs → draft-rules loop is skill-driven
+(`wh extract` / `wh extract submit` remain as the primitives the skill calls).
+Archived Python scripts under `scripts/legacy/` exist only as parity references
+for contract tests. The authoritative boundary is
+[`planning/skill-cli-boundary.md`](planning/skill-cli-boundary.md).
 
 See [`references/workflow-matrix.md`](references/workflow-matrix.md) for the
 command-to-step map, [`references/rule-schema.yaml`](references/rule-schema.yaml)

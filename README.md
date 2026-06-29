@@ -6,6 +6,8 @@ Whetstone is a **rule-intelligence layer** that derives coding rules from the do
 
 Other tools execute checks, review pull requests, or apply fixes. Whetstone decides **which rules are worth enforcing** in the first place, why they matter, and how they map to deterministic enforcement and agent guidance.
 
+Whetstone is **skill-first with a thin deterministic CLI**. The agent skill is the front door: it owns judgment — reading docs, proposing high-confidence rules, and carrying taste/type-aware guidance that can't be deterministically enforced. The CLI is the deterministic substrate the skill calls (detect, resolve + content-hash, validate, generate, scan, drift gate). See [`planning/skill-cli-boundary.md`](planning/skill-cli-boundary.md) for the authoritative split.
+
 It's a codegen tool, not a runtime dependency. A teammate who never installs Whetstone still gets every rule enforced through standard CI and every agent guided by current instructions.
 
 ## Why Whetstone?
@@ -116,7 +118,7 @@ wh reinit              # writes whetstone/.state/refresh-diff.json
 wh reinit --check      # same, but exits non-zero when drift is detected (CI-friendly)
 ```
 
-> **Agent skill mode:** When using Whetstone as an agent skill, say "wh init" or "extract rules" and the agent runs the full workflow. The binary handles deterministic work; your existing LLM does the extraction.
+> **Agent skill mode:** The skill is the front door. Say "wh init" or "extract rules" and the agent runs the full workflow — owning the judgment loop and calling the CLI for the deterministic work (detection, resolution, validation, generation, scan, drift gate).
 
 ### Worked Example: Extracting Rules for a Rust Project
 
@@ -134,41 +136,49 @@ $ wh init
 ────────────────────────────────────────
 ```
 
-The agent reads the resolved content and proposes rules. Each rule is presented as a card:
+The skill reads the resolved content and proposes rules. Each enforceable rule
+gets a deterministic backing; each one is presented as a card:
 
 ```
-[MUST] reqwest.set-timeout — high confidence — default
+[MUST] anyhow.context-over-map-err — high confidence — convention
   Source kind: official_docs
-  MUST set an explicit timeout on reqwest clients. Default is no timeout.
-  Source: https://docs.rs/reqwest/latest/reqwest/struct.ClientBuilder.html
-  Risk:   Hangs indefinitely on unresponsive servers.
-  Signal: pattern — Client::new\s*\(\)  [match: regex]
-  > Approve / Edit / Deny / Skip?
+  Prefer .context(...) over .map_err(|e| anyhow!(...)) for error context.
+  Source: https://docs.rs/anyhow/latest/anyhow/trait.Context.html
+  Signal: ast — map_err closure containing the anyhow! macro  [strategy: ast]
+  > Approve / Edit / Skip?
+
+[MUST] anyhow.expect-over-unwrap — high confidence — convention
+  Source kind: official_docs
+  Use .expect("...") over .unwrap() so panics carry context.
+  Source: https://docs.rs/anyhow/latest/anyhow/
+  Signal: lint_proxy — clippy unwrap_used  [emits clippy config]
+  > Approve / Edit / Skip?
 ```
 
-You approve or deny each rule. Approved rules are written to `whetstone/rules/rust/reqwest.yaml`.
+Not everything becomes a rule. Type-aware advice — e.g. "set an explicit
+`reqwest` timeout" or "prefer the clap derive API" — needs to know a value's
+type, which the tree-sitter scanner can't resolve. The skill **carries that as
+guidance** instead of minting a brittle regex rule. (See
+[`planning/skill-cli-boundary.md`](planning/skill-cli-boundary.md).)
+
+You approve or skip each rule. Approved rules are written to
+`whetstone/rules/rust/anyhow.yaml`.
 
 Then generate outputs:
 
 ```bash
-$ wh validate     # ✓ All schema checks passed
-$ wh actions context   # → whetstone/context/AGENTS.md (11 rules, 302 lines)
-$ wh actions test      # → whetstone/evals/rust/test_reqwest.rs (real regex checks)
-$ wh status       # → Score: 95 | Label: Healthy
+$ wh validate          # ✓ All schema checks passed
+$ wh actions context   # → whetstone/context/AGENTS.md
+$ wh actions lint      # → whetstone/lint/clippy.whetstone.toml (enables unwrap_used)
+$ wh scan src/         # → tree-sitter enforces the ast rule; lint config the lint_proxy rule
+$ wh status            # → Score: 95 | Label: Healthy
 ```
 
-The generated test for `reqwest.set-timeout` actually scans your source code:
-
-```rust
-let pattern = regex::Regex::new(r"Client::new\s*\(\)").unwrap();
-for (line_num, line) in content.lines().enumerate() {
-    if pattern.is_match(line) {
-        violations.push(format!("{}:{}: {}", file.display(), line_num + 1, line.trim()));
-    }
-}
-```
-
-Run `cargo test` and the test catches any `Client::new()` calls without explicit timeouts. Meanwhile, the generated context under `whetstone/context/AGENTS.md` tells your AI coding agent to use timeouts from the start — enforcement before AND after code is written, from the same approved rule.
+`wh scan` runs the `ast` rule via a tree-sitter query and verifies the
+`lint_proxy` rule's native config — enforcement after code is written. Meanwhile
+the generated context under `whetstone/context/AGENTS.md` tells your AI coding
+agent the same rules (plus the skill's type-aware guidance) before code is
+written — both halves from the same approved ruleset.
 
 ## Canonical Workflow
 
@@ -192,26 +202,21 @@ See [`references/workflow-matrix.md`](references/workflow-matrix.md) for the ful
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Rust binary (deterministic)       Agent (LLM-mediated)     │
-│                                                             │
-│  wh init ─────────────┐                                     │
-│                       ├─────────────→  Extract rules         │
-│                       │               (agent reads docs,     │
-│                       │                proposes rules)       │
-│                       │                      ↓               │
-│                       │               Approve rules          │
-│                       │               (user reviews         │
-│                       │                each one)             │
-│                       │                      ↓               │
-│  wh actions all ──────┤────────────── writes approved YAML   │
-│                               │                              │
-│  wh status ─ health score, drift detection, next actions     │
-│  wh scan  ─ enforcement against approved rules               │
-│  wh debt  ─ deterministic debt hotspots                      │
+│  Skill / Agent (front door, judgment)                       │
+│    reads docs · proposes rules · carries taste guidance      │
+│    orchestrates the workflow ─ and CALLS the CLI below ──┐   │
+│                                                          ▼   │
+│  Rust CLI (deterministic substrate)                          │
+│    wh init    ─ detect deps, resolve docs, content-hash      │
+│    wh validate ─ schema-check candidate rules                │
+│    wh actions all ─ generate context + tests + lint config   │
+│    wh scan    ─ enforce ast / lint_proxy rules               │
+│    wh status / wh ci ─ health score + drift gate             │
+│    wh debt    ─ deterministic debt hotspots                  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**The binary handles deterministic work:** dependency detection, URL resolution, file generation, health monitoring. **The agent handles judgment:** reading documentation, proposing rules, and presenting them for user approval. This separation means the agent can be Claude, Cursor, Copilot, or any LLM — the binary doesn't care.
+**The skill is the front door and owns judgment:** reading documentation, proposing rules, carrying taste/type-aware guidance that can't be deterministically enforced, and orchestrating the loop. **The CLI is the deterministic substrate the skill calls:** dependency detection, URL resolution + content-hashing, validation, file generation, the AST/lint scanner, and the drift gate. The skill can be Claude, Cursor, Copilot, or any LLM — the CLI doesn't care. Nothing structural is removed; only the read-docs → draft-rules loop is skill-driven.
 
 ### What gets proposed
 
@@ -226,9 +231,13 @@ See [`references/workflow-matrix.md`](references/workflow-matrix.md) for the ful
 ### What gets rejected
 
 - Generic advice ("write clean code")
-- Things standard linters already catch (ruff, biome, clippy)
 - Subjective preferences without documentation backing
-- Rules with no testable signal
+
+A check that a standard linter already covers (ruff/biome/clippy) is **not**
+rejected — it becomes a `lint_proxy` rule that emits the native config to enable
+it. Guidance that needs taste or type resolution (and so has no deterministic
+signal) is **not** rejected either — it lives in the skill as agent guidance
+rather than a signal-less rule.
 
 ## Commands
 
@@ -300,7 +309,8 @@ rules:
         selector: test_async_routes
     signals:
       - id: is-sync-function
-        strategy: ast         # ast | pattern | lint_proxy
+        strategy: ast         # ast | lint_proxy | pattern (deprecated)
+        ast_query: ...        # required for `ast` signals (tree-sitter S-expression)
         weight: required
       - id: mutable-defaults
         strategy: lint_proxy
@@ -329,7 +339,7 @@ See [`references/rule-schema.yaml`](references/rule-schema.yaml) for the full sc
 | `freshness_days` | Days since last rule extraction |
 | `rules_count` | Total approved rules |
 | `high_confidence_ratio` | % of rules with `confidence: high` |
-| `deterministic_coverage` | % of signals using ast/pattern/lint_proxy (not ai) |
+| `deterministic_coverage` | % of signals with a deterministic backing (ast / lint_proxy / formatter / tests / validators) |
 | `pending_updates` | Dependencies with version drift |
 
 Labels: **Healthy**, **Needs Review**, **Stale**, **No Rules**.
@@ -347,7 +357,7 @@ Labels: **Healthy**, **Needs Review**, **Stale**, **No Rules**.
 | `dependencies_covered` | Dependencies with at least one approved rule |
 | `dependencies_total` | Total tracked dependencies |
 | `dependency_coverage` | % of dependencies with rules |
-| `deterministic_coverage` | % of signals using ast/pattern/lint_proxy |
+| `deterministic_coverage` | % of signals with a deterministic backing (ast / lint_proxy / formatter / tests / validators) |
 | `pending_drift` | Dependencies with version drift |
 
 ### Metric history
@@ -436,9 +446,9 @@ Action outputs: `freshness_status`, `changed_sources_count`, `recommended_rules_
 
 ### What each tier means
 
-**Full (Python):** AST-based checks for function signatures, decorators, imports, class inheritance, keyword arguments. Pattern-based checks for string literals and naming conventions. Ruff overlay generation for lint_proxy signals. Generated tests are complete and runnable.
+**Full (Python):** tree-sitter `ast_query` checks for function signatures, decorators, imports, class inheritance, keyword arguments. `ast_scope`-bounded text checks for string-literal content and naming. Ruff overlay generation for `lint_proxy` signals. Generated tests are complete and runnable.
 
-**Baseline (TypeScript, Rust):** Pattern/string-matching checks for deprecated APIs, import statements, and common patterns. Generated tests work for these signal types. Complex AST patterns (e.g., type inference, trait bounds) produce TODO scaffolds that need manual implementation. Biome/clippy overlay generation works for lint_proxy signals.
+**Baseline (TypeScript, Rust):** tree-sitter `ast_query` checks for import structure and deprecated-call shape, plus `lint_proxy` overlay generation (biome/clippy). Generated tests work for these signal types. Type-dependent checks (type inference, trait bounds, "is this receiver a `reqwest::Client`?") are **not** scaffolded — tree-sitter has no type resolution, so they're carried as skill guidance instead of a CLI rule (see [`planning/skill-cli-boundary.md`](planning/skill-cli-boundary.md)).
 
 ## Privacy
 

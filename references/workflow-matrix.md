@@ -8,6 +8,12 @@ This matrix is load-bearing for the README, SKILL.md, and the roadmap. When a
 new command ships (or an existing command changes its handoff artifacts), update
 this file first and cross-link from the other docs.
 
+Whetstone is **skill-first with a thin deterministic CLI**: the skill owns the
+read-docs → draft-rules judgment loop and *calls* these deterministic commands.
+The commands below are the substrate, not the brain. See
+[`../planning/skill-cli-boundary.md`](../planning/skill-cli-boundary.md) for the
+authoritative judgment-vs-deterministic contract.
+
 ---
 
 ## Lifecycle stages
@@ -16,7 +22,7 @@ Whetstone's loop has five stages. Each command below maps to one or more
 stages:
 
 1. **Detect + Resolve** — find dependencies from manifests and fetch their docs
-2. **Extract** — agent reads docs, drafts a bundle, submits as candidate rules
+2. **Extract** — the **skill** reads docs and drafts a bundle (judgment); `wh extract` (worklist) and `wh extract submit` (validation) are the deterministic primitives it calls
 3. **Approve** — user flips candidates to approved (single id or batch)
 4. **Generate** — emit context, tests, and lint configs from approved rules
 5. **Monitor** — health score, drift detection, refresh

@@ -1060,6 +1060,7 @@ mod tests {
                     dep: Some("custom".into()),
                     enforcement: crate::rule_authoring::EnforcementMode::Pattern {
                         regex: "grouped_rule".into(),
+                        ast_scope: None,
                     },
                     personal: true,
                 },

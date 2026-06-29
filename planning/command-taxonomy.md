@@ -3,6 +3,11 @@
 > **Status:** draft in implementation · 2026-04-28
 > **Tracking:** whetstone-ng9g, whetstone-ng9g.2, whetstone-ng9g.5
 
+> This taxonomy is the **deterministic CLI surface** the skill calls. Whetstone is
+> skill-first with a thin deterministic CLI: the skill owns the read-docs →
+> draft-rules judgment loop and invokes these commands. See
+> [`skill-cli-boundary.md`](./skill-cli-boundary.md).
+
 ## Confirmed decisions
 
 - `wh status` stays top-level.

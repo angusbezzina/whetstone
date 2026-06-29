@@ -71,21 +71,28 @@ rules:
                            #   stale   — source content has changed since rule was approved
                            #   unknown — not yet validated
 
-    signals:               # Optional. Prefer ast/pattern/lint_proxy checks when possible.
-                           # Rules backed only by formatter or tests may leave this empty.
+    signals:               # Optional. Prefer ast/lint_proxy checks. Rules backed
+                           # only by formatter/tests/validators may leave this empty.
       - id: string         # Required. Unique within this rule (e.g., "is-sync-function").
-        strategy: enum     # Required. One of: ast | pattern | lint_proxy
-                           #   ast        — verifiable via syntax tree analysis
-                           #   pattern    — verifiable via text/regex matching
-                           #   lint_proxy — maps to an existing linter rule
+        strategy: enum     # Required. One of: ast | lint_proxy | pattern
+                           #   ast        — verifiable via syntax tree analysis (preferred for
+                           #                checks no linter expresses; see signal-strategies.md)
+                           #   lint_proxy — maps to an existing linter rule (ruff/biome/clippy);
+                           #                `wh actions lint` emits the native enablement config
+                           #   pattern    — DEPRECATED raw text/regex. Brittle and false-positive
+                           #                prone. The ONLY allowed form is regex bounded by
+                           #                `ast_scope` (scoped to a parsed node). Bare `pattern`
+                           #                (no `ast_scope`) is rejected by `wh validate` for
+                           #                shipped rules under whetstone/rules/. See
+                           #                planning/skill-cli-boundary.md §3.
         description: string # Required. What this signal checks.
         weight: enum       # Required. One of: required | strong | moderate
                            #   required — rule fails if this signal fires
                            #   strong   — significant indicator
                            #   moderate — supporting evidence
-        match: string      # Optional. Concrete regex pattern for `pattern` strategy signals.
-                           # When present, generated tests use this regex for actual checking
-                           # instead of producing TODO stubs. Example: '\.unwrap\s*\(\)'
+        match: string      # Optional. Regex for an `ast_scope`-bounded `pattern` signal (the
+                           # only sanctioned use of `pattern`). Bare regex is deprecated; prefer
+                           # an `ast` signal with `ast_query`. Example: '\.unwrap\s*\(\)'
         ast_query: string  # Optional. Raw tree-sitter S-expression query for `ast` signals.
                            # Every node captured by `@match` becomes a violation when `wh scan`
                            # parses a file of the rule's language. Example for Python:

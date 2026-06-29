@@ -40,10 +40,16 @@ reason against.
 
 ## Who does what
 
+Whetstone is **skill-first with a thin deterministic CLI**: the skill (agent) is
+the front door and owns judgment; it *calls* the binary for deterministic work.
+"Thin" means role + discipline, not line count — no deterministic command is
+removed; only the read-docs → draft-rules loop is skill-driven. The authoritative
+split is [`planning/skill-cli-boundary.md`](./skill-cli-boundary.md).
+
 | Actor | Role |
 |-------|------|
-| **Binary** (Rust, this repo) | Detects manifests, fetches docs, validates YAML, scans source for violations, writes every artifact, and computes repo-health views. Always deterministic. |
-| **Agent** (Claude, Cursor, Codex, …) | Reads fetched source material, drafts candidate rules, and calls binary oracles mid-turn. |
+| **Skill / Agent** (Claude, Cursor, Codex, …) | Front door. Reads fetched source material, drafts candidate rules, carries taste / type-aware guidance that can't be deterministically enforced, orchestrates the workflow, and calls binary oracles mid-turn. |
+| **Binary** (Rust, this repo) | Deterministic substrate the skill calls: detects manifests, fetches docs + content-hashes, validates YAML, scans source for violations, writes every artifact, and computes repo-health/drift views. |
 | **User** | Chooses trusted sources, approves rules, hand-authors strict rules, and decides what counts as project taste. |
 
 ---
@@ -253,7 +259,7 @@ enforcing CI-parity gates locally.
 | Item | Tracking |
 |------|----------|
 | Cut 0.4.0 | TBD |
-| `wh patterns` reinstatement | `whetstone-e2r` |
+| Skill ↔ CLI boundary alignment (`planning/skill-cli-boundary.md`) | `whetstone-4xw` |
 | Archived-planning cleanup | TBD |
 
 ### Future concerns

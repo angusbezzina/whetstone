@@ -40,10 +40,12 @@ The documentation must clearly state or strongly imply the practice. "Best pract
 
 ### 2. Signal Requirement
 
-Every rule MUST have at least one deterministic enforcement surface: an `ast`, `pattern`, or `lint_proxy` signal when possible, or an explicit `formatter` / `tests` binding when the rule is best enforced mechanically or through an existing test. Pure `ai`-only rules are rejected because they can't be reliably enforced in CI.
+Every CLI rule MUST have a deterministic backing: a `strategy: ast` signal (with a real `ast_query`) or a `strategy: lint_proxy` signal, or an explicit `formatter` / `tests` / `validators` binding when the rule is best enforced mechanically, through an existing test, or by an external tool. `strategy: pattern` (raw regex) is deprecated — the only allowed form is regex bounded by `ast_scope` inside an `ast` signal.
 
-**Passes**: Rule with an `ast` signal that checks for `FunctionDef` vs `AsyncFunctionDef`
-**Fails**: Rule with only an `ai` signal that says "check if the function should be async"
+Guidance that can't get a deterministic signal because it needs **taste or type resolution** is not rejected outright — it moves to the skill as agent guidance (tree-sitter has no type resolution, so it can't, for example, confirm a receiver is a `reqwest::Client`). It just doesn't become a signal-less rule.
+
+**Passes**: Rule with an `ast` signal (and `ast_query`) that distinguishes a sync from an async function form
+**Becomes skill guidance, not a CLI rule**: "set a reqwest timeout" — verifying it requires knowing the receiver's type and detecting an absent `.timeout()` call
 
 ### 3. Count Ceiling (Max 5)
 
@@ -90,9 +92,9 @@ Patterns that work in the current version but will break in the next major versi
 **Example**: Next.js 15 requires `async` for page components that access `params` — was synchronous in Next.js 14.
 
 ### semantic
-Practices that require some judgment to enforce but can be decomposed into mostly-deterministic signals. The key requirement is that at least one signal must be deterministic.
+Practices that require some judgment to enforce but can be decomposed so that the enforceable part is deterministic. The key requirement is that the rule's primary signal is deterministic (`ast` with `ast_query`, or `lint_proxy`); the residual judgment that can't be made deterministic stays in the skill as guidance rather than becoming a signal.
 
-**Example**: "Error messages SHOULD be actionable" — decomposed into: uses f-string (ast), references a variable (pattern), contains expectation language (pattern), suggests remediation (ai).
+**Example**: "Error messages SHOULD be actionable" — the deterministic part (uses dynamic string formatting, references a variable, `ast_scope`-bounded expectation-language check) becomes the signal; "actually suggests a useful remediation" is judgment the skill applies, not a signal.
 
 ## Multi-Section Content
 
@@ -121,39 +123,61 @@ Common values: `official_docs`, `changelog`, `migration_guide`, `blog`, `social`
 
 ---
 
-## Match Patterns for Signals
+## Writing enforceable signals
 
-Every `pattern`-strategy signal SHOULD include a `match` field with a concrete regex pattern. This is critical: without `match`, generated tests produce TODO stubs that check nothing. With `match`, generated tests contain real regex checks that catch violations in CI.
+Lead with `ast_query` and `lint_proxy`; raw regex is the last resort.
 
-```yaml
-signals:
-  - id: bare-unwrap
-    strategy: pattern
-    description: "Detects .unwrap() calls"
-    match: '\.unwrap\s*\(\)'     # Concrete regex — enables real tests
-    weight: required
-```
+- **Linter already catches it (bucket 1)** → `strategy: lint_proxy` with
+  `lint: {tool, code}`. Don't reimplement it as regex. The bare-`.unwrap()` case,
+  for instance, is clippy `unwrap_used` — bind to it, don't hand-roll `\.unwrap\(\)`.
 
-**Guidelines for writing match patterns:**
-- Use standard regex syntax (Rust `regex` crate, Python `re` module)
-- Keep patterns simple — one pattern per signal, not compound regex
-- Test the pattern mentally against the golden examples
-- For complex checks that need multi-line or AST awareness, use `strategy: ast` without `match` (deferred to tree-sitter)
+  ```yaml
+  signals:
+    - id: bare-unwrap
+      strategy: lint_proxy
+      description: "Covered by clippy unwrap_used"
+      weight: required
+      lint:
+        tool: clippy
+        code: unwrap_used
+  ```
+
+- **Structural and type-independent (bucket 3)** → `strategy: ast` with a real
+  `ast_query` (tree-sitter S-expression). Absence/negation and text refinements use
+  `#match?` / `#not-match?` predicates or `ast_scope`-bounded regex *inside* the
+  signal — regex scoped to a parsed node, not a blind text sweep.
+
+  ```yaml
+  signals:
+    - id: sync-route-handler
+      strategy: ast
+      description: "Route handler declared with sync def"
+      weight: required
+      ast_query: |
+        (function_definition name: (identifier)) @fn
+  ```
+
+- **Raw `strategy: pattern` is deprecated.** `wh validate` rejects a top-level
+  `match:` regex outside a narrow allowlist (string-literal content, naming). If
+  you reach for it, re-run the bucket audit first.
+
+- **Needs a value's type (bucket 2)** → don't write a signal. Move it to the skill
+  as guidance; tree-sitter cannot resolve types.
 
 ---
 
 ## Signal Decomposition Guide
 
-Every rule is a spectrum of signals. The goal is to maximize deterministic coverage before resorting to AI.
+Every rule is a spectrum of signals. The goal is maximum deterministic coverage; whatever can't be made deterministic stays in the skill as guidance, not as a signal.
 
-See [signal-strategies.md](signal-strategies.md) for detailed strategy descriptions and examples.
+See [signal-strategies.md](signal-strategies.md) for the three-bucket signal audit and detailed strategy descriptions.
 
 ### Decomposition Process
 
 1. State the rule in plain language
 2. Ask: "What would I look for in code to verify this?"
-3. For each check, determine if it can be done via AST, regex, or linter rule
-4. Only use AI for what's left
+3. For each check, run the bucket audit: linter already catches it → `lint_proxy`; type-independent and structural → `ast` + `ast_query`; needs taste or a value's type → skill guidance (no signal)
+4. If nothing deterministic survives, the rule is bucket 2 — carry it as skill guidance, don't submit a signal-less rule
 5. Assign weights: the most reliable signal is `required`, supporting signals are `strong` or `moderate`
 
 ### Structured lint bindings
@@ -177,22 +201,22 @@ This is the preferred format for agent-authored candidate bundles.
 
 **Rule**: "Error messages SHOULD be actionable"
 
-| Signal | Strategy | Weight | Deterministic? |
-|--------|----------|--------|----------------|
-| Uses dynamic string formatting | ast | required | Yes |
-| References a variable from scope | pattern | strong | Yes |
-| Contains expectation language | pattern | moderate | Yes |
-| Suggests a remediation | ai | moderate | No |
+| Check | Disposition | Weight |
+|-------|-------------|--------|
+| Uses dynamic string formatting | `ast` (`ast_query`) | required |
+| References a variable from scope | `ast_scope`-bounded check inside the signal | strong |
+| Contains expectation language | `ast_scope`-bounded string-content check | moderate |
+| "Actually suggests a useful remediation" | skill guidance — judgment, not a signal | — |
 
-Result: 3 of 4 signals are deterministic. The AI signal is only needed for ambiguous cases.
+Result: the deterministic checks become the rule's signal; the residual judgment stays in the skill rather than becoming a non-deterministic signal.
 
 ## Golden Examples
 
 Every rule requires 3-5 golden examples — code snippets with known pass/fail verdicts. These serve three purposes:
 
 1. **Test generation** — examples become the basis for generated test files
-2. **Prompt grounding** — examples ground AI eval prompts in known answers
-3. **Calibration** — if AI eval disagrees with golden examples, the prompt needs fixing
+2. **Signal calibration** — examples are the known-answer set the rule's `ast` / `lint_proxy` signal must agree with; if the scanner disagrees with a golden example, the signal is wrong
+3. **Agent grounding** — examples ground the skill's judgment when it applies the rule (and bucket-2 taste guidance) mid-turn
 
 ### Writing Good Examples
 

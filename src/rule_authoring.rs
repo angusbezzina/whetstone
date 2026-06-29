@@ -35,6 +35,10 @@ pub enum EnforcementMode {
     Advisory,
     Pattern {
         regex: String,
+        /// AST node kind that bounds the regex (the only sanctioned form of
+        /// `strategy: pattern`). When None the signal is a bare pattern, which
+        /// `wh validate` rejects for shipped project rules.
+        ast_scope: Option<String>,
     },
     Lint {
         tool: String,
@@ -126,13 +130,16 @@ pub fn add(project_dir: &Path, opts: AddOptions) -> Result<Value> {
 
     match &opts.enforcement {
         EnforcementMode::Advisory => {}
-        EnforcementMode::Pattern { regex } => {
+        EnforcementMode::Pattern { regex, ast_scope } => {
             let mut sig = Mapping::new();
             sig.insert(ystr("id"), ystr("authored-pattern"));
             sig.insert(ystr("strategy"), ystr("pattern"));
             sig.insert(ystr("description"), ystr("Authored regex"));
             sig.insert(ystr("weight"), ystr("required"));
             sig.insert(ystr("match"), ystr(regex));
+            if let Some(scope) = ast_scope {
+                sig.insert(ystr("ast_scope"), ystr(scope));
+            }
             signals.push(YamlValue::Mapping(sig));
         }
         EnforcementMode::Lint { tool, code } => {
@@ -260,7 +267,7 @@ pub fn add(project_dir: &Path, opts: AddOptions) -> Result<Value> {
 fn validate_enforcement(enforcement: &EnforcementMode, language: &str) -> Result<()> {
     match enforcement {
         EnforcementMode::Advisory => Ok(()),
-        EnforcementMode::Pattern { regex } => {
+        EnforcementMode::Pattern { regex, .. } => {
             if regex.trim().is_empty() {
                 Err(anyhow!("pattern enforcement requires a non-empty regex"))
             } else {
