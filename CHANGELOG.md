@@ -6,6 +6,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-06-28
+
+### Fixed
+- **Release CI:** pinned `cross` to 0.2.5 for the `aarch64-unknown-linux-gnu` build. The workflow had installed `cross` from unpinned git HEAD, and a regression there failed the `cargo metadata` preflight, breaking the v0.9.0 release build (the other three targets built fine). v0.9.1 is the first published build of the 0.9.x skill-first line — see 0.9.0 below for the feature changes.
+
 ## [0.9.0] - 2026-06-28
 
 Skill-first reorientation: the skill (`SKILL.md`) is now the front door that owns
@@ -493,6 +498,7 @@ no Python runtime dependency.
 - **Release workflow** building Linux and macOS binaries for x86_64 and
   aarch64 with cross-compilation support.
 
+[0.9.1]: https://github.com/angusbezzina/whetstone/releases/tag/v0.9.1
 [0.9.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.9.0
 [0.5.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.5.0
 [0.8.14]: https://github.com/angusbezzina/whetstone/releases/tag/v0.8.14
