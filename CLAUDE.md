@@ -8,9 +8,9 @@ Read `AGENTS.md` for universal project context. This file contains Claude Code-s
 
 ## Project Context
 
-Whetstone is an Agent Skill (agentskills.io format) with a **Rust CLI binary** that derives coding rules from dependency documentation and developer patterns. The MVP architecture is documented in `planning/mvp.md`. The full vision is in `planning/product-spec.md`.
+Whetstone is an Agent Skill (agentskills.io format) with a thin deterministic **Rust CLI binary** that derives coding rules from dependency documentation. The MVP architecture is documented in `planning/mvp.md`. The full vision is in `planning/product-spec.md`. The authoritative contract for what is judgment vs. deterministic work is `planning/skill-cli-boundary.md`.
 
-**The Rust binary (`src/`) is the sole runtime implementation.** Archived Python command implementations live under `scripts/legacy/` strictly as parity reference for `tests/test_script_contracts.py`. Pattern mining (`wh patterns`), rule-schema validation (`wh validate`), and every other user-facing workflow are Rust-native. The agent (you) acts as the LLM for rule extraction -- the binary handles deterministic work.
+**Whetstone is skill-first with a thin deterministic CLI (role-thin sense).** The skill (`SKILL.md`) is the front door: it owns *judgment* -- reading dependency docs, proposing high-confidence rules, carrying taste/type-aware guidance that can't be deterministically enforced, and orchestrating the workflow. The CLI (`src/`) keeps all of its *deterministic* commands -- detection, source resolution + content-hashing, schema validation (`wh validate`), generation of native lint/test/context artifacts, the AST/lint scanner (`wh scan`), and the drift gate (`wh status`, `wh ci`) -- which the skill **calls**. "Thin" means role + discipline, not line count: nothing structural is removed, only the read-docs → draft-rules loop is skill-driven. Archived Python command implementations live under `scripts/legacy/` strictly as parity reference for `tests/test_script_contracts.py`. The agent (you) acts as the LLM for rule extraction; the binary handles the deterministic substrate.
 
 ---
 
@@ -75,7 +75,8 @@ The SKILL.md follows the agentskills.io specification:
 
 Rules follow the schema in `references/rule-schema.yaml`. Key constraints:
 - Every rule needs an `id`, `severity`, `confidence`, `category`, `description`, `source_url`
-- Every rule needs at least one signal with `strategy: ast` or `strategy: pattern`
+- Every CLI rule needs a deterministic backing: a `strategy: ast` signal (with a real `ast_query`) or `strategy: lint_proxy` signal, or a `formatter` / `tests` / `validators` binding. `strategy: pattern` (raw regex) is **deprecated** -- the only allowed form is regex bounded by `ast_scope` inside an `ast` signal
+- Pure taste / type-aware guidance that has no deterministic signal does NOT become a signal-less rule -- it lives in the skill as agent guidance (see `planning/skill-cli-boundary.md`)
 - Every rule needs 3-5 golden examples (mix of pass and fail)
 - Maximum 5 rules per dependency
 
@@ -87,8 +88,9 @@ This is the most important principle in the project. When proposing rules, gener
 
 - **5 rules you trust completely beats 50 you have to review**
 - If you're not 90%+ confident, don't propose it
-- Every rule MUST have at least one deterministic signal
-- Don't duplicate what ruff, biome, or clippy already catch
+- Every CLI rule MUST have a deterministic backing (ast + `ast_query`, lint_proxy, or a formatter/tests/validators binding)
+- If ruff/biome/clippy already catch it, don't reimplement it as regex -- express it as a `lint_proxy` rule that emits the native config
+- Guidance that needs taste or type resolution lives in the skill, not as a signal-less rule
 - Every rule must cite a specific documentation URL
 - "I'm not sure" is always better than a low-confidence rule
 

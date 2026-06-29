@@ -1,80 +1,106 @@
 # Signal Strategies Reference
 
-> How Whetstone decomposes rules into testable signals.
+> How Whetstone decomposes rules into deterministic checks — and what belongs in
+> the skill instead.
 
 ## Overview
 
-Every Whetstone rule is decomposed into one or more **signals** — individual checks that can verify whether code follows the rule. The goal is 100% deterministic coverage: every rule should have at least one AST, pattern, or `lint_proxy` signal when possible. Formatter-backed or explicitly test-bound rules may rely on structured `formatter` / `tests` bindings instead.
+A Whetstone rule earns a place in the ruleset only when it has a **deterministic
+backing**: an `ast` signal (with a real `ast_query`), a `lint_proxy` signal, or a
+`formatter` / `tests` / `validators` binding. Guidance that can't get one — because
+it needs taste or type resolution — is not a signal-less rule. It lives in the
+**skill** as agent guidance. The authoritative split is in
+[`../planning/skill-cli-boundary.md`](../planning/skill-cli-boundary.md).
 
-## Strategy Types
+## The signal audit: three buckets
 
-### `ast` — Syntax Tree Analysis
+Before writing a signal, put the candidate in **exactly one** bucket.
 
-**What it does**: Parses source code into an Abstract Syntax Tree and checks structural properties.
+### Bucket 1 — Duplicates an existing tool → emit native config
+
+If a linter already expresses the check, don't reimplement it and don't drop it.
+Bind it to the tool so Whetstone emits the native config that enables it.
+
+- Expressible by ruff/biome/clippy → `strategy: lint_proxy` with `lint: {tool, code}`.
+  `wh actions lint` then writes the native config fragment.
+- The check belongs to a tool `lint_proxy` doesn't support (cargo-audit/RUSTSEC,
+  pip-audit, npm audit, type-checkers) → either delete the rule and document "use
+  cargo-audit" / "use pip-audit", **or** bind it via `validators: command`
+  (e.g. `cargo audit`). Default: delete + document.
+
+### Bucket 2 — Needs taste or type resolution → move to the skill
+
+If verifying the rule requires judgment, or requires knowing a value's **type**,
+it cannot be a deterministic CLI rule. tree-sitter matches *syntax structure*, not
+types: it cannot tell a `reqwest::Client` from a `std::process::Command`, and it
+has no native "this subtree is missing node X" operator. Such guidance lives in
+the skill (no signal, no CLI rule). Examples: "set a reqwest timeout" (needs to
+know the receiver's type and that `.timeout()` is absent), "prefer clap derive
+over builder" (needs to know `Command` is `clap::Command`).
+
+### Bucket 3 — No linter expresses it, and it's type-independent → keep as AST
+
+`strategy: ast` with a real `ast_query` (a tree-sitter S-expression). This is the
+CLI's moat, but a **narrow** one: only *type-independent structural* checks —
+decorator shape, async-vs-sync function form, import structure, the presence of a
+node inside a clearly-identified construct.
+
+## Strategy types
+
+### `ast` — tree-sitter structural query (the default deterministic strategy)
+
+**What it does**: Parses source into a syntax tree and matches structure with a
+tree-sitter S-expression `ast_query`.
 
 **When to use**:
-- Function signatures (async vs sync, parameter types, return types)
+- Function signatures (async vs sync, parameters, return shape)
 - Decorator presence or absence
 - Class inheritance patterns
 - Import statements and their structure
-- Control flow patterns (nesting depth, early returns)
-- Method calls on specific objects
+- A method call's syntactic shape inside an identified construct
 
-**Deterministic**: Yes — always produces the same result for the same code.
+**Deterministic**: Yes — same result for the same code.
 
-**Implementation**:
-- Python: `ast` stdlib module
-- TypeScript: regex-based (MVP) or TypeScript compiler API
-- Rust: string/regex matching (MVP) or `syn` crate
+**Implementation**: tree-sitter across Python, TypeScript, and Rust. Every `ast`
+signal must carry an `ast_query`; `wh validate` rejects an `ast` signal with no
+query (there is no silent regex fallback).
 
-**Examples**:
+```yaml
+signals:
+  - id: sync-route-handler
+    strategy: ast
+    description: Route handler declared with sync def instead of async def
+    weight: required
+    ast_query: |
+      (function_definition name: (identifier)) @fn
+```
 
-| Check | AST Node Type |
-|-------|---------------|
-| Function is async | `AsyncFunctionDef` vs `FunctionDef` |
-| Has decorator X | `FunctionDef.decorator_list` |
-| Imports from module | `ImportFrom.module` |
-| Class inherits from X | `ClassDef.bases` |
-| Nesting depth > N | Recursive `If`/`For`/`While` count |
-| Calls deprecated method | `Call.func.attr` |
+**`ast_query` is not "regex-free."** Absence/negation and text-level refinements
+still use tree-sitter `#match?` / `#not-match?` predicates and `ast_scope`-bounded
+regex *inside* the `ast` signal. The win over raw regex is that the match is
+**scoped to a parsed node** rather than a blind text sweep. `wh validate` cannot
+police regex hidden inside an `ast_query` predicate — that is a human-review
+responsibility.
 
-### `pattern` — Text/Regex Matching
+| Check | Structural target |
+|-------|-------------------|
+| Function is async | `async` keyword on the function node |
+| Has decorator X | decorator child of the function node |
+| Imports from module | import node with the module name |
+| Class inherits from X | base-class child of the class node |
+| `map_err` closure contains `anyhow!` | call node whose closure subtree holds the macro |
 
-**What it does**: Searches source code text using regular expressions or string matching.
+### `lint_proxy` — delegate to an existing linter
 
-**When to use**:
-- String literals (error messages, config values)
-- Naming conventions (variable names, file names)
-- Comment patterns (TODO, FIXME, specific annotations)
-- Import ordering or grouping
-- Configuration values in code
-- Version strings or magic numbers
+**What it does**: Maps the rule to a ruff/biome/clippy lint that isn't on by
+default, so Whetstone emits the native config that turns it on.
 
-**Deterministic**: Yes.
-
-**Implementation**: Standard regex across all languages.
-
-**Examples**:
-
-| Check | Pattern |
-|-------|---------|
-| Uses deprecated `.schema()` | `\.schema\(\)` |
-| Has hardcoded secret | `(password\|secret\|api_key)\s*=\s*["']` |
-| Uses old import path | `from old_module import` |
-| Missing type annotation | `def \w+\([^:)]+\)` (no colon in params) |
-
-### `lint_proxy` — Existing Linter Rule
-
-**What it does**: Maps to an existing rule in ruff, biome, or clippy that isn't enabled by default.
-
-**When to use**:
-- When a linter has a rule for this check but it's not in the default set
-- When the linter rule needs specific configuration
-- When combining multiple linter rules covers the check
+**When to use**: any time a linter already expresses the check (bucket 1). This is
+the **primary enforcement path** — prefer it over hand-rolling an AST query.
 
 **Deterministic**: Yes (delegated to the linter).
 
-**Implementation**: Generates linter configuration overlays. Prefer structured bindings on the signal itself:
+**Implementation**: Always use structured `lint` metadata, never free-text:
 
 ```yaml
 signals:
@@ -87,81 +113,111 @@ signals:
       code: B006
 ```
 
-This avoids brittle free-text parsing of descriptions.
+`wh actions lint` then generates the native overlay:
+- Python: `ruff.whetstone.toml` (`extend-select`)
+- TypeScript: `biome.whetstone.json` (rule config)
+- Rust: `clippy.whetstone.toml` (clippy lint settings)
 
-Generates linter configuration overlays:
-- Python: `ruff.whetstone.toml` with `extend-select`
-- TypeScript: `biome.whetstone.json` with rule config
-- Rust: `clippy.whetstone.toml` with lint settings
-
-**Examples**:
-
-| Check | Linter Rule |
+| Check | Linter rule |
 |-------|-------------|
-| Unused function arguments | ruff: `ARG001` |
-| Mutable default arguments | ruff: `B006` |
-| Use of `any` type | biome: `noExplicitAny` |
-| Unwrap without expect | clippy: `unwrap_used` |
+| Unused function arguments | ruff `ARG001` |
+| Mutable default arguments | ruff `B006` |
+| Use of `any` type | biome `noExplicitAny` |
+| `.unwrap()` without `.expect()` | clippy `unwrap_used` |
 
-## Weight Definitions
+### `formatter` / `tests` / `validators` bindings
+
+When a rule maps to a mechanical rewrite or an existing check rather than a
+scanner signal, bind it directly instead of inventing a signal:
+
+- `formatter` — a safe mechanical rewrite owned by a formatter (e.g. ruff format
+  / rustfmt / biome) via `formatter: {tool, options}`.
+- `tests` — an existing test that proves the rule via `tests: [{runner, path, selector}]`.
+- `validators` — an external command that owns the check via `validators: command`
+  (e.g. `cargo audit`, `pip-audit`, a type-checker) when `lint_proxy` can't.
+
+### `pattern` — raw regex (DEPRECATED)
+
+> **Deprecated. Do not reach for this first.** Top-level `strategy: pattern` is a
+> blind text sweep — brittle across newlines, false-positive prone, and the source
+> of past credibility gaps. `wh validate` rejects it outside a narrow allowlist.
+
+The **only** legitimate uses are genuinely text-level checks where AST adds
+nothing — string-literal *content* and naming conventions — and even those are
+better expressed as regex bounded by `ast_scope` inside an `ast` signal. If you
+think you need a top-level `pattern`, re-run the bucket audit: it is almost always
+bucket 1 (`lint_proxy`) or bucket 3 (`ast` + `ast_query`).
+
+| Allowlisted text-level check | Note |
+|------------------------------|------|
+| Naming convention (e.g. function casing) | prefer `ast_scope`-bounded |
+| String-literal content (e.g. forbidden message text) | prefer `ast_scope`-bounded |
+
+## Weight definitions
 
 | Weight | Meaning | Usage |
 |--------|---------|-------|
 | `required` | Rule fails if this signal fires | Use for the primary check. A rule should have exactly one `required` signal. |
-| `strong` | Significant indicator | Use for secondary checks that strongly support the rule. |
-| `moderate` | Supporting evidence | Use for additional context. |
+| `strong` | Significant indicator | Secondary checks that strongly support the rule. |
+| `moderate` | Supporting evidence | Additional context. |
 
-## Threshold Gating
+## Threshold gating
 
-Rules with multiple signals can use threshold gating to combine deterministic
-evidence. The `deterministic_pass_threshold` / `deterministic_fail_threshold`
-fields let a rule require a minimum number of fired signals before it counts
-as a violation.
+Rules with multiple signals can combine deterministic evidence. The
+`deterministic_pass_threshold` / `deterministic_fail_threshold` fields require a
+minimum number of fired signals before a rule counts as a violation.
 
 ```yaml
 deterministic_pass_threshold: 3  # ≥3 deterministic signals = auto-pass
 deterministic_fail_threshold: 0  # 0 deterministic signals = auto-fail
 ```
 
-## Decomposition Checklist
+## Decomposition checklist
 
 When decomposing a rule into signals:
 
-- [ ] At least one signal has strategy `ast` or `pattern`
+- [ ] The candidate was run through the three-bucket audit (and bucket-2 items
+      were moved to the skill, not forced into a signal)
+- [ ] The primary signal is `ast` (with `ast_query`), `lint_proxy`, or a
+      `formatter` / `tests` / `validators` binding — not a raw `pattern`
 - [ ] `lint_proxy` signals include structured `lint.tool` + `lint.code`
+- [ ] `ast` signals carry a real `ast_query`
 - [ ] No signal is redundant with another
 - [ ] Exactly one signal has weight `required`
 - [ ] All signals have descriptive `description` fields
 - [ ] Signal IDs are unique within the rule
 
-## Language Support Matrix
+## Language support matrix
 
 | Strategy | Python | TypeScript | Rust |
 |----------|--------|------------|------|
-| `ast` | Full (`ast` stdlib) | Regex approximation | String matching |
-| `pattern` | Full (regex) | Full (regex) | Full (string/regex) |
-| `lint_proxy` | Ruff overlay | Biome config | Clippy config |
+| `ast` (`ast_query`) | tree-sitter | tree-sitter | tree-sitter |
+| `lint_proxy` | ruff overlay | biome config | clippy config |
+| `pattern` (deprecated) | allowlist only | allowlist only | allowlist only |
 
-### Supported Signal Patterns by Language
+`wh scan` runs tree-sitter for `ast_query` / `ast_scope` across all three
+languages, regex for allowlisted `match:` checks, and lint-config verification for
+`lint_proxy`.
 
-#### Python (Reference Implementation)
+### Supported signal patterns by language
+
+#### Python
 - Function signatures (async/sync, parameters, decorators)
 - Import statements and paths
 - Class inheritance and method overrides
 - Keyword argument presence/absence
-- String literal patterns
-- Deprecated API calls
+- String-literal content (allowlisted text-level checks)
 
-#### TypeScript (Baseline)
-- Deprecated API calls (pattern matching)
-- Import statement checks (pattern matching)
-- String literal checks (pattern matching)
-- Async/sync function detection (regex approximation)
-- Complex AST checks generate TODO scaffolds
+#### TypeScript
+- Import structure and deprecated API call shape (tree-sitter)
+- Async/sync function form
+- `any`-type and similar checks via `lint_proxy` (biome)
+- Complex type-dependent checks belong in the skill (bucket 2)
 
-#### Rust (Baseline)
-- Deprecated API calls (string contains)
-- Unsafe block detection
-- .unwrap() usage detection
-- use statement checks
-- Complex AST checks generate TODO scaffolds with Dylint reference
+#### Rust
+- Import (`use`) structure and deprecated API call shape (tree-sitter)
+- `.unwrap()` / `.expect()` via `lint_proxy` (clippy `unwrap_used`)
+- Security/advisory dups (RUSTSEC) via `validators: command` (e.g. `cargo audit`)
+  or documented as owned by that tool — not reimplemented
+- Type-dependent checks (e.g. "is this a `reqwest::Client`?") belong in the skill
+  (bucket 2) — tree-sitter has no type resolution

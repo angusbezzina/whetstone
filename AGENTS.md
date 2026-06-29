@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-Whetstone is an Agent Skill (agentskills.io format) with a Rust CLI binary. The binary handles deterministic work (dependency detection, URL resolution, file generation, health monitoring). The agent handles judgment (reading documentation, proposing rules, presenting them for approval). No separate API key required — the agent running Whetstone *is* the LLM.
+Whetstone is **skill-first with a thin deterministic CLI**. The skill (`SKILL.md`) is the front door: it owns judgment — reading documentation, proposing rules, carrying taste/type-aware guidance that isn't deterministically enforceable, and orchestrating the workflow. The Rust CLI binary keeps all of its deterministic commands (dependency detection, URL resolution + content-hashing, schema validation, file generation, the AST/lint scanner, health/drift monitoring), which the skill **calls**. No separate API key required — the agent running Whetstone *is* the LLM. The authoritative judgment-vs-deterministic contract is `planning/skill-cli-boundary.md`.
 
 ### Canonical Workflow
 
@@ -29,8 +29,8 @@ Agents MAY hand-author rule YAML only through `wh extract submit <bundle>`, whic
 | `src/` | Rust source for the `whetstone` binary |
 | `scripts/legacy/` | Archived Python reference implementations, parity-tested by `tests/test_script_contracts.py` |
 | `references/rule-schema.yaml` | Rule YAML format specification |
-| `references/proposal-schema.md` | Agent-emitted proposal bundle format (input to `wh propose import`) |
 | `references/handoff-schema.md` | Durable handoff artifacts under `whetstone/.state/` |
+| `planning/skill-cli-boundary.md` | Authoritative skill (judgment) ↔ CLI (deterministic) contract |
 | `tests/` | Integration tests and fixtures |
 
 ---
@@ -78,18 +78,23 @@ This is critical because Whetstone's entire value proposition is keeping rules c
 Whetstone is not a linter. It catches the things that matter most and that nothing else catches. Every decision should be guided by these principles:
 
 - **5 rules you trust completely beats 50 you have to review**
-- Every proposed rule MUST have at least one deterministic signal (AST or pattern check)
+- Every CLI rule MUST have a deterministic backing: a `strategy: ast` signal (with a real `ast_query`) or a `strategy: lint_proxy` signal, or a `formatter` / `tests` / `validators` binding. `strategy: pattern` (raw regex) is deprecated
 - Maximum 5 rules per dependency -- if you can't rank them, you haven't filtered hard enough
-- Don't propose rules that standard linters already enforce (ruff, biome, clippy)
 - Every rule must cite a specific URL in the dependency's documentation
 - If you're not 90%+ confident a rule prevents a real mistake, don't propose it
 
+### The three-bucket signal audit
+
+Every candidate falls into exactly one bucket (see `references/signal-strategies.md` and `planning/skill-cli-boundary.md`):
+
+1. **Duplicates an existing linter** → don't drop it, express it as `strategy: lint_proxy` so `wh actions lint` emits the native ruff/biome/clippy config. For tools `lint_proxy` doesn't support (cargo-audit/RUSTSEC, pip-audit, type-checkers), either document "use that tool" or bind via `validators: command`.
+2. **Needs taste OR type resolution** → lives in the **skill** as agent guidance, with no deterministic signal and no CLI rule. tree-sitter has no type resolution, so anything that must know a value's type (e.g. "is this receiver a `reqwest::Client`?") cannot be a CLI rule.
+3. **No linter expresses it AND it's expressible without type resolution** → `strategy: ast` with a real `ast_query`. This is the CLI's narrow moat (decorator shape, async-vs-sync form, import structure).
+
 ### What gets rejected
 - Generic advice ("write clean code", "use meaningful names")
-- Things linters already catch
 - Subjective preferences without source backing
-- Rules with no testable signal
-- Architecture principles that can't be decomposed into checks
+- Architecture principles that can't be decomposed into checks or expressed as skill guidance
 
 ### What gets accepted
 - Migration footguns (deprecated APIs that still work)
@@ -97,6 +102,7 @@ Whetstone is not a linter. It catches the things that matter most and that nothi
 - Convention divergence (docs say X, most tutorials/LLMs default to Y)
 - Breaking change preparation (will fail in next major version)
 - Semantic practices decomposable into mostly-deterministic signals
+- Taste / type-aware guidance — carried in the skill, not as a signal-less rule
 
 ---
 
@@ -134,14 +140,15 @@ rules:
     description: >
       Route handlers MUST use async def.
     source_url: https://fastapi.tiangolo.com/async/
-    status: approved            # candidate | approved | denied | deprecated
+    status: approved            # candidate | approved
     approved: true
     approved_at: "2026-03-28T12:00:00Z"
     proposed_at: "2026-03-28T11:30:00Z"
     proposed_by: whetstone-extraction
     signals:
       - id: is-sync-function
-        strategy: ast           # ast | pattern | lint_proxy | ai
+        strategy: ast           # ast | lint_proxy | pattern (deprecated)
+        ast_query: ...          # required for `ast` signals (tree-sitter S-expression)
         description: Function decorated with route decorator uses def instead of async def
         weight: required
     golden_examples:
@@ -163,8 +170,8 @@ rules:
 |-------|---------|---------------------|
 | `candidate` | Proposed, awaiting review | No |
 | `approved` | Reviewed and accepted | Yes |
-| `denied` | Reviewed and rejected (prevents re-proposal) | No |
-| `deprecated` | Previously approved, now invalid | No |
+
+There are only two states. To retire a rule, **delete it** from the YAML — there is no `denied` or `deprecated` state to maintain.
 
 ---
 
