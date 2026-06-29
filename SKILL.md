@@ -120,7 +120,7 @@ wh rules edit --all --dep fastapi --category convention --severity must --dry-ru
 
 `--project` routes to the committed layer instead of personal. `wh rules edit` refuses candidate rules — approve first (`wh rules approve <id>`). Use `wh rules remove <id>` to delete one cleanly.
 
-> `--match` mints a raw-regex (`strategy: pattern`) signal, which is **deprecated** and allowlisted only for genuinely text-level checks (string-literal content, naming) where AST adds nothing — like the `snake_case` example above. For anything a linter or formatter already expresses, prefer the `--lint-tool` / `--formatter-tool` / `--test-runner` binding forms.
+> `--match` mints a raw-regex (`strategy: pattern`) signal, which is **deprecated**. A bare `--match` is allowed only on the personal layer (advisory); for a `--project` rule, `wh rules add` refuses it (`wh validate` would reject it too). Bound it to a parsed node with `--ast-scope <node>` (e.g. `--ast-scope function_definition`) — the only sanctioned form of `pattern` — or, better, use the `--lint-tool` / `--formatter-tool` / `--test-runner` bindings for anything a linter/formatter/test already expresses.
 
 ## Subscribe to custom sources (blogs, wikis, llms.txt, internal docs)
 

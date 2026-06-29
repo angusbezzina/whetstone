@@ -292,9 +292,16 @@ enum RulesAction {
         #[arg(long)]
         description: String,
 
-        /// Regex pattern that signals a violation (produces a `pattern` signal)
+        /// Regex pattern that signals a violation (produces a `pattern` signal).
+        /// Bare patterns are deprecated; pair with --ast-scope to bound the regex
+        /// to a parsed node (required for --project rules).
         #[arg(long = "match")]
         match_regex: Option<String>,
+
+        /// AST node kind that bounds a --match regex (e.g. function_definition).
+        /// The only sanctioned form of `strategy: pattern`.
+        #[arg(long = "ast-scope")]
+        ast_scope: Option<String>,
 
         /// Structured lint binding tool [ruff | biome | clippy]
         #[arg(long)]
@@ -1786,6 +1793,7 @@ pub fn run() -> i32 {
                 rule_id,
                 description,
                 match_regex,
+                ast_scope,
                 lint_tool,
                 lint_code,
                 formatter_tool,
@@ -1810,6 +1818,7 @@ pub fn run() -> i32 {
                 let personal = !project;
                 let enforcement = match build_rule_enforcement(RuleEnforcementInput {
                     match_regex,
+                    ast_scope,
                     lint_tool,
                     lint_code,
                     formatter_tool,
@@ -1821,6 +1830,7 @@ pub fn run() -> i32 {
                     validator_rule,
                     validator_configs,
                     advisory,
+                    is_project: project,
                 }) {
                     Ok(enforcement) => enforcement,
                     Err(e) => {
@@ -2891,6 +2901,7 @@ fn load_deps_input(input: Option<&std::path::Path>) -> anyhow::Result<serde_json
 
 struct RuleEnforcementInput {
     match_regex: Option<String>,
+    ast_scope: Option<String>,
     lint_tool: Option<String>,
     lint_code: Option<String>,
     formatter_tool: Option<String>,
@@ -2902,6 +2913,9 @@ struct RuleEnforcementInput {
     validator_rule: Option<String>,
     validator_configs: Vec<String>,
     advisory: bool,
+    /// True when authoring into the shared project layer (whetstone/rules/),
+    /// where `wh validate` rejects bare `strategy: pattern`.
+    is_project: bool,
 }
 
 fn build_rule_enforcement(
@@ -2909,6 +2923,7 @@ fn build_rule_enforcement(
 ) -> anyhow::Result<rule_authoring::EnforcementMode> {
     let RuleEnforcementInput {
         match_regex,
+        ast_scope,
         lint_tool,
         lint_code,
         formatter_tool,
@@ -2920,6 +2935,7 @@ fn build_rule_enforcement(
         validator_rule,
         validator_configs,
         advisory,
+        is_project,
     } = input;
     let mut chosen = Vec::new();
     if match_regex.is_some() {
@@ -2948,7 +2964,15 @@ fn build_rule_enforcement(
     }
 
     if let Some(regex) = match_regex {
-        return Ok(rule_authoring::EnforcementMode::Pattern { regex });
+        // Bare `strategy: pattern` is rejected by `wh validate` for shipped
+        // project rules. Refuse to author one there, directing to the sanctioned
+        // forms; keep it allowed (advisory) for the personal layer.
+        if is_project && ast_scope.is_none() {
+            return Err(anyhow::anyhow!(
+                "a bare --match regex creates a deprecated `strategy: pattern` signal that `wh validate` rejects for project rules. Bound it with --ast-scope <node> (e.g. function_definition), or use --lint-tool/--lint-code for a linter-backed rule, or drop --project to author it as a personal/advisory rule."
+            ));
+        }
+        return Ok(rule_authoring::EnforcementMode::Pattern { regex, ast_scope });
     }
 
     if lint_tool.is_some() || lint_code.is_some() {
@@ -3115,6 +3139,7 @@ mod tests {
     fn rule_enforcement_builder_rejects_multiple_modes() {
         let err = build_rule_enforcement(RuleEnforcementInput {
             match_regex: Some("foo".into()),
+            ast_scope: None,
             lint_tool: Some("ruff".into()),
             lint_code: Some("B006".into()),
             formatter_tool: None,
@@ -3126,6 +3151,7 @@ mod tests {
             validator_rule: None,
             validator_configs: Vec::new(),
             advisory: false,
+            is_project: false,
         })
         .unwrap_err();
         assert!(err
@@ -3134,9 +3160,87 @@ mod tests {
     }
 
     #[test]
+    fn rule_enforcement_project_bare_match_is_rejected() {
+        // A bare --match into the project layer would be hard-rejected by
+        // `wh validate`, so authoring must refuse it up front (M2 consistency).
+        let err = build_rule_enforcement(RuleEnforcementInput {
+            match_regex: Some("foo".into()),
+            ast_scope: None,
+            lint_tool: None,
+            lint_code: None,
+            formatter_tool: None,
+            formatter_options: Vec::new(),
+            test_runner: None,
+            test_path: None,
+            test_selector: None,
+            validator_adapter: None,
+            validator_rule: None,
+            validator_configs: Vec::new(),
+            advisory: false,
+            is_project: true,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("--ast-scope"), "{err}");
+    }
+
+    #[test]
+    fn rule_enforcement_project_match_with_ast_scope_ok() {
+        let enforcement = build_rule_enforcement(RuleEnforcementInput {
+            match_regex: Some("foo".into()),
+            ast_scope: Some("function_definition".into()),
+            lint_tool: None,
+            lint_code: None,
+            formatter_tool: None,
+            formatter_options: Vec::new(),
+            test_runner: None,
+            test_path: None,
+            test_selector: None,
+            validator_adapter: None,
+            validator_rule: None,
+            validator_configs: Vec::new(),
+            advisory: false,
+            is_project: true,
+        })
+        .unwrap();
+        match enforcement {
+            crate::rule_authoring::EnforcementMode::Pattern { ast_scope, .. } => {
+                assert_eq!(ast_scope.as_deref(), Some("function_definition"));
+            }
+            _ => panic!("expected pattern enforcement"),
+        }
+    }
+
+    #[test]
+    fn rule_enforcement_personal_bare_match_ok() {
+        // Personal layer is advisory; bare --match is allowed there.
+        let enforcement = build_rule_enforcement(RuleEnforcementInput {
+            match_regex: Some("foo".into()),
+            ast_scope: None,
+            lint_tool: None,
+            lint_code: None,
+            formatter_tool: None,
+            formatter_options: Vec::new(),
+            test_runner: None,
+            test_path: None,
+            test_selector: None,
+            validator_adapter: None,
+            validator_rule: None,
+            validator_configs: Vec::new(),
+            advisory: false,
+            is_project: false,
+        })
+        .unwrap();
+        assert!(matches!(
+            enforcement,
+            crate::rule_authoring::EnforcementMode::Pattern { .. }
+        ));
+    }
+
+    #[test]
     fn rule_enforcement_builder_accepts_validator_mode() {
         let enforcement = build_rule_enforcement(RuleEnforcementInput {
             match_regex: None,
+            ast_scope: None,
             lint_tool: None,
             lint_code: None,
             formatter_tool: None,
@@ -3148,6 +3252,7 @@ mod tests {
             validator_rule: Some("custom.inline-handlers".into()),
             validator_configs: vec!["path=scripts/check-inline-handlers.py".into()],
             advisory: false,
+            is_project: false,
         })
         .unwrap();
         match enforcement {

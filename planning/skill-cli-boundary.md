@@ -190,3 +190,22 @@ An independent review built the binary and ran the queries. Findings, with the b
   least surfaces unmerged rules as `config_issues`); bucket-1 lint_proxy rules consume the
   "max 5 rules/dep" budget to flip linter flags (partly justified by carrying provenance/source).
   Folded into **whetstone-480** / noted.
+
+### Resolution (post-validation, 2026-06-28)
+
+A second independent validation found and we then fixed:
+
+- **M2 (authoring consistency)** — `wh rules add` now takes `--ast-scope` and emits a bounded
+  pattern; a bare `--match` into the project layer is refused up front with guidance (it would
+  otherwise mint a file `wh validate` rejects). Personal/advisory bare `--match` still allowed.
+  Tests cover all three paths.
+- **480 / §8.6 (CI wiring)** — the generated `wh init --ci` workflow now gates on
+  `--fail-on=needs_review` (so it fails on content **and** version drift, not just stale), and its
+  header states the enforcement model: Whetstone generates native `[lints.clippy]`/ruff/biome
+  config; the project's existing lint CI enforces it agent-free. (Running the linters inside the
+  generated workflow — setting up each toolchain — is deliberately left to the project's own lint
+  CI, which is where "the tools you already use" run.)
+- **TS bucket-3 demonstrator** — added a committed TypeScript `ast_query` test (window/document
+  member access) and gave the react fixture's `ast` signal a real query. Rust (`anyhow`), Python
+  (`snake`), and TypeScript now each have a proven AST query. Remaining bare-`pattern` *fixture*
+  signals stay advisory by design (only shipped rules under `whetstone/rules/` must be clean).

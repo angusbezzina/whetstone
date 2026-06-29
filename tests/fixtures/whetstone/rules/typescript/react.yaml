@@ -25,6 +25,10 @@ rules:
         strategy: ast
         description: File accesses window/document without 'use client'
         weight: strong
+        ast_query: |
+          ((member_expression
+             object: (identifier) @_obj)
+           (#match? @_obj "^(window|document)$")) @match
     golden_examples:
       - code: |
           'use client';

@@ -914,6 +914,28 @@ mod tests {
     }
 
     #[test]
+    fn ast_query_matches_typescript_member_access() {
+        // TypeScript bucket-3 demonstrator: a type-independent structural query
+        // (window.* member access) fires precisely and ignores other receivers.
+        let mut rule = rule_with("demo.win", "typescript", "ast");
+        rule.signals[0].ast_query = Some(
+            r#"((member_expression object: (identifier) @_o) (#eq? @_o "window")) @match"#.into(),
+        );
+        let rules = vec![&rule];
+        let compiled = compile_rules(&rules);
+        let source = "const x = window.location;\nconst y = local.value;\n";
+        let tree = ast::parse(AstLang::TypeScript, source).unwrap();
+        let hits = apply_signal(
+            &compiled[0].signals[0],
+            Some(AstLang::TypeScript),
+            source,
+            Some(&tree),
+        );
+        assert_eq!(hits.len(), 1, "got: {hits:?}");
+        assert_eq!(hits[0].line, 1);
+    }
+
+    #[test]
     fn ast_scope_restricts_regex_to_nodes_of_kind() {
         // Pattern rule that should only flag TODO inside function bodies,
         // not inside module-level comments.
