@@ -8,6 +8,11 @@ source:
   content_origin: readme
 
 rules:
+  # Bucket 3 (keep as AST): no linter expresses "prefer .context() over
+  # map_err(|e| anyhow!(...))", and it is type-independent — a structural match
+  # on a `map_err` call whose arguments contain the `anyhow!` macro. The regex
+  # lives inside a `#match?` predicate bounded to the `arguments` node, not a
+  # blind text sweep. See planning/skill-cli-boundary.md §3.
   - id: anyhow.context-over-map-err
     severity: should
     confidence: high
@@ -21,10 +26,14 @@ rules:
     status: approved
     signals:
       - id: map-err-anyhow-bang
-        strategy: pattern
-        description: "Detects .map_err followed by anyhow! macro call"
-        match: '\.map_err\s*\(.*anyhow!'
+        strategy: ast
+        description: "A map_err call whose closure builds an error with the anyhow! macro"
         weight: required
+        ast_query: |
+          (call_expression
+            function: (field_expression
+              field: (field_identifier) @_method (#eq? @_method "map_err"))
+            arguments: (arguments) @_args (#match? @_args "anyhow!")) @match
 
     golden_examples:
       - code: |
@@ -42,24 +51,34 @@ rules:
               .map_err(|e| anyhow!("Failed to read config: {}", e))?;
         verdict: fail
         reason: "Uses map_err+anyhow! instead of .context()"
+      - code: |
+          let n: i32 = text.parse().map_err(|e| ParseError::from(e))?;
+        verdict: pass
+        reason: "map_err without anyhow! is fine — this is not the targeted anti-pattern"
 
+  # Bucket 1 (duplicates a linter): .unwrap() vs .expect() is exactly clippy's
+  # `unwrap_used` restriction lint (off by default). Delegate via lint_proxy so
+  # `wh actions lint` emits the Cargo `[lints.clippy]` enablement and CI enforces
+  # it agent-free — rather than reimplementing it as a brittle regex.
   - id: anyhow.expect-over-unwrap
     severity: should
     confidence: high
     category: convention
     description: >
       SHOULD use .expect("reason") instead of .unwrap() in application code
-      using anyhow. When an operation is expected to succeed, .expect() documents
-      the invariant and produces actionable panic messages.
-    source_url: "https://docs.rs/anyhow/latest/anyhow/"
+      using anyhow. Enforced via clippy's `unwrap_used` restriction lint, which
+      is off by default; Whetstone turns it on through generated Cargo lints.
+    source_url: "https://rust-lang.github.io/rust-clippy/master/index.html#unwrap_used"
     approved: true
     status: approved
     signals:
-      - id: unwrap-call
-        strategy: pattern
-        description: "Detects .unwrap() calls in source files"
-        match: '\.unwrap\s*\(\)'
+      - id: unwrap-used
+        strategy: lint_proxy
+        description: "Covered by clippy::unwrap_used (restriction lint, off by default)"
         weight: required
+        lint:
+          tool: clippy
+          code: unwrap_used
 
     golden_examples:
       - code: |
@@ -69,7 +88,7 @@ rules:
       - code: |
           let port = env::var("PORT").unwrap();
         verdict: fail
-        reason: "Bare unwrap with no context for failure"
+        reason: "Bare unwrap with no context for failure (clippy::unwrap_used)"
       - code: |
           let value = some_infallible_op().expect("internal: op is infallible");
         verdict: pass

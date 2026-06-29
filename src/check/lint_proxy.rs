@@ -11,9 +11,13 @@
 //!   `[tool.ruff.lint]` or `[tool.ruff]`, checking the `select =` list.
 //! - **Biome**: `biome.json` / `biome.jsonc`, checking
 //!   `linter.rules.<category>.<rule>` and the boolean `linter.enabled`.
-//! - Clippy is deliberately skipped for now — its rule enablement is
-//!   spread across `Cargo.toml` `[lints.clippy]`, `clippy.toml`, and
-//!   in-source `#![warn(..)]` attributes, which is a larger investigation.
+//! - **Clippy**: `Cargo.toml` `[lints.clippy]` / `[workspace.lints.clippy]`,
+//!   checking the lint's level is not `allow`. We intentionally do NOT treat
+//!   the generated `clippy.whetstone.toml` overlay as proof: Cargo only applies
+//!   `[lints]` from Cargo.toml (a bare `clippy.toml` cannot set lint levels), so
+//!   verifying against the overlay would report a false "enabled". The overlay
+//!   is a fragment to merge into Cargo.toml; verification reflects what Cargo
+//!   actually enforces.
 
 use serde_json::{json, Value};
 use std::fs;
@@ -24,6 +28,7 @@ use crate::rules::{self, ApprovedRule, ApprovedValidatorBinding};
 pub fn verify_lint_proxies(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<Value> {
     let ruff = load_ruff_selects(project_dir);
     let biome = load_biome_enabled(project_dir);
+    let clippy = load_clippy_lints(project_dir);
     let mut issues: Vec<Value> = Vec::new();
 
     for rule in rules {
@@ -35,7 +40,13 @@ pub fn verify_lint_proxies(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<V
                 let verdict = match binding.tool.as_str() {
                     "ruff" => verify_ruff(&ruff, &binding.code),
                     "biome" => verify_biome(&biome, &binding.code),
+                    "clippy" => verify_clippy(&clippy, &binding.code),
                     _ => Verdict::Unsupported,
+                };
+                let fix = if binding.tool == "clippy" {
+                    "add the lint to Cargo.toml `[lints.clippy]` (run `wh actions lint` to generate the fragment, then merge it — a bare clippy.toml cannot enable lints)"
+                } else {
+                    "run `wh actions lint` to generate the overlay config, or enable manually"
                 };
                 match verdict {
                     Verdict::Verified => continue,
@@ -45,8 +56,8 @@ pub fn verify_lint_proxies(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<V
                         "linter": binding.tool,
                         "code": binding.code,
                         "issue": "linter rule is not enabled in project config",
-                        "fix": "run `wh tests` to generate the overlay config, or enable manually",
-                        "config_files_checked": ruff.config_paths.iter().chain(biome.paths.iter()).map(|p| p.display().to_string()).collect::<Vec<_>>(),
+                        "fix": fix,
+                        "config_files_checked": ruff.config_paths.iter().chain(biome.paths.iter()).chain(clippy.config_paths.iter()).map(|p| p.display().to_string()).collect::<Vec<_>>(),
                     })),
                     Verdict::NoConfig => issues.push(json!({
                         "rule_id": rule.id,
@@ -187,6 +198,7 @@ pub fn verify_test_bindings(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<
 pub fn verify_validator_bindings(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<Value> {
     let ruff = load_ruff_selects(project_dir);
     let biome = load_biome_enabled(project_dir);
+    let clippy = load_clippy_lints(project_dir);
     let mut issues = Vec::new();
 
     for rule in rules {
@@ -217,6 +229,7 @@ pub fn verify_validator_bindings(project_dir: &Path, rules: &[&ApprovedRule]) ->
                     let verdict = match tool {
                         "ruff" => verify_ruff(&ruff, code),
                         "biome" => verify_biome(&biome, code),
+                        "clippy" => verify_clippy(&clippy, code),
                         _ => Verdict::Unsupported,
                     };
 
@@ -719,6 +732,113 @@ fn load_ruff_formatter(project_dir: &Path) -> FormatterConfig {
     FormatterConfig { paths, options }
 }
 
+// ── Clippy ──
+
+struct ClippyConfig {
+    config_paths: Vec<PathBuf>,
+    /// Bare lint name (e.g. "unwrap_used") -> level string ("warn"/"deny"/...).
+    levels: std::collections::BTreeMap<String, String>,
+    parse_errors: Vec<String>,
+}
+
+impl ClippyConfig {
+    fn has_code(&self, code: &str) -> bool {
+        // A rule may declare the code as "unwrap_used" or "clippy::unwrap_used".
+        let bare = code.strip_prefix("clippy::").unwrap_or(code);
+        match self.levels.get(bare) {
+            Some(level) => !level.eq_ignore_ascii_case("allow"),
+            None => false,
+        }
+    }
+}
+
+/// A `[lints.clippy]` value is either a level string (`"warn"`) or a table
+/// (`{ level = "warn", priority = -1 }`). Extract the level either way.
+fn clippy_level_from_value(value: &toml::Value) -> Option<String> {
+    match value {
+        toml::Value::String(s) => Some(s.clone()),
+        toml::Value::Table(t) => t.get("level").and_then(|l| l.as_str()).map(String::from),
+        _ => None,
+    }
+}
+
+/// Collect enabled clippy lints from the project's Cargo.toml `[lints.clippy]`
+/// and `[workspace.lints.clippy]` tables. Cargo only honours `[lints]` from
+/// Cargo.toml, so this is the single authoritative source — the generated
+/// `clippy.whetstone.toml` overlay is deliberately NOT consulted (it is inert
+/// until merged into Cargo.toml).
+fn load_clippy_lints(project_dir: &Path) -> ClippyConfig {
+    let candidates = [project_dir.join("Cargo.toml")];
+    let mut levels: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut config_paths: Vec<PathBuf> = Vec::new();
+    let mut parse_errors: Vec<String> = Vec::new();
+
+    for path in &candidates {
+        if !path.exists() {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
+        let parsed: toml::Value = match toml::from_str(&text) {
+            Ok(v) => v,
+            Err(err) => {
+                parse_errors.push(format!("{}: {err}", path.display()));
+                continue;
+            }
+        };
+        config_paths.push(path.clone());
+
+        let lints_tables = [
+            parsed.get("lints").cloned(),
+            parsed
+                .get("workspace")
+                .and_then(|w| w.get("lints"))
+                .cloned(),
+        ];
+        for lints in lints_tables.into_iter().flatten() {
+            // `[lints.clippy]` — keys are bare lint names.
+            if let Some(clippy) = lints.get("clippy").and_then(|c| c.as_table()) {
+                for (name, value) in clippy {
+                    if let Some(level) = clippy_level_from_value(value) {
+                        levels.insert(name.clone(), level);
+                    }
+                }
+            }
+            // `[lints]` with `clippy::`-prefixed keys (the other accepted form).
+            if let Some(table) = lints.as_table() {
+                for (key, value) in table {
+                    if let Some(name) = key.strip_prefix("clippy::") {
+                        if let Some(level) = clippy_level_from_value(value) {
+                            levels.insert(name.to_string(), level);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    ClippyConfig {
+        config_paths,
+        levels,
+        parse_errors,
+    }
+}
+
+fn verify_clippy(cfg: &ClippyConfig, code: &str) -> Verdict {
+    if !cfg.parse_errors.is_empty() {
+        return Verdict::InvalidConfig(cfg.parse_errors.join("; "));
+    }
+    if cfg.config_paths.is_empty() {
+        return Verdict::NoConfig;
+    }
+    if cfg.has_code(code) {
+        Verdict::Verified
+    } else {
+        Verdict::Missing
+    }
+}
+
 // ── Biome ──
 
 struct BiomeConfig {
@@ -1080,5 +1200,74 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0]["adapter"], "linked_test");
         assert_eq!(issues[0]["path"], "tests/inline-handlers.test.ts");
+    }
+
+    fn write_cargo(dir: &Path, body: &str) {
+        fs::write(dir.join("Cargo.toml"), body).unwrap();
+    }
+
+    #[test]
+    fn clippy_verified_when_cargo_lints_enable_the_code() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_cargo(
+            tmp.path(),
+            "[package]\nname=\"x\"\nversion=\"0.1.0\"\n\n[lints.clippy]\nunwrap_used = \"warn\"\n",
+        );
+        let cfg = load_clippy_lints(tmp.path());
+        assert!(matches!(verify_clippy(&cfg, "unwrap_used"), Verdict::Verified));
+        // The `clippy::`-prefixed form must verify too.
+        assert!(matches!(
+            verify_clippy(&cfg, "clippy::unwrap_used"),
+            Verdict::Verified
+        ));
+    }
+
+    #[test]
+    fn clippy_missing_when_lint_absent_or_allowed() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_cargo(
+            tmp.path(),
+            "[package]\nname=\"x\"\nversion=\"0.1.0\"\n\n[lints.clippy]\nunwrap_used = \"allow\"\n",
+        );
+        let cfg = load_clippy_lints(tmp.path());
+        // Present but allowed => not enforced => Missing.
+        assert!(matches!(verify_clippy(&cfg, "unwrap_used"), Verdict::Missing));
+        // Absent entirely => Missing.
+        assert!(matches!(verify_clippy(&cfg, "expect_used"), Verdict::Missing));
+    }
+
+    #[test]
+    fn clippy_table_level_form_and_workspace_lints() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_cargo(
+            tmp.path(),
+            "[workspace.lints.clippy]\nunwrap_used = { level = \"deny\", priority = -1 }\n",
+        );
+        let cfg = load_clippy_lints(tmp.path());
+        assert!(matches!(verify_clippy(&cfg, "unwrap_used"), Verdict::Verified));
+    }
+
+    #[test]
+    fn clippy_no_config_when_no_cargo_toml() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = load_clippy_lints(tmp.path());
+        assert!(matches!(verify_clippy(&cfg, "unwrap_used"), Verdict::NoConfig));
+    }
+
+    #[test]
+    fn clippy_overlay_file_is_not_treated_as_enforcement() {
+        // The generated overlay carries a `[lints.clippy]` table, but Cargo does
+        // not apply it — only Cargo.toml does. verify_clippy must ignore it.
+        let tmp = tempfile::tempdir().unwrap();
+        write_cargo(tmp.path(), "[package]\nname=\"x\"\nversion=\"0.1.0\"\n");
+        let overlay = tmp.path().join("whetstone").join("lint");
+        fs::create_dir_all(&overlay).unwrap();
+        fs::write(
+            overlay.join("clippy.whetstone.toml"),
+            "[lints.clippy]\nunwrap_used = \"warn\"\n",
+        )
+        .unwrap();
+        let cfg = load_clippy_lints(tmp.path());
+        assert!(matches!(verify_clippy(&cfg, "unwrap_used"), Verdict::Missing));
     }
 }

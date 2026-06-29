@@ -1,4 +1,14 @@
-# Whetstone clippy overlay
+# Whetstone clippy lints (generated).
+#
+# Merge this `[lints.clippy]` table into your crate's Cargo.toml `[lints]`
+# section (or a workspace `[workspace.lints]` table that members inherit with
+# `[lints] workspace = true`). Cargo applies it on every `cargo clippy` /
+# `cargo build`, so enforcement runs agent-free in CI with no extra flags.
+#
+# NOTE: a bare `clippy.toml` CANNOT set lint levels — it only configures lint
+# parameters (thresholds). Enabling a lint requires `[lints.clippy]` in
+# Cargo.toml, a `#![warn(clippy::...)]` attribute, or `cargo clippy -- -W`.
+[lints.clippy]
 {% for lint in lints -%}
-warn = ["{{ lint }}"]
+{{ lint }} = "warn"
 {% endfor -%}

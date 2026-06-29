@@ -342,6 +342,26 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
                 });
             }
 
+            if sig.strategy == "pattern" && sig.ast_scope.is_none() {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!(
+                        "{rule_ctx}: signal `{}` uses deprecated bare `strategy: pattern`; prefer `ast` with ast_query or `lint_proxy`, or bound the regex with `ast_scope`",
+                        sig.id.clone().unwrap_or_default()
+                    ),
+                });
+            }
+
+            if sig.strategy == "ast" && sig.ast_query.is_none() && sig.match_pattern.is_none() {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!(
+                        "{rule_ctx}: signal `{}` is `ast` but has neither ast_query nor a regex fallback",
+                        sig.id.clone().unwrap_or_default()
+                    ),
+                });
+            }
+
             if let Some(lint) = &sig.lint {
                 if sig.strategy != "lint_proxy" {
                     warnings.push(ValidationWarning {
@@ -772,6 +792,30 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
                     errors.push(format!(
                         "{rel}: rule {rid} invalid strategy \"{}\"",
                         sig.strategy
+                    ));
+                }
+
+                // Deprecated bare `strategy: pattern` (raw regex). The only
+                // sanctioned use is regex bounded by `ast_scope`. Shipped rules
+                // under whetstone/rules/ must not carry bare patterns — that is
+                // the credibility bar from planning/skill-cli-boundary.md §3.
+                // Fixtures and the personal layer get an advisory, not a hard
+                // failure, so the gate stays green while still flagging drift.
+                if sig.strategy == "pattern" && sig.ast_scope.is_none() {
+                    let msg = format!(
+                        "{rel}: rule {rid} uses deprecated bare `strategy: pattern` (no ast_scope); migrate to `strategy: ast` with ast_query, `strategy: lint_proxy`, or bound the regex with ast_scope"
+                    );
+                    if rel.starts_with("whetstone/rules/") {
+                        errors.push(msg);
+                    } else {
+                        out.push_str(&format!("  WARN: {msg}\n"));
+                    }
+                }
+
+                // An `ast` signal with no `ast_query` silently degrades to regex.
+                if sig.strategy == "ast" && sig.ast_query.is_none() {
+                    out.push_str(&format!(
+                        "  WARN: {rel}: rule {rid} `ast` signal has no ast_query (falls back to weaker regex scanning)\n"
                     ));
                 }
             }
@@ -1308,4 +1352,62 @@ pub fn compute_rule_stats(rule_files: &[Value]) -> BTreeMap<String, Value> {
     );
 
     stats
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(yaml: &str) -> RuleFile {
+        serde_yaml::from_str(yaml).expect("valid rule yaml")
+    }
+
+    fn rule_file(signals: &str) -> RuleFile {
+        parse(&format!(
+            "source:\n  name: demo\nrules:\n  - id: demo.r\n    severity: should\n    confidence: high\n    category: convention\n    description: x\n    source_url: https://example.com\n    signals:\n{signals}"
+        ))
+    }
+
+    #[test]
+    fn bare_pattern_signal_is_flagged_deprecated() {
+        let rf = rule_file(
+            "      - id: s\n        strategy: pattern\n        weight: required\n        match: 'foo'\n",
+        );
+        let warnings = validate_rule_file(&rf, "demo.yaml");
+        assert!(warnings
+            .iter()
+            .any(|w| w.message.contains("deprecated bare `strategy: pattern`")));
+    }
+
+    #[test]
+    fn ast_scope_bounded_pattern_is_allowed() {
+        let rf = rule_file(
+            "      - id: s\n        strategy: pattern\n        weight: required\n        match: 'foo'\n        ast_scope: function_definition\n",
+        );
+        let warnings = validate_rule_file(&rf, "demo.yaml");
+        assert!(!warnings
+            .iter()
+            .any(|w| w.message.contains("deprecated bare `strategy: pattern`")));
+    }
+
+    #[test]
+    fn ast_signal_without_query_is_flagged() {
+        let rf = rule_file(
+            "      - id: s\n        strategy: ast\n        weight: required\n",
+        );
+        let warnings = validate_rule_file(&rf, "demo.yaml");
+        assert!(warnings
+            .iter()
+            .any(|w| w.message.contains("neither ast_query nor a regex fallback")));
+    }
+
+    #[test]
+    fn ast_signal_with_query_is_clean() {
+        let rf = rule_file(
+            "      - id: s\n        strategy: ast\n        weight: required\n        ast_query: '(function_definition) @match'\n",
+        );
+        let warnings = validate_rule_file(&rf, "demo.yaml");
+        assert!(!warnings.iter().any(|w| w.message.contains("strategy: pattern")));
+        assert!(!warnings.iter().any(|w| w.message.contains("ast_query")));
+    }
 }
