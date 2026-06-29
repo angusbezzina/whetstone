@@ -191,6 +191,24 @@ An independent review built the binary and ran the queries. Findings, with the b
   "max 5 rules/dep" budget to flip linter flags (partly justified by carrying provenance/source).
   Folded into **whetstone-480** / noted.
 
+## 10. TUI role decision (whetstone-9ef)
+
+Decision (2026-06-29): under skill-first, the **TUI is a secondary, optional human
+entry point — not the front door** (the skill is). Investment is **frozen**: no new
+"operator workbench" build. The bar is a **minimal usability floor**, not feature growth:
+
+- It must remain coherent: consistent navigation/footers, no dead or placeholder
+  screens, and it must not crash or show stale state.
+- It may surface read-only status/browse (rules, sources, drift) and the existing
+  guided rule-authoring forms, but new human-facing capability should land in the
+  CLI oracles + the skill, which any agent or script can drive — not in bespoke TUI.
+- Rationale: the deterministic value (scan/eval/drift) and the judgment value
+  (skill) are both reachable headless; a heavy TUI would re-create that surface for
+  one client. The recent intro-splash churn is exactly the kind of investment to avoid.
+
+If a concrete, repeated human workflow emerges that the CLI/skill can't serve, revisit
+with a specific, scoped proposal — not a general "make the TUI nicer" pass.
+
 ### Resolution (post-validation, 2026-06-28)
 
 A second independent validation found and we then fixed:

@@ -70,6 +70,33 @@ cargo build --release && ./target/release/whetstone --help
 init --project-dir <your-repo>` works from any directory — there is no
 requirement to run it from inside the Whetstone checkout.
 
+### Get value in a minute: import a starter pack
+
+The fastest way to see Whetstone working is to import a trusted, pre-verified
+rule pack (see [`packs/`](packs/README.md) — FastAPI, Pydantic, SQLAlchemy,
+httpx, React, Next, Zod, Express, axum, serde). Drop the pack into your repo and
+reference it from `whetstone/whetstone.yaml`:
+
+```bash
+mkdir -p whetstone/packs
+curl -fsSL https://raw.githubusercontent.com/angusbezzina/whetstone/main/packs/python/fastapi.yaml \
+  -o whetstone/packs/fastapi.yaml
+cat > whetstone/whetstone.yaml <<'YAML'
+version: 1
+extends:
+  - scope: project
+    ref: path:./whetstone/packs/fastapi.yaml
+YAML
+
+whetstone scan src/          # flag violations now
+whetstone actions lint       # emit native ruff/biome/clippy config to enforce in CI
+whetstone actions context    # write CLAUDE.md / AGENTS.md so your agent follows the rules
+```
+
+Every pack rule is doc-cited, deterministic, and passes `whetstone eval`. From a
+clean repo to enforced rules in three commands — no extraction needed. To derive
+your own rules from your dependencies' docs, use the full workflow below.
+
 ### Recommended repo setup for contributors
 
 Enable the repo-managed pre-push hook so local pushes run the same quality gates used in CI:

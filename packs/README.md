@@ -35,3 +35,17 @@ through `wh eval`. See epic `whetstone-5ox` and `planning/skill-cli-boundary.md`
 | `typescript/next.yaml` | typescript | `next.revalidate-tag-requires-profile`, `next.no-legacy-image-import` |
 | `typescript/react.yaml` | typescript | `react.no-reactdom-render`, `react.no-reactdom-hydrate`, `react.no-prop-types` |
 | `typescript/zod.yaml` | typescript | `zod.top-level-string-formats`, `zod.no-native-enum`, `zod.record-two-args`, `zod.no-object-strict-passthrough`, `zod.no-dropped-error-params` |
+
+## Currency (keeping packs trustworthy)
+
+Whetstone's core thesis is that rules go stale, so the corpus must be maintained:
+
+- Each pack's `metadata` carries `version` + `last_validated`.
+- `tests/corpus_packs.rs` re-runs `wh eval` on every pack in CI, so a rule whose
+  golden behaviour regresses fails the build immediately.
+- **Re-validation cadence:** when a covered dependency ships a new major/minor, or at
+  least quarterly, re-run the corpus-research workflow for that dep, confirm the cited
+  `source_url`/`source_quote` still hold against the current docs, bump
+  `last_validated` (and `version` if rules change), and re-run `wh eval`.
+- Consumers get drift detection for their own copy automatically: `wh ci` flags when
+  a dependency's docs change after a rule was authored (content-hash drift).

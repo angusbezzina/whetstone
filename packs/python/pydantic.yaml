@@ -5,6 +5,7 @@ language: python
 metadata:
   name: whetstone.pydantic
   version: 0.1.0
+  last_validated: "2026-06-29"
   scope: project
   owner: whetstone
 rules:
