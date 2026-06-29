@@ -1,0 +1,55 @@
+# Whetstone trusted rule pack — generated + eval-verified (epic whetstone-5ox)
+apiVersion: whetstone/v1alpha1
+kind: RulePack
+language: rust
+metadata:
+  name: whetstone.axum
+  version: 0.1.0
+  scope: project
+  owner: whetstone
+rules:
+- id: axum.path-param-braces
+  severity: must
+  confidence: high
+  category: migration
+  description: 'In axum 0.8+, route path parameters MUST use brace syntax: `/{id}` for a single capture
+    and `/{*rest}` for a catch-all. The pre-0.8 colon/star syntax (`/:id`, `/*rest`) is no longer valid
+    and produces a panic at startup, so it must not appear in `.route(...)` path literals.'
+  source_url: https://github.com/tokio-rs/axum/blob/main/axum/CHANGELOG.md
+  source_quote: Upgrade matchit to 0.8, changing the path parameter syntax from `/:single` and `/*many`
+    to `/{single}` and `/{*many}`; the old syntax produces a panic to avoid silent change in behavior
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: Verbatim documented breaking change in the official axum CHANGELOG (matchit 0.8 upgrade).
+      Pre-0.8 pa
+    weight: required
+    ast_query: |
+      (call_expression
+        function: (field_expression
+          field: (field_identifier) @method (#eq? @method "route"))
+        arguments: (arguments
+          (string_literal) @match (#match? @match "/[:*]")))
+  golden_examples:
+  - code: |
+      fn build() { let _ = Router::new().route("/users/{id}", get(h)); }
+    verdict: pass
+    reason: New 0.8 brace param `/{id}` — correct, no violation.
+  - code: |
+      fn build() { let _ = Router::new().route("/files/{*rest}", get(h)); }
+    verdict: pass
+    reason: New 0.8 brace catch-all `/{*rest}` — the `*` follows `{` not `/`, so it is not flagged.
+  - code: |
+      fn build() { let _ = Router::new().route("/health", get(h)); }
+    verdict: pass
+    reason: Static path with no params — no violation.
+  - code: |
+      fn build() { let _ = Router::new().route("/users/:id", get(h)); }
+    verdict: fail
+    reason: Pre-0.8 colon param `/:id` — panics at startup in axum 0.8.
+  - code: |
+      fn build() { let _ = Router::new().route("/files/*rest", get(h)); }
+    verdict: fail
+    reason: Pre-0.8 catch-all `/*rest` — panics at startup in axum 0.8.

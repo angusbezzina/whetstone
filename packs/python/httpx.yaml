@@ -1,0 +1,245 @@
+# Whetstone trusted rule pack — generated + eval-verified (epic whetstone-5ox)
+apiVersion: whetstone/v1alpha1
+kind: RulePack
+language: python
+metadata:
+  name: whetstone.httpx
+  version: 0.1.0
+  scope: project
+  owner: whetstone
+rules:
+- id: httpx.use-client-not-top-level-api
+  severity: should
+  confidence: medium
+  category: convention
+  description: Use an httpx.Client (or AsyncClient) instance instead of the module-level top-level request
+    functions (httpx.get/post/put/patch/delete/head/options/request/stream). The top-level API opens a
+    brand-new connection for every call (no connection pooling); the docs say anything beyond one-off
+    scripts should use a Client.
+  source_url: https://www.python-httpx.org/advanced/clients/
+  source_quote: If you do anything more than experimentation, one-off scripts, or prototypes, then you
+    should use a `Client` instance.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: Most tutorials and LLMs mirror requests.get() and write httpx.get(), which the official
+      Clients page
+    weight: required
+    ast_query: |
+      (call function: (attribute object: (identifier) @_obj attribute: (identifier) @_m) (#eq? @_obj "httpx") (#match? @_m "^(get|post|put|patch|delete|head|options|request|stream)$")) @match
+  golden_examples:
+  - code: |
+      import httpx
+      resp = httpx.get("https://api.example.com/users")
+    verdict: fail
+    reason: Top-level httpx.get opens a fresh connection with no pooling; docs say to use a Client.
+  - code: |
+      import httpx
+      httpx.post("https://api.example.com", json={"a": 1})
+    verdict: fail
+    reason: Top-level httpx.post is the discouraged module-level API.
+  - code: |
+      import httpx
+      with httpx.Client() as client:
+          resp = client.get("https://api.example.com/users")
+    verdict: pass
+    reason: client.get receiver is the local identifier 'client', not the httpx module, so it does not
+      match.
+  - code: |
+      import httpx
+      client = httpx.Client(base_url="https://api.example.com")
+    verdict: pass
+    reason: Constructing httpx.Client is the recommended pattern; Client is not in the request-method
+      set.
+  - code: |
+      import requests
+      resp = requests.get("https://api.example.com")
+    verdict: pass
+    reason: Object identifier is 'requests', not 'httpx'.
+- id: httpx.proxies-argument-removed
+  severity: must
+  confidence: high
+  category: breaking-change
+  description: The `proxies=` keyword argument to httpx clients/requests was deprecated in 0.26.0 and
+    REMOVED in 0.28.0. Use `proxy=` (single proxy) or `mounts=` (complex config) instead. Passing proxies=
+    raises TypeError on current httpx.
+  source_url: https://github.com/encode/httpx/blob/master/CHANGELOG.md
+  source_quote: The `proxy` argument was added. You should use the `proxy` argument instead of the deprecated
+    `proxies`, or use `mounts=` for more complex configurations.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: LLMs frequently carry the requests-style proxies= dict into httpx, but httpx removed
+      it in 0.28.0 (l
+    weight: required
+    ast_query: |
+      (call function: (attribute object: (identifier) @_obj) arguments: (argument_list (keyword_argument name: (identifier) @_kw)) (#eq? @_obj "httpx") (#eq? @_kw "proxies")) @match
+  golden_examples:
+  - code: |
+      import httpx
+      client = httpx.Client(proxies="http://localhost:8030")
+    verdict: fail
+    reason: proxies= on httpx.Client was removed in 0.28.0 and now raises TypeError.
+  - code: |
+      import httpx
+      client = httpx.AsyncClient(proxies={"https://": "http://localhost:8030"})
+    verdict: fail
+    reason: proxies= on httpx.AsyncClient was removed in 0.28.0.
+  - code: |
+      import httpx
+      client = httpx.Client(proxy="http://localhost:8030")
+    verdict: pass
+    reason: proxy= is the current replacement argument.
+  - code: |
+      import httpx
+      client = httpx.Client(mounts={"all://": transport})
+    verdict: pass
+    reason: mounts= is the recommended replacement for complex proxy configs.
+  - code: |
+      import requests
+      resp = requests.get(url, proxies=proxies)
+    verdict: pass
+    reason: Object identifier is 'requests', not 'httpx'; requests still uses proxies= correctly.
+- id: httpx.app-argument-removed
+  severity: must
+  confidence: high
+  category: breaking-change
+  description: The `app=` shortcut on httpx.Client/AsyncClient (for testing WSGI/ASGI apps in-process)
+    was deprecated in 0.27.0 and REMOVED in 0.28.0. Use the explicit transport=httpx.WSGITransport(app=...)
+    or transport=httpx.ASGITransport(app=...) instead. Passing app= raises TypeError on current httpx.
+  source_url: https://github.com/encode/httpx/blob/master/CHANGELOG.md
+  source_quote: The `app=...` shortcut has been deprecated. Use the explicit style of `transport=httpx.WSGITransport()`
+    or `transport=httpx.ASGITransport()` instead.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: The app= shortcut is the pattern almost every FastAPI/Starlette testing tutorial used,
+      and LLMs stil
+    weight: required
+    ast_query: |
+      (call function: (attribute object: (identifier) @_obj attribute: (identifier) @_cls) arguments: (argument_list (keyword_argument name: (identifier) @_kw)) (#eq? @_obj "httpx") (#match? @_cls "^(Client|AsyncClient)$") (#eq? @_kw "app")) @match
+  golden_examples:
+  - code: |
+      import httpx
+      client = httpx.Client(app=app)
+    verdict: fail
+    reason: app= shortcut on httpx.Client was removed in 0.28.0 and now raises TypeError.
+  - code: |
+      import httpx
+      client = httpx.AsyncClient(app=asgi_app)
+    verdict: fail
+    reason: app= shortcut on httpx.AsyncClient was removed in 0.28.0.
+  - code: |
+      import httpx
+      client = httpx.Client(transport=httpx.WSGITransport(app=app))
+    verdict: pass
+    reason: Recommended explicit transport style; the outer Client keyword is transport=, and WSGITransport
+      is not Client/AsyncClient.
+  - code: |
+      import httpx
+      client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
+    verdict: pass
+    reason: Recommended explicit ASGI transport style.
+  - code: |
+      from fastapi.testclient import TestClient
+      client = TestClient(app=app)
+    verdict: pass
+    reason: TestClient is not an attribute on the httpx module; unrelated app= usage is not flagged.
+- id: httpx.verify-string-deprecated
+  severity: should
+  confidence: high
+  category: migration
+  description: Passing a string path (CA bundle file/dir) to the `verify=` argument is deprecated as of
+    0.28.0 and emits a DeprecationWarning. verify= should be a bool or an ssl.SSLContext; build an ssl.SSLContext
+    (e.g. ssl.create_default_context(cafile=...)) and pass that instead.
+  source_url: https://github.com/encode/httpx/blob/master/CHANGELOG.md
+  source_quote: The `verify` argument as a string argument is now deprecated and will raise warnings.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: Carrying the requests/old-httpx idiom verify='/path/to/ca.pem' is a common LLM mistake;
+      0.28.0 depre
+    weight: required
+    ast_query: |
+      (call function: (attribute object: (identifier) @_obj) arguments: (argument_list (keyword_argument name: (identifier) @_kw value: (string))) (#eq? @_obj "httpx") (#eq? @_kw "verify")) @match
+  golden_examples:
+  - code: |
+      import httpx
+      client = httpx.Client(verify="/etc/ssl/certs/ca.pem")
+    verdict: fail
+    reason: verify= with a string path is deprecated in 0.28.0; use an ssl.SSLContext.
+  - code: |
+      import httpx
+      resp = httpx.get("https://example.com", verify="ca-bundle.crt")
+    verdict: fail
+    reason: verify= string path on a top-level call is deprecated.
+  - code: |
+      import httpx
+      client = httpx.Client(verify=False)
+    verdict: pass
+    reason: verify=False is a bool (false node), not a string; explicitly unchanged by the deprecation.
+  - code: |
+      import httpx
+      client = httpx.Client(verify=ssl_ctx)
+    verdict: pass
+    reason: verify= with an ssl.SSLContext variable (identifier) is the recommended form.
+  - code: |
+      import httpx
+      client = httpx.Client(verify=True)
+    verdict: pass
+    reason: verify=True is a bool (true node), not a string.
+- id: httpx.cert-argument-deprecated
+  severity: should
+  confidence: high
+  category: migration
+  description: The `cert=` argument (client-side certificate for mutual TLS) is deprecated as of 0.28.0
+    and emits a DeprecationWarning. Load the client cert into an ssl.SSLContext via ssl_context.load_cert_chain(...)
+    and pass it through verify= instead.
+  source_url: https://github.com/encode/httpx/blob/master/CHANGELOG.md
+  source_quote: The `cert` argument is now deprecated and will raise warnings.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: Mutual-TLS code commonly uses cert= (the requests/old-httpx idiom), which 0.28.0 deprecated
+      in favor
+    weight: required
+    ast_query: |
+      (call function: (attribute object: (identifier) @_obj) arguments: (argument_list (keyword_argument name: (identifier) @_kw)) (#eq? @_obj "httpx") (#eq? @_kw "cert")) @match
+  golden_examples:
+  - code: |
+      import httpx
+      client = httpx.Client(cert="/path/client.pem")
+    verdict: fail
+    reason: cert= on httpx.Client is deprecated in 0.28.0; use ssl_context.load_cert_chain via verify=.
+  - code: |
+      import httpx
+      resp = httpx.get("https://example.com", cert=("client.crt", "client.key"))
+    verdict: fail
+    reason: cert= tuple form on a top-level call is deprecated.
+  - code: |
+      import httpx
+      client = httpx.Client(verify=ctx)
+    verdict: pass
+    reason: No cert= argument; client cert is loaded into the ssl context passed via verify=.
+  - code: |
+      import requests
+      resp = requests.get(url, cert="/path/client.pem")
+    verdict: pass
+    reason: Object identifier is 'requests', not 'httpx'; requests still supports cert=.
+  - code: |
+      import ssl
+      ctx = ssl.create_default_context()
+      ctx.load_cert_chain(certfile="c.pem", keyfile="k.pem")
+    verdict: pass
+    reason: Recommended replacement using ssl_context; not an httpx call and keyword is certfile, not
+      cert.

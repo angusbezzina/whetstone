@@ -1,3 +1,4 @@
+# Whetstone trusted rule pack — generated + eval-verified (epic whetstone-5ox)
 apiVersion: whetstone/v1alpha1
 kind: RulePack
 language: python
@@ -7,47 +8,107 @@ metadata:
   scope: project
   owner: whetstone
 rules:
-  - id: fastapi.annotated-depends
-    severity: should
-    confidence: high
-    category: convention
-    description: >
-      SHOULD declare dependencies with Annotated[X, Depends(...)] instead of the
-      default-value style (param: X = Depends(...)). FastAPI recommends the
-      Annotated form since 0.95.0; it keeps the parameter's real default usable
-      and reads correctly with type checkers.
-    source_url: "https://fastapi.tiangolo.com/tutorial/dependencies/"
-    source_quote: "Prefer to use the `Annotated` version if possible."
-    approved: true
-    status: approved
-    signals:
-      - id: depends-as-default
-        strategy: ast
-        description: "A function parameter whose default value is a Depends(...) call"
-        weight: required
-        ast_query: |
-          (typed_default_parameter
-            value: (call function: (identifier) @_f (#eq? @_f "Depends"))) @match
-          (default_parameter
-            value: (call function: (identifier) @_g (#eq? @_g "Depends"))) @match
-    golden_examples:
-      - code: |
-          async def read_items(commons: Annotated[dict, Depends(common_parameters)]):
-              return commons
-        verdict: pass
-        reason: Uses the recommended Annotated form
-      - code: |
-          async def read_items(commons: dict = Depends(common_parameters)):
-              return commons
-        verdict: fail
-        reason: Uses the default-value style instead of Annotated
-      - code: |
-          def read_items(commons=Depends(common_parameters)):
-              return commons
-        verdict: fail
-        reason: Untyped default-value Depends, also discouraged
-      - code: |
-          async def read_items(q: str = "default"):
-              return q
-        verdict: pass
-        reason: A non-Depends default value is unrelated to this rule
+- id: fastapi.annotated-depends
+  severity: should
+  confidence: high
+  category: convention
+  description: |
+    SHOULD declare dependencies with Annotated[X, Depends(...)] instead of the default-value style (param: X = Depends(...)). FastAPI recommends the Annotated form since 0.95.0; it keeps the parameter's real default usable and reads correctly with type checkers.
+  source_url: https://fastapi.tiangolo.com/tutorial/dependencies/
+  source_quote: Prefer to use the `Annotated` version if possible.
+  approved: true
+  status: approved
+  signals:
+  - id: depends-as-default
+    strategy: ast
+    description: A function parameter whose default value is a Depends(...) call
+    weight: required
+    ast_query: |
+      (typed_default_parameter
+        value: (call function: (identifier) @_f (#eq? @_f "Depends"))) @match
+      (default_parameter
+        value: (call function: (identifier) @_g (#eq? @_g "Depends"))) @match
+  golden_examples:
+  - code: |
+      async def read_items(commons: Annotated[dict, Depends(common_parameters)]):
+          return commons
+    verdict: pass
+    reason: Uses the recommended Annotated form
+  - code: |
+      async def read_items(commons: dict = Depends(common_parameters)):
+          return commons
+    verdict: fail
+    reason: Uses the default-value style instead of Annotated
+  - code: |
+      def read_items(commons=Depends(common_parameters)):
+          return commons
+    verdict: fail
+    reason: Untyped default-value Depends, also discouraged
+  - code: |
+      async def read_items(q: str = "default"):
+          return q
+    verdict: pass
+    reason: A non-Depends default value is unrelated to this rule
+- id: fastapi.lifespan-over-on-event
+  severity: should
+  confidence: high
+  category: migration
+  description: Do not use the deprecated @app.on_event("startup") / @app.on_event("shutdown") decorators
+    for startup and shutdown logic. The official docs mark these as deprecated and recommend the lifespan
+    async context manager passed via FastAPI(lifespan=...) instead.
+  source_url: https://fastapi.tiangolo.com/advanced/events/
+  source_quote: The recommended way to handle the startup and shutdown is using the lifespan parameter
+    of the FastAPI app as described above.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: The AST query matches only the attribute name 'on_event' on a decorator call, so it needs
+      no type re
+    weight: required
+    ast_query: |
+      (decorator (call function: (attribute attribute: (identifier) @method)) (#eq? @method "on_event")) @match
+  golden_examples:
+  - code: |
+      from fastapi import FastAPI
+
+      app = FastAPI()
+
+      @app.on_event("startup")
+      async def startup_event():
+          pass
+    verdict: fail
+    reason: Uses the deprecated @app.on_event("startup") decorator; the decorator node matches the query.
+  - code: |
+      from fastapi import FastAPI
+
+      app = FastAPI()
+
+      @app.on_event("shutdown")
+      async def shutdown_event():
+          pass
+    verdict: fail
+    reason: Uses the deprecated @app.on_event("shutdown") decorator; matches the query.
+  - code: |
+      from contextlib import asynccontextmanager
+
+      from fastapi import FastAPI
+
+      @asynccontextmanager
+      async def lifespan(app: FastAPI):
+          yield
+
+      app = FastAPI(lifespan=lifespan)
+    verdict: pass
+    reason: Uses the recommended lifespan context manager; no on_event decorator, no match.
+  - code: |
+      from fastapi import FastAPI
+
+      app = FastAPI()
+
+      @app.get("/")
+      async def root():
+          return {"message": "Hello World"}
+    verdict: pass
+    reason: Ordinary route decorator (app.get), attribute name is not on_event, so no match.

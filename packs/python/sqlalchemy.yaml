@@ -1,0 +1,70 @@
+# Whetstone trusted rule pack — generated + eval-verified (epic whetstone-5ox)
+apiVersion: whetstone/v1alpha1
+kind: RulePack
+language: python
+metadata:
+  name: whetstone.sqlalchemy
+  version: 0.1.0
+  scope: project
+  owner: whetstone
+rules:
+- id: sqlalchemy.declarative-base-class
+  severity: should
+  confidence: high
+  category: convention
+  description: Define the ORM declarative base by subclassing DeclarativeBase, not by calling the legacy
+    declarative_base() factory function. In SQLAlchemy 2.0 the DeclarativeBase superclass supersedes declarative_base();
+    the subclassing form integrates with PEP 484 type checkers (mypy/pyright) without plugins, while the
+    function form returns a dynamically-generated class that type checkers cannot resolve.
+  source_url: https://docs.sqlalchemy.org/en/20/orm/declarative_styles.html
+  source_quote: The DeclarativeBase superclass supersedes the use of the declarative_base() function and
+    registry.generate_base() methods; the superclass approach integrates with PEP 484 tools without the
+    use of plugins.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: Pure name-based detection of a call to declarative_base() (bare or attribute form); no
+      receiver/vari
+    weight: required
+    ast_query: |
+      [(call function: (identifier) @_fn (#eq? @_fn "declarative_base")) (call function: (attribute attribute: (identifier) @_fn (#eq? @_fn "declarative_base")))] @match
+  golden_examples:
+  - code: |
+      from sqlalchemy.orm import declarative_base
+
+      Base = declarative_base()
+    verdict: fail
+    reason: Calls the legacy declarative_base() factory; 2.0 docs say DeclarativeBase subclassing supersedes
+      it.
+  - code: |
+      import sqlalchemy.orm as orm
+
+      Base = orm.declarative_base()
+    verdict: fail
+    reason: Attribute-access form orm.declarative_base() is the same superseded factory call.
+  - code: |
+      Base = declarative_base()
+
+      class User(Base):
+          pass
+    verdict: fail
+    reason: declarative_base() invoked to build the base instead of subclassing DeclarativeBase.
+  - code: |
+      from sqlalchemy.orm import DeclarativeBase
+
+      class Base(DeclarativeBase):
+          pass
+    verdict: pass
+    reason: 'Recommended 2.0 pattern: base is a subclass of DeclarativeBase, no declarative_base() call.'
+  - code: |
+      from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+      class Base(DeclarativeBase):
+          pass
+
+      class User(Base):
+          id: Mapped[int] = mapped_column(primary_key=True)
+    verdict: pass
+    reason: Uses DeclarativeBase subclassing; no declarative_base() call present.

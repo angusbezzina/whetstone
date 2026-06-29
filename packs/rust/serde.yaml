@@ -1,0 +1,82 @@
+# Whetstone trusted rule pack — generated + eval-verified (epic whetstone-5ox)
+apiVersion: whetstone/v1alpha1
+kind: RulePack
+language: rust
+metadata:
+  name: whetstone.serde
+  version: 0.1.0
+  scope: project
+  owner: whetstone
+rules:
+- id: serde.derive-import-from-serde
+  severity: should
+  confidence: medium
+  category: convention
+  description: Import the Serialize/Deserialize derive macros from the `serde` crate (with the `derive`
+    feature enabled) -- `use serde::Serialize;` / `use serde::Deserialize;` -- rather than from `serde_derive`
+    directly. The official setup guide documents the `serde`-path import as the canonical way to enable
+    the derive macros; `use serde_derive::...` is the legacy pre-derive-feature pattern and pulls in a
+    separately-versioned dependency that can drift out of sync with `serde`.
+  source_url: https://serde.rs/derive.html
+  source_quote: 'On structs and enums that you want to serialize, import the derive macro as use serde::Serialize;
+    within the same module and write #[derive(Serialize)] on the struct or enum.'
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: Backed by an explicit verbatim recommendation on serde.rs/derive.html that the derive
+      macros are imp
+    weight: required
+    ast_query: |
+      (
+       (use_declaration argument: (scoped_use_list path: (identifier) @p)) @match
+       (#eq? @p "serde_derive")
+      )
+      (
+       (use_declaration argument: (scoped_identifier path: (identifier) @p)) @match
+       (#eq? @p "serde_derive")
+      )
+      (
+       (use_declaration argument: (use_as_clause path: (scoped_identifier path: (identifier) @p))) @match
+       (#eq? @p "serde_derive")
+      )
+  golden_examples:
+  - code: |
+      use serde_derive::{Serialize, Deserialize};
+
+      #[derive(Serialize, Deserialize)]
+      struct Config { name: String }
+    verdict: fail
+    reason: Grouped import of the derive macros from serde_derive directly instead of from the serde crate's
+      derive feature -- query matches the use_declaration.
+  - code: |
+      use serde_derive::Serialize;
+
+      #[derive(Serialize)]
+      struct Config { name: String }
+    verdict: fail
+    reason: Single import from serde_derive (legacy pattern) -- query matches the scoped_identifier form.
+  - code: |
+      use serde::{Serialize, Deserialize};
+
+      #[derive(Serialize, Deserialize)]
+      struct Config { name: String }
+    verdict: pass
+    reason: Canonical import from the serde crate (derive feature) -- query yields no match.
+  - code: |
+      use serde::Serialize;
+
+      #[derive(Serialize)]
+      struct Config { name: String }
+    verdict: pass
+    reason: Canonical single import from serde -- no match.
+  - code: |
+      use serde::{Serialize, Deserialize};
+      use serde_json::Value;
+
+      #[derive(Serialize, Deserialize)]
+      struct Config { name: String, extra: Value }
+    verdict: pass
+    reason: 'serde + serde_json imports; #eq? predicate is exact on the path identifier so serde_json
+      (and serde) are not flagged -- false-positive guard.'

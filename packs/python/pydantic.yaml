@@ -1,0 +1,92 @@
+# Whetstone trusted rule pack — generated + eval-verified (epic whetstone-5ox)
+apiVersion: whetstone/v1alpha1
+kind: RulePack
+language: python
+metadata:
+  name: whetstone.pydantic
+  version: 0.1.0
+  scope: project
+  owner: whetstone
+rules:
+- id: pydantic.deprecated-config-class
+  severity: should
+  confidence: high
+  category: migration
+  description: Configure Pydantic models with `model_config = ConfigDict(...)` rather than a nested `class
+    Config`. The inner Config class is deprecated in Pydantic V2.
+  source_url: https://pydantic.dev/docs/validation/latest/get-started/migration/
+  source_quote: The Pydantic V1 behavior to create a class called `Config` in the namespace of the parent
+    `BaseModel` subclass is now deprecated.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: 'Directly stated as deprecated in the migration guide. Enforced syntactically: a class_definition
+      who'
+    weight: required
+    ast_query: |
+      (class_definition superclasses: (argument_list (identifier) @base) body: (block (class_definition name: (identifier) @cfg) @match) (#match? @base "^(BaseModel|BaseSettings)$") (#eq? @cfg "Config"))
+  golden_examples:
+  - code: |
+      class User(BaseModel):
+          name: str
+
+          class Config:
+              frozen = True
+    verdict: fail
+    reason: Nested `class Config` inside a BaseModel subclass is the deprecated V1 pattern.
+  - code: |
+      class Settings(BaseSettings):
+          class Config:
+              env_prefix = "APP_"
+    verdict: fail
+    reason: Nested `class Config` inside a BaseSettings subclass is the deprecated V1 pattern.
+  - code: |
+      class User(BaseModel):
+          name: str
+          model_config = ConfigDict(frozen=True)
+    verdict: pass
+    reason: Uses the current V2 model_config = ConfigDict(...) idiom; no nested Config class.
+  - code: |
+      class Foo:
+          class Config:
+              debug = True
+    verdict: pass
+    reason: Not a pydantic model (no BaseModel/BaseSettings base), so the nested Config class is not flagged.
+- id: pydantic.deprecated-parse-methods
+  severity: should
+  confidence: medium
+  category: migration
+  description: Use model_validate()/model_validate_json() instead of the deprecated V1 classmethods parse_obj(),
+    parse_raw(), and parse_file().
+  source_url: https://pydantic.dev/docs/validation/latest/get-started/migration/
+  source_quote: Some of the built-in data-loading functionality has been slated for removal. In particular,
+    `parse_raw` and `parse_file` are now deprecated.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: Migration guide states parse_raw/parse_file are deprecated and the method-rename table
+      maps parse_ob
+    weight: required
+    ast_query: |
+      (call function: (attribute attribute: (identifier) @method) (#match? @method "^(parse_obj|parse_raw|parse_file)$")) @match
+  golden_examples:
+  - code: |
+      user = User.parse_obj(data)
+    verdict: fail
+    reason: parse_obj is the deprecated V1 method; use model_validate.
+  - code: |
+      user = User.parse_raw(raw_json)
+    verdict: fail
+    reason: parse_raw is deprecated in V2; use model_validate_json.
+  - code: |
+      user = User.model_validate(data)
+    verdict: pass
+    reason: Uses the current V2 model_validate classmethod.
+  - code: |
+      user = User.model_validate_json(raw_json)
+    verdict: pass
+    reason: Uses the current V2 model_validate_json classmethod.

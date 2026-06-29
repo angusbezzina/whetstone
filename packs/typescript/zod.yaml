@@ -1,0 +1,203 @@
+# Whetstone trusted rule pack — generated + eval-verified (epic whetstone-5ox)
+apiVersion: whetstone/v1alpha1
+kind: RulePack
+language: typescript
+metadata:
+  name: whetstone.zod
+  version: 0.1.0
+  scope: project
+  owner: whetstone
+rules:
+- id: zod.top-level-string-formats
+  severity: should
+  confidence: high
+  category: migration
+  description: Prefer the top-level string-format schemas (z.email(), z.url(), z.uuid(), z.emoji(), z.base64(),
+    z.base64url(), z.nanoid(), z.cuid(), z.cuid2(), z.ulid()) over the deprecated chained method forms
+    on z.string() such as z.string().email().
+  source_url: https://zod.dev/v4/changelog?id=zstring-updates
+  source_quote: The method forms (`z.string().email()`) still exist and work as before, but are now deprecated.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: Zod v4 moved string formats to top-level z.* functions and deprecated the chained method
+      forms. LLMs
+    weight: required
+    ast_query: |
+      (call_expression
+        function: (member_expression
+          object: (call_expression
+            function: (member_expression
+              object: (identifier) @_z (#eq? @_z "z")
+              property: (property_identifier) @_s (#eq? @_s "string")))
+          property: (property_identifier) @_fmt
+            (#match? @_fmt "^(email|url|uuid|emoji|base64|base64url|nanoid|cuid|cuid2|ulid)$"))) @match
+  golden_examples:
+  - code: |
+      const a = z.string().email();
+    verdict: fail
+    reason: Deprecated chained .email() on z.string(); should be z.email().
+  - code: |
+      const a = z.string().uuid();
+    verdict: fail
+    reason: Deprecated chained .uuid() on z.string(); should be z.uuid().
+  - code: |
+      const a = z.email();
+    verdict: pass
+    reason: Uses the top-level z.email() format schema.
+  - code: |
+      const a = z.string().min(3);
+    verdict: pass
+    reason: .min() is a constraint, not a deprecated format method.
+  - code: |
+      const a = z.string().trim();
+    verdict: pass
+    reason: .trim() is a transform, not a deprecated format method.
+- id: zod.no-native-enum
+  severity: should
+  confidence: high
+  category: migration
+  description: Use z.enum() (which accepts native TypeScript enums in v4) instead of the deprecated z.nativeEnum().
+  source_url: https://zod.dev/v4/changelog?id=znativeenum-deprecated
+  source_quote: The `z.nativeEnum()` function is now deprecated in favor of just `z.enum()`.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: Directly stated deprecation in the v4 changelog. The query matches the literal z.nativeEnum(
+      call ex
+    weight: required
+    ast_query: |
+      (call_expression
+        function: (member_expression
+          object: (identifier) @_z (#eq? @_z "z")
+          property: (property_identifier) @_m (#eq? @_m "nativeEnum"))) @match
+  golden_examples:
+  - code: |
+      const C = z.nativeEnum(Color);
+    verdict: fail
+    reason: z.nativeEnum() is deprecated; use z.enum(Color).
+  - code: |
+      const C = z.enum(Color);
+    verdict: pass
+    reason: z.enum() accepts a TypeScript enum directly in v4.
+  - code: |
+      const C = z.enum(["a", "b"]);
+    verdict: pass
+    reason: Standard z.enum() usage with a literal array.
+- id: zod.record-two-args
+  severity: must
+  confidence: high
+  category: breaking-change
+  description: z.record() now requires both a key schema and a value schema. Single-argument usage like
+    z.record(z.string()) was dropped in v4 and must be migrated to z.record(keySchema, valueSchema).
+  source_url: https://zod.dev/v4/changelog?id=drops-single-argument-usage
+  source_quote: Before, `z.record()` could be used with a single argument. This is no longer supported.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: 'Breaking removal in v4: single-arg z.record() is gone. The query matches z.record( with
+      exactly one '
+    weight: required
+    ast_query: |
+      (call_expression
+        function: (member_expression
+          object: (identifier) @_z (#eq? @_z "z")
+          property: (property_identifier) @_m (#eq? @_m "record"))
+        arguments: (arguments . (_) @_arg .)) @match
+  golden_examples:
+  - code: |
+      const R = z.record(z.string());
+    verdict: fail
+    reason: Single-argument z.record() was removed in v4.
+  - code: |
+      const R = z.record(z.string(), z.number());
+    verdict: pass
+    reason: Two-argument z.record(key, value) is the v4 form.
+  - code: |
+      const R = z.partialRecord(z.string(), z.number());
+    verdict: pass
+    reason: z.partialRecord, not z.record(); not matched.
+- id: zod.no-object-strict-passthrough
+  severity: should
+  confidence: high
+  category: migration
+  description: Prefer the top-level z.strictObject() / z.looseObject() constructors over the deprecated
+    chained .strict() / .passthrough() methods on z.object().
+  source_url: https://zod.dev/v4/changelog?id=deprecates-strict-and-passthrough
+  source_quote: These methods are generally no longer necessary. Instead use the top-level `z.strictObject()`
+    and `z.looseObject()` functions.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: Documented deprecation in v4. The query only matches the literal z.object(...).strict()/.passthrough
+    weight: required
+    ast_query: |
+      (call_expression
+        function: (member_expression
+          object: (call_expression
+            function: (member_expression
+              object: (identifier) @_z (#eq? @_z "z")
+              property: (property_identifier) @_o (#eq? @_o "object")))
+          property: (property_identifier) @_m (#match? @_m "^(strict|passthrough)$"))) @match
+  golden_examples:
+  - code: |
+      const S = z.object({ a: z.string() }).strict();
+    verdict: fail
+    reason: Deprecated .strict() chained on z.object(); use z.strictObject().
+  - code: |
+      const S = z.object({ a: z.string() }).passthrough();
+    verdict: fail
+    reason: Deprecated .passthrough() chained on z.object(); use z.looseObject().
+  - code: |
+      const S = z.strictObject({ a: z.string() });
+    verdict: pass
+    reason: Uses the top-level z.strictObject() constructor.
+  - code: |
+      const S = z.object({ a: z.string() });
+    verdict: pass
+    reason: Plain z.object() without a deprecated modifier.
+- id: zod.no-dropped-error-params
+  severity: must
+  confidence: high
+  category: breaking-change
+  description: The invalid_type_error and required_error schema params were removed in Zod 4. Use the
+    unified error param (a string or a function) for error customization instead.
+  source_url: https://zod.dev/v4/changelog?id=error-customization
+  source_quote: The `invalid_type_error` / `required_error` params have been dropped.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: Zod 4 dropped the invalid_type_error/required_error params in favor of a single unified
+      error param.
+    weight: required
+    ast_query: |
+      (pair
+        key: (property_identifier) @_k
+          (#match? @_k "^(invalid_type_error|required_error)$")) @match
+  golden_examples:
+  - code: |
+      const s = z.string({ required_error: "Required" });
+    verdict: fail
+    reason: required_error was dropped in v4; use { error }.
+  - code: |
+      const s = z.string({ invalid_type_error: "Must be a string" });
+    verdict: fail
+    reason: invalid_type_error was dropped in v4; use { error }.
+  - code: |
+      const s = z.string({ error: "Required" });
+    verdict: pass
+    reason: Uses the v4 unified error param.
+  - code: |
+      const s = z.string();
+    verdict: pass
+    reason: No error customization; nothing to migrate.

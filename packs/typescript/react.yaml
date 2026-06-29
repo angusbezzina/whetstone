@@ -1,0 +1,126 @@
+# Whetstone trusted rule pack — generated + eval-verified (epic whetstone-5ox)
+apiVersion: whetstone/v1alpha1
+kind: RulePack
+language: typescript
+metadata:
+  name: whetstone.react
+  version: 0.1.0
+  scope: project
+  owner: whetstone
+rules:
+- id: react.no-reactdom-render
+  severity: must
+  confidence: high
+  category: migration
+  description: React 19 removed `ReactDOM.render`. Code MUST mount the app with `createRoot(container).render(<App/>)`
+    from `react-dom/client` instead of calling `ReactDOM.render(...)`.
+  source_url: https://react.dev/blog/2024/04/25/react-19-upgrade-guide
+  source_quote: In React 19, we're removing `ReactDOM.render` and you'll need to migrate to using `ReactDOM.createRoot`
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: ReactDOM.render was removed in React 19 (the docs page now redirects to 18.react.dev),
+      yet it is the
+    weight: required
+    ast_query: |
+      (call_expression function: (member_expression object: (identifier) @_obj property: (property_identifier) @_prop) (#eq? @_obj "ReactDOM") (#eq? @_prop "render")) @match
+  golden_examples:
+  - code: |
+      ReactDOM.render(<App />, document.getElementById("root"));
+    verdict: fail
+    reason: Calls the removed ReactDOM.render API; must migrate to createRoot.
+  - code: |
+      import ReactDOM from "react-dom";
+      ReactDOM.render(<App />, container);
+    verdict: fail
+    reason: ReactDOM.render member call is matched regardless of import style.
+  - code: |
+      import { createRoot } from "react-dom/client";
+      const root = createRoot(document.getElementById("root")!);
+      root.render(<App />);
+    verdict: pass
+    reason: Uses createRoot; root.render has object 'root', not 'ReactDOM', so no match.
+  - code: |
+      import { render } from "@testing-library/react";
+      render(<App />);
+    verdict: pass
+    reason: Bare render() is not a ReactDOM member call; testing-library render is not flagged.
+- id: react.no-reactdom-hydrate
+  severity: must
+  confidence: high
+  category: migration
+  description: React 19 removed `ReactDOM.hydrate`. Server-rendered apps MUST hydrate with `hydrateRoot(container,
+    <App/>)` from `react-dom/client` instead of calling `ReactDOM.hydrate(...)`.
+  source_url: https://react.dev/blog/2024/04/25/react-19-upgrade-guide
+  source_quote: In React 19, we're removing `ReactDOM.hydrate` you'll need to migrate to using `ReactDOM.hydrateRoot`
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: ReactDOM.hydrate was removed in React 19; hydrateRoot is the replacement. LLMs trained
+      on pre-19 SSR
+    weight: required
+    ast_query: |
+      (call_expression function: (member_expression object: (identifier) @_obj property: (property_identifier) @_prop) (#eq? @_obj "ReactDOM") (#eq? @_prop "hydrate")) @match
+  golden_examples:
+  - code: |
+      ReactDOM.hydrate(<App />, document.getElementById("root"));
+    verdict: fail
+    reason: Calls the removed ReactDOM.hydrate API; must migrate to hydrateRoot.
+  - code: |
+      import ReactDOM from "react-dom";
+      ReactDOM.hydrate(<App />, container);
+    verdict: fail
+    reason: ReactDOM.hydrate member call is the removed SSR hydration entry point.
+  - code: |
+      import { hydrateRoot } from "react-dom/client";
+      hydrateRoot(document.getElementById("root")!, <App />);
+    verdict: pass
+    reason: Uses hydrateRoot; bare call is not a ReactDOM member expression.
+  - code: |
+      import { createRoot } from "react-dom/client";
+      createRoot(el).render(<App />);
+    verdict: pass
+    reason: Client render path; contains no ReactDOM.hydrate call.
+- id: react.no-prop-types
+  severity: should
+  confidence: high
+  category: migration
+  description: React 19 ignores runtime `propTypes`. Components SHOULD type props with TypeScript instead
+    of assigning `Component.propTypes = {...}`, which is now silently ignored dead code.
+  source_url: https://react.dev/blog/2024/04/25/react-19-upgrade-guide
+  source_quote: In React 19, we're removing the `propType` checks from the React package, and using them
+    will be silently ignored. If you're using `propTypes`, we recommend migrating to TypeScript or another
+    type-checking solution.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: React 19 strips runtime propTypes and the docs explicitly recommend migrating to TypeScript.
+      Countle
+    weight: required
+    ast_query: |
+      (assignment_expression left: (member_expression property: (property_identifier) @_prop) (#eq? @_prop "propTypes")) @match
+  golden_examples:
+  - code: |
+      function Heading({ text }: { text: string }) { return <h1>{text}</h1>; }
+      Heading.propTypes = { text: PropTypes.string };
+    verdict: fail
+    reason: Assigns Component.propTypes, which React 19 silently ignores; use TypeScript types.
+  - code: |
+      Button.propTypes = { onClick: PropTypes.func.isRequired };
+    verdict: fail
+    reason: propTypes assignment is dead code in React 19.
+  - code: |
+      interface Props { text?: string }
+      function Heading({ text = "Hello" }: Props) { return <h1>{text}</h1>; }
+    verdict: pass
+    reason: Props typed via TypeScript interface; no propTypes assignment.
+  - code: |
+      Heading.displayName = "Heading";
+    verdict: pass
+    reason: Assigns displayName, not propTypes; not flagged.

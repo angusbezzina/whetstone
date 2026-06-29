@@ -1,0 +1,162 @@
+# Whetstone trusted rule pack — generated + eval-verified (epic whetstone-5ox)
+apiVersion: whetstone/v1alpha1
+kind: RulePack
+language: typescript
+metadata:
+  name: whetstone.express
+  version: 0.1.0
+  scope: project
+  owner: whetstone
+rules:
+- id: express.no-sendfile
+  severity: must
+  confidence: high
+  category: migration
+  description: Use res.sendFile() (camel-cased). The lowercase res.sendfile() was removed in Express 5
+    and no longer exists.
+  source_url: https://expressjs.com/en/guide/migrating-5.html
+  source_quote: The `res.sendfile()` function has been replaced by a camel-cased version `res.sendFile()`
+    in Express 5.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: Removed API in Express 5; pre-v5 code and LLMs trained on Express 4 still emit res.sendfile,
+      which t
+    weight: required
+    ast_query: |
+      (call_expression function: (member_expression property: (property_identifier) @_p) (#eq? @_p "sendfile")) @match
+  golden_examples:
+  - code: |
+      res.sendfile('/abs/index.html');
+    verdict: fail
+    reason: Lowercase sendfile was removed in Express 5; only res.sendFile exists.
+  - code: |
+      response.sendfile(p);
+    verdict: fail
+    reason: Lowercase sendfile call regardless of receiver name.
+  - code: |
+      res.sendFile('/abs/index.html');
+    verdict: pass
+    reason: Correct camel-cased API.
+  - code: |
+      res.send('hi');
+    verdict: pass
+    reason: Unrelated method.
+- id: express.send-status-number
+  severity: must
+  confidence: high
+  category: migration
+  description: Use res.sendStatus(code) instead of res.send(number). Express 5 removed the res.send(status)
+    numeric signature; passing a number is no longer interpreted as a status code.
+  source_url: https://expressjs.com/en/guide/migrating-5.html
+  source_quote: Express 5 no longer supports the signature `res.send(status)`, where `status` is a number.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: 'Classic Express 4 idiom (res.send(500)) that breaks in v5; the doc even says to quote
+      the number to '
+    weight: required
+    ast_query: |
+      (call_expression function: (member_expression object: (identifier) @_o property: (property_identifier) @_p) arguments: (arguments . (number) .) (#match? @_o "^(res|response)$") (#eq? @_p "send")) @match
+  golden_examples:
+  - code: |
+      res.send(404);
+    verdict: fail
+    reason: Single numeric literal to res.send is the removed status signature.
+  - code: |
+      response.send(500);
+    verdict: fail
+    reason: Same removed signature on alternately-named response object.
+  - code: |
+      res.send('404');
+    verdict: pass
+    reason: Quoted number is a string body, which the docs explicitly allow.
+  - code: |
+      res.sendStatus(404);
+    verdict: pass
+    reason: Correct replacement API.
+  - code: |
+      res.send(user);
+    verdict: pass
+    reason: Non-numeric argument is a normal body send.
+- id: express.no-redirect-back
+  severity: must
+  confidence: high
+  category: migration
+  description: Do not pass the magic string 'back' to res.redirect()/res.location(); it was removed in
+    Express 5. Use req.get('Referrer') || '/' instead.
+  source_url: https://expressjs.com/en/guide/migrating-5.html
+  source_quote: Express 5 no longer supports the magic string `back` in the `res.redirect()` and `res.location()`
+    methods.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: 'A widely-copied Express 4 idiom that silently breaks in v5. The violation is a string-literal
+      whose '
+    weight: required
+    ast_query: |
+      (call_expression function: (member_expression property: (property_identifier) @_p) arguments: (arguments (string (string_fragment) @_s)) (#match? @_p "^(redirect|location)$") (#eq? @_s "back")) @match
+  golden_examples:
+  - code: |
+      res.redirect('back');
+    verdict: fail
+    reason: Removed magic string 'back' in redirect.
+  - code: |
+      res.location("back");
+    verdict: fail
+    reason: Removed magic string 'back' in location.
+  - code: |
+      res.redirect('/login');
+    verdict: pass
+    reason: Ordinary URL redirect.
+  - code: |
+      res.redirect(req.get('Referrer') || '/');
+    verdict: pass
+    reason: Documented replacement for 'back'.
+- id: express.no-req-param
+  severity: must
+  confidence: high
+  category: migration
+  description: Read params explicitly from req.params, req.body, or req.query. The req.param(name) accessor
+    was removed in Express 5.
+  source_url: https://expressjs.com/en/guide/migrating-5.html
+  source_quote: This potentially confusing and dangerous method of retrieving form data has been removed.
+    You will now need to specifically look for the submitted parameter name in the `req.params`, `req.body`,
+    or `req.query` object.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: 'req.param() was a long-deprecated Express 4 accessor removed in v5; legacy tutorials
+      and LLM output '
+    weight: required
+    ast_query: |
+      (call_expression function: (member_expression object: (identifier) @_o property: (property_identifier) @_p) (#match? @_o "^(req|request)$") (#eq? @_p "param")) @match
+  golden_examples:
+  - code: |
+      const id = req.param('id');
+    verdict: fail
+    reason: req.param accessor removed in Express 5.
+  - code: |
+      const n = request.param('name');
+    verdict: fail
+    reason: Same removed accessor on alternately-named request object.
+  - code: |
+      const id = req.params.id;
+    verdict: pass
+    reason: Correct replacement property access.
+  - code: |
+      const id = req.query.id;
+    verdict: pass
+    reason: Correct replacement property access.
+  - code: |
+      app.param('id', handler);
+    verdict: pass
+    reason: app.param (route param middleware) still exists and is distinct; receiver guard excludes it.

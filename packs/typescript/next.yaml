@@ -1,0 +1,91 @@
+# Whetstone trusted rule pack — generated + eval-verified (epic whetstone-5ox)
+apiVersion: whetstone/v1alpha1
+kind: RulePack
+language: typescript
+metadata:
+  name: whetstone.next
+  version: 0.1.0
+  scope: project
+  owner: whetstone
+rules:
+- id: next.revalidate-tag-requires-profile
+  severity: should
+  confidence: high
+  category: migration
+  description: Call revalidateTag with a cacheLife profile as the second argument (e.g. revalidateTag('posts',
+    'max')). The single-argument form revalidateTag(tag) is deprecated as of Next.js 16.
+  source_url: https://nextjs.org/docs/app/api-reference/functions/revalidateTag
+  source_quote: The single-argument form `revalidateTag(tag)` is deprecated. It currently works if TypeScript
+    errors are suppressed, but this behavior may be removed in a future version. Update to the two-argument
+    signature.
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: Next.js 16 changed revalidateTag's signature to require a cacheLife profile; the bare
+      revalidateTag(
+    weight: required
+    ast_query: |
+      (call_expression function: (identifier) @_fn arguments: (arguments . (_) @_arg .) (#eq? @_fn "revalidateTag")) @match
+  golden_examples:
+  - code: |
+      import { revalidateTag } from 'next/cache'
+      revalidateTag('posts')
+    verdict: fail
+    reason: Single-argument form is deprecated; must pass a cacheLife profile as the second argument.
+  - code: |
+      import { revalidateTag } from 'next/cache'
+      revalidateTag('posts', 'max')
+    verdict: pass
+    reason: Two-argument form with the recommended 'max' profile.
+  - code: |
+      import { revalidateTag } from 'next/cache'
+      revalidateTag('products', { expire: 3600 })
+    verdict: pass
+    reason: Two-argument form with an inline { expire } profile object.
+  - code: |
+      import { revalidateTag } from 'next/cache'
+      revalidateTag(myTag)
+    verdict: fail
+    reason: Single-argument call (identifier tag) is still the deprecated one-arg form.
+  - code: |
+      import { updateTag } from 'next/cache'
+      updateTag('user-1')
+    verdict: pass
+    reason: updateTag is a different function and legitimately takes a single tag argument.
+- id: next.no-legacy-image-import
+  severity: should
+  confidence: high
+  category: migration
+  description: Import the Image component from 'next/image', not from the deprecated 'next/legacy/image'
+    compatibility path.
+  source_url: https://nextjs.org/docs/app/guides/upgrading/version-16
+  source_quote: 'The `next/legacy/image` component is deprecated. Use `next/image` instead:'
+  approved: true
+  status: approved
+  signals:
+  - id: ast-signal
+    strategy: ast
+    description: next/legacy/image was the codemod target from the Next 12->13 migration, so it persists
+      in older cod
+    weight: required
+    ast_query: |
+      (import_statement source: (string) @_src (#match? @_src "next/legacy/image")) @match
+  golden_examples:
+  - code: |
+      import Image from 'next/legacy/image'
+    verdict: fail
+    reason: Imports the deprecated next/legacy/image component.
+  - code: |
+      import Image from "next/legacy/image"
+    verdict: fail
+    reason: Deprecated import path regardless of quote style.
+  - code: |
+      import Image from 'next/image'
+    verdict: pass
+    reason: Uses the current next/image component.
+  - code: |
+      import { getImageProps } from 'next/image'
+    verdict: pass
+    reason: Named import from the current next/image module.
