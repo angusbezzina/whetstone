@@ -2888,8 +2888,12 @@ fn test_init_ci_writes_workflow_file() {
     assert!(path.exists());
     let body = std::fs::read_to_string(&path).unwrap();
     assert!(body.contains("cron: \"0 9 * * 1\""));
-    assert!(body.contains("Run wh status"));
-    assert!(body.contains("wh ci"));
+    // Two agent-free gates (whetstone-qfj): enforce on push/PR via `wh scan`,
+    // freshness on schedule via `wh ci`.
+    assert!(body.contains("wh scan"), "enforce step missing:\n{body}");
+    assert!(body.contains("wh ci"), "freshness gate missing:\n{body}");
+    assert!(body.contains("pull_request"), "PR trigger missing:\n{body}");
+    assert!(body.contains("enforce:") && body.contains("freshness:"));
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

@@ -419,6 +419,26 @@ wh debt --since=90d --top=10   # tune hotspot window + list length
 
 ## CI Integration
 
+`wh init --ci` generates `.github/workflows/whetstone-check.yml` with two
+agent-free gates:
+
+- **enforce** (push / pull_request) — `wh scan` fails the build on violations of
+  rules the scanner enforces directly (AST rules). No agent, no tokens.
+- **freshness** (schedule) — `wh ci` fails on content-hash / version drift (the
+  docs a rule was derived from changed since it was authored).
+
+For rules delegated to a linter (`lint_proxy`), run `wh actions lint` and merge
+the generated native config so your normal lint CI enforces them too:
+
+| Ecosystem | Generated overlay | How to wire it |
+|-----------|-------------------|----------------|
+| Rust | `whetstone/lint/clippy.whetstone.toml` (`[lints.clippy]`) | merge into your `Cargo.toml` `[lints]` — Cargo applies it on every `cargo clippy` |
+| Python | `whetstone/lint/ruff.whetstone.toml` | `extend = "whetstone/lint/ruff.whetstone.toml"` in your `ruff.toml`/`pyproject.toml` |
+| TypeScript | `whetstone/lint/biome.whetstone.json` | add to your `biome.json` `extends` |
+
+Whetstone decides *which* rules are worth enforcing; your existing linters enforce
+the ones they can express, and `wh scan` enforces the rest.
+
 ### GitHub Action
 
 ```yaml
