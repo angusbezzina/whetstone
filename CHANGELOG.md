@@ -6,6 +6,27 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-28
+
+Skill-first reorientation: the skill (`SKILL.md`) is now the front door that owns
+judgment, and the Rust CLI is the thin deterministic substrate it calls. See
+`planning/skill-cli-boundary.md` for the authoritative contract.
+
+### Added
+- **Offline content-hash drift gate.** `wh ci` now detects when cached documentation no longer hashes to a rule's authored `content_hash` (docs changed since the rule was authored), surfaces it with an actionable message, and fails the gate — no network required.
+- **`wh rules add --ast-scope <node>`** to author the only sanctioned form of a regex signal (bounded to a parsed AST node).
+- **Skill/CLI boundary design doc** (`planning/skill-cli-boundary.md`): the three-bucket signal discipline, role-thin command classification, and per-rule disposition.
+
+### Changed
+- **AST-only CLI enforcement.** Rules use `strategy: ast` (tree-sitter `ast_query`) or `strategy: lint_proxy`; `strategy: pattern` (raw regex) is **deprecated**. `wh validate` now hard-fails a bare `strategy: pattern` for shipped rules under `whetstone/rules/` (advisory elsewhere).
+- **clippy `lint_proxy` now works.** Generated clippy config is a real Cargo `[lints.clippy]` table (a bare `clippy.toml` cannot set lint levels), and `wh scan` verifies enablement against `Cargo.toml` rather than the inert overlay.
+- **`wh ci` gate is ON by default.** `--fail-on` default changed from `none` to `needs_review`, and the generated `wh init --ci` workflow gates on content/version drift.
+- **`wh rules add --match` into the project layer now requires `--ast-scope`** (a bare regex stays allowed on the personal/advisory layer).
+- **Documentation reconciled to the skill-first vision** across README, AGENTS.md, CLAUDE.md, SKILL.md, and `references/` (dead `wh patterns`/`wh propose` commands, the `ai` signal strategy, and "sole runtime" framing removed).
+
+### Removed
+- Dropped the dogfood `reqwest`, `clap`, and `serde_yaml` rules: `reqwest`/`clap` need type resolution tree-sitter can't do (now carried as skill taste/type-aware guidance), and `serde_yaml` duplicated cargo-audit/RUSTSEC.
+
 ## [0.8.23] - 2026-05-27
 
 ### Changed
@@ -472,6 +493,7 @@ no Python runtime dependency.
 - **Release workflow** building Linux and macOS binaries for x86_64 and
   aarch64 with cross-compilation support.
 
+[0.9.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.9.0
 [0.5.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.5.0
 [0.8.14]: https://github.com/angusbezzina/whetstone/releases/tag/v0.8.14
 [0.8.13]: https://github.com/angusbezzina/whetstone/releases/tag/v0.8.13
