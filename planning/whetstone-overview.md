@@ -227,6 +227,7 @@ The complete canonical surface, grouped by concern. All commands accept
 | Command | Purpose |
 |---------|---------|
 | `wh rules query` | JIT rule lookup for agents. |
+| `wh mcp` | Local MCP stdio server exposing `rules_query` + `scan` to MCP-capable agents. |
 | `wh config show / validate` | Inspect canonical `whetstone/whetstone.yaml`, imported packs, and effective per-key provenance. |
 | `wh review` | Read-only rule inspection / worklist view. |
 | `wh update` | Self-update the binary from GitHub Releases. |

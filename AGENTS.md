@@ -17,7 +17,7 @@ Whetstone is **skill-first with a thin deterministic CLI**. The skill (`SKILL.md
 | 5. Verify | Binary | `wh scan <path>` — deterministic scan, agent's "am I done?" gate |
 | 6. Maintain | Binary | `wh reinit` when deps change; `wh status` for health |
 
-Prefer the canonical names above. A small compatibility surface still exists for migration (`wh approve`, `wh check`, `wh rule`, `wh source`, `wh source fetch`), but docs, handoffs, and new automation should use the canonical forms. Older names like `wh doctor`, `wh refresh`, `wh gen`, `wh propose`, `wh apply`, `wh promote`, `wh bench`, `wh patterns`, and `wh eval` are gone from the shipped workflow. Rules have exactly two statuses: `candidate` and `approved`. Denial = delete the rule from YAML.
+Prefer the canonical names above. A small compatibility surface still exists for migration (`wh approve`, `wh check`, `wh rule`, `wh source`, `wh source fetch`), but docs, handoffs, and new automation should use the canonical forms. Older names like `wh doctor`, `wh refresh`, `wh gen`, `wh propose`, `wh apply`, `wh promote`, `wh bench`, and `wh patterns` are gone from the shipped workflow. (`wh eval` exists and is current — it is the golden↔scanner rule-quality bar, unrelated to the removed ai-signal eval; `wh mcp` runs the local MCP server exposing `rules_query` + `scan` to agents.) Rules have exactly two statuses: `candidate` and `approved`. Denial = delete the rule from YAML.
 
 Agents MAY hand-author rule YAML only through `wh extract submit <bundle>`, which refuses id collisions. Do NOT edit `whetstone/rules/**/*.yaml` directly.
 
@@ -177,7 +177,7 @@ There are only two states. To retire a rule, **delete it** from the YAML — the
 
 ## Gates Must Pass Locally Before Every Push
 
-**Non-negotiable.** CI mirrors these six gates exactly. If any fails locally, CI will fail too — fix before pushing, do not push hoping to fix on CI. This has happened before; it wastes team time.
+**Non-negotiable.** CI mirrors these eight gates exactly. If any fails locally, CI will fail too — fix before pushing, do not push hoping to fix on CI. This has happened before; it wastes team time.
 
 ```bash
 cargo clippy --all-targets --all-features -- -D warnings
@@ -185,10 +185,12 @@ cargo test
 python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
 python3 -m ruff format --check scripts/ tests/
 cargo run --quiet --release -- validate
+cargo run --quiet --release -- eval
+cargo run --quiet --release -- scan src --lang rust --json --no-fail  # violations_count must be 0 (dogfood)
 python3 -m pytest -q
 ```
 
-The repo ships a pre-push hook at `.githooks/pre-push` that runs all five and aborts the push on any failure. **At the start of any session that may push**, verify the hook is active:
+The repo ships a pre-push hook at `.githooks/pre-push` that runs all eight and aborts the push on any failure. **At the start of any session that may push**, verify the hook is active:
 
 ```bash
 test "$(git config core.hooksPath)" = ".githooks" || git config core.hooksPath .githooks
@@ -202,14 +204,11 @@ Never use `--no-verify` to bypass the hook. If a gate fails, fix the underlying 
 When ending a work session, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
 
 1. **File issues for remaining work** -- create beads for anything that needs follow-up
-2. **Run quality gates** (if code changed) — the same five listed above. Never push if any fails.
+2. **Run quality gates** (if code changed) — the same eight listed above. Never push if any fails.
 3. **Update issue status** -- close finished beads, update in-progress items
 4. **PUSH TO REMOTE**:
    ```bash
-   cargo clippy --all-targets --all-features -- -D warnings
-   cargo test
-   python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
-   cargo run --quiet --release -- validate
+   # run the full 8-gate suite from the section above, then:
    git pull --rebase
    git push
    git status  # MUST show "up to date with origin"
@@ -231,7 +230,7 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
 ## Release Protocol
 
 When cutting a release, agents MUST:
-1. Pass all quality gates (clippy, cargo test, ruff, validate-rules, pytest)
+1. Pass all quality gates (clippy, cargo test, ruff check + format, validate, eval, rust self-scan, pytest)
 2. Update `CHANGELOG.md` with a new version section listing every user-visible change
 3. Bump the `version` field in `Cargo.toml` to match the tag
 4. Commit as `chore: release vX.Y.Z`, then `git tag vX.Y.Z && git push && git push origin vX.Y.Z`

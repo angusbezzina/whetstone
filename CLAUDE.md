@@ -123,17 +123,17 @@ When ending a work session, complete ALL steps. Work is NOT complete until `git 
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test
    python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
+   python3 -m ruff format --check scripts/ tests/
    cargo run --quiet --release -- validate
+   cargo run --quiet --release -- eval
+   cargo run --quiet --release -- scan src --lang rust --json --no-fail  # violations_count must be 0 (dogfood)
    python3 -m pytest -q
    ```
    Do not push if Ruff fails. This exact command mirrors the CI gate that has been failing on import ordering issues.
 3. Update bead status (close finished, update in-progress)
 4. Push:
    ```bash
-   cargo clippy --all-targets --all-features -- -D warnings
-   cargo test
-   python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
-   cargo run --quiet --release -- validate
+   # run the full 8-gate suite from step 2, then:
    git pull --rebase
    git push
    git status  # MUST show "up to date with origin"
@@ -154,10 +154,12 @@ cargo test
 python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
 python3 -m ruff format --check scripts/ tests/
 cargo run --quiet --release -- validate
+cargo run --quiet --release -- eval
+cargo run --quiet --release -- scan src --lang rust --json --no-fail  # violations_count must be 0 (dogfood)
 python3 -m pytest -q
 ```
 
-This repo ships a pre-push hook at `.githooks/pre-push` that runs all six gates and aborts the push on any failure. **Before your first push in any session, verify the hook is wired up** — `core.hooksPath` must be `.githooks`, and the hook must be executable.
+This repo ships a pre-push hook at `.githooks/pre-push` that runs all eight gates and aborts the push on any failure. **Before your first push in any session, verify the hook is wired up** — `core.hooksPath` must be `.githooks`, and the hook must be executable.
 
 ### Preflight (run at the start of any coding session)
 
@@ -190,12 +192,15 @@ whetstone/
 │   ├── rules.rs                   # Structured YAML rule parsing + validation
 │   ├── generate_context.rs        # Multi-format agent context generation
 │   ├── generate_tests.rs          # Test + linter config generation
+│   ├── check/                     # Deterministic scanner + wh eval quality bar
+│   ├── mcp.rs                     # Local MCP stdio server (rules_query + scan)
 │   ├── status.rs                  # Health score, drift detection
-│   ├── ci_check.rs                # CI freshness gating
+│   ├── ci_check.rs                # CI freshness + content-hash drift gating
 │   ├── state/                     # State management (cache, inventory, manifests)
 │   ├── config.rs                  # Config file loading
 │   ├── output.rs                  # JSON/report formatting
 │   └── types.rs                   # Shared type definitions
+├── packs/                          # Trusted starter rule packs (eval-gated corpus)
 ├── scripts/                        # Legacy Python scripts (reference only)
 ├── tests/                          # Rust integration tests + fixtures
 ├── references/
@@ -230,7 +235,10 @@ MUST follow this protocol when the user asks to cut a release.
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
+python3 -m ruff format --check scripts/ tests/
 cargo run --quiet --release -- validate
+cargo run --quiet --release -- eval
+cargo run --quiet --release -- scan src --lang rust --json --no-fail  # violations_count must be 0 (dogfood)
 python3 -m pytest -q
 ```
 
