@@ -53,6 +53,10 @@ while the CLI settles on `wh scan`, `wh rules`, `wh sources`, and `wh sources ve
 | `wh lint` | generate | approved rules | `whetstone/lint/*` or `whetstone/.personal/lint/*` | Emits `ruff.whetstone.toml`, `biome.whetstone.json`, `clippy.whetstone.toml`, and formatter-backed overlays such as `rustfmt.whetstone.toml` when rules opt in. |
 | `wh scan` | monitor / enforce | approved rules, source files | — | Deterministic enforcement: tree-sitter for `ast_query` / `ast_scope`, regex for `match:`, lint-config verification for `lint_proxy`. Non-zero exit on violations or config gaps unless `--no-fail`. |
 | `wh check` | monitor / enforce | approved rules, source files | — | Compatibility alias for `wh scan`. |
+| `wh eval` | verify | approved rules, golden examples, cached docs | — | Rule-quality bar: runs each rule's goldens through the scanner + structural source-fidelity; non-zero exit on mismatch. |
+| `wh mcp` | agent access | approved rules, source files | stdio JSON-RPC | Local MCP server exposing `rules_query` + `scan` to agents. |
+| `wh hook posttooluse` | enforce (in-session) | PostToolUse event (stdin), edited file, approved rules | hook JSON on stdout | Claude Code hook: scans the edited file, feeds violations back to the agent in the same turn. |
+| `wh init --claude` | onboard | manifests, bundled corpus | packs + `whetstone.yaml` + `.mcp.json` + context + hooks | One-command agent onboarding. |
 | `wh rules query` | inspect (JIT) | approved rules | — | JIT rule lookup for agents. Filters: `--file <path>` (infers language), `--lang`, `--dep`, `--severity`, `--personal-only`, `--project-only`, `--full`. Preferred over re-reading `AGENTS.md` mid-turn. |
 | `wh rules add <id>` | author | — | one rule appended to (or creates) `whetstone/(.personal/)?rules/<lang>/<dep>.yaml` as `status: approved` | Personal-taste shortcut. Required: `--description`, `--lang`, either `--match` or a dep prefix in the id. `--project` to target the committed layer. |
 | `wh rules edit <id> \| --all [--dep] [--category]` | author | approved rule files | same file, severity/confidence mutated | Bump severity (`should → must`) or confidence without hand-editing YAML. `--dry-run` to preview. Refuses candidates. |
@@ -102,7 +106,8 @@ Features intentionally removed in 0.3.0:
   project, so promotion and per-layer inspection are no longer needed.
 - `wh propose`, `wh apply`, `wh review queue`, `wh review diff` — replaced by
   the simpler `wh extract submit` + `wh rules approve` pair.
-- `wh bench`, `wh eval`, `wh patterns` — trust/AI-eval/pattern-mining work is
-  parked until the core loop stabilizes.
+- `wh bench`, `wh patterns` — benchmark-corpus and pattern-mining work is parked.
+  (`wh eval` is current — the golden↔scanner rule-quality bar, unrelated to the
+  parked AI-eval work.)
 - Built-in rules and team extends — gone. The personal layer carries
   local-only overrides; everything else lives in `whetstone/rules/`.

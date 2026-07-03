@@ -10,6 +10,24 @@ Whetstone is **skill-first with a thin deterministic CLI**. The agent skill is t
 
 It's a codegen tool, not a runtime dependency. A teammate who never installs Whetstone still gets every rule enforced through standard CI and every agent guided by current instructions.
 
+### Two loops that keep agents on standard
+
+Whetstone closes two loops so your agents write code you consider best-practice:
+
+1. **In-session enforcement.** A Claude Code PostToolUse hook scans each file the
+   agent edits and feeds any rule violation back into the *same turn*, so the agent
+   fixes it before moving on — not post-hoc in CI. Wire it in one command:
+   `wh init --claude`.
+2. **Taste capture.** When you express a standing preference ("never do that
+   again"), the agent codifies it — a deterministic rule (verified with `wh eval`)
+   or, when it needs judgment, a guidance entry — and lands it in a **personal taste
+   pack** imported into every repo. Your standards, versioned once, enforced
+   everywhere.
+
+(Scope discipline — stopping an agent wandering off-task — is a different problem
+and deliberately **out of scope**; Whetstone keeps agents *on standard*, not *on
+scope*. See [`planning/skill-cli-boundary.md`](planning/skill-cli-boundary.md) §10.)
+
 ## Why Whetstone?
 
 **Rules go stale.** Linter configs and coding conventions are written once at project setup. Dependencies ship new versions, deprecate APIs, and introduce better patterns. Nobody updates the rules. Agents keep writing code against outdated practices.
@@ -70,12 +88,21 @@ cargo build --release && ./target/release/whetstone --help
 init --project-dir <your-repo>` works from any directory — there is no
 requirement to run it from inside the Whetstone checkout.
 
-### Get value in a minute: import a starter pack
+### Get value in one command
 
-The fastest way to see Whetstone working is to import a trusted, pre-verified
-rule pack (see [`packs/`](packs/README.md) — FastAPI, Pydantic, SQLAlchemy,
-httpx, React, Next, Zod, Express, axum, serde). Drop the pack into your repo and
-reference it from `whetstone/whetstone.yaml`:
+The fastest path — wire the whole thing for a Claude Code agent in one step:
+
+```bash
+whetstone init --claude
+```
+
+That detects your dependencies, imports the matching pre-verified starter packs
+(FastAPI, Pydantic, SQLAlchemy, httpx, React, Next, Zod, Express, axum, serde),
+generates agent context, registers the [MCP server](#use-with-coding-agents-mcp),
+and installs the in-session enforcement hook. Restart your session and edit a
+file — any rule violation is fed back to the agent in the same turn.
+
+Prefer to wire it by hand, or not using Claude Code? Import a pack directly:
 
 ```bash
 mkdir -p whetstone/packs
@@ -93,9 +120,9 @@ whetstone actions lint       # emit native ruff/biome/clippy config to enforce i
 whetstone actions context    # write CLAUDE.md / AGENTS.md so your agent follows the rules
 ```
 
-Every pack rule is doc-cited, deterministic, and passes `whetstone eval`. From a
-clean repo to enforced rules in three commands — no extraction needed. To derive
-your own rules from your dependencies' docs, use the full workflow below.
+Every pack rule is doc-cited, deterministic, and passes `whetstone eval`. To derive
+your own rules from your dependencies' docs, use the full workflow below; to encode
+your own taste, see [your personal taste pack](packs/README.md).
 
 ### Recommended repo setup for contributors
 
@@ -657,7 +684,7 @@ The test fixtures include rule files for fastapi and react that demonstrate the 
 **Deferred (0.3.0 lean refactor):**
 - `wh promote` / `wh layers` — team and built-in layers were removed.
 - `wh propose` / `wh apply` / `wh review queue|diff` — replaced by extract + approve.
-- `wh bench` / `wh eval` / `wh patterns` — benchmark corpus, AI eval, and pattern mining are parked.
+- `wh bench` / `wh patterns` — benchmark corpus and pattern mining are parked. (`wh eval` is NOT parked — it is the current golden↔scanner rule-quality bar.)
 - Built-in rules and team `extends:`.
 
 **Planned:**

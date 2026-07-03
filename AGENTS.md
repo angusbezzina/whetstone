@@ -19,6 +19,12 @@ Whetstone is **skill-first with a thin deterministic CLI**. The skill (`SKILL.md
 
 Prefer the canonical names above. A small compatibility surface still exists for migration (`wh approve`, `wh check`, `wh rule`, `wh source`, `wh source fetch`), but docs, handoffs, and new automation should use the canonical forms. Older names like `wh doctor`, `wh refresh`, `wh gen`, `wh propose`, `wh apply`, `wh promote`, `wh bench`, and `wh patterns` are gone from the shipped workflow. (`wh eval` exists and is current — it is the golden↔scanner rule-quality bar, unrelated to the removed ai-signal eval; `wh mcp` runs the local MCP server exposing `rules_query` + `scan` to agents.) Rules have exactly two statuses: `candidate` and `approved`. Denial = delete the rule from YAML.
 
+### Agent integration (the two loops)
+
+- **One-command onboarding:** `wh init --claude` imports matching starter packs, generates context, registers the MCP server (`.mcp.json`), and installs the hooks.
+- **In-session enforcement:** the installed `wh hook posttooluse` scans each edited file and feeds violations back to the agent in the same turn. When it surfaces a violation, fix it before continuing.
+- **Taste capture:** codify a standing preference as a rule (verified with `wh eval`) or, when it needs judgment, a guidance entry in `whetstone/guidance/` (schema: `references/guidance-schema.yaml`) — surfaced in generated context and `wh rules query`, never scanned. Personal standards live in a taste pack imported across repos.
+
 Agents MAY hand-author rule YAML only through `wh extract submit <bundle>`, which refuses id collisions. Do NOT edit `whetstone/rules/**/*.yaml` directly.
 
 ### Key Files

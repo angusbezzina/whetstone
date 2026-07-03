@@ -179,6 +179,7 @@ The complete canonical surface, grouped by concern. All commands accept
 | Command | Purpose |
 |---------|---------|
 | `wh init` | Detect deps, resolve docs, fetch subscribed sources, write extraction handoff. |
+| `wh init --claude` | One-command agent onboarding: import matching starter packs, generate context, register the MCP server, install SessionStart + PostToolUse hooks. |
 | `wh reinit` | Re-resolve deps and sources; flag version/content-hash drift. |
 | `wh set-sources` | Lower-level resolution-only slice of init. Usually implicit. |
 
@@ -217,6 +218,7 @@ The complete canonical surface, grouped by concern. All commands accept
 | `wh scan <path>` | Deterministic rule scan (tree-sitter + regex + lint_proxy). |
 | `wh validate` | Schema + fixture validation. |
 | `wh eval` | Rule-quality bar: runs every rule's golden examples through the scanner + structural source-fidelity + scorecards. |
+| `wh hook posttooluse` | Claude Code PostToolUse adapter: scans the just-edited file and feeds violations back to the agent in-session (installed by `wh init --hooks`/`--claude`). |
 | `wh status` | Rule-system health + adherence score. |
 | `wh report` | One-page markdown summary. |
 | `wh debt` | Deterministic technical-debt triage. |
@@ -264,10 +266,18 @@ enforcing CI-parity gates locally.
 | Skill ↔ CLI boundary alignment (`planning/skill-cli-boundary.md`) | `whetstone-4xw` |
 | Archived-planning cleanup | TBD |
 
+### Shipped since (epics whetstone-5ox / whetstone-z83)
+
+- Trusted rule corpus under `packs/` + the `wh eval` quality bar.
+- Local MCP server (`wh mcp`) around `rules_query` / `scan`.
+- In-session enforcement (`wh hook posttooluse`) + one-command onboarding
+  (`wh init --claude`).
+- Taste-guidance store (`whetstone/guidance/`) for non-enforceable judgment, and
+  the personal taste pack for cross-repo standards.
+
 ### Future concerns
 
 - tech-debt quantification
-- local MCP wrapper around `wh rules query` / `wh scan`
 - shared registries / publishing ecosystem
 
 See [`planning/platform-registry.md`](./platform-registry.md) and

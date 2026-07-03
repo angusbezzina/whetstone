@@ -75,6 +75,11 @@ MCP-capable agent can look up applicable rules mid-edit and self-check without
 shelling out. Register it once (`claude mcp add whetstone -- whetstone mcp`); it
 returns the same JSON as the CLI.
 
+**In-session enforcement.** When the project is onboarded (`wh init --claude`),
+a Claude Code PostToolUse hook (`wh hook posttooluse`) scans each file you edit
+and feeds any rule violation back in the same turn. Treat that feedback as a
+`must`-fix: correct the violation before moving on, don't defer it to CI.
+
 ### Cheaper bootstrap: `--terse` and per-language sidecars
 
 `wh actions all --terse` (or `wh context --terse`) emits a one-line-per-rule `AGENTS.md` (~50% smaller) that agents can load at session start without consuming much context. Use it when you prefer to rely on `wh rules query` for the details.

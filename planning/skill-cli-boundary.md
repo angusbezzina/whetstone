@@ -104,6 +104,9 @@ Default is **keep** (deterministic). Only one command reshapes; none is removed.
 | `validate` | Keep + **enforce no-regex** (rejects `strategy: pattern`) |
 | `context`, `tests`, `lint`, `actions` | Keep — deterministic generation; skill calls them; `lint` becomes the primary enforcement path |
 | `scan` | Keep — deterministic enforcement; **AST + lint_proxy only** |
+| `eval` | Keep — deterministic rule-quality bar (goldens through the scanner). Added by whetstone-5co. |
+| `mcp` | Keep — deterministic oracle transport (MCP stdio: `rules_query` + `scan`). Added by whetstone-b5b. |
+| `hook posttooluse` | Keep — deterministic in-session enforcement adapter: scan the edited file, feed violations back to the agent. Added by whetstone-cpt. The judgment stays in the agent; the CLI just reports. |
 | `status`, `ci` | Keep — drift/freshness gate (a CLI moat) |
 | `rules`, `approve`, `review` | Keep — deterministic state/query ops |
 | `report`, `debt`, `update` | Keep — deterministic, lower priority |
@@ -191,7 +194,7 @@ An independent review built the binary and ran the queries. Findings, with the b
   "max 5 rules/dep" budget to flip linter flags (partly justified by carrying provenance/source).
   Folded into **whetstone-480** / noted.
 
-## 11. Scope-discipline decision — "on task" vs "on standard" (whetstone-bws)
+## 10. Scope-discipline decision — "on task" vs "on standard" (whetstone-bws)
 
 "Keep agents on task" has two readings, and conflating them dilutes the product:
 
@@ -222,7 +225,7 @@ with its own design — never smuggled in under "keep agents on task."
 agents **on standard** / writing best-practice code, not "on scope." Do not
 over-promise scope enforcement.
 
-## 10. TUI role decision (whetstone-9ef)
+## 11. TUI role decision (whetstone-9ef)
 
 Decision (2026-06-29): under skill-first, the **TUI is a secondary, optional human
 entry point — not the front door** (the skill is). Investment is **frozen**: no new
@@ -239,6 +242,8 @@ entry point — not the front door** (the skill is). Investment is **frozen**: n
 
 If a concrete, repeated human workflow emerges that the CLI/skill can't serve, revisit
 with a specific, scoped proposal — not a general "make the TUI nicer" pass.
+
+## 12. Resolution log — design-review items
 
 ### Resolution (post-validation, 2026-06-28)
 
