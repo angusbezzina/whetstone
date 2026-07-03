@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    approve, check, ci_check, config, debt, detect, doctor, extract, gen, generate_context,
-    generate_lint, generate_tests, mcp, output, personal, report, resolve, review, rule_authoring,
-    rules, rules_query, source_mgmt, status, triggers, tui, update, worklist,
+    agent_hook, approve, check, ci_check, config, debt, detect, doctor, extract, gen,
+    generate_context, generate_lint, generate_tests, mcp, output, personal, report, resolve, review,
+    rule_authoring, rules, rules_query, source_mgmt, status, triggers, tui, update, worklist,
 };
 
 const WORKLIST_MAX_ENTRIES: usize = 200;
@@ -511,6 +511,22 @@ enum RulesAction {
 }
 
 #[derive(Subcommand)]
+enum HookAction {
+    /// Claude Code PostToolUse hook: scan the just-edited file and feed any rule
+    /// violations back to the agent in the same turn. Reads the event JSON on stdin.
+    #[command(name = "posttooluse")]
+    PostToolUse {
+        /// Project root directory (defaults to the hook's cwd)
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Block the agent loop (`decision:block`) instead of advisory context
+        #[arg(long)]
+        block: bool,
+    },
+}
+
+#[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Bootstrap from zero: detect dependencies, resolve documentation, write extraction handoff
@@ -809,6 +825,13 @@ enum Commands {
         /// Project root directory
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
+    },
+
+    /// Agent-harness hook adapters (e.g. the Claude Code PostToolUse hook)
+    #[command(name = "hook")]
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
     },
 
     /// Run every rule's golden examples through the scanner and score them (the rule-quality bar)
@@ -1494,6 +1517,12 @@ pub fn run() -> i32 {
             Err(e) => {
                 eprintln!("whetstone mcp: {e}");
                 1
+            }
+        },
+
+        Commands::Hook { action } => match action {
+            HookAction::PostToolUse { project_dir, block } => {
+                agent_hook::post_tool_use(&project_dir, block).unwrap_or(0)
             }
         },
 
@@ -2838,6 +2867,7 @@ fn command_title(command: &Commands) -> &'static str {
         Commands::Extract { .. } => "EXTRACT",
         Commands::Validate { .. } => "VALIDATE",
         Commands::Mcp { .. } => "MCP",
+        Commands::Hook { .. } => "HOOK",
         Commands::Eval { .. } => "EVAL",
         Commands::Scan { .. } => "SCAN",
         Commands::Ci { .. } => "CI",
@@ -2924,6 +2954,9 @@ fn project_dir_for_command(command: &Commands) -> PathBuf {
         },
         Commands::Scan { project_dir, .. } => project_dir.clone(),
         Commands::Mcp { project_dir, .. } => project_dir.clone(),
+        Commands::Hook { action } => match action {
+            HookAction::PostToolUse { project_dir, .. } => project_dir.clone(),
+        },
         Commands::Eval { project_dir, .. } => project_dir.clone(),
         Commands::Rules { action } => match action {
             RulesAction::List { project_dir, .. }

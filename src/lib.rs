@@ -1,4 +1,5 @@
 mod adherence;
+mod agent_hook;
 mod approve;
 mod ast;
 mod check;
