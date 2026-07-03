@@ -58,7 +58,18 @@ pub fn generate_context(
         (approved, paths.whetstone_dir.join("context"), warns)
     };
 
-    if approved.is_empty() {
+    // Taste guidance (whetstone-7bo): non-deterministically-enforceable standards
+    // that live alongside rules. Project context carries project guidance;
+    // personal context carries personal guidance. Loaded before the empty-rules
+    // guard so a guidance-only project still generates context.
+    let guidance = crate::guidance::load(
+        project_dir,
+        lang_filter,
+        !personal_output, // project layer
+        personal_output,  // personal layer
+    );
+
+    if approved.is_empty() && guidance.is_empty() {
         // Check whether any personal rules exist — if so, tell the user how
         // to include them rather than silently emitting nothing.
         let (personal_rules, _) = crate::layers::load_personal_only(project_dir, lang_filter);
@@ -109,6 +120,7 @@ pub fn generate_context(
     let mut ctx = Context::new();
     ctx.insert("use_rules", &use_rules);
     ctx.insert("avoid_rules", &avoid_rules);
+    ctx.insert("guidance", &guidance);
     ctx.insert("deps", &deps);
     ctx.insert("timestamp", &timestamp);
     ctx.insert("terse", &terse);
@@ -171,9 +183,16 @@ pub fn generate_context(
                 let siblings: Vec<String> =
                     languages.iter().filter(|l| *l != lang).cloned().collect();
 
+                let lang_guidance: Vec<_> = guidance
+                    .iter()
+                    .filter(|g| crate::guidance::lang_matches(g, Some(lang)))
+                    .cloned()
+                    .collect();
+
                 let mut lang_ctx = Context::new();
                 lang_ctx.insert("use_rules", &lang_use);
                 lang_ctx.insert("avoid_rules", &lang_avoid);
+                lang_ctx.insert("guidance", &lang_guidance);
                 lang_ctx.insert("deps", &lang_deps);
                 lang_ctx.insert("timestamp", &timestamp);
                 lang_ctx.insert("terse", &terse);

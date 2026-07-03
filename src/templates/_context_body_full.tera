@@ -54,3 +54,13 @@ Source: {{ r.source_url }}
 
 {% endfor -%}
 {%- endif -%}
+{%- if guidance | default(value=[]) | length > 0 -%}
+## Taste guidance (judgment — not deterministically enforced)
+
+{% for g in guidance -%}
+### {{ g.title }}
+
+{{ g.text }}
+
+{% endfor -%}
+{%- endif -%}

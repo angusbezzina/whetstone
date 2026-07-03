@@ -43,6 +43,9 @@ pub struct QueryResult {
     pub rules: Vec<LayeredRule>,
     pub total: usize,
     pub warnings: Vec<String>,
+    /// Non-deterministic taste guidance (whetstone-7bo) applicable to the same
+    /// filters — surfaced alongside rules but never scanned.
+    pub guidance: Vec<crate::guidance::GuidanceEntry>,
 }
 
 /// Infer language from a source file path's extension.
@@ -75,11 +78,20 @@ pub fn query(project_dir: &Path, filters: &Filters) -> QueryResult {
             .then_with(|| a.rule.id.cmp(&b.rule.id))
     });
 
+    // Applicable taste guidance for the same filters (layer + language + dep).
+    let include_project = !matches!(filters.layer_filter, LayerFilter::PersonalOnly);
+    let guidance: Vec<crate::guidance::GuidanceEntry> =
+        crate::guidance::load(project_dir, effective_lang, include_project, include_personal)
+            .into_iter()
+            .filter(|g| crate::guidance::dep_matches(g, filters.dep))
+            .collect();
+
     let total = matching.len();
     QueryResult {
         rules: matching,
         total,
         warnings: resolved.warnings,
+        guidance,
     }
 }
 
@@ -95,13 +107,22 @@ pub fn to_json(result: &QueryResult, detail: Detail, echo_filters: Value) -> Val
             .iter()
             .map(|lr| rule_to_json(lr, detail))
             .collect::<Vec<_>>(),
+        "guidance": result.guidance.iter().map(|g| json!({
+            "id": g.id,
+            "title": g.title,
+            "text": g.text,
+            "languages": g.languages,
+            "deps": g.deps,
+            "layer": g.layer,
+            "kind": "guidance",
+        })).collect::<Vec<_>>(),
     })
 }
 
 /// Format the rules as a compact human-readable block (non-JSON).
 pub fn to_human(result: &QueryResult, detail: Detail) -> String {
-    if result.rules.is_empty() {
-        return "No approved rules match the given filters.\n".to_string();
+    if result.rules.is_empty() && result.guidance.is_empty() {
+        return "No approved rules or guidance match the given filters.\n".to_string();
     }
     let mut out = String::new();
     out.push_str(&format!("{} rule(s) match:\n\n", result.total));
@@ -129,6 +150,17 @@ pub fn to_human(result: &QueryResult, detail: Detail) -> String {
                 let page = provenance.source_page_id.as_deref().unwrap_or("n/a");
                 out.push_str(&format!("      provenance [{authority}] {page}\n"));
             }
+        }
+        out.push('\n');
+    }
+    if !result.guidance.is_empty() {
+        out.push_str("Taste guidance (judgment — not scanned):\n");
+        for g in &result.guidance {
+            out.push_str(&format!(
+                "  · {} — {}\n",
+                g.title,
+                trim_one_line(&g.text, 100)
+            ));
         }
         out.push('\n');
     }

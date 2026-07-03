@@ -15,6 +15,7 @@ mod gen;
 mod generate_context;
 mod generate_lint;
 mod generate_tests;
+mod guidance;
 mod handoff;
 mod layers;
 mod mcp;

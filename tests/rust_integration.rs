@@ -4247,3 +4247,63 @@ dependencies = ["definitely-unused"]
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn test_guidance_flows_into_context_and_query() {
+    // whetstone-7bo: taste guidance appears in generated context and in
+    // `wh rules query` (and thus MCP), but is never scanned.
+    let tmp = std::env::temp_dir().join(format!(
+        "wh_guidance_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone/guidance")).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone/rules/python")).unwrap();
+    std::fs::write(tmp.join("whetstone/whetstone.yaml"), "version: 1\n").unwrap();
+    std::fs::write(
+        tmp.join("whetstone/rules/python/fastapi.yaml"),
+        "source: { name: fastapi }\nrules:\n  - id: fastapi.x\n    severity: should\n    confidence: high\n    category: convention\n    description: some rule\n    source_url: https://x\n    approved: true\n    status: approved\n    signals: [{ id: s, strategy: ast, weight: required, ast_query: '(function_definition) @match' }]\n    golden_examples: [{ code: \"def f(): pass\", verdict: fail, reason: y }]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("whetstone/guidance/taste.yaml"),
+        "guidance:\n  - id: fastapi.thin-handlers\n    title: Keep FastAPI route handlers thin\n    languages: [python]\n    deps: [fastapi]\n    text: Delegate business logic to a service layer.\n",
+    )
+    .unwrap();
+    let project = tmp.to_str().unwrap();
+
+    // Generated context carries the guidance.
+    let (_o, _e, ok) = run_whetstone(&["actions", "context", "--project-dir", project], project);
+    assert!(ok);
+    let agents = std::fs::read_to_string(tmp.join("whetstone/context/AGENTS.md")).unwrap();
+    assert!(
+        agents.contains("Keep FastAPI route handlers thin"),
+        "guidance missing from AGENTS.md:\n{agents}"
+    );
+
+    // rules query surfaces it (flagged as guidance), filtered by dep.
+    let (stdout, _e, _ok) = run_whetstone(
+        &["rules", "query", "--dep", "fastapi", "--json", "--project-dir", project],
+        project,
+    );
+    let result = parse_json(&stdout);
+    let guidance = result["guidance"].as_array().cloned().unwrap_or_default();
+    assert_eq!(guidance.len(), 1, "expected one guidance entry: {result}");
+    assert_eq!(guidance[0]["title"], "Keep FastAPI route handlers thin");
+    assert_eq!(guidance[0]["kind"], "guidance");
+
+    // A dep it does not relate to still gets it only if deps is empty; here it's
+    // scoped to fastapi, so querying dep=django excludes it.
+    let (stdout2, _e, _ok) = run_whetstone(
+        &["rules", "query", "--dep", "django", "--json", "--project-dir", project],
+        project,
+    );
+    let r2 = parse_json(&stdout2);
+    assert_eq!(r2["guidance"].as_array().map(|a| a.len()).unwrap_or(0), 0, "{r2}");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

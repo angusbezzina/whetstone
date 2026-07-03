@@ -1,0 +1,33 @@
+# Whetstone taste-guidance schema (whetstone-7bo)
+#
+# Guidance is for standards that are real but NOT deterministically enforceable —
+# judgment/taste that can't be an `ast_query` or `lint_proxy` (e.g. "keep route
+# handlers thin", "prefer composition here"). Rather than forcing these into
+# low-confidence scannable rules (which would violate "high confidence or
+# silence"), they live here. Guidance is injected into generated agent context
+# (AGENTS.md / CLAUDE.md / .cursorrules / ...) and surfaced by `wh rules query`
+# and the MCP server, but it is NEVER scanned and never fails a gate.
+#
+# Store layout:
+#   whetstone/guidance/<name>.yaml            # project layer (committed)
+#   whetstone/.personal/guidance/<name>.yaml  # personal layer (gitignored)
+
+guidance:
+  - id: string          # Required. Stable identifier, e.g. "fastapi.thin-handlers".
+    title: string       # Required. One-line heading shown in context + query output.
+    text: string        # The guidance itself (markdown; multi-line via `|` or `>`).
+    languages: [string] # Optional. python | typescript | rust. Empty = all languages.
+    deps: [string]      # Optional. Dependencies this relates to. Empty = all deps.
+    # `layer` (project | personal) is set automatically at load time — do not author it.
+
+# Example:
+#
+# guidance:
+#   - id: fastapi.thin-handlers
+#     title: Keep FastAPI route handlers thin
+#     languages: [python]
+#     deps: [fastapi]
+#     text: >
+#       Route handlers should validate input and delegate to a service/repository
+#       layer, not embed business logic. This is taste (it needs judgment about
+#       what "business logic" is), so it is guidance, not a scannable rule.
