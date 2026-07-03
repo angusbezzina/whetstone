@@ -132,32 +132,47 @@ fn install_session_hooks(project_dir: &Path) -> Result<Vec<PathBuf>> {
     set_executable(&claude_path)?;
     written.push(claude_path.clone());
 
+    // In-session enforcement hook: PostToolUse scans the edited file and feeds
+    // violations back to the agent in the same turn (whetstone-cpt). A tiny
+    // wrapper script no-ops if `wh` is not on PATH, so a missing binary never
+    // wedges the agent.
+    let posttool_path = claude_dir.join("whetstone-posttooluse-hook.sh");
+    std::fs::write(&posttool_path, POSTTOOLUSE_HOOK_BODY)?;
+    set_executable(&posttool_path)?;
+    written.push(posttool_path.clone());
+
     // settings.json merges into any existing file so user-configured hooks
     // survive. `atomic_write` guards against mid-write crashes corrupting the
     // user's Claude Code config.
     let settings_path = claude_dir.join("settings.json");
-    let merged = merge_claude_settings(&settings_path, &claude_path);
+    let merged = merge_claude_settings(&settings_path, &claude_path, &posttool_path);
     crate::state::atomic_write(&settings_path, &merged);
     written.push(settings_path);
 
-    // Cursor settings live at .cursor/config.json. We write a small advisory
-    // file pointing at the same shell script; Cursor doesn't standardise
-    // startup hooks, so this is documentary rather than mechanical.
+    // Cursor has no standard PostToolUse hook API, so in-session enforcement is
+    // not mechanical there. We write an honest advisory pointing at the CLI/MCP
+    // path (Cursor reads the generated context files; run `wh scan` / use the MCP
+    // server for lookups) rather than pretending parity with Claude Code.
     let cursor_dir = project_dir.join(".cursor");
     std::fs::create_dir_all(&cursor_dir)?;
     let cursor_path = cursor_dir.join("whetstone-session.md");
     std::fs::write(
         &cursor_path,
-        "# Whetstone session advisory\n\n\
-         On project open, run `wh status --json --no-snapshot --no-drift-check` and surface\n\
-         a brief summary if the score is below 80 or drift is pending.\n",
+        "# Whetstone in Cursor\n\n\
+         Cursor has no PostToolUse hook, so Whetstone cannot feed violations back\n\
+         in-session automatically here (that is Claude Code only, for now).\n\n\
+         Instead:\n\
+         - The generated `.cursorrules` / `AGENTS.md` carry the rules at session start.\n\
+         - Register the MCP server so the agent can look rules up mid-turn:\n\
+           `wh mcp --project-dir .` (see README > Use with coding agents).\n\
+         - Enforce deterministically with `wh scan .` before finishing / in CI.\n",
     )?;
     written.push(cursor_path);
 
     Ok(written)
 }
 
-fn merge_claude_settings(path: &Path, hook_script: &Path) -> Value {
+fn merge_claude_settings(path: &Path, session_hook: &Path, posttooluse_hook: &Path) -> Value {
     let existing = std::fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
@@ -174,29 +189,59 @@ fn merge_claude_settings(path: &Path, hook_script: &Path) -> Value {
         .entry("hooks".to_string())
         .or_insert_with(|| json!({}));
     let hooks_obj = hooks.as_object_mut().unwrap();
+
+    // SessionStart: flat advisory entry (read-only freshness check), preserved
+    // in its existing shape for backward compatibility.
+    let session_cmd = session_hook.display().to_string();
     let session_list = hooks_obj
         .entry("SessionStart".to_string())
         .or_insert_with(|| json!([]));
-
-    let advisory = json!({
-        "type": "command",
-        "command": hook_script.display().to_string(),
-        "description": "Whetstone freshness advisory (read-only status check)."
-    });
-
     if let Some(arr) = session_list.as_array_mut() {
-        let already = arr.iter().any(|entry| {
-            entry
-                .get("command")
-                .and_then(|v| v.as_str())
-                .map(|cmd| cmd == hook_script.display().to_string())
+        let already = arr.iter().any(|e| {
+            e.get("command").and_then(|v| v.as_str()) == Some(session_cmd.as_str())
+        });
+        if !already {
+            arr.push(json!({
+                "type": "command",
+                "command": session_cmd,
+                "description": "Whetstone freshness advisory (read-only status check)."
+            }));
+        }
+    } else {
+        *session_list = json!([{
+            "type": "command",
+            "command": session_cmd,
+            "description": "Whetstone freshness advisory (read-only status check)."
+        }]);
+    }
+
+    // PostToolUse: matcher + hooks shape (Claude Code's standard structure), so
+    // the edited file is scanned and violations fed back in-session.
+    let posttool_cmd = posttooluse_hook.display().to_string();
+    let posttool_list = hooks_obj
+        .entry("PostToolUse".to_string())
+        .or_insert_with(|| json!([]));
+    if let Some(arr) = posttool_list.as_array_mut() {
+        let already = arr.iter().any(|e| {
+            e.get("hooks")
+                .and_then(|h| h.as_array())
+                .map(|hs| {
+                    hs.iter()
+                        .any(|x| x.get("command").and_then(|c| c.as_str()) == Some(posttool_cmd.as_str()))
+                })
                 .unwrap_or(false)
         });
         if !already {
-            arr.push(advisory);
+            arr.push(json!({
+                "matcher": "Edit|Write|MultiEdit",
+                "hooks": [{ "type": "command", "command": posttool_cmd }]
+            }));
         }
     } else {
-        *session_list = json!([advisory]);
+        *posttool_list = json!([{
+            "matcher": "Edit|Write|MultiEdit",
+            "hooks": [{ "type": "command", "command": posttool_cmd }]
+        }]);
     }
 
     root
@@ -356,4 +401,19 @@ case "$label" in
         printf 'Whetstone: %s (score %s). Run `wh status` for detail.\n' "$label" "$score" >&2
         exit 0 ;;
 esac
+"#;
+
+// PostToolUse hook: forwards the event JSON on stdin to `wh hook posttooluse`,
+// which scans the edited file and feeds violations back to the agent in-session.
+// No-ops if `wh` is not installed (fail-open at the shell level too).
+const POSTTOOLUSE_HOOK_BODY: &str = r#"#!/usr/bin/env sh
+# Whetstone in-session enforcement (installed by `wh init --hooks`).
+# Claude Code invokes this after Edit/Write/MultiEdit with the event JSON on stdin.
+set -eu
+
+if ! command -v wh >/dev/null 2>&1; then
+    exit 0
+fi
+
+exec wh hook posttooluse --project-dir "${CLAUDE_PROJECT_DIR:-.}"
 "#;

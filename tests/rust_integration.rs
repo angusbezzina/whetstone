@@ -2921,11 +2921,45 @@ fn test_init_hooks_writes_post_merge_and_session_hook() {
 
     let session = tmp.join(".claude/whetstone-session-hook.sh");
     assert!(session.exists(), "claude session hook must be installed");
+    // In-session enforcement hook (whetstone-cpt/z4b).
+    let posttool = tmp.join(".claude/whetstone-posttooluse-hook.sh");
+    assert!(posttool.exists(), "claude PostToolUse hook must be installed");
     let settings = tmp.join(".claude/settings.json");
     assert!(settings.exists(), "claude settings.json must be written");
     let settings_body = std::fs::read_to_string(&settings).unwrap();
     assert!(settings_body.contains("SessionStart"));
     assert!(settings_body.contains("whetstone-session-hook.sh"));
+    let parsed: serde_json::Value = serde_json::from_str(&settings_body).unwrap();
+    let post = &parsed["hooks"]["PostToolUse"];
+    assert!(post.is_array(), "PostToolUse hook must be registered: {settings_body}");
+    assert_eq!(post[0]["matcher"], "Edit|Write|MultiEdit");
+    assert!(post[0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .contains("whetstone-posttooluse-hook.sh"));
+
+    // Idempotent + preserves a user-configured hook: re-run, then check no
+    // duplicate PostToolUse entry and the user's hook survives.
+    let mut with_user: serde_json::Value = parsed.clone();
+    with_user["hooks"]["PostToolUse"].as_array_mut().unwrap().push(serde_json::json!({
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "my-user-hook.sh"}]
+    }));
+    std::fs::write(&settings, serde_json::to_string_pretty(&with_user).unwrap()).unwrap();
+    let (_o, _e, ok2) = run_whetstone(&["init", "--hooks", "--json", "--project-dir", project], project);
+    assert!(ok2);
+    let after: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    let arr = after["hooks"]["PostToolUse"].as_array().unwrap();
+    let ours = arr
+        .iter()
+        .filter(|e| e["hooks"][0]["command"].as_str().unwrap_or("").contains("whetstone-posttooluse-hook.sh"))
+        .count();
+    assert_eq!(ours, 1, "must not duplicate our PostToolUse entry: {arr:?}");
+    assert!(
+        arr.iter().any(|e| e["hooks"][0]["command"] == "my-user-hook.sh"),
+        "user-configured hook must be preserved: {arr:?}"
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
