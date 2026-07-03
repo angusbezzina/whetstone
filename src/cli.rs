@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     agent_hook, approve, check, ci_check, config, debt, detect, doctor, extract, gen,
-    generate_context, generate_lint, generate_tests, mcp, output, personal, report, resolve, review,
-    rule_authoring, rules, rules_query, source_mgmt, status, triggers, tui, update, worklist,
+    generate_context, generate_lint, generate_tests, mcp, onboard, output, personal, report, resolve,
+    review, rule_authoring, rules, rules_query, source_mgmt, status, triggers, tui, update, worklist,
 };
 
 const WORKLIST_MAX_ENTRIES: usize = 200;
@@ -568,6 +568,11 @@ enum Commands {
         #[arg(long)]
         hooks: bool,
 
+        /// One-command agent onboarding: import matching starter packs, generate
+        /// context, register the MCP server, and install the in-session hooks
+        #[arg(long)]
+        claude: bool,
+
         /// Generate .github/workflows/whetstone-check.yml for scheduled freshness checks
         #[arg(long)]
         ci: bool,
@@ -1046,6 +1051,7 @@ pub fn run() -> i32 {
             incremental,
             personal,
             hooks,
+            claude,
             ci,
             schedule,
             include_dev,
@@ -1060,9 +1066,24 @@ pub fn run() -> i32 {
         } => {
             // Setup flags short-circuit everything else. They can compose — e.g.
             // `wh init --personal --hooks --ci --schedule=weekly`.
-            if personal || hooks || ci {
+            if personal || hooks || claude || ci {
                 let mut setup = serde_json::Map::new();
                 setup.insert("status".to_string(), serde_json::json!("ok"));
+
+                if claude {
+                    match onboard::claude(&project_dir) {
+                        Ok(v) => {
+                            setup.insert("claude".to_string(), v);
+                        }
+                        Err(e) => {
+                            output::print_json(&output::error_json(
+                                &e.to_string(),
+                                "Ensure the project has a detectable manifest (pyproject.toml, package.json, Cargo.toml)",
+                            ));
+                            return 1;
+                        }
+                    }
+                }
 
                 if personal {
                     match personal::init_personal(&project_dir) {

@@ -4307,3 +4307,71 @@ fn test_guidance_flows_into_context_and_query() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn test_init_claude_onboards_everything() {
+    // whetstone-0cj: one command wires imported packs + context + MCP + hooks.
+    let tmp = std::env::temp_dir().join(format!(
+        "wh_onboard_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&tmp)
+        .status()
+        .ok();
+    std::fs::write(tmp.join("requirements.txt"), "fastapi==0.115\nrequests==2.32\n").unwrap();
+    let project = tmp.to_str().unwrap();
+
+    let (stdout, _e, ok) = run_whetstone(&["init", "--claude", "--json", "--project-dir", project], project);
+    assert!(ok, "init --claude should succeed:\n{stdout}");
+    let result = parse_json(&stdout);
+    let claude = &result["claude"];
+    // fastapi has a pack; requests does not — imported set is exactly [fastapi].
+    assert_eq!(claude["imported_packs"], serde_json::json!(["fastapi"]), "{result}");
+
+    for f in [
+        "whetstone/whetstone.yaml",
+        "whetstone/packs/fastapi.yaml",
+        ".mcp.json",
+        "whetstone/context/AGENTS.md",
+        ".claude/settings.json",
+        ".claude/whetstone-posttooluse-hook.sh",
+    ] {
+        assert!(tmp.join(f).exists(), "onboarding must write {f}");
+    }
+
+    // .mcp.json registers the whetstone server; whetstone.yaml extends the pack.
+    let mcp: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(tmp.join(".mcp.json")).unwrap()).unwrap();
+    assert_eq!(mcp["mcpServers"]["whetstone"]["args"][0], "mcp");
+    let wsyaml = std::fs::read_to_string(tmp.join("whetstone/whetstone.yaml")).unwrap();
+    assert!(wsyaml.contains("whetstone/packs/fastapi.yaml"), "{wsyaml}");
+
+    // The imported pack actually enforces: scanning a violation fires its rule.
+    std::fs::write(
+        tmp.join("src/routes.py"),
+        "async def r(c: dict = Depends(x)):\n    return c\n",
+    )
+    .unwrap();
+    let (scan, _e, _o) = run_whetstone(
+        &["scan", "src/routes.py", "--json", "--no-fail", "--project-dir", project],
+        project,
+    );
+    let sres = parse_json(&scan);
+    let fired: Vec<String> = sres["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["rule_id"].as_str().unwrap_or("").to_string())
+        .collect();
+    assert!(fired.iter().any(|r| r == "fastapi.annotated-depends"), "imported pack must enforce: {fired:?}");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
