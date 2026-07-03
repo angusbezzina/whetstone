@@ -123,23 +123,23 @@ Default is **keep** (deterministic). Only one command reshapes; none is removed.
 - Reconcile lifecycle to **`candidate | approved` only** across schema + docs (remove
   `denied`/`deprecated`).
 
-## 7. Docs reconciliation checklist
+## 7. Docs reconciliation checklist — DONE
 
-The docs are currently **wrong and self-contradictory**; fixing them is part of "the correct
-vision," independent of the reorientation.
+This reconciliation is **complete** (shipped in v0.9.1 and since). The living docs
+lead skill-first, `strategy: pattern` is deprecated, and no live `wh propose` /
+`wh patterns` / `ai`-strategy / "sole runtime" usage remains. Kept as a record.
 
-- [ ] `SKILL.md` — drop "the binary is the sole runtime"; reposition skill as front door;
-      reconcile "every rule needs a signal" vs schema "signals optional" (taste lives in the skill).
-- [ ] `AGENTS.md` — remove dead `ai` strategy, dead `denied`/`deprecated` states, dead
+- [x] `SKILL.md` — dropped "the binary is the sole runtime"; skill is the front door;
+      "every rule needs a signal" vs schema "signals optional" reconciled (taste lives in the skill).
+- [x] `AGENTS.md` — removed dead `ai` strategy, dead `denied`/`deprecated` states, dead
       `wh propose` / `proposal-schema` references.
-- [ ] `CLAUDE.md` — remove "sole runtime"; remove dead `wh patterns`.
-- [ ] `README.md` — remove dead `wh patterns` / `wh propose`; lead skill-first.
-- [ ] `references/signal-strategies.md` — retire regex-as-first-class; teach `ast_query` + `lint_proxy`.
-- [ ] `references/rule-schema.yaml` — deprecate `strategy: pattern`; drop `ai`.
-- [ ] `references/extraction-prompt.md`, `references/workflow-matrix.md` — align to the above.
-- [ ] Live `planning/` docs — `whetstone-overview.md`, `whetstone-logic-flow.mmd`,
-      `command-taxonomy.md` (dead commands, CLI-first framing). Archived `planning/archive/*` may
-      be left or marked superseded.
+- [x] `CLAUDE.md` — removed "sole runtime" and dead `wh patterns`.
+- [x] `README.md` — removed live `wh patterns` / `wh propose`; leads skill-first (and now with `wh init --claude`).
+- [x] `references/signal-strategies.md` — regex demoted; leads with `ast_query` + `lint_proxy`.
+- [x] `references/rule-schema.yaml` — `strategy: pattern` deprecated; `ai` dropped.
+- [x] `references/extraction-prompt.md`, `references/workflow-matrix.md` — aligned.
+- [x] Live `planning/` docs — `whetstone-overview.md`, `whetstone-logic-flow.mmd`,
+      `command-taxonomy.md` aligned. Archived `planning/archive/*` left as historical.
 
 ## 8. Alignment criteria (definition of done for the epic)
 

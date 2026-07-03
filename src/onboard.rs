@@ -56,7 +56,16 @@ pub fn claude(project_dir: &Path) -> Result<Value> {
             imported.join(", ")
         )
     });
-    wired.push("generated terse agent context (whetstone/context/AGENTS.md)".to_string());
+    let context_written = context
+        .get("generated")
+        .and_then(|g| g.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
+    wired.push(if context_written {
+        "generated terse agent context (whetstone/context/AGENTS.md)".to_string()
+    } else {
+        "no agent context generated yet (no approved rules or guidance — import a pack or run `wh extract`)".to_string()
+    });
     wired.push("registered the MCP server in .mcp.json (rules_query + scan)".to_string());
     wired.push(
         "installed hooks: SessionStart advisory + PostToolUse in-session enforcement".to_string(),
