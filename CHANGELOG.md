@@ -6,6 +6,51 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-03
+
+Two big steps: a **trusted rule corpus + quality tooling**, and the **agent-governance
+last mile** — in-session enforcement plus a loop for capturing your own taste. Whetstone
+now keeps agents *on standard* (writing best-practice code), wired in one command.
+
+### Added
+- **`wh eval` — the rule-quality bar.** Runs every rule's golden examples through the real
+  scanner (a `pass` example must not fire, a `fail` example must fire) plus structural
+  source-fidelity (the `source_quote` appears verbatim in the cached docs) and per-rule
+  scorecards. Gated in the pre-push hook and CI.
+- **Trusted rule corpus** under `packs/` — 26 doc-cited, deterministic (AST/`lint_proxy`),
+  eval-verified rules across 10 dependencies (fastapi, pydantic, sqlalchemy, httpx, react,
+  next, zod, express, axum, serde). Import any pack via `whetstone.yaml` `extends`.
+- **Local MCP server (`wh mcp`).** A Model Context Protocol stdio server exposing
+  `rules_query` + `scan` so any MCP-capable agent gets JIT, deterministic, cited rules and
+  can self-check — no per-tool wiring.
+- **In-session enforcement (`wh hook posttooluse`).** A Claude Code PostToolUse hook scans
+  each file the agent edits and feeds any rule violation back into the same turn (advisory,
+  or blocking with `--block`); fails open so a hiccup never wedges the agent.
+- **One-command onboarding (`wh init --claude`).** Detects deps, imports the matching
+  starter packs (embedded in the binary), generates context, registers the MCP server in
+  `.mcp.json`, and installs the SessionStart + PostToolUse hooks.
+- **Taste-guidance store** (`whetstone/guidance/`, schema in `references/guidance-schema.yaml`)
+  — a home for standards that need judgment and can't be scanned. Injected into every
+  generated context format and surfaced by `wh rules query` / the MCP server; never scanned.
+- **Personal taste pack** template (`packs/templates/taste.yaml`) + cross-repo import flow:
+  encode your own standards once and enforce them in every repo.
+- **Offline content-hash drift gate** in `wh ci`: fails when a dependency's docs changed
+  since a rule was authored.
+- **Turnkey agent-free CI enforcement:** the generated `wh init --ci` workflow now enforces
+  rules on push/PR (`wh scan`) in addition to gating drift on schedule (`wh ci`).
+
+### Changed
+- **`wh ci` default `--fail-on` is now `needs_review`** (the freshness/drift gate is ON).
+- **`wh init --hooks` installs the PostToolUse enforcement hook**, not just the read-only
+  SessionStart advisory.
+- Documentation repositioned around the two loops (in-session enforcement + taste capture);
+  `wh init --claude` leads the README quickstart.
+
+### Fixed
+- **Whetstone passes its own rules (dogfood):** migrated 15 `map_err(|e| anyhow!(...))` sites
+  to `.context()`; `wh scan src --lang rust` is clean, enforced by a new gate (the pre-push
+  hook now runs eight gates).
+
 ## [0.9.1] - 2026-06-28
 
 ### Fixed
@@ -498,6 +543,7 @@ no Python runtime dependency.
 - **Release workflow** building Linux and macOS binaries for x86_64 and
   aarch64 with cross-compilation support.
 
+[0.10.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.10.0
 [0.9.1]: https://github.com/angusbezzina/whetstone/releases/tag/v0.9.1
 [0.9.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.9.0
 [0.5.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.5.0
