@@ -36,6 +36,30 @@ through `wh eval`. See epic `whetstone-5ox` and `planning/skill-cli-boundary.md`
 | `typescript/react.yaml` | typescript | `react.no-reactdom-render`, `react.no-reactdom-hydrate`, `react.no-prop-types` |
 | `typescript/zod.yaml` | typescript | `zod.top-level-string-formats`, `zod.no-native-enum`, `zod.record-two-args`, `zod.no-object-strict-passthrough`, `zod.no-dropped-error-params` |
 
+## Your personal taste pack ("my standards, everywhere")
+
+The starter packs above encode *upstream-doc* taste. To encode **your own** taste
+and carry it into every repo, use a personal taste pack — copy the template and
+import it:
+
+```bash
+cp packs/templates/taste.yaml ~/dotfiles/whetstone/taste.yaml   # your shared location
+```
+
+```yaml
+# each repo's whetstone/whetstone.yaml
+version: 1
+extends:
+  - scope: personal            # personal = local by default (gitignored)
+    ref: path:~/dotfiles/whetstone/taste.yaml
+    commit: false
+```
+
+Add rules with the skill's taste-capture workflow (see `SKILL.md`): express a
+preference, and the agent authors the rule + goldens, verifies it with `wh eval`,
+and lands it in your taste pack. Every rule is scanned/enforced in every repo that
+imports it — one pack, versioned once, applied everywhere.
+
 ## Currency (keeping packs trustworthy)
 
 Whetstone's core thesis is that rules go stale, so the corpus must be maintained:

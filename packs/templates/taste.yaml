@@ -1,0 +1,59 @@
+# Whetstone PERSONAL TASTE PACK — template.
+#
+# This is the vehicle for "my agents, my standards, everywhere": copy it to a
+# shared location (a dotfiles repo, an internal git repo, or just alongside your
+# projects), rename `metadata.name`/`owner`, add your own rules, and import it
+# into every repo's whetstone/whetstone.yaml via `extends` (see packs/README.md):
+#
+#   version: 1
+#   extends:
+#     - scope: personal            # personal = local by default (gitignored)
+#       ref: path:~/dotfiles/whetstone/taste.yaml
+#       commit: false
+#
+# Every rule must pass `wh eval` (its golden examples run through the real
+# scanner). Capture new taste with the skill's taste-capture workflow (SKILL.md).
+apiVersion: whetstone/v1alpha1
+kind: RulePack
+language: python
+metadata:
+  name: your-name.taste
+  version: 0.1.0
+  scope: personal
+  owner: your-name
+rules:
+  # Example taste rule (delete or keep): no stray print() in committed Python.
+  # Not a ruff default; AST-enforced; type-resolution-free.
+  - id: taste.no-print
+    severity: should
+    confidence: high
+    category: convention
+    description: >
+      Do not leave bare print() calls in committed Python — use logging. This is
+      personal taste, not an upstream doc rule, so it lives in your taste pack.
+    source_url: "personal://taste/no-print"
+    approved: true
+    status: approved
+    signals:
+      - id: print-call
+        strategy: ast
+        weight: required
+        ast_query: |
+          (call function: (identifier) @_f (#eq? @_f "print")) @match
+    golden_examples:
+      - code: |
+          def f():
+              print("debug")
+        verdict: fail
+        reason: A bare print() left in committed code.
+      - code: |
+          import logging
+          def f():
+              logging.info("x")
+        verdict: pass
+        reason: Uses logging instead of print.
+      - code: |
+          def f(obj):
+              return obj.print()
+        verdict: pass
+        reason: A .print() method call is not the print() builtin (no false positive).
