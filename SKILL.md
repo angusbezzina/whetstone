@@ -273,6 +273,39 @@ Carry guidance like this in your turn-by-turn judgment:
 When a candidate "rule" turns out to need a type, move it here. Document the
 why so the next agent doesn't try to re-add it as a regex.
 
+## Capturing taste mid-session (notice → codify → enforce)
+
+When the user expresses a standing preference during a session ("never do that
+again", "always do X here", "I don't like Y") — capture it so it is enforced from
+now on, don't just fix the one instance. Route by whether it is deterministically
+checkable, and always ask **scope** (personal vs project/team) and, for rules,
+**severity** (must/should/may).
+
+**Is it a syntactic/structural pattern a scanner can verify?**
+
+- **YES → author a RULE.**
+  1. Author it: `wh rules add <id> --match '<regex>' --ast-scope <node>` for a
+     bounded pattern, or hand-author an `ast` bundle with a real `ast_query` for
+     structural checks, or `--lint-tool/--lint-code` to delegate to ruff/biome/clippy.
+  2. Give it 3–5 golden examples (mix pass and fail).
+  3. **Verify with `wh eval`** — the goldens must run clean through the real
+     scanner. If they don't, fix the query or stop (high confidence or silence).
+  4. Land it by scope: personal → the personal taste pack
+     (`packs/templates/taste.yaml`, imported via `extends`) or `whetstone/.personal/`;
+     project/team → `whetstone/rules/` or a committed pack.
+  5. It is now enforced everywhere that ruleset applies — `wh scan`, CI, and the
+     in-session PostToolUse hook.
+
+- **NO (needs judgment or type resolution — "keep handlers thin", "prefer
+  composition") → author GUIDANCE.** Add an entry to the guidance store
+  (`whetstone/guidance/` for project, `whetstone/.personal/guidance/` for
+  personal) per `references/guidance-schema.yaml`. It appears in generated context
+  and in `wh rules query` / the MCP server, guiding you and other agents — but it
+  is never scanned, so it can't cause a false gate failure.
+
+**Never force soft taste into a bad AST rule.** If `wh eval` can't make it fire
+cleanly on real goldens, it is guidance, not a rule.
+
 ## Rule lifecycle
 
 ```
