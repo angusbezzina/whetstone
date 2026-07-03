@@ -191,6 +191,37 @@ An independent review built the binary and ran the queries. Findings, with the b
   "max 5 rules/dep" budget to flip linter flags (partly justified by carrying provenance/source).
   Folded into **whetstone-480** / noted.
 
+## 11. Scope-discipline decision — "on task" vs "on standard" (whetstone-bws)
+
+"Keep agents on task" has two readings, and conflating them dilutes the product:
+
+1. **on-STANDARD** — the code the agent writes follows the project's rules
+   (deprecated APIs, conventions, taste). This is Whetstone's entire domain: a
+   cited ruleset → deterministic scan → native config / CI / the in-session hook.
+2. **on-TASK / scope discipline** — the agent doesn't wander: no refactoring
+   unrelated files, no gold-plating, no drifting from the requested change.
+
+**Decision (2026-06-29): scope discipline is OUT of scope for Whetstone.** Rationale:
+
+- It's a fundamentally different mechanism — **diff-vs-declared-intent**, not
+  source-vs-rules. It needs a task/intent declaration and a diff comparison, not a
+  ruleset and a tree-sitter scanner. Nothing in Whetstone's substrate answers "did
+  this edit belong to the task."
+- Whetstone's value proposition doesn't transfer: "touched a file outside the
+  task" is not a coding standard you can cite a doc for or express as an
+  `ast_query`. High-confidence-or-silence, doc-backed rules simply don't model it.
+- Whetstone is **the rule-intelligence layer** — governance of code *standards*.
+  Scope discipline is plan/diff governance: adjacent, but a distinct product.
+
+**Not architecturally impossible, just separate.** The PostToolUse hook substrate
+(whetstone-cpt) *could* host a future scope check (compare the edited path against
+a declared task scope), so if this is ever pursued it should be a **separate epic**
+with its own design — never smuggled in under "keep agents on task."
+
+**Consequence for messaging:** README/SKILL wording frames Whetstone as keeping
+agents **on standard** / writing best-practice code, not "on scope." Do not
+over-promise scope enforcement.
+
 ## 10. TUI role decision (whetstone-9ef)
 
 Decision (2026-06-29): under skill-first, the **TUI is a secondary, optional human
