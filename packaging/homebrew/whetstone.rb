@@ -21,28 +21,28 @@
 class Whetstone < Formula
   desc "Whetstone sharpens the tools that write your code"
   homepage "https://github.com/angusbezzina/whetstone"
-  version "0.1.0"
+  version "0.10.0"
   license "MIT"
 
   on_macos do
     on_arm do
       url "https://github.com/angusbezzina/whetstone/releases/download/v#{version}/whetstone-aarch64-apple-darwin"
-      sha256 "REPLACE_WITH_AARCH64_APPLE_DARWIN_SHA256"
+      sha256 "7268bde70533b90e42abf47a4317f36fd526bc1cbbafd2018d2762a48d44dd95"
     end
     on_intel do
       url "https://github.com/angusbezzina/whetstone/releases/download/v#{version}/whetstone-x86_64-apple-darwin"
-      sha256 "REPLACE_WITH_X86_64_APPLE_DARWIN_SHA256"
+      sha256 "f101ba5245cfd9115cb71c4bea14936be849957834d55911d747b9a8bcaab0e7"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/angusbezzina/whetstone/releases/download/v#{version}/whetstone-aarch64-unknown-linux-gnu"
-      sha256 "REPLACE_WITH_AARCH64_LINUX_GNU_SHA256"
+      sha256 "a4729df7704fa7073e9daa1260ab9e0a82045c0ffe0f6e60037cdb37b8cd25db"
     end
     on_intel do
       url "https://github.com/angusbezzina/whetstone/releases/download/v#{version}/whetstone-x86_64-unknown-linux-gnu"
-      sha256 "REPLACE_WITH_X86_64_LINUX_GNU_SHA256"
+      sha256 "82f0e75a133681069802de6868b7360cd9886d9f7fe130fdca10485f04844335"
     end
   end
 
