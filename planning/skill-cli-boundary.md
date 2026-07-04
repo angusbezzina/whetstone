@@ -243,6 +243,23 @@ entry point — not the front door** (the skill is). Investment is **frozen**: n
 If a concrete, repeated human workflow emerges that the CLI/skill can't serve, revisit
 with a specific, scoped proposal — not a general "make the TUI nicer" pass.
 
+### Amendment (2026-07-04): scoped exception — onboarding + review
+
+The escape clause above has been exercised, once, deliberately. First-run
+onboarding qualifies: it is choice-heavy and exploratory (a bad fit for CLI
+flags) and **pre-skill** (you cannot delegate taste-setup to an agent you have
+not configured yet). Accordingly:
+
+- The TUI **owns two flows**: (a) first-run onboarding and (b) rule
+  review/approve. Design: `planning/tui-onboarding.md`.
+- Both flows are **skins over deterministic oracles** — zero business logic,
+  no inference, no fetching, no TUI-only state (progress is derived from real
+  artifacts). Anything the wizard needs that does not exist lands as a CLI
+  oracle first (headlessly useful to agents/scripts), then gets a screen.
+- The wizard and `wh init --claude` must produce **identical artifacts** —
+  one state, two front doors.
+- Everything else in the TUI **stays frozen** per the decision above.
+
 ## 12. Resolution log — design-review items
 
 ### Resolution (post-validation, 2026-06-28)
