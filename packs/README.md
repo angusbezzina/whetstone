@@ -60,6 +60,17 @@ preference, and the agent authors the rule + goldens, verifies it with `wh eval`
 and lands it in your taste pack. Every rule is scanned/enforced in every repo that
 imports it — one pack, versioned once, applied everywhere.
 
+## Resource packs (public style guides)
+
+Style-guide packs live under `packs/resources/` and are **opt-in** via the
+onboarding wizard (`wh`) — never auto-imported by `wh init --claude`. Every rule
+is doc-cited, AST-enforced, type-resolution-free, and NOT a default of
+biome/eslint/ruff/clippy (those are already covered).
+
+| Pack | Guide | Rules shipped | Notes |
+|---|---|---|---|
+| `resources/airbnb-js.yaml` | [Airbnb JavaScript](https://github.com/airbnb/javascript) | 1 (`airbnb.no-arguments-object`) | First of the wave. Most Airbnb rules are already biome defaults; the high-signal, non-duplicate remainder needs a current-docs research pass (tracked as follow-up). |
+
 ## Currency (keeping packs trustworthy)
 
 Whetstone's core thesis is that rules go stale, so the corpus must be maintained:

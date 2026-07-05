@@ -10,6 +10,9 @@ pub struct BundledPack {
     pub language: &'static str,
     pub dep: &'static str,
     pub yaml: &'static str,
+    /// "starter" (a dependency pack, auto-importable by `wh init --claude`) or
+    /// "resource" (a public style-guide pack, opt-in via the wizard picker).
+    pub kind: &'static str,
 }
 
 pub const PACKS: &[BundledPack] = &[
@@ -17,58 +20,79 @@ pub const PACKS: &[BundledPack] = &[
         language: "python",
         dep: "fastapi",
         yaml: include_str!("../packs/python/fastapi.yaml"),
+        kind: "starter",
     },
     BundledPack {
         language: "python",
         dep: "pydantic",
         yaml: include_str!("../packs/python/pydantic.yaml"),
+        kind: "starter",
     },
     BundledPack {
         language: "python",
         dep: "sqlalchemy",
         yaml: include_str!("../packs/python/sqlalchemy.yaml"),
+        kind: "starter",
     },
     BundledPack {
         language: "python",
         dep: "httpx",
         yaml: include_str!("../packs/python/httpx.yaml"),
+        kind: "starter",
     },
     BundledPack {
         language: "typescript",
         dep: "react",
         yaml: include_str!("../packs/typescript/react.yaml"),
+        kind: "starter",
     },
     BundledPack {
         language: "typescript",
         dep: "next",
         yaml: include_str!("../packs/typescript/next.yaml"),
+        kind: "starter",
     },
     BundledPack {
         language: "typescript",
         dep: "zod",
         yaml: include_str!("../packs/typescript/zod.yaml"),
+        kind: "starter",
     },
     BundledPack {
         language: "typescript",
         dep: "express",
         yaml: include_str!("../packs/typescript/express.yaml"),
+        kind: "starter",
     },
     BundledPack {
         language: "rust",
         dep: "axum",
         yaml: include_str!("../packs/rust/axum.yaml"),
+        kind: "starter",
     },
     BundledPack {
         language: "rust",
         dep: "serde",
         yaml: include_str!("../packs/rust/serde.yaml"),
+        kind: "starter",
+    },
+    // ── Resource packs (public style guides; opt-in via the wizard) ──
+    BundledPack {
+        language: "typescript",
+        dep: "airbnb-js",
+        yaml: include_str!("../packs/resources/airbnb-js.yaml"),
+        kind: "resource",
     },
 ];
 
-/// The bundled pack for a `(language, dependency)` pair, if the corpus covers it.
+/// The bundled STARTER pack for a `(language, dependency)` pair, if the corpus
+/// covers it. Resource packs are excluded — they are opt-in, never matched to a
+/// detected dependency for auto-import.
 pub fn for_dep(language: &str, dep: &str) -> Option<&'static BundledPack> {
     PACKS.iter().find(|p| {
-        p.language.eq_ignore_ascii_case(language) && p.dep.eq_ignore_ascii_case(dep)
+        p.kind == "starter"
+            && p.language.eq_ignore_ascii_case(language)
+            && p.dep.eq_ignore_ascii_case(dep)
     })
 }
 
@@ -105,7 +129,7 @@ pub fn catalog() -> Vec<CatalogEntry> {
                 language: p.language,
                 name,
                 rule_count,
-                kind: "starter",
+                kind: p.kind,
                 yaml: p.yaml,
             }
         })

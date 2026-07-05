@@ -1,0 +1,50 @@
+# Whetstone RESOURCE pack — Airbnb JavaScript Style Guide.
+#
+# A style-guide pack (not a dependency pack): opt-in via the onboarding wizard,
+# never auto-imported. Every rule is doc-cited, AST-enforced, type-resolution-
+# free, and NOT a default of biome/eslint. First of the resources wave
+# (whetstone-hg9).
+apiVersion: whetstone/v1alpha1
+kind: RulePack
+metadata:
+  name: airbnb.javascript
+  version: 0.1.0
+  scope: resource
+  owner: airbnb
+language: typescript
+rules:
+  - id: airbnb.no-arguments-object
+    severity: should
+    confidence: high
+    category: convention
+    description: >
+      Prefer rest parameters (`...args`) over the `arguments` object. `arguments`
+      is not a real array, is absent in arrow functions, and rest parameters read
+      more clearly. Airbnb JavaScript Style Guide §7.6 ("Never use arguments, opt
+      to use rest syntax instead").
+    source_url: "https://github.com/airbnb/javascript#functions--arguments-object"
+    approved: true
+    status: approved
+    signals:
+      - id: arguments-ref
+        strategy: ast
+        weight: required
+        ast_query: |
+          ((identifier) @match (#eq? @match "arguments"))
+    golden_examples:
+      - code: |
+          function sum() {
+            return Array.prototype.slice.call(arguments).reduce((a, b) => a + b, 0);
+          }
+        verdict: fail
+        reason: reads the arguments object instead of rest params
+      - code: |
+          function sum(...args) {
+            return args.reduce((a, b) => a + b, 0);
+          }
+        verdict: pass
+        reason: uses rest parameters
+      - code: |
+          const label = "arguments";
+        verdict: pass
+        reason: a string literal, not the arguments identifier (no false positive)
