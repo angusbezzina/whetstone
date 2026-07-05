@@ -4443,3 +4443,53 @@ fn test_scan_with_pack_preview_matches_import_and_writes_nothing() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn test_pack_import_matches_init_claude_artifacts() {
+    // whetstone-if6: both front doors write the same pack file + extends entry
+    // (one state, two front doors). Door A = wh init --claude on a fastapi repo;
+    // door B = wh pack import of the same bundled pack.
+    fn tmpdir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "wh_ifq_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    // Door A: agent onboarding on a repo whose only dep is fastapi.
+    let a = tmpdir("a");
+    std::process::Command::new("git").args(["init", "--quiet"]).current_dir(&a).status().ok();
+    std::fs::write(a.join("requirements.txt"), "fastapi==0.115\n").unwrap();
+    let (_o, _e, ok) = run_whetstone(&["init", "--claude", "--json", "--project-dir", a.to_str().unwrap()], a.to_str().unwrap());
+    assert!(ok);
+
+    // Door B: import the same bundled pack directly.
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let b = tmpdir("b");
+    let (_o, _e, ok) = run_whetstone(
+        &["pack", "import", manifest.join("packs/python/fastapi.yaml").to_str().unwrap(), "--json", "--project-dir", b.to_str().unwrap()],
+        b.to_str().unwrap(),
+    );
+    assert!(ok);
+
+    // The pack file each door wrote is byte-identical.
+    let pack_a = std::fs::read_to_string(a.join("whetstone/packs/fastapi.yaml")).unwrap();
+    let pack_b = std::fs::read_to_string(b.join("whetstone/packs/fastapi.yaml")).unwrap();
+    assert_eq!(pack_a, pack_b, "both doors must write identical pack bytes");
+
+    // Both whetstone.yaml carry the same extends ref for fastapi.
+    for dir in [&a, &b] {
+        let ws = std::fs::read_to_string(dir.join("whetstone/whetstone.yaml")).unwrap();
+        assert!(ws.contains("path:./whetstone/packs/fastapi.yaml"), "extends ref missing in {ws}");
+    }
+
+    let _ = std::fs::remove_dir_all(&a);
+    let _ = std::fs::remove_dir_all(&b);
+}

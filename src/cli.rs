@@ -511,6 +511,21 @@ enum RulesAction {
 }
 
 #[derive(Subcommand)]
+enum PackAction {
+    /// Import a pack file into this project: copy it under whetstone/packs/ and
+    /// add its `extends` entry idempotently. The same primitive `wh init --claude`
+    /// and the onboarding wizard use — one state, two front doors (whetstone-if6).
+    Import {
+        /// Path to the RulePack YAML file to import
+        pack_file: PathBuf,
+
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
 enum HookAction {
     /// Claude Code PostToolUse hook: scan the just-edited file and feed any rule
     /// violations back to the agent in the same turn. Reads the event JSON on stdin.
@@ -837,6 +852,12 @@ enum Commands {
     Hook {
         #[command(subcommand)]
         action: HookAction,
+    },
+
+    /// Manage rule packs (import a pack into this project)
+    Pack {
+        #[command(subcommand)]
+        action: PackAction,
     },
 
     /// Run every rule's golden examples through the scanner and score them (the rule-quality bar)
@@ -1551,6 +1572,31 @@ pub fn run() -> i32 {
             HookAction::PostToolUse { project_dir, block } => {
                 agent_hook::post_tool_use(&project_dir, block).unwrap_or(0)
             }
+        },
+
+        Commands::Pack { action } => match action {
+            PackAction::Import {
+                pack_file,
+                project_dir,
+            } => match onboard::import_pack_from_file(&project_dir, &pack_file) {
+                Ok(imported) => {
+                    output::print_json(&serde_json::json!({
+                        "status": "ok",
+                        "pack_name": imported.pack_name,
+                        "pack_path": imported.pack_path.display().to_string(),
+                        "extends_ref": imported.extends_ref,
+                        "already_present": imported.already_present,
+                    }));
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "Pass a path to a valid RulePack YAML file",
+                    ));
+                    1
+                }
+            },
         },
 
         Commands::Eval {
@@ -2911,6 +2957,7 @@ fn command_title(command: &Commands) -> &'static str {
         Commands::Validate { .. } => "VALIDATE",
         Commands::Mcp { .. } => "MCP",
         Commands::Hook { .. } => "HOOK",
+        Commands::Pack { .. } => "PACK",
         Commands::Eval { .. } => "EVAL",
         Commands::Scan { .. } => "SCAN",
         Commands::Ci { .. } => "CI",
@@ -2999,6 +3046,9 @@ fn project_dir_for_command(command: &Commands) -> PathBuf {
         Commands::Mcp { project_dir, .. } => project_dir.clone(),
         Commands::Hook { action } => match action {
             HookAction::PostToolUse { project_dir, .. } => project_dir.clone(),
+        },
+        Commands::Pack { action } => match action {
+            PackAction::Import { project_dir, .. } => project_dir.clone(),
         },
         Commands::Eval { project_dir, .. } => project_dir.clone(),
         Commands::Rules { action } => match action {
