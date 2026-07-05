@@ -4416,6 +4416,36 @@ fn test_scan_with_pack_preview_matches_import_and_writes_nothing() {
         "preview must not write whetstone/.state"
     );
 
+    // Non-vacuous guard: a preview on an ALREADY-onboarded project (non-empty
+    // extends, warm .state) must leave .state byte-identical (whetstone-dva Issue 1).
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let (_o, _e, _ok) = run_whetstone(
+        &["pack", "import", manifest.join("packs/python/pydantic.yaml").to_str().unwrap(), "--json", "--project-dir", project],
+        project,
+    );
+    // warm the pack cache
+    let _ = run_whetstone(&["scan", "src", "--json", "--no-fail", "--project-dir", project], project);
+    fn state_hash(dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+        let s = dir.join("whetstone/.state");
+        let mut out = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&s) {
+            for e in rd.flatten() {
+                if let Ok(b) = std::fs::read(e.path()) {
+                    out.push((e.file_name().to_string_lossy().to_string(), b));
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+    let before_state = state_hash(&tmp);
+    assert!(!before_state.is_empty(), "onboarded project should have warmed .state");
+    let (_o, _e, _ok) = run_whetstone(
+        &["scan", "src", "--with-pack", pack.to_str().unwrap(), "--json", "--no-fail", "--project-dir", project],
+        project,
+    );
+    assert_eq!(before_state, state_hash(&tmp), "preview mutated .state on an onboarded project");
+
     // Real import → scan; the candidate hit count must match the preview.
     std::fs::create_dir_all(tmp.join("whetstone/packs")).unwrap();
     std::fs::copy(&pack, tmp.join("whetstone/packs/cand.yaml")).unwrap();

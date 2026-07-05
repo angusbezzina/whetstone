@@ -40,6 +40,24 @@ pub enum Outcome {
     Exit,
 }
 
+/// One row in the Review gate — a pack rule (pre-import) or a project candidate.
+pub struct ReviewRow {
+    pub id: String,
+    pub citation: String,
+    pub severity: String,
+    pub source_label: String,
+    pub goldens: Vec<String>,
+    /// True for a project candidate rule (approved on confirm); false for a
+    /// pack rule (imported on confirm).
+    pub is_candidate: bool,
+}
+
+fn format_golden(g: &crate::rules::GoldenExample) -> String {
+    let code = g.code.lines().next().unwrap_or("").trim();
+    let verdict = if g.verdict == "pass" { "ok" } else { "flag" };
+    format!("[{verdict}] {code}")
+}
+
 pub struct OnboardState {
     pub step: Step,
     pub setup: Value,
@@ -53,6 +71,9 @@ pub struct OnboardState {
     pub payoff: Option<Value>,
     pub conflicts: Option<Value>,
     pub conflict_cursor: usize,
+    /// Detected dependencies as (name, language) — the SOURCES step's rows.
+    pub deps: Vec<(String, String)>,
+    pub source_cursor: usize,
     pub message: String,
     pub wired: bool,
 }
@@ -62,13 +83,20 @@ impl OnboardState {
         let setup = crate::onboard::setup_status(project_dir);
         let catalog = corpus::catalog();
 
-        // Which catalog packs match detected dependencies.
+        // Detected deps (name, language) + which catalog packs match them.
         let mut matched = Vec::new();
+        let mut deps: Vec<(String, String)> = Vec::new();
         if let Ok(detected) = crate::detect::detect_deps(project_dir, false, &[], &[], false) {
-            if let Some(deps) = detected.get("dependencies").and_then(|d| d.as_array()) {
-                for dep in deps {
+            if let Some(dep_list) = detected.get("dependencies").and_then(|d| d.as_array()) {
+                for dep in dep_list {
                     let name = dep.get("name").and_then(|v| v.as_str()).unwrap_or("");
                     let lang = dep.get("language").and_then(|v| v.as_str()).unwrap_or("");
+                    if name.is_empty() {
+                        continue;
+                    }
+                    if !deps.iter().any(|(n, _)| n == name) {
+                        deps.push((name.to_string(), lang.to_string()));
+                    }
                     if let Some(i) = catalog.iter().position(|c| {
                         c.dep.eq_ignore_ascii_case(name) && c.language.eq_ignore_ascii_case(lang)
                     }) {
@@ -79,10 +107,7 @@ impl OnboardState {
                 }
             }
         }
-        let deps_detected = setup
-            .get("dependencies_detected")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
+        let deps_detected = deps.len();
 
         OnboardState {
             step: Step::Home,
@@ -97,8 +122,64 @@ impl OnboardState {
             payoff: None,
             conflicts: None,
             conflict_cursor: 0,
+            deps,
+            source_cursor: 0,
             message: String::new(),
             wired: false,
+        }
+    }
+
+    /// The docs/changelog URL Whetstone watches for a dependency, by registry.
+    fn dep_docs_url(name: &str, language: &str) -> String {
+        match language.to_lowercase().as_str() {
+            "python" => format!("https://pypi.org/project/{name}/"),
+            "typescript" | "javascript" => format!("https://www.npmjs.com/package/{name}"),
+            "rust" => format!("https://docs.rs/{name}"),
+            _ => format!("https://www.google.com/search?q={name}+changelog"),
+        }
+    }
+
+    /// URLs currently subscribed in config (read-only — no cache writes).
+    fn watched_urls(&self, project_dir: &Path) -> BTreeSet<String> {
+        let opts = crate::config::SnapshotOptions {
+            read_only: true,
+            injected_packs: Vec::new(),
+        };
+        crate::config::WhetstoneConfig::load_with(project_dir, &opts)
+            .sources
+            .custom
+            .iter()
+            .map(|c| c.url.clone())
+            .collect()
+    }
+
+    fn toggle_source(&mut self, project_dir: &Path) {
+        let Some((name, lang)) = self.deps.get(self.source_cursor).cloned() else {
+            return;
+        };
+        let url = Self::dep_docs_url(&name, &lang);
+        let watched = self.watched_urls(project_dir);
+        if watched.contains(&url) {
+            let _ = crate::source_mgmt::remove(
+                project_dir,
+                crate::source_mgmt::RemoveOptions {
+                    target: &url,
+                    personal: false,
+                },
+            );
+            self.message = format!("Stopped watching {name}.");
+        } else {
+            let _ = crate::source_mgmt::add(
+                project_dir,
+                crate::source_mgmt::AddOptions {
+                    url: &url,
+                    name: Some(&name),
+                    language: if lang.is_empty() { None } else { Some(&lang) },
+                    source_kind: Some("official_docs"),
+                    personal: false,
+                },
+            );
+            self.message = format!("Watching {name} for drift.");
         }
     }
 
@@ -111,16 +192,7 @@ impl OnboardState {
             .unwrap_or_default()
     }
 
-    fn list_len(&self) -> usize {
-        match self.step {
-            Step::Packs => self.catalog.len(),
-            Step::Review => self.review_rule_ids().len(),
-            _ => 0,
-        }
-    }
-
-    fn move_cursor(&mut self, delta: i64) {
-        let len = self.list_len();
+    fn move_cursor(&mut self, delta: i64, len: usize) {
         if len == 0 {
             return;
         }
@@ -128,9 +200,10 @@ impl OnboardState {
         self.cursor = cur.rem_euclid(len as i64) as usize;
     }
 
-    /// The (rule_id, citation, severity, pack_name) for every rule across the
-    /// selected packs — what the review screen lists.
-    fn review_rows(&self) -> Vec<(String, String, String, String)> {
+    /// Every rule the Review screen lists: the rules of each selected pack
+    /// (pre-import), plus any existing project CANDIDATE rules — e.g. taste an
+    /// agent proposed via the Infer handoff (whetstone-eg4 / 420 return leg).
+    fn review_rows(&self, project_dir: &Path) -> Vec<ReviewRow> {
         let mut rows = Vec::new();
         for &i in &self.selected {
             let entry = &self.catalog[i];
@@ -139,20 +212,40 @@ impl OnboardState {
                     if !r.approved {
                         continue;
                     }
-                    rows.push((
-                        r.id.clone(),
-                        r.source_url.clone().unwrap_or_default(),
-                        r.severity.clone().unwrap_or_default(),
-                        entry.name.clone(),
-                    ));
+                    rows.push(ReviewRow {
+                        id: r.id.clone(),
+                        citation: r.source_url.clone().unwrap_or_default(),
+                        severity: r.severity.clone().unwrap_or_default(),
+                        source_label: entry.name.clone(),
+                        goldens: r.golden_examples.iter().map(format_golden).collect(),
+                        is_candidate: false,
+                    });
                 }
+            }
+        }
+        // Project candidate rules (status != approved) — awaiting a decision.
+        let rules_dir = crate::layers::LayerPaths::for_project(project_dir).project_rules_dir;
+        let (files, _) = crate::rules::load_rule_files(&rules_dir);
+        for lrf in &files {
+            for r in &lrf.rule_file.rules {
+                if r.approved {
+                    continue;
+                }
+                rows.push(ReviewRow {
+                    id: r.id.clone(),
+                    citation: r.source_url.clone().unwrap_or_default(),
+                    severity: r.severity.clone().unwrap_or_default(),
+                    source_label: "candidate".to_string(),
+                    goldens: r.golden_examples.iter().map(format_golden).collect(),
+                    is_candidate: true,
+                });
             }
         }
         rows
     }
 
-    fn review_rule_ids(&self) -> Vec<String> {
-        self.review_rows().into_iter().map(|(id, ..)| id).collect()
+    fn review_rule_ids(&self, project_dir: &Path) -> Vec<String> {
+        self.review_rows(project_dir).into_iter().map(|r| r.id).collect()
     }
 
     fn injected_from_selected(&self) -> Vec<crate::config_packs::ResolvedConfigPack> {
@@ -192,6 +285,9 @@ impl OnboardState {
     /// opted-out rules, then compute the payoff scan. Nothing is enforceable
     /// before this confirm (whetstone-eg4).
     fn confirm_and_import(&mut self, project_dir: &Path) {
+        // Snapshot rows before writing (kept/denied classification).
+        let rows = self.review_rows(project_dir);
+        // Import selected packs (extends).
         for &i in &self.selected {
             let e = &self.catalog[i];
             if let Err(err) = crate::onboard::import_pack(project_dir, e.dep, e.yaml) {
@@ -199,8 +295,20 @@ impl OnboardState {
                 return;
             }
         }
-        let denied: Vec<String> = self.denied_rules.iter().cloned().collect();
-        let _ = crate::onboard::add_deny(project_dir, &denied);
+        // Candidate rules: approve the kept ones (the Infer return leg); pack
+        // rules opted out become deny entries.
+        let mut pack_denies: Vec<String> = Vec::new();
+        for row in &rows {
+            let denied = self.denied_rules.contains(&row.id);
+            if row.is_candidate {
+                if !denied {
+                    let _ = crate::approve::approve_by_id(project_dir, &row.id);
+                }
+            } else if denied {
+                pack_denies.push(row.id.clone());
+            }
+        }
+        let _ = crate::onboard::add_deny(project_dir, &pack_denies);
         self.step = Step::Payoff;
         self.compute_payoff(project_dir);
     }
@@ -246,8 +354,8 @@ impl OnboardState {
                 _ => {}
             },
             Step::Packs => match key {
-                Up | Char('k') => self.move_cursor(-1),
-                Down | Char('j') => self.move_cursor(1),
+                Up | Char('k') => self.move_cursor(-1, self.catalog.len()),
+                Down | Char('j') => self.move_cursor(1, self.catalog.len()),
                 Char(' ') => {
                     if self.selected.contains(&self.cursor) {
                         self.selected.remove(&self.cursor);
@@ -269,6 +377,38 @@ impl OnboardState {
                 _ => {}
             },
             Step::Sources => match key {
+                Up | Char('k') => {
+                    if !self.deps.is_empty() {
+                        self.source_cursor =
+                            (self.source_cursor + self.deps.len() - 1) % self.deps.len();
+                    }
+                }
+                Down | Char('j') => {
+                    if !self.deps.is_empty() {
+                        self.source_cursor = (self.source_cursor + 1) % self.deps.len();
+                    }
+                }
+                Char(' ') => self.toggle_source(project_dir),
+                Char('a') | Char('A') => {
+                    // Bulk: watch every not-yet-watched dependency.
+                    let watched = self.watched_urls(project_dir);
+                    for (name, lang) in self.deps.clone() {
+                        let url = Self::dep_docs_url(&name, &lang);
+                        if !watched.contains(&url) {
+                            let _ = crate::source_mgmt::add(
+                                project_dir,
+                                crate::source_mgmt::AddOptions {
+                                    url: &url,
+                                    name: Some(&name),
+                                    language: if lang.is_empty() { None } else { Some(&lang) },
+                                    source_kind: Some("official_docs"),
+                                    personal: false,
+                                },
+                            );
+                        }
+                    }
+                    self.message = "Watching all dependencies for drift.".to_string();
+                }
                 Enter => {
                     // Compute conflicts for the proposed selection, then advance.
                     self.conflicts = Some(crate::conflicts::detect(
@@ -321,10 +461,16 @@ impl OnboardState {
                 }
             }
             Step::Review => match key {
-                Up | Char('k') => self.move_cursor(-1),
-                Down | Char('j') => self.move_cursor(1),
+                Up | Char('k') => {
+                    let len = self.review_rule_ids(project_dir).len();
+                    self.move_cursor(-1, len);
+                }
+                Down | Char('j') => {
+                    let len = self.review_rule_ids(project_dir).len();
+                    self.move_cursor(1, len);
+                }
                 Char(' ') | Char('d') | Char('D') => {
-                    let ids = self.review_rule_ids();
+                    let ids = self.review_rule_ids(project_dir);
                     if let Some(id) = ids.get(self.cursor) {
                         if self.denied_rules.contains(id) {
                             self.denied_rules.remove(id);
@@ -371,9 +517,9 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     match s.step {
         Step::Home => render_home(&mut lines, s),
         Step::Packs => render_packs(&mut lines, s),
-        Step::Sources => render_sources(&mut lines, s),
+        Step::Sources => render_sources(&mut lines, s, &app.project_dir),
         Step::Conflicts => render_conflicts(&mut lines, s),
-        Step::Review => render_review(&mut lines, s),
+        Step::Review => render_review(&mut lines, s, &app.project_dir),
         Step::Payoff => render_payoff(&mut lines, s),
         Step::Infer => render_infer(&mut lines),
     }
@@ -484,30 +630,40 @@ fn render_packs(lines: &mut Vec<Line<'static>>, s: &OnboardState) {
     }
 }
 
-fn render_sources(lines: &mut Vec<Line<'static>>, s: &OnboardState) {
+fn render_sources(lines: &mut Vec<Line<'static>>, s: &OnboardState, project_dir: &Path) {
     heading(
         lines,
-        "Sources — defaults are already sane",
-        "Every imported pack carries its own doc citations · Enter to continue",
+        "Watch dependency docs for drift",
+        "Space toggles a watch · A watches all · Enter continues (defaults are fine to skip)",
     );
-    lines.push(Line::from(Span::styled(
-        format!(
-            "{} dependencies detected. Official docs travel with the packs you import;",
-            s.deps_detected
-        ),
-        Style::default().fg(theme::MUTED),
-    )));
-    lines.push(Line::from(Span::styled(
-        "nothing to configure here to get value.",
-        Style::default().fg(theme::MUTED),
-    )));
+    if s.deps.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No dependencies detected — nothing to watch. Enter to continue.",
+            Style::default().fg(theme::MUTED),
+        )));
+        return;
+    }
+    let watched = s.watched_urls(project_dir);
+    for (i, (name, lang)) in s.deps.iter().enumerate() {
+        let url = OnboardState::dep_docs_url(name, lang);
+        let on = watched.contains(&url);
+        let mark = if on { "[x]" } else { "[ ]" };
+        let cursor = if i == s.source_cursor { "›" } else { " " };
+        let style = if i == s.source_cursor {
+            theme::selection()
+        } else if on {
+            Style::default().fg(theme::STATUS_OK)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{cursor} {mark} {name} ({lang}) — {url}"),
+            style,
+        )));
+    }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "To watch dependency changelogs for drift, use the Sources screen (press 2 anytime)",
-        Style::default().fg(theme::MUTED),
-    )));
-    lines.push(Line::from(Span::styled(
-        "or `wh sources add <url>` — Whetstone's drift gate flags stale rules automatically.",
+        "Watched sources feed Whetstone's drift gate — it flags rules when the docs change.",
         Style::default().fg(theme::MUTED),
     )));
 }
@@ -553,13 +709,13 @@ fn render_conflicts(lines: &mut Vec<Line<'static>>, s: &OnboardState) {
     }
 }
 
-fn render_review(lines: &mut Vec<Line<'static>>, s: &OnboardState) {
+fn render_review(lines: &mut Vec<Line<'static>>, s: &OnboardState, project_dir: &Path) {
     heading(
         lines,
         "Review — nothing is enforced until you confirm",
-        "Space/D opts a rule out (deny) · A approves all · Enter confirms import",
+        "Space/D opts a rule out · A keeps all · Enter confirms (imports packs, approves candidates)",
     );
-    let rows = s.review_rows();
+    let rows = s.review_rows(project_dir);
     if rows.is_empty() {
         lines.push(Line::from(Span::styled(
             "No rules selected. Go back (Esc) and pick a pack.",
@@ -567,21 +723,31 @@ fn render_review(lines: &mut Vec<Line<'static>>, s: &OnboardState) {
         )));
         return;
     }
-    for (i, (id, cite, severity, pack)) in rows.iter().enumerate() {
-        let denied = s.denied_rules.contains(id);
+    for (i, row) in rows.iter().enumerate() {
+        let denied = s.denied_rules.contains(&row.id);
         let cursor = if i == s.cursor { "›" } else { " " };
         let mark = if denied { "✗ deny" } else { "✓ keep" };
-        let color = if denied { theme::STATUS_ERR } else { theme::severity_color(severity) };
+        let origin = if row.is_candidate { "candidate" } else { &row.source_label };
+        let color = if denied { theme::STATUS_ERR } else { theme::severity_color(&row.severity) };
         let style = if i == s.cursor { theme::selection() } else { Style::default().fg(color) };
         lines.push(Line::from(Span::styled(
-            format!("{cursor} {mark} [{severity}] {id}  ({pack})"),
+            format!("{cursor} {mark} [{}] {}  ({origin})", row.severity, row.id),
             style,
         )));
-        if i == s.cursor && !cite.is_empty() {
-            lines.push(Line::from(Span::styled(
-                format!("      source: {cite}"),
-                Style::default().fg(theme::MUTED),
-            )));
+        // Detail on the cursor row: citation + golden examples (whetstone-eg4).
+        if i == s.cursor {
+            if !row.citation.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    format!("      source: {}", row.citation),
+                    Style::default().fg(theme::MUTED),
+                )));
+            }
+            for g in row.goldens.iter().take(3) {
+                lines.push(Line::from(Span::styled(
+                    format!("      {g}"),
+                    Style::default().fg(theme::MUTED),
+                )));
+            }
         }
     }
 }
@@ -662,12 +828,16 @@ fn render_infer(lines: &mut Vec<Line<'static>>) {
         Style::default().fg(theme::STATUS_OK),
     )));
     lines.push(Line::from(Span::styled(
-        "   Verify each with `wh eval`; land keepers with `wh pack import` or a guidance entry.\"",
+        "   Add each as a CANDIDATE rule (`wh rules add`) and verify it with `wh eval`.\"",
         Style::default().fg(theme::STATUS_OK),
     )));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "New candidates show up in this wizard's Review step next time.",
+        "Candidate rules appear in this wizard's Review step (marked 'candidate') for you to",
+        Style::default().fg(theme::MUTED),
+    )));
+    lines.push(Line::from(Span::styled(
+        "approve or deny — approve happens only when you confirm there.",
         Style::default().fg(theme::MUTED),
     )));
     lines.push(Line::from(""));
@@ -718,7 +888,7 @@ mod tests {
         press(&mut s, &tmp, KeyCode::Char('e'));
         assert_eq!(s.step, Step::Review);
         assert!(!tmp.join("whetstone/whetstone.yaml").exists(), "no import before confirm");
-        assert!(!s.review_rows().is_empty(), "review lists the pack's rules with citations");
+        assert!(!s.review_rows(&tmp).is_empty(), "review lists the pack's rules with citations");
 
         // Confirm (approve all) → imports via the oracle → Payoff with real hits.
         press(&mut s, &tmp, KeyCode::Char('a'));
@@ -735,6 +905,88 @@ mod tests {
         // Finish exits.
         assert!(press(&mut s, &tmp, KeyCode::Enter));
 
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn infer_return_leg_candidate_appears_and_approves() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wh_wizcand_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("whetstone/rules/python")).unwrap();
+        fs::write(tmp.join("requirements.txt"), "fastapi==0.115\n").unwrap();
+        // A project candidate rule (status candidate, approved false) — as if an
+        // agent proposed it via the Infer handoff.
+        fs::write(
+            tmp.join("whetstone/rules/python/taste.yaml"),
+            "source: { name: taste }\nrules:\n  - id: taste.mine\n    severity: should\n    confidence: high\n    category: convention\n    description: candidate\n    source_url: https://x\n    approved: false\n    status: candidate\n    signals: [{ id: s, strategy: ast, weight: required, ast_query: '(pass_statement) @match' }]\n    golden_examples: [{ code: \"def f(): pass\", verdict: fail, reason: y }]\n",
+        ).unwrap();
+        let mut s = OnboardState::load(&tmp);
+        press(&mut s, &tmp, KeyCode::Char('e')); // express → Review (fastapi matched)
+        assert_eq!(s.step, Step::Review);
+        // The candidate rule shows up in Review.
+        assert!(s.review_rows(&tmp).iter().any(|r| r.id == "taste.mine" && r.is_candidate), "candidate not listed");
+        press(&mut s, &tmp, KeyCode::Char('a')); // confirm keeps all → approves the candidate
+        let after = fs::read_to_string(tmp.join("whetstone/rules/python/taste.yaml")).unwrap();
+        assert!(after.contains("approved: true") || after.contains("status: approved"), "candidate should be approved: {after}");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn sources_toggle_persists_and_lists() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wh_wizsrc_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        fs::write(tmp.join("requirements.txt"), "fastapi==0.115\n").unwrap();
+        let mut s = OnboardState::load(&tmp);
+        assert!(!s.deps.is_empty(), "fastapi should be detected");
+        press(&mut s, &tmp, KeyCode::Char('c')); // Packs
+        // jump straight to Sources by selecting a pack then Enter
+        s.cursor = s.catalog.iter().position(|c| c.dep == "fastapi").unwrap();
+        press(&mut s, &tmp, KeyCode::Char(' '));
+        press(&mut s, &tmp, KeyCode::Enter); // Sources
+        assert_eq!(s.step, Step::Sources);
+        press(&mut s, &tmp, KeyCode::Char(' ')); // watch fastapi
+        assert!(s.watched_urls(&tmp).iter().any(|u| u.contains("pypi.org/project/fastapi")), "watch should persist to config");
+        // Toggling again removes it.
+        press(&mut s, &tmp, KeyCode::Char(' '));
+        assert!(!s.watched_urls(&tmp).iter().any(|u| u.contains("pypi.org/project/fastapi")), "second toggle unsubscribes");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn conflict_deny_writes_deny_entry() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wh_wizcd_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        // Onboard fastapi first, so re-selecting it in the wizard collides (same-id).
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fastapi = manifest.join("packs/python/fastapi.yaml");
+        crate::onboard::import_pack_from_file(&tmp, &fastapi).unwrap();
+        let mut s = OnboardState::load(&tmp);
+        let fa = s.catalog.iter().position(|c| c.dep == "fastapi").unwrap();
+        press(&mut s, &tmp, KeyCode::Char('c')); // Packs
+        s.cursor = fa;
+        press(&mut s, &tmp, KeyCode::Char(' ')); // select fastapi (collides with configured)
+        press(&mut s, &tmp, KeyCode::Enter); // Sources
+        press(&mut s, &tmp, KeyCode::Enter); // Conflicts (same-id present)
+        assert_eq!(s.step, Step::Conflicts);
+        assert!(!s.conflict_list().is_empty(), "expected a same-id conflict");
+        let cid = s.conflict_list()[0]["rule_id"].as_str().unwrap().to_string();
+        press(&mut s, &tmp, KeyCode::Char('d')); // deny the contested rule
+        let ws = fs::read_to_string(tmp.join("whetstone/whetstone.yaml")).unwrap();
+        assert!(ws.contains(&cid) && ws.contains("deny"), "conflict deny should write a deny entry: {ws}");
         let _ = fs::remove_dir_all(&tmp);
     }
 
@@ -777,7 +1029,7 @@ mod tests {
         fs::write(tmp.join("requirements.txt"), "fastapi==0.115\n").unwrap();
         let mut s = OnboardState::load(&tmp);
         press(&mut s, &tmp, KeyCode::Char('e')); // → Review
-        let first = s.review_rule_ids()[0].clone();
+        let first = s.review_rule_ids(&tmp)[0].clone();
         press(&mut s, &tmp, KeyCode::Char(' ')); // deny the cursor rule
         assert!(s.denied_rules.contains(&first));
         press(&mut s, &tmp, KeyCode::Char('a')); // confirm

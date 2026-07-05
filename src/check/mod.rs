@@ -119,7 +119,14 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
     config_issues.extend(lint_proxy::verify_formatter_directives(project_dir, &rules));
     config_issues.extend(lint_proxy::verify_test_bindings(project_dir, &rules));
     config_issues.extend(lint_proxy::verify_validator_bindings(project_dir, &rules));
-    let validator_default_timeout = crate::config::WhetstoneConfig::load(project_dir)
+    // In preview mode this must be read-only too, or resolving the effective
+    // config re-writes the pack cache and breaks the zero-state promise
+    // (whetstone-dva). Non-preview keeps the historical writing behavior.
+    let cfg_opts = crate::config::SnapshotOptions {
+        read_only: previewing,
+        injected_packs: Vec::new(),
+    };
+    let validator_default_timeout = crate::config::WhetstoneConfig::load_with(project_dir, &cfg_opts)
         .resolve
         .timeout_seconds
         .unwrap_or(15);

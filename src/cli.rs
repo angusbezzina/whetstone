@@ -1705,7 +1705,15 @@ pub fn run() -> i32 {
             with_pack,
             no_fail,
         } => {
-            let cfg = config::WhetstoneConfig::load(&project_dir);
+            // Previewing (--with-pack) must not write the pack cache — load the
+            // config read-only in that case (whetstone-dva/653).
+            let cfg = config::WhetstoneConfig::load_with(
+                &project_dir,
+                &config::SnapshotOptions {
+                    read_only: !with_pack.is_empty(),
+                    injected_packs: Vec::new(),
+                },
+            );
             let scan_paths: Vec<PathBuf> = if !paths.is_empty() {
                 paths
             } else if !cfg.check.paths.is_empty() {
