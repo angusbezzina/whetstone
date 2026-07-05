@@ -26,6 +26,7 @@ use crate::tui::{app::App, components::footer, theme};
 pub enum Step {
     Home,
     Packs,
+    Sources,
     Review,
     Conflicts,
     Payoff,
@@ -51,6 +52,7 @@ pub struct OnboardState {
     pub preview: Option<Value>,
     pub payoff: Option<Value>,
     pub conflicts: Option<Value>,
+    pub conflict_cursor: usize,
     pub message: String,
     pub wired: bool,
 }
@@ -94,9 +96,19 @@ impl OnboardState {
             preview: None,
             payoff: None,
             conflicts: None,
+            conflict_cursor: 0,
             message: String::new(),
             wired: false,
         }
+    }
+
+    fn conflict_list(&self) -> Vec<Value> {
+        self.conflicts
+            .as_ref()
+            .and_then(|c| c.get("conflicts"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn list_len(&self) -> usize {
@@ -250,26 +262,64 @@ impl OnboardState {
                     if self.selected.is_empty() {
                         self.message = "Select at least one pack (Space) before continuing.".to_string();
                     } else {
-                        self.conflicts = Some(crate::conflicts::detect(
-                            project_dir,
-                            None,
-                            &self.injected_from_selected(),
-                            true,
-                        ));
-                        self.step = Step::Conflicts;
+                        self.step = Step::Sources;
                     }
                 }
                 Esc => return Outcome::Exit,
                 _ => {}
             },
-            Step::Conflicts => match key {
+            Step::Sources => match key {
                 Enter => {
-                    self.step = Step::Review;
-                    self.cursor = 0;
+                    // Compute conflicts for the proposed selection, then advance.
+                    self.conflicts = Some(crate::conflicts::detect(
+                        project_dir,
+                        None,
+                        &self.injected_from_selected(),
+                        true,
+                    ));
+                    self.conflict_cursor = 0;
+                    self.step = Step::Conflicts;
                 }
                 Esc => self.step = Step::Packs,
                 _ => {}
             },
+            Step::Conflicts => {
+                let conflicts = self.conflict_list();
+                match key {
+                    Up | Char('k') => {
+                        if !conflicts.is_empty() {
+                            self.conflict_cursor =
+                                (self.conflict_cursor + conflicts.len() - 1) % conflicts.len();
+                        }
+                    }
+                    Down | Char('j') => {
+                        if !conflicts.is_empty() {
+                            self.conflict_cursor = (self.conflict_cursor + 1) % conflicts.len();
+                        }
+                    }
+                    Char('d') | Char('D') => {
+                        // Resolve a same-id conflict by denying the contested rule
+                        // id (writes a deny entry — whetstone-j09).
+                        if let Some(c) = conflicts.get(self.conflict_cursor) {
+                            if c.get("kind").and_then(|v| v.as_str()) == Some("same-id") {
+                                if let Some(id) = c.get("rule_id").and_then(|v| v.as_str()) {
+                                    let _ = crate::onboard::add_deny(project_dir, &[id.to_string()]);
+                                    self.message = format!("Denied {id} (writes a deny entry).");
+                                }
+                            } else {
+                                self.message =
+                                    "Formatter clashes are resolved by an override — deny a rule in Review.".to_string();
+                            }
+                        }
+                    }
+                    Enter => {
+                        self.step = Step::Review;
+                        self.cursor = 0;
+                    }
+                    Esc => self.step = Step::Sources,
+                    _ => {}
+                }
+            }
             Step::Review => match key {
                 Up | Char('k') => self.move_cursor(-1),
                 Down | Char('j') => self.move_cursor(1),
@@ -321,6 +371,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
     match s.step {
         Step::Home => render_home(&mut lines, s),
         Step::Packs => render_packs(&mut lines, s),
+        Step::Sources => render_sources(&mut lines, s),
         Step::Conflicts => render_conflicts(&mut lines, s),
         Step::Review => render_review(&mut lines, s),
         Step::Payoff => render_payoff(&mut lines, s),
@@ -433,11 +484,39 @@ fn render_packs(lines: &mut Vec<Line<'static>>, s: &OnboardState) {
     }
 }
 
+fn render_sources(lines: &mut Vec<Line<'static>>, s: &OnboardState) {
+    heading(
+        lines,
+        "Sources — defaults are already sane",
+        "Every imported pack carries its own doc citations · Enter to continue",
+    );
+    lines.push(Line::from(Span::styled(
+        format!(
+            "{} dependencies detected. Official docs travel with the packs you import;",
+            s.deps_detected
+        ),
+        Style::default().fg(theme::MUTED),
+    )));
+    lines.push(Line::from(Span::styled(
+        "nothing to configure here to get value.",
+        Style::default().fg(theme::MUTED),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "To watch dependency changelogs for drift, use the Sources screen (press 2 anytime)",
+        Style::default().fg(theme::MUTED),
+    )));
+    lines.push(Line::from(Span::styled(
+        "or `wh sources add <url>` — Whetstone's drift gate flags stale rules automatically.",
+        Style::default().fg(theme::MUTED),
+    )));
+}
+
 fn render_conflicts(lines: &mut Vec<Line<'static>>, s: &OnboardState) {
     heading(
         lines,
         "Conflicts",
-        "How your selection overlaps existing rules · Enter to continue",
+        "↑/↓ move · D denies a contested rule · Enter accepts precedence + continues",
     );
     let count = s
         .conflicts
@@ -452,16 +531,25 @@ fn render_conflicts(lines: &mut Vec<Line<'static>>, s: &OnboardState) {
         )));
         return;
     }
-    if let Some(cs) = s.conflicts.as_ref().and_then(|c| c.get("conflicts")).and_then(|v| v.as_array()) {
-        for c in cs {
-            let kind = c.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-            let id = c.get("rule_id").or_else(|| c.get("option")).and_then(|v| v.as_str()).unwrap_or("");
-            let winner = c.get("winner").and_then(|v| v.as_str()).unwrap_or("");
-            lines.push(Line::from(Span::styled(
-                format!("  ⚠ {kind}: {id}  (winner: {winner})"),
-                Style::default().fg(theme::STATUS_WARN),
-            )));
-        }
+    for (i, c) in s.conflict_list().iter().enumerate() {
+        let kind = c.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        let id = c.get("rule_id").or_else(|| c.get("option")).and_then(|v| v.as_str()).unwrap_or("");
+        let winner = c.get("winner").and_then(|v| v.as_str()).unwrap_or("");
+        let cursor = if i == s.conflict_cursor { "›" } else { " " };
+        let extra = if winner.is_empty() {
+            String::new()
+        } else {
+            format!("  (winner: {winner})")
+        };
+        let style = if i == s.conflict_cursor {
+            theme::selection()
+        } else {
+            Style::default().fg(theme::STATUS_WARN)
+        };
+        lines.push(Line::from(Span::styled(
+            format!("{cursor} ⚠ {kind}: {id}{extra}"),
+            style,
+        )));
     }
 }
 
@@ -647,6 +735,33 @@ mod tests {
         // Finish exits.
         assert!(press(&mut s, &tmp, KeyCode::Enter));
 
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn curated_path_sources_conflicts_deny() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wh_wizcur_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let mut s = OnboardState::load(&tmp);
+        // Curated: Home C -> Packs. Select the airbnb resource pack, then walk
+        // Packs -> Sources -> Conflicts -> Review.
+        press(&mut s, &tmp, KeyCode::Char('c'));
+        assert_eq!(s.step, Step::Packs);
+        let airbnb = s.catalog.iter().position(|c| c.kind == "resource").expect("a resource pack exists");
+        s.cursor = airbnb;
+        press(&mut s, &tmp, KeyCode::Char(' ')); // select
+        assert!(s.selected.contains(&airbnb));
+        press(&mut s, &tmp, KeyCode::Enter); // -> Sources
+        assert_eq!(s.step, Step::Sources);
+        press(&mut s, &tmp, KeyCode::Enter); // -> Conflicts (computed)
+        assert_eq!(s.step, Step::Conflicts);
+        press(&mut s, &tmp, KeyCode::Enter); // -> Review
+        assert_eq!(s.step, Step::Review);
         let _ = fs::remove_dir_all(&tmp);
     }
 
