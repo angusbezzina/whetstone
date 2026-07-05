@@ -138,6 +138,25 @@ pub fn resolve_local_pack(path: &Path) -> Result<ResolvedConfigPack> {
     })
 }
 
+/// Like [`resolve_local_pack`] but from an in-memory YAML string (the wizard
+/// previews bundled catalog packs without writing temp files — whetstone-dyg).
+pub fn resolve_inline_pack(yaml: &str, label: &str) -> Result<ResolvedConfigPack> {
+    let pack: RulePackFile =
+        serde_yaml::from_str(yaml).with_context(|| format!("parse pack {label}"))?;
+    Ok(ResolvedConfigPack {
+        scope: CANDIDATE_SCOPE.to_string(),
+        ref_spec: format!("inline:{label}"),
+        resolved_ref: label.to_string(),
+        source_kind: "inline".to_string(),
+        cache_status: "preview".to_string(),
+        content_hash: resolve::content_hash(yaml),
+        metadata: pack.metadata.clone(),
+        language: pack.language.clone(),
+        fetched_at: String::new(),
+        pack,
+    })
+}
+
 /// Scope tag applied to injected preview packs (whetstone-dva).
 pub const CANDIDATE_SCOPE: &str = "candidate";
 

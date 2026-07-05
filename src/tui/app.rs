@@ -22,6 +22,7 @@ pub struct App {
     pub dashboard: DashboardState,
     pub sources_ui: SourcesUiState,
     pub rules_ui: RulesUiState,
+    pub onboard: crate::tui::screens::onboard::OnboardState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -256,9 +257,31 @@ impl App {
             dashboard: DashboardState::default(),
             sources_ui: SourcesUiState::default(),
             rules_ui: RulesUiState::default(),
+            onboard: crate::tui::screens::onboard::OnboardState::load(&project_dir),
         };
         app.load_dashboard();
         Ok(app)
+    }
+
+    /// If this project isn't set up yet and the user hasn't dismissed onboarding,
+    /// open the wizard instead of the dashboard (whetstone-arx). Derived purely
+    /// from `setup_status` — no stored "seen it" flag beyond `setup.dismissed`.
+    pub fn start_onboarding_if_needed(&mut self) {
+        let complete = self
+            .onboard
+            .setup
+            .get("complete")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let dismissed = self
+            .onboard
+            .setup
+            .get("dismissed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !complete && !dismissed {
+            self.screen = Screen::Onboard;
+        }
     }
 
     /// Best-effort load of the dashboard data. Errors are swallowed and
@@ -337,6 +360,21 @@ impl App {
 
         if self.screen == Screen::Intro {
             self.handle_intro_key(ev);
+            return;
+        }
+
+        // The onboarding wizard owns all of its keys (whetstone-v5n). Ctrl-C
+        // above still quits; everything else routes to its step machine.
+        if self.screen == Screen::Onboard {
+            use crate::tui::screens::onboard::Outcome;
+            match self.onboard.on_key(ev.code, &self.project_dir) {
+                Outcome::Stay => {}
+                Outcome::Exit => {
+                    self.onboard = crate::tui::screens::onboard::OnboardState::load(&self.project_dir);
+                    self.load_dashboard();
+                    self.screen = Screen::Dashboard;
+                }
+            }
             return;
         }
 
@@ -455,6 +493,12 @@ impl App {
 
     fn finish_intro(&mut self, next_screen: Screen) {
         self.screen = next_screen;
+        // Leaving the splash for the dashboard on an un-onboarded project opens
+        // the setup wizard instead (whetstone-arx). An explicit nav key (1-5)
+        // overrides — the user asked for a specific screen.
+        if next_screen == Screen::Dashboard {
+            self.start_onboarding_if_needed();
+        }
         self.ensure_current_screen_loaded();
     }
 
@@ -466,7 +510,7 @@ impl App {
                 Screen::Dashboard => {
                     self.dashboard_ui.scroll = self.dashboard_ui.scroll.saturating_sub(1)
                 }
-                Screen::Intro => {}
+                Screen::Intro | Screen::Onboard => {}
                 Screen::Help => self.help.scroll_y = self.help.scroll_y.saturating_sub(1),
                 Screen::Result => self.dashboard.result.scroll_up(1),
                 Screen::Debt => self.dashboard.debt.select_prev(),
@@ -510,7 +554,7 @@ impl App {
                 Screen::Dashboard => {
                     self.dashboard_ui.scroll = self.dashboard_ui.scroll.saturating_add(1)
                 }
-                Screen::Intro => {}
+                Screen::Intro | Screen::Onboard => {}
                 Screen::Help => self.help.scroll_y = self.help.scroll_y.saturating_add(1),
                 Screen::Result => self.dashboard.result.scroll_down(1),
                 Screen::Debt => self.dashboard.debt.select_next(),
@@ -1744,12 +1788,29 @@ mod tests {
     fn intro_any_key_opens_dashboard() {
         let tmp = std::env::temp_dir().join(format!("wh_tui_intro_key_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
+        // Dismiss onboarding so intro → dashboard (an un-onboarded project would
+        // route to the wizard — see intro_unonboarded_opens_wizard).
+        crate::onboard::set_dismissed(&tmp, true).unwrap();
         let mut app = App::new(&tmp).unwrap();
         app.start_intro();
 
         app.update(Msg::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
 
         assert_eq!(app.screen, Screen::Dashboard);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn intro_unonboarded_opens_wizard() {
+        // whetstone-arx: leaving the splash on a fresh (un-onboarded, not
+        // dismissed) project opens the setup wizard, not the dashboard.
+        let tmp = std::env::temp_dir().join(format!("wh_tui_onboard_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::create_dir_all(&tmp);
+        let mut app = App::new(&tmp).unwrap();
+        app.start_intro();
+        app.update(Msg::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+        assert_eq!(app.screen, Screen::Onboard);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

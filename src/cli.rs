@@ -527,6 +527,21 @@ enum RulesAction {
 }
 
 #[derive(Subcommand)]
+enum OnboardAction {
+    /// Persist the "skip onboarding" decision (setup.dismissed) so the wizard
+    /// stops offering itself. Reversible with `wh onboard reset`.
+    Dismiss {
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+    /// Clear the dismissal so the onboarding wizard is offered again.
+    Reset {
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
 enum PackAction {
     /// Import a pack file into this project: copy it under whetstone/packs/ and
     /// add its `extends` entry idempotently. The same primitive `wh init --claude`
@@ -880,6 +895,12 @@ enum Commands {
     Pack {
         #[command(subcommand)]
         action: PackAction,
+    },
+
+    /// Onboarding controls (dismiss / reset the setup wizard)
+    Onboard {
+        #[command(subcommand)]
+        action: OnboardAction,
     },
 
     /// Run every rule's golden examples through the scanner and score them (the rule-quality bar)
@@ -1600,6 +1621,29 @@ pub fn run() -> i32 {
                 agent_hook::post_tool_use(&project_dir, block).unwrap_or(0)
             }
         },
+
+        Commands::Onboard { action } => {
+            let (project_dir, dismissed) = match action {
+                OnboardAction::Dismiss { project_dir } => (project_dir, true),
+                OnboardAction::Reset { project_dir } => (project_dir, false),
+            };
+            match onboard::set_dismissed(&project_dir, dismissed) {
+                Ok(()) => {
+                    output::print_json(&serde_json::json!({
+                        "status": "ok",
+                        "dismissed": dismissed,
+                    }));
+                    0
+                }
+                Err(e) => {
+                    output::print_json(&output::error_json(
+                        &e.to_string(),
+                        "Ensure whetstone/whetstone.yaml is writable",
+                    ));
+                    1
+                }
+            }
+        }
 
         Commands::Pack { action } => match action {
             PackAction::Import {
@@ -3008,6 +3052,7 @@ fn command_title(command: &Commands) -> &'static str {
         Commands::Mcp { .. } => "MCP",
         Commands::Hook { .. } => "HOOK",
         Commands::Pack { .. } => "PACK",
+        Commands::Onboard { .. } => "ONBOARD",
         Commands::Eval { .. } => "EVAL",
         Commands::Scan { .. } => "SCAN",
         Commands::Ci { .. } => "CI",
@@ -3099,6 +3144,11 @@ fn project_dir_for_command(command: &Commands) -> PathBuf {
         },
         Commands::Pack { action } => match action {
             PackAction::Import { project_dir, .. } => project_dir.clone(),
+        },
+        Commands::Onboard { action } => match action {
+            OnboardAction::Dismiss { project_dir } | OnboardAction::Reset { project_dir } => {
+                project_dir.clone()
+            }
         },
         Commands::Eval { project_dir, .. } => project_dir.clone(),
         Commands::Rules { action } => match action {

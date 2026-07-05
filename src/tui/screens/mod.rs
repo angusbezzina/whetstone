@@ -11,6 +11,7 @@ pub mod debt;
 pub mod extract;
 pub mod help;
 pub mod intro;
+pub mod onboard;
 pub mod result;
 pub mod rules;
 pub mod sources;
@@ -40,12 +41,13 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Screen::Check => check::render(frame, area, app),
         Screen::Debt => debt::render(frame, area, app),
         Screen::Help => help::render(frame, area, app),
+        Screen::Onboard => onboard::render(frame, area, app),
     }
 }
 
 pub fn ensure_loaded(screen: Screen, app: &mut App) {
     match screen {
-        Screen::Intro | Screen::Result | Screen::Dashboard | Screen::Help => {}
+        Screen::Intro | Screen::Result | Screen::Dashboard | Screen::Help | Screen::Onboard => {}
         Screen::Debt => app.ensure_debt_loaded(),
         Screen::Sources => app.ensure_sources_loaded(),
         Screen::Rules => app.ensure_rules_loaded(),
@@ -74,6 +76,7 @@ pub fn scroll_hint(screen: Screen, body: Rect, app: &App) -> Option<footer::Scro
             _ => None,
         },
         Screen::Check => None,
+        Screen::Onboard => None,
     }
 }
 

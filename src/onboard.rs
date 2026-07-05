@@ -296,6 +296,72 @@ fn add_extends_entry(project_dir: &Path, ref_str: &str) -> Result<bool> {
     Ok(already)
 }
 
+/// Persist the onboarding "skip" decision as `setup.dismissed` in
+/// whetstone.yaml — a real, reversible config key, NOT a TUI-only state file
+/// (whetstone-arx). The TUI writes it only through this oracle. Round-trips the
+/// whole doc so `extends`/other keys survive.
+pub fn set_dismissed(project_dir: &Path, dismissed: bool) -> Result<()> {
+    let path = project_dir.join("whetstone").join("whetstone.yaml");
+    let mut doc: Value = if path.exists() {
+        serde_yaml::from_str(&std::fs::read_to_string(&path)?).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+    if !doc.is_object() {
+        doc = json!({});
+    }
+    let obj = doc.as_object_mut().unwrap();
+    obj.insert("version".to_string(), json!(1));
+    let setup = obj.entry("setup").or_insert_with(|| json!({}));
+    if !setup.is_object() {
+        *setup = json!({});
+    }
+    setup
+        .as_object_mut()
+        .unwrap()
+        .insert("dismissed".to_string(), json!(dismissed));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, serde_yaml::to_string(&doc).context("serialize whetstone.yaml")?)?;
+    Ok(())
+}
+
+/// Add rule ids to the project's `deny` list in whetstone.yaml idempotently —
+/// the wizard's per-rule opt-out during review (whetstone-eg4). Preserves other
+/// keys via a whole-doc round-trip.
+pub fn add_deny(project_dir: &Path, ids: &[String]) -> Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let path = project_dir.join("whetstone").join("whetstone.yaml");
+    let mut doc: Value = if path.exists() {
+        serde_yaml::from_str(&std::fs::read_to_string(&path)?).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+    if !doc.is_object() {
+        doc = json!({});
+    }
+    let obj = doc.as_object_mut().unwrap();
+    obj.insert("version".to_string(), json!(1));
+    let deny = obj.entry("deny").or_insert_with(|| json!([]));
+    if !deny.is_array() {
+        *deny = json!([]);
+    }
+    let arr = deny.as_array_mut().unwrap();
+    for id in ids {
+        if !arr.iter().any(|e| e.as_str() == Some(id.as_str())) {
+            arr.push(json!(id));
+        }
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, serde_yaml::to_string(&doc).context("serialize whetstone.yaml")?)?;
+    Ok(())
+}
+
 /// Register the Whetstone MCP server in .mcp.json, preserving any existing
 /// servers. Shared step (whetstone-if6).
 pub fn register_mcp(project_dir: &Path) -> Result<()> {

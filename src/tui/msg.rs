@@ -17,6 +17,9 @@ pub enum Screen {
     Check,
     Debt,
     Help,
+    /// First-run onboarding wizard (whetstone-v5n). Its own step machine lives
+    /// on `App::onboard`; it is not part of the 1–5 nav.
+    Onboard,
 }
 
 impl Screen {
@@ -38,6 +41,7 @@ impl Screen {
             Screen::Check => "VIOLATIONS",
             Screen::Debt => "DEBT",
             Screen::Help => "HELP",
+            Screen::Onboard => "SETUP",
         }
     }
 

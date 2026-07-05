@@ -71,3 +71,43 @@ pub fn for_dep(language: &str, dep: &str) -> Option<&'static BundledPack> {
         p.language.eq_ignore_ascii_case(language) && p.dep.eq_ignore_ascii_case(dep)
     })
 }
+
+/// A browsable summary of a bundled pack (whetstone-dyg): the onboarding packs
+/// picker renders this without re-parsing YAML in the view.
+#[derive(Debug, Clone)]
+pub struct CatalogEntry {
+    pub dep: &'static str,
+    pub language: &'static str,
+    pub name: String,
+    pub rule_count: usize,
+    /// "starter" (dependency pack) or "resource" (style-guide pack).
+    pub kind: &'static str,
+    pub yaml: &'static str,
+}
+
+/// Parse every bundled pack into a browsable catalog entry.
+pub fn catalog() -> Vec<CatalogEntry> {
+    PACKS
+        .iter()
+        .map(|p| {
+            let parsed: Option<crate::config_packs::RulePackFile> = serde_yaml::from_str(p.yaml).ok();
+            let (name, rule_count) = parsed
+                .as_ref()
+                .map(|pk| {
+                    (
+                        pk.metadata.name.clone().unwrap_or_else(|| p.dep.to_string()),
+                        pk.rules.iter().filter(|r| r.approved).count(),
+                    )
+                })
+                .unwrap_or_else(|| (p.dep.to_string(), 0));
+            CatalogEntry {
+                dep: p.dep,
+                language: p.language,
+                name,
+                rule_count,
+                kind: "starter",
+                yaml: p.yaml,
+            }
+        })
+        .collect()
+}
