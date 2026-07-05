@@ -65,6 +65,127 @@ pub fn generate_context_step(project_dir: &Path) -> Result<Value> {
     crate::generate_context::generate_context(project_dir, None, None, false, false, true)
 }
 
+/// Derive the onboarding checklist from real artifacts — never a stored state
+/// file (whetstone-suk). The single source of truth the TUI wizard, the skill,
+/// and Janitor all read to decide "how set up is this repo?". Write-free.
+pub fn setup_status(project_dir: &Path) -> Value {
+    // extends + setup.dismissed come straight from whetstone.yaml (no snapshot,
+    // no cache writes).
+    let ws_path = project_dir.join("whetstone").join("whetstone.yaml");
+    let ws_doc: Value = std::fs::read_to_string(&ws_path)
+        .ok()
+        .and_then(|s| serde_yaml::from_str(&s).ok())
+        .unwrap_or_else(|| json!({}));
+    let extends_count = ws_doc
+        .get("extends")
+        .and_then(|e| e.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let dismissed = ws_doc
+        .get("setup")
+        .and_then(|s| s.get("dismissed"))
+        .and_then(|d| d.as_bool())
+        .unwrap_or(false);
+
+    // Detected deps (manifests only, no network).
+    let deps_detected = crate::detect::detect_deps(project_dir, false, &[], &[], false)
+        .ok()
+        .and_then(|d| d.get("dependencies").and_then(|a| a.as_array()).map(|a| a.len()))
+        .unwrap_or(0);
+
+    // Active rules via the read-only merge seam (whetstone-dva) — no writes.
+    let rules_active = if crate::layers::project_is_initialized(project_dir) {
+        let opts = crate::config::SnapshotOptions {
+            read_only: true,
+            injected_packs: Vec::new(),
+        };
+        crate::layers::resolve_merged_with(project_dir, None, true, true, false, &opts)
+            .merged
+            .len()
+    } else {
+        0
+    };
+
+    // Context files.
+    let context_dir = project_dir.join("whetstone").join("context");
+    let context_files: Vec<String> = std::fs::read_dir(&context_dir)
+        .map(|rd| {
+            rd.flatten()
+                .filter_map(|e| e.file_name().to_str().map(str::to_string))
+                .filter(|n| n.ends_with(".md"))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Hooks: PostToolUse entry in .claude/settings.json.
+    let settings: Value = std::fs::read_to_string(project_dir.join(".claude").join("settings.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| json!({}));
+    let hooks_installed = settings
+        .get("hooks")
+        .and_then(|h| h.get("PostToolUse"))
+        .and_then(|p| p.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
+
+    // MCP: whetstone server in .mcp.json.
+    let mcp: Value = std::fs::read_to_string(project_dir.join(".mcp.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| json!({}));
+    let mcp_registered = mcp
+        .get("mcpServers")
+        .and_then(|m| m.get("whetstone"))
+        .is_some();
+
+    // The counted milestones (each a user-completable step).
+    let items = json!([
+        {
+            "key": "rules_active",
+            "done": rules_active > 0,
+            "evidence": format!("{rules_active} active rule(s)"),
+            "next_command": "wh  (run the wizard) — or wh pack import <file>",
+        },
+        {
+            "key": "context_generated",
+            "done": !context_files.is_empty(),
+            "evidence": context_files.join(", "),
+            "next_command": "wh actions context",
+        },
+        {
+            "key": "hooks_installed",
+            "done": hooks_installed,
+            "evidence": if hooks_installed { ".claude/settings.json PostToolUse" } else { "" },
+            "next_command": "wh init --hooks",
+        },
+        {
+            "key": "mcp_registered",
+            "done": mcp_registered,
+            "evidence": if mcp_registered { ".mcp.json mcpServers.whetstone" } else { "" },
+            "next_command": "wh init --claude",
+        },
+    ]);
+    let done = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["done"].as_bool().unwrap_or(false))
+        .count();
+    let total = items.as_array().unwrap().len();
+
+    json!({
+        "status": "ok",
+        "done": done,
+        "total": total,
+        "complete": done == total,
+        "dismissed": dismissed,
+        "dependencies_detected": deps_detected,
+        "packs_imported": extends_count,
+        "items": items,
+    })
+}
+
 /// Install the SessionStart advisory + PostToolUse enforcement hooks (shared step).
 pub fn install_hooks_step(project_dir: &Path) -> Result<Value> {
     crate::triggers::install_hooks(project_dir, &crate::triggers::HookOptions::all())

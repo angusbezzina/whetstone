@@ -4493,3 +4493,46 @@ fn test_pack_import_matches_init_claude_artifacts() {
     let _ = std::fs::remove_dir_all(&a);
     let _ = std::fs::remove_dir_all(&b);
 }
+
+#[test]
+fn test_status_setup_derives_checklist_and_dismissal() {
+    // whetstone-suk: --setup derives the checklist from artifacts (no state file),
+    // surfaces the dismissed flag, and works on an uninitialized repo.
+    let tmp = std::env::temp_dir().join(format!(
+        "wh_setup_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let p = tmp.to_str().unwrap();
+
+    // Uninitialized repo: no early-return, all milestones false.
+    let (out, _e, ok) = run_whetstone(&["status", "--setup", "--json", "--project-dir", p], p);
+    assert!(ok, "status --setup should succeed on a fresh repo: {out}");
+    let s = parse_json(&out);
+    assert_eq!(s["done"], 0);
+    assert_eq!(s["total"], 4);
+    assert_eq!(s["dismissed"], false);
+    assert_eq!(s["status"], "ok");
+
+    // Dismissal is read from whetstone.yaml, and add_extends_entry (wh pack import)
+    // must preserve the setup key on round-trip.
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::write(tmp.join("whetstone/whetstone.yaml"), "version: 1\nsetup:\n  dismissed: true\n").unwrap();
+    let (out2, _e, _ok) = run_whetstone(&["status", "--setup", "--json", "--project-dir", p], p);
+    assert_eq!(parse_json(&out2)["dismissed"], true);
+
+    // A pack import preserves the dismissed key (unknown-key round-trip).
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let (_o, _e, _ok) = run_whetstone(
+        &["pack", "import", manifest.join("packs/python/fastapi.yaml").to_str().unwrap(), "--json", "--project-dir", p],
+        p,
+    );
+    let ws = std::fs::read_to_string(tmp.join("whetstone/whetstone.yaml")).unwrap();
+    assert!(ws.contains("dismissed"), "pack import must preserve setup.dismissed: {ws}");
+    let (out3, _e, _ok) = run_whetstone(&["status", "--setup", "--json", "--project-dir", p], p);
+    assert_eq!(parse_json(&out3)["dismissed"], true, "dismissed survived import");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

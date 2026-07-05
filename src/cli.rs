@@ -714,6 +714,12 @@ enum Commands {
         /// Output only extraction-ready deps
         #[arg(long)]
         extraction_ready: bool,
+
+        /// Emit the derived onboarding checklist (packs/context/hooks/mcp/rules)
+        /// instead of the health summary — the single source of truth the TUI
+        /// wizard, the skill, and Janitor read (whetstone-suk)
+        #[arg(long)]
+        setup: bool,
     },
 
     /// Generate agent context files from approved rules
@@ -1353,7 +1359,12 @@ pub fn run() -> i32 {
             history,
             no_snapshot,
             extraction_ready,
+            setup,
         } => {
+            if setup {
+                output::print_json(&onboard::setup_status(&project_dir));
+                return 0;
+            }
             if status_report {
                 return run_report_command(
                     &project_dir,
