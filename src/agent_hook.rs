@@ -131,8 +131,13 @@ mod tests {
 
     /// A temp project whose only rule flags a bare `.unwrap()` via ast_scope.
     fn project_with_unwrap_rule() -> PathBuf {
+        // Per-call atomic counter so sibling tests never share a dir (a nanos
+        // collision under parallelism previously let one test delete another's
+        // fixture mid-scan).
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let tmp = std::env::temp_dir().join(format!(
-            "wh_hook_{}_{}",
+            "wh_hook_{}_{}_{seq}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
