@@ -180,6 +180,12 @@ The complete canonical surface, grouped by concern. All commands accept
 |---------|---------|
 | `wh init` | Detect deps, resolve docs, fetch subscribed sources, write extraction handoff. |
 | `wh init --claude` | One-command agent onboarding: import matching starter packs, generate context, register the MCP server, install SessionStart + PostToolUse hooks. |
+| `wh` (bare, TTY) | First-run onboarding **wizard** — the human front door (Express/Curated, preview-before-commit, review gate, payoff scan). Skin over the oracles below. |
+| `wh status --setup` | Derived onboarding checklist (rules/context/hooks/mcp + deps/packs/dismissed) — the shared source of truth for the wizard, skill, and Janitor. |
+| `wh scan --with-pack <file>` | Preview a candidate pack as if imported (read-only); tags hits `from_candidate` + adds a `preview` summary. |
+| `wh config conflicts` | Cross-layer rule conflicts (same-id shadowing, formatter-option clashes) as JSON; accepts `--with-pack`. |
+| `wh pack import <file>` | Import a pack (copy + idempotent `extends`) — the shared primitive behind both front doors. |
+| `wh onboard dismiss` / `reset` | Persist / clear the wizard's skip decision (`setup.dismissed`). |
 | `wh reinit` | Re-resolve deps and sources; flag version/content-hash drift. |
 | `wh set-sources` | Lower-level resolution-only slice of init. Usually implicit. |
 

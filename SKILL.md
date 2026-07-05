@@ -80,6 +80,13 @@ a Claude Code PostToolUse hook (`wh hook posttooluse`) scans each file you edit
 and feeds any rule violation back in the same turn. Treat that feedback as a
 `must`-fix: correct the violation before moving on, don't defer it to CI.
 
+**Onboarding is human-first; don't drive the TUI.** Bare `wh` on a TTY opens a
+setup wizard for humans. As an agent, onboard headlessly with `wh init --claude`
+(or the shared oracles: `wh pack import`, `wh scan --with-pack` to preview,
+`wh config conflicts`, `wh status --setup`). Both front doors produce identical
+artifacts — after `init --claude`, tell the user their imported rules can be
+reviewed anytime by running `wh`.
+
 ### Cheaper bootstrap: `--terse` and per-language sidecars
 
 `wh actions all --terse` (or `wh context --terse`) emits a one-line-per-rule `AGENTS.md` (~50% smaller) that agents can load at session start without consuming much context. Use it when you prefer to rely on `wh rules query` for the details.

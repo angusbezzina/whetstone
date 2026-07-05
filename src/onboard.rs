@@ -227,8 +227,10 @@ pub fn claude(project_dir: &Path) -> Result<Value> {
     wired.push(if imported.is_empty() {
         "no matching starter packs for detected deps — extract your own with `wh extract`".to_string()
     } else {
+        // Consent asymmetry (whetstone-5ie): the agent door imports pre-verified
+        // rules without a review moment, so point at the human review surface.
         format!(
-            "imported {} starter pack(s): {}",
+            "imported {} pre-verified starter pack(s): {} — review them anytime: run `wh` (Review)",
             imported.len(),
             imported.join(", ")
         )

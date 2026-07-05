@@ -57,6 +57,11 @@ while the CLI settles on `wh scan`, `wh rules`, `wh sources`, and `wh sources ve
 | `wh mcp` | agent access | approved rules, source files | stdio JSON-RPC | Local MCP server exposing `rules_query` + `scan` to agents. |
 | `wh hook posttooluse` | enforce (in-session) | PostToolUse event (stdin), edited file, approved rules | hook JSON on stdout | Claude Code hook: scans the edited file, feeds violations back to the agent in the same turn. |
 | `wh init --claude` | onboard | manifests, bundled corpus | packs + `whetstone.yaml` + `.mcp.json` + context + hooks | One-command agent onboarding. |
+| `wh` (TTY) | onboard (human) | manifests, corpus, oracles below | packs + `whetstone.yaml` + context + hooks | First-run setup wizard — the human front door; skin over the oracles. |
+| `wh status --setup` | inspect | artifacts | — | Derived onboarding checklist (write-free); shared truth for wizard/skill/Janitor. |
+| `wh scan --with-pack` | preview | approved rules + candidate pack, source files | — | Read-only preview of a pack as if imported; tags `from_candidate`. |
+| `wh config conflicts` | inspect | configured + proposed packs | — | Same-id + formatter-option conflicts as JSON. |
+| `wh pack import` | onboard | pack file | pack + `extends` | Shared import primitive (idempotent) behind both front doors. |
 | `wh rules query` | inspect (JIT) | approved rules | — | JIT rule lookup for agents. Filters: `--file <path>` (infers language), `--lang`, `--dep`, `--severity`, `--personal-only`, `--project-only`, `--full`. Preferred over re-reading `AGENTS.md` mid-turn. |
 | `wh rules add <id>` | author | — | one rule appended to (or creates) `whetstone/(.personal/)?rules/<lang>/<dep>.yaml` as `status: approved` | Personal-taste shortcut. Required: `--description`, `--lang`, either `--match` or a dep prefix in the id. `--project` to target the committed layer. |
 | `wh rules edit <id> \| --all [--dep] [--category]` | author | approved rule files | same file, severity/confidence mutated | Bump severity (`should → must`) or confidence without hand-editing YAML. `--dry-run` to preview. Refuses candidates. |

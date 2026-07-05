@@ -88,13 +88,25 @@ cargo build --release && ./target/release/whetstone --help
 init --project-dir <your-repo>` works from any directory — there is no
 requirement to run it from inside the Whetstone checkout.
 
-### Get value in one command
+### Get value in one command — or one screen
 
-The fastest path — wire the whole thing for a Claude Code agent in one step:
+Whetstone has two front doors that produce the **same** artifacts (packs,
+`extends`, context, hooks, `.mcp.json`) — pick whichever fits:
+
+- **Human:** run `whetstone` (bare, on a TTY) on a fresh project and follow the
+  **Setup wizard** — Express accepts the starter packs that match your
+  dependencies, or Curated lets you browse packs, preview each one's hits against
+  your code *before* importing, review every rule with its citation, and see the
+  first scan. Nothing is enforced until you confirm.
+- **Agent:** one command wires it headlessly for a Claude Code agent:
 
 ```bash
 whetstone init --claude
 ```
+
+The two doors differ only in the consent moment: the wizard reviews before it
+writes; `init --claude` imports pre-verified rules and tells you to review them
+anytime (run `whetstone`). Same state, either way.
 
 That detects your dependencies, imports the matching pre-verified starter packs
 (FastAPI, Pydantic, SQLAlchemy, httpx, React, Next, Zod, Express, axum, serde),

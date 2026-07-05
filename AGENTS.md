@@ -24,6 +24,7 @@ Prefer the canonical names above. A small compatibility surface still exists for
 - **One-command onboarding:** `wh init --claude` imports matching starter packs, generates context, registers the MCP server (`.mcp.json`), and installs the hooks.
 - **In-session enforcement:** the installed `wh hook posttooluse` scans each edited file and feeds violations back to the agent in the same turn. When it surfaces a violation, fix it before continuing.
 - **Taste capture:** codify a standing preference as a rule (verified with `wh eval`) or, when it needs judgment, a guidance entry in `whetstone/guidance/` (schema: `references/guidance-schema.yaml`) — surfaced in generated context and `wh rules query`, never scanned. Personal standards live in a taste pack imported across repos.
+- **Onboarding wizard (humans, not agents):** bare `wh` on a TTY opens the first-run setup wizard — the human front door. Agents should NOT drive the TUI; use `wh init --claude` / the MCP server instead. Both doors produce identical artifacts. The wizard is a skin over oracles you can also call directly: `wh status --setup` (derived checklist), `wh scan --with-pack` (preview), `wh config conflicts`, `wh pack import`.
 
 Agents MAY hand-author rule YAML only through `wh extract submit <bundle>`, which refuses id collisions. Do NOT edit `whetstone/rules/**/*.yaml` directly.
 
