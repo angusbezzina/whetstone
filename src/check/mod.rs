@@ -36,14 +36,39 @@ pub struct CheckOptions<'a> {
     pub scan_paths: &'a [PathBuf],
     pub lang_filter: Option<&'a str>,
     pub rule_filter: Option<&'a [String]>,
+    /// Candidate packs to preview as if imported (whetstone-653). When non-empty,
+    /// resolution is READ-ONLY (no pack-cache writes) and each violation is tagged
+    /// with `from_candidate`; a `preview` summary is added to the output.
+    pub injected_packs: &'a [crate::config_packs::ResolvedConfigPack],
 }
 
 pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
     let project_dir = opts.project_dir;
     let project_initialized = layers::project_is_initialized(project_dir);
+    let previewing = !opts.injected_packs.is_empty();
 
-    let rules: Vec<ApprovedRule> = if project_initialized {
-        let merged = layers::resolve_merged(project_dir, opts.lang_filter, true, true, false);
+    // Rule ids contributed by the candidate packs (post language filter), used to
+    // label preview hits. Derived from provenance so the label matches the merge.
+    let candidate_ids: BTreeSet<String> = if previewing {
+        crate::config_packs::merge_pack_rules_tagged(opts.injected_packs, opts.lang_filter)
+            .0
+            .into_iter()
+            .filter(|(_, origin)| origin.is_candidate())
+            .map(|(rule, _)| rule.id)
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
+
+    let rules: Vec<ApprovedRule> = if project_initialized || previewing {
+        // Preview injects the candidate through the identical merge seam
+        // (read-only), so shadowing + denies apply exactly as a real import would.
+        let snap_opts = crate::config::SnapshotOptions {
+            read_only: previewing,
+            injected_packs: opts.injected_packs.to_vec(),
+        };
+        let merged =
+            layers::resolve_merged_with(project_dir, opts.lang_filter, true, true, false, &snap_opts);
         merged.merged.into_iter().map(|lr| lr.rule).collect()
     } else {
         let paths = layers::LayerPaths::for_project(project_dir);
@@ -227,7 +252,7 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
     } else {
         "config_issues_found"
     };
-    Ok(json!({
+    let mut result = json!({
         "status": status,
         "violations_count": violations_count,
         "config_issues_count": config_issue_count,
@@ -237,7 +262,40 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
         "config_issues": config_issues,
         "skipped": skipped,
         "warnings": warnings,
-    }))
+    });
+
+    // Preview mode: tag each hit candidate-vs-configured and add a summary
+    // (whetstone-653). Non-preview output is byte-for-byte unchanged.
+    if previewing {
+        let mut candidate_hits = 0i64;
+        if let Some(vs) = result["violations"].as_array_mut() {
+            for v in vs.iter_mut() {
+                let rid = v.get("rule_id").and_then(|r| r.as_str()).unwrap_or("");
+                let from_candidate = candidate_ids.contains(rid);
+                if from_candidate {
+                    candidate_hits += 1;
+                }
+                v["from_candidate"] = json!(from_candidate);
+            }
+        }
+        let candidate_rules_active = rules
+            .iter()
+            .filter(|r| candidate_ids.contains(&r.id))
+            .count();
+        let names: Vec<String> = opts
+            .injected_packs
+            .iter()
+            .map(crate::config_packs::pack_display_name)
+            .collect();
+        result["preview"] = json!({
+            "candidate_packs": names,
+            "candidate_rules": candidate_rules_active,
+            "candidate_hits": candidate_hits,
+            "configured_hits": violations_count - candidate_hits,
+        });
+    }
+
+    Ok(result)
 }
 
 // ── Golden eval (the rule-quality bar) ──

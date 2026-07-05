@@ -46,6 +46,7 @@ pub fn build(opts: &ReportOptions<'_>) -> Result<Value> {
         scan_paths: std::slice::from_ref(&scan_root),
         lang_filter: None,
         rule_filter: None,
+        injected_packs: &[],
     })?;
     let violations = rank_violations(&check_result);
     let top = violations

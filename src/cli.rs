@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    agent_hook, approve, check, ci_check, config, debt, detect, doctor, extract, gen,
+    agent_hook, approve, check, ci_check, config, config_packs, debt, detect, doctor, extract, gen,
     generate_context, generate_lint, generate_tests, mcp, onboard, output, personal, report, resolve,
     review, rule_authoring, rules, rules_query, source_mgmt, status, triggers, tui, update, worklist,
 };
@@ -873,6 +873,12 @@ enum Commands {
         #[arg(long)]
         rule: Option<String>,
 
+        /// Preview a candidate pack as if it were imported, WITHOUT touching
+        /// config or state (may be repeated). Hits are tagged `from_candidate`
+        /// and a `preview` summary is added. See `whetstone-653`.
+        #[arg(long = "with-pack", value_name = "PACK_FILE")]
+        with_pack: Vec<PathBuf>,
+
         /// Treat violations as exit-zero (for preview runs)
         #[arg(long)]
         no_fail: bool,
@@ -1579,6 +1585,7 @@ pub fn run() -> i32 {
             project_dir,
             lang,
             rule,
+            with_pack,
             no_fail,
         } => {
             let cfg = config::WhetstoneConfig::load(&project_dir);
@@ -1595,11 +1602,26 @@ pub fn run() -> i32 {
             };
             let rule_filter: Option<Vec<String>> =
                 rule.map(|s| s.split(',').map(|r| r.trim().to_string()).collect());
+            // Resolve candidate packs for preview (read-only; no state written).
+            let mut injected = Vec::new();
+            for pack_path in &with_pack {
+                match config_packs::resolve_local_pack(pack_path) {
+                    Ok(p) => injected.push(p),
+                    Err(e) => {
+                        output::print_json(&output::error_json(
+                            &format!("could not load --with-pack {}: {e}", pack_path.display()),
+                            "Pass a path to a valid RulePack YAML file",
+                        ));
+                        return 1;
+                    }
+                }
+            }
             match check::run(check::CheckOptions {
                 project_dir: &project_dir,
                 scan_paths: &scan_paths,
                 lang_filter: lang.as_deref(),
                 rule_filter: rule_filter.as_deref(),
+                injected_packs: &injected,
             }) {
                 Ok(result) => {
                     let violations_count = result

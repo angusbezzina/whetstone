@@ -1490,6 +1490,7 @@ fn collect_dashboard(project_dir: &Path) -> DashboardState {
         scan_paths: std::slice::from_ref(&scan_root),
         lang_filter: None,
         rule_filter: None,
+        injected_packs: &[],
     }) {
         if let Some(arr) = check.get("violations").and_then(|v| v.as_array()) {
             for v in arr {

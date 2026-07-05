@@ -1000,21 +1000,28 @@ impl WhetstoneConfig {
     /// [`WhetstoneConfig::load_full`] — kept separate so callers that
     /// produce committed output can opt out of personal-layer effects.
     pub fn load(project_dir: &Path) -> Self {
-        let snap = ConfigSnapshot::load(project_dir, true, false);
+        let snap = ConfigSnapshot::load(project_dir, true, false, &SnapshotOptions::default());
         snap.effective
+    }
+
+    /// Like `load`, but with explicit snapshot options — used so a read-only
+    /// preview never writes the pack cache while loading deny lists
+    /// (whetstone-dva).
+    pub fn load_with(project_dir: &Path, opts: &SnapshotOptions) -> Self {
+        ConfigSnapshot::load(project_dir, true, false, opts).effective
     }
 
     /// Project-only load: ignores the global config entirely. Used by
     /// the team resolver when it inspects a sibling project.
     pub fn load_project_only(project_dir: &Path) -> Self {
-        let snap = ConfigSnapshot::load(project_dir, false, false);
+        let snap = ConfigSnapshot::load(project_dir, false, false, &SnapshotOptions::default());
         snap.effective
     }
 
     /// Load every layer (global + project + personal). Returns a
     /// [`ConfigSnapshot`] with per-key provenance for `wh config show`.
     pub fn load_full(project_dir: &Path) -> ConfigSnapshot {
-        ConfigSnapshot::load(project_dir, true, true)
+        ConfigSnapshot::load(project_dir, true, true, &SnapshotOptions::default())
     }
 }
 
@@ -1034,6 +1041,18 @@ pub struct ConfigSnapshot {
 pub struct LoadedFile {
     pub layer: ConfigLayer,
     pub path: PathBuf,
+}
+
+/// Options for resolving a config snapshot (whetstone-dva). Defaults reproduce
+/// the historical behavior exactly (writes the pack cache, no injected packs).
+#[derive(Default, Clone)]
+pub struct SnapshotOptions {
+    /// When true, resolving packs must not mutate `whetstone/.state` (pack
+    /// cache). Used by previews so a dry-run scan leaves the tree byte-identical.
+    pub read_only: bool,
+    /// Candidate packs injected into `active_packs` after configured packs, so
+    /// they flow through the identical merge/shadow/deny seam a real import would.
+    pub injected_packs: Vec<ResolvedConfigPack>,
 }
 
 /// Which layer set each key on the effective config.
@@ -1089,7 +1108,13 @@ impl ProvenanceSource {
 
 impl ConfigSnapshot {
     pub(crate) fn load_project_snapshot(project_dir: &Path) -> Self {
-        Self::load(project_dir, true, false)
+        Self::load(project_dir, true, false, &SnapshotOptions::default())
+    }
+
+    /// Resolve a snapshot with explicit options (read-only / injected candidate
+    /// packs). See `SnapshotOptions` (whetstone-dva).
+    pub(crate) fn load_project_snapshot_with(project_dir: &Path, opts: &SnapshotOptions) -> Self {
+        Self::load(project_dir, true, false, opts)
     }
 
     pub fn has_errors(&self) -> bool {
@@ -1098,7 +1123,12 @@ impl ConfigSnapshot {
             .any(|d| d.level == DiagnosticLevel::Error)
     }
 
-    fn load(project_dir: &Path, include_global: bool, include_personal: bool) -> Self {
+    fn load(
+        project_dir: &Path,
+        include_global: bool,
+        include_personal: bool,
+        opts: &SnapshotOptions,
+    ) -> Self {
         let mut snap = ConfigSnapshot {
             effective: WhetstoneConfig::default(),
             sources: BTreeMap::new(),
@@ -1237,6 +1267,7 @@ impl ConfigSnapshot {
                     &global_cfg,
                     cfg.resolve.timeout_seconds,
                     cfg.resolve.cache_ttl_seconds,
+                    !opts.read_only,
                 );
                 for warning in resolved.warnings {
                     snap.diagnostics.push(Diagnostic::warning(
@@ -1390,6 +1421,16 @@ impl ConfigSnapshot {
                 ProvenanceSource::Personal,
                 &mut snap.sources,
             );
+        }
+
+        // --- Injected candidate packs (whetstone-dva) ---
+        // Appended after configured packs so they win same-id ties exactly as a
+        // real `extends` import would, and flow through the identical merge seam.
+        // Done outside the project-config block so a repo with no whetstone.yaml
+        // can still be previewed.
+        for pack in &opts.injected_packs {
+            apply_pack_config(&mut snap, pack);
+            snap.active_packs.push(pack.clone());
         }
 
         snap
@@ -1786,7 +1827,7 @@ mod tests {
     #[test]
     fn loads_empty_project_defaults() {
         let td = tempdir();
-        let snap = ConfigSnapshot::load(td.path(), false, false);
+        let snap = ConfigSnapshot::load(td.path(), false, false, &SnapshotOptions::default());
         assert!(snap.effective.deny.is_empty());
         assert!(snap.sources.is_empty());
         assert!(snap.diagnostics.is_empty());
@@ -1805,7 +1846,7 @@ mod tests {
 "#,
         )
         .unwrap();
-        let snap = ConfigSnapshot::load(td.path(), false, false);
+        let snap = ConfigSnapshot::load(td.path(), false, false, &SnapshotOptions::default());
         assert_eq!(snap.effective.extraction.max_rules_per_dep, Some(3));
         assert_eq!(snap.effective.extraction.include, vec!["fastapi"]);
         assert_eq!(
@@ -1833,7 +1874,7 @@ mod tests {
         )
         .unwrap();
 
-        let snap = ConfigSnapshot::load(td.path(), false, false);
+        let snap = ConfigSnapshot::load(td.path(), false, false, &SnapshotOptions::default());
         assert_eq!(snap.effective.resolve.timeout_seconds, Some(45));
         assert_eq!(snap.loaded_files.len(), 1);
         assert_eq!(snap.loaded_files[0].path, wh.join("whetstone.yaml"));
@@ -1854,7 +1895,7 @@ mod tests {
             "resolve:\n  timeout_seconds: 90\n",
         )
         .unwrap();
-        let snap = ConfigSnapshot::load(td.path(), false, true);
+        let snap = ConfigSnapshot::load(td.path(), false, true, &SnapshotOptions::default());
         assert_eq!(snap.effective.resolve.timeout_seconds, Some(90));
         assert_eq!(
             snap.sources
@@ -1875,7 +1916,7 @@ mod tests {
             "extractoin:\n  max_rules_per_dep: 5\n",
         )
         .unwrap();
-        let snap = ConfigSnapshot::load(td.path(), false, false);
+        let snap = ConfigSnapshot::load(td.path(), false, false, &SnapshotOptions::default());
         let msgs: Vec<&str> = snap
             .diagnostics
             .iter()
@@ -1939,7 +1980,7 @@ mod tests {
         let wh = td.path().join("whetstone");
         fs::create_dir_all(&wh).unwrap();
         fs::write(wh.join("whetstone.yaml"), "default_formats: [claude.md]\n").unwrap();
-        let snap = ConfigSnapshot::load(td.path(), false, false);
+        let snap = ConfigSnapshot::load(td.path(), false, false, &SnapshotOptions::default());
         assert!(
             snap.diagnostics
                 .iter()
@@ -1970,7 +2011,7 @@ check:
         )
         .unwrap();
 
-        let snap = ConfigSnapshot::load(td.path(), false, false);
+        let snap = ConfigSnapshot::load(td.path(), false, false, &SnapshotOptions::default());
         assert!(
             snap.diagnostics
                 .iter()
@@ -2022,7 +2063,7 @@ extends:
         )
         .unwrap();
 
-        let snap = ConfigSnapshot::load(td.path(), false, false);
+        let snap = ConfigSnapshot::load(td.path(), false, false, &SnapshotOptions::default());
         let msgs: Vec<&str> = snap
             .diagnostics
             .iter()

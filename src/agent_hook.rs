@@ -77,6 +77,7 @@ pub fn handle_event(event: &Value, project_dir: &Path, blocking: bool) -> Option
         scan_paths: &scan_paths,
         lang_filter: None,
         rule_filter: None,
+        injected_packs: &[],
     })
     .ok()?;
 

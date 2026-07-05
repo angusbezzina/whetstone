@@ -115,12 +115,39 @@ struct FetchOutcome {
     warning: Option<String>,
 }
 
+/// Build a `ResolvedConfigPack` from a local pack file WITHOUT touching the
+/// pack cache or any project state. Used for previewing a candidate pack
+/// (whetstone-dva): the returned pack is tagged with the `candidate` scope so
+/// downstream merges can distinguish preview rules from configured ones.
+pub fn resolve_local_pack(path: &Path) -> Result<ResolvedConfigPack> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("read candidate pack {}", path.display()))?;
+    let pack: RulePackFile = serde_yaml::from_str(&content)
+        .with_context(|| format!("parse candidate pack {}", path.display()))?;
+    Ok(ResolvedConfigPack {
+        scope: CANDIDATE_SCOPE.to_string(),
+        ref_spec: format!("path:{}", path.display()),
+        resolved_ref: path.display().to_string(),
+        source_kind: "local".to_string(),
+        cache_status: "preview".to_string(),
+        content_hash: resolve::content_hash(&content),
+        fetched_at: String::new(),
+        metadata: pack.metadata.clone(),
+        language: pack.language.clone(),
+        pack,
+    })
+}
+
+/// Scope tag applied to injected preview packs (whetstone-dva).
+pub const CANDIDATE_SCOPE: &str = "candidate";
+
 pub fn resolve_project_packs(
     project_dir: &Path,
     refs: &[ConfigPackRef],
     global_cfg: &GlobalConfig,
     project_timeout: Option<u64>,
     project_ttl: Option<u64>,
+    write_cache: bool,
 ) -> ResolvedPackSet {
     let timeout = project_timeout
         .or(global_cfg.resolve.timeout_seconds)
@@ -213,17 +240,45 @@ pub fn resolve_project_packs(
         });
     }
 
-    save_pack_cache(&cache_path, &cache);
+    // Read-only mode (previews) must not mutate whetstone/.state (whetstone-dva).
+    if write_cache {
+        save_pack_cache(&cache_path, &cache);
+    }
     out
+}
+
+/// Where a merged imported rule came from — retained through the merge so a
+/// preview can distinguish candidate-pack hits from configured ones
+/// (whetstone-dva). Dropped by the plain `merge_pack_rules` wrapper.
+#[derive(Debug, Clone)]
+pub struct MergedRuleOrigin {
+    pub pack_scope: String,
+}
+
+impl MergedRuleOrigin {
+    pub fn is_candidate(&self) -> bool {
+        self.pack_scope == CANDIDATE_SCOPE
+    }
 }
 
 pub fn merge_pack_rules(
     packs: &[ResolvedConfigPack],
     lang_filter: Option<&str>,
 ) -> (Vec<ApprovedRule>, Vec<String>) {
+    let (tagged, warnings) = merge_pack_rules_tagged(packs, lang_filter);
+    (tagged.into_iter().map(|(rule, _)| rule).collect(), warnings)
+}
+
+/// Like `merge_pack_rules` but each merged rule keeps the origin pack it won
+/// from (after same-id "later wins" and override/deny resolution).
+pub fn merge_pack_rules_tagged(
+    packs: &[ResolvedConfigPack],
+    lang_filter: Option<&str>,
+) -> (Vec<(ApprovedRule, MergedRuleOrigin)>, Vec<String>) {
     #[derive(Clone)]
     struct AccumRule {
         rule: ApprovedRule,
+        origin: MergedRuleOrigin,
         order: usize,
     }
 
@@ -295,10 +350,12 @@ pub fn merge_pack_rules(
                     approved.id
                 ));
             }
+            let origin = MergedRuleOrigin { pack_scope: pack.scope.clone() };
             merged.insert(
                 approved.id.clone(),
                 AccumRule {
                     rule: approved,
+                    origin,
                     order: next_order,
                 },
             );
@@ -308,7 +365,10 @@ pub fn merge_pack_rules(
 
     let mut rules = merged.into_values().collect::<Vec<_>>();
     rules.sort_by_key(|r| r.order);
-    (rules.into_iter().map(|r| r.rule).collect(), warnings)
+    (
+        rules.into_iter().map(|r| (r.rule, r.origin)).collect(),
+        warnings,
+    )
 }
 
 pub fn packs_to_json(packs: &[ResolvedConfigPack]) -> Value {

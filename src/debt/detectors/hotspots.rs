@@ -133,6 +133,7 @@ fn collect_violations(project_dir: &Path) -> HashMap<String, u32> {
         scan_paths: &scan_paths,
         lang_filter: None,
         rule_filter: None,
+        injected_packs: &[],
     };
     let result = match check::run(opts) {
         Ok(v) => v,

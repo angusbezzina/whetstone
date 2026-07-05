@@ -58,6 +58,7 @@ pub fn compute(project_dir: &Path, rule_count_hint: usize) -> Result<Option<Adhe
         scan_paths: &paths,
         lang_filter: None,
         rule_filter: None,
+        injected_packs: &[],
     })?;
 
     let rules_applied = result

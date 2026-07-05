@@ -4375,3 +4375,71 @@ fn test_init_claude_onboards_everything() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn test_scan_with_pack_preview_matches_import_and_writes_nothing() {
+    // whetstone-653/dva: previewing a candidate pack reports its hits, tags them
+    // from_candidate, writes no state, and matches a real import's hit count.
+    let tmp = std::env::temp_dir().join(format!(
+        "wh_preview_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("src")).unwrap();
+    std::fs::create_dir_all(tmp.join("whetstone")).unwrap();
+    std::fs::write(tmp.join("whetstone/whetstone.yaml"), "version: 1\n").unwrap();
+    std::fs::write(tmp.join("src/a.py"), "def f():\n    print('x')\n").unwrap();
+    let pack = tmp.join("cand.yaml");
+    std::fs::write(
+        &pack,
+        "apiVersion: whetstone/v1alpha1\nkind: RulePack\nmetadata: { name: acme.taste, scope: candidate }\nlanguage: python\nrules:\n  - id: taste.no-print\n    severity: should\n    confidence: high\n    category: convention\n    description: no print\n    source_url: https://x\n    approved: true\n    status: approved\n    signals: [{ id: s, strategy: ast, weight: required, ast_query: '(call function: (identifier) @f (#eq? @f \"print\")) @match' }]\n    golden_examples: [{ code: \"print(1)\", verdict: fail, reason: y }]\n",
+    )
+    .unwrap();
+    let project = tmp.to_str().unwrap();
+
+    // Preview.
+    let (stdout, _e, _ok) = run_whetstone(
+        &["scan", "src", "--with-pack", pack.to_str().unwrap(), "--json", "--no-fail", "--project-dir", project],
+        project,
+    );
+    let prev = parse_json(&stdout);
+    assert_eq!(prev["preview"]["candidate_hits"], 1, "preview should find the print hit: {prev}");
+    assert_eq!(prev["preview"]["candidate_rules"], 1);
+    assert_eq!(prev["violations"][0]["from_candidate"], true);
+    // Zero-write: no pack cache state was created by the preview.
+    assert!(
+        !tmp.join("whetstone/.state").exists(),
+        "preview must not write whetstone/.state"
+    );
+
+    // Real import → scan; the candidate hit count must match the preview.
+    std::fs::create_dir_all(tmp.join("whetstone/packs")).unwrap();
+    std::fs::copy(&pack, tmp.join("whetstone/packs/cand.yaml")).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "version: 1\nextends:\n  - scope: project\n    ref: path:./whetstone/packs/cand.yaml\n",
+    )
+    .unwrap();
+    let (stdout2, _e, _ok) = run_whetstone(
+        &["scan", "src", "--json", "--no-fail", "--project-dir", project],
+        project,
+    );
+    let imported = parse_json(&stdout2);
+    let imported_hits = imported["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["rule_id"] == "taste.no-print")
+        .count();
+    assert_eq!(
+        imported_hits as i64,
+        prev["preview"]["candidate_hits"].as_i64().unwrap(),
+        "preview parity: preview hits must equal post-import hits"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

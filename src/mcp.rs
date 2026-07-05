@@ -163,6 +163,7 @@ fn run_scan(project_dir: &Path, args: &Value) -> Value {
         scan_paths: &scan_paths,
         lang_filter: lang,
         rule_filter: None,
+        injected_packs: &[],
     }) {
         Ok(v) => v,
         Err(e) => json!({ "error": e.to_string() }),

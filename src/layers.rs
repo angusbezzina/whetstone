@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::config::{ConfigSnapshot, PersonalConfig, WhetstoneConfig};
+use crate::config::{ConfigSnapshot, PersonalConfig, SnapshotOptions, WhetstoneConfig};
 use crate::config_packs;
 use crate::rules::{load_approved_rules, load_rule_files, ApprovedRule};
 use serde_json::Value;
@@ -93,8 +93,13 @@ pub struct ResolvedLayers {
 }
 
 impl LayerSet {
-    /// Load every layer that exists for this project.
-    pub fn load(project_dir: &Path, lang_filter: Option<&str>) -> (Self, Vec<String>) {
+    /// Load every layer, resolving imported packs with explicit snapshot options
+    /// (read-only / injected candidate packs — whetstone-dva).
+    pub fn load_with(
+        project_dir: &Path,
+        lang_filter: Option<&str>,
+        opts: &SnapshotOptions,
+    ) -> (Self, Vec<String>) {
         let paths = LayerPaths::for_project(project_dir);
         let mut warnings = Vec::new();
 
@@ -102,7 +107,7 @@ impl LayerSet {
         warnings.append(&mut pw);
 
         let (mut imported, mut import_warnings) =
-            load_imported_pack_rules(project_dir, lang_filter);
+            load_imported_pack_rules_with(project_dir, lang_filter, opts);
         warnings.append(&mut import_warnings);
 
         let local_ids: HashSet<&str> = project_local.iter().map(|r| r.id.as_str()).collect();
@@ -153,11 +158,12 @@ impl LayerSet {
     }
 }
 
-fn load_imported_pack_rules(
+fn load_imported_pack_rules_with(
     project_dir: &Path,
     lang_filter: Option<&str>,
+    opts: &SnapshotOptions,
 ) -> (Vec<ApprovedRule>, Vec<String>) {
-    let snapshot = ConfigSnapshot::load_project_snapshot(project_dir);
+    let snapshot = ConfigSnapshot::load_project_snapshot_with(project_dir, opts);
     let mut warnings: Vec<String> = snapshot
         .diagnostics
         .iter()
@@ -184,11 +190,12 @@ pub fn summary_from(merged: &[LayeredRule]) -> BTreeMap<String, usize> {
     out
 }
 
-/// Load deny lists from the relevant config files:
-/// - `whetstone/whetstone.yaml` (project layer — merges global config too)
-/// - `whetstone/.personal/config.yaml` (personal layer)
-pub fn load_denies(project_dir: &Path) -> LayerDenies {
-    let project_cfg = WhetstoneConfig::load(project_dir);
+/// Load deny lists from the project (`whetstone/whetstone.yaml`, merges global)
+/// and personal (`whetstone/.personal/config.yaml`) config, using explicit
+/// snapshot options so a read-only preview never writes the pack cache while
+/// resolving the effective config (whetstone-dva).
+pub fn load_denies_with(project_dir: &Path, opts: &SnapshotOptions) -> LayerDenies {
+    let project_cfg = WhetstoneConfig::load_with(project_dir, opts);
     let paths = LayerPaths::for_project(project_dir);
     LayerDenies {
         personal: PersonalConfig::load(&paths.personal_config).deny,
@@ -206,12 +213,34 @@ pub fn load_denies(project_dir: &Path) -> LayerDenies {
 pub fn resolve_merged(
     project_dir: &Path,
     lang_filter: Option<&str>,
+    include_builtin: bool,
+    include_personal: bool,
+    refresh_team: bool,
+) -> ResolvedLayers {
+    resolve_merged_with(
+        project_dir,
+        lang_filter,
+        include_builtin,
+        include_personal,
+        refresh_team,
+        &SnapshotOptions::default(),
+    )
+}
+
+/// Like `resolve_merged` but resolves imported packs with explicit snapshot
+/// options — read-only and/or with injected candidate packs (whetstone-dva).
+/// Candidate rules flow through the identical merge/shadow/deny path, so a
+/// preview sees exactly what a real import would produce.
+pub fn resolve_merged_with(
+    project_dir: &Path,
+    lang_filter: Option<&str>,
     _include_builtin: bool,
     include_personal: bool,
     _refresh_team: bool,
+    opts: &SnapshotOptions,
 ) -> ResolvedLayers {
-    let (mut layers, warnings) = LayerSet::load(project_dir, lang_filter);
-    let mut denies = load_denies(project_dir);
+    let (mut layers, warnings) = LayerSet::load_with(project_dir, lang_filter, opts);
+    let mut denies = load_denies_with(project_dir, opts);
 
     if !include_personal {
         layers.personal.clear();
@@ -335,5 +364,184 @@ extends:
             .merged
             .iter()
             .any(|lr| lr.rule.id == "fastapi.async-routes" && lr.layer == Layer::Project));
+    }
+
+    // ── whetstone-dva: read-only + injectable snapshot seam ──
+
+    fn candidate_pack(dir: &Path, rule_id: &str) -> PathBuf {
+        let p = dir.join("cand.yaml");
+        fs::write(
+            &p,
+            format!(
+                r#"apiVersion: whetstone/v1alpha1
+kind: RulePack
+metadata:
+  name: acme.candidate
+  scope: candidate
+language: python
+rules:
+  - id: {rule_id}
+    severity: should
+    confidence: high
+    category: convention
+    description: Candidate rule.
+    source_url: https://example.com/cand
+    approved: true
+    status: approved
+    signals:
+      - id: s
+        strategy: ast
+        description: match
+        weight: required
+        ast_query: '(function_definition) @match'
+    golden_examples:
+      - code: "def f(): pass"
+        verdict: fail
+        reason: y
+"#
+            ),
+        )
+        .unwrap();
+        p
+    }
+
+    fn hash_state_dir(project_dir: &Path) -> String {
+        let state = project_dir.join("whetstone").join(".state");
+        let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+        fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, Vec<u8>)>) {
+            if let Ok(rd) = fs::read_dir(dir) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        walk(&p, base, out);
+                    } else if let Ok(bytes) = fs::read(&p) {
+                        let rel = p.strip_prefix(base).unwrap().display().to_string();
+                        out.push((rel, bytes));
+                    }
+                }
+            }
+        }
+        walk(&state, &state, &mut entries);
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        format!("{entries:?}").len().to_string() + &format!("{entries:?}")
+    }
+
+    /// A project with one imported pack, so scanning writes a pack cache under
+    /// whetstone/.state.
+    fn project_with_import(td: &Path) {
+        let wh = td.join("whetstone");
+        let packs = wh.join("packs");
+        fs::create_dir_all(&packs).unwrap();
+        fs::write(
+            packs.join("base.yaml"),
+            r#"apiVersion: whetstone/v1alpha1
+kind: RulePack
+metadata:
+  name: acme.base
+  scope: project
+language: python
+rules:
+  - id: acme.base-rule
+    severity: must
+    confidence: high
+    category: convention
+    description: Base.
+    source_url: https://example.com/base
+    approved: true
+    status: approved
+    signals:
+      - id: s
+        strategy: ast
+        description: m
+        weight: required
+        ast_query: '(pass_statement) @match'
+    golden_examples:
+      - code: "def f(): pass"
+        verdict: fail
+        reason: y
+"#,
+        )
+        .unwrap();
+        fs::write(
+            wh.join("whetstone.yaml"),
+            "version: 1\nextends:\n  - scope: project\n    ref: path:./whetstone/packs/base.yaml\n",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn readonly_preview_leaves_state_byte_identical() {
+        let td = tempfile::tempdir().unwrap();
+        project_with_import(td.path());
+
+        // Warm the cache with a normal (writing) resolve.
+        let _ = resolve_merged(td.path(), Some("python"), true, true, false);
+        let before = hash_state_dir(td.path());
+
+        // A read-only preview with an injected candidate must not touch .state.
+        let cand = candidate_pack(td.path(), "acme.candidate-rule");
+        let opts = SnapshotOptions {
+            read_only: true,
+            injected_packs: vec![crate::config_packs::resolve_local_pack(&cand).unwrap()],
+        };
+        let merged = resolve_merged_with(td.path(), Some("python"), true, true, false, &opts);
+        assert!(merged.merged.iter().any(|lr| lr.rule.id == "acme.candidate-rule"));
+        assert!(merged.merged.iter().any(|lr| lr.rule.id == "acme.base-rule"));
+
+        let after = hash_state_dir(td.path());
+        assert_eq!(before, after, "read-only preview mutated whetstone/.state");
+    }
+
+    #[test]
+    fn injected_candidate_shadows_same_id_and_respects_deny() {
+        let td = tempfile::tempdir().unwrap();
+        project_with_import(td.path());
+
+        // Candidate redefines the configured id — "later wins" means candidate wins.
+        let cand = candidate_pack(td.path(), "acme.base-rule");
+        let inject = crate::config_packs::resolve_local_pack(&cand).unwrap();
+        let opts = SnapshotOptions {
+            read_only: true,
+            injected_packs: vec![inject],
+        };
+        let merged = resolve_merged_with(td.path(), Some("python"), true, true, false, &opts);
+        let base = merged
+            .merged
+            .iter()
+            .find(|lr| lr.rule.id == "acme.base-rule")
+            .expect("base-rule present");
+        assert_eq!(base.rule.description, "Candidate rule.", "candidate should shadow");
+
+        // A project deny excises the injected rule exactly as a real import would.
+        let wh = td.path().join("whetstone");
+        fs::write(
+            wh.join("whetstone.yaml"),
+            "version: 1\ndeny:\n  - acme.base-rule\nextends:\n  - scope: project\n    ref: path:./whetstone/packs/base.yaml\n",
+        )
+        .unwrap();
+        let cand2 = candidate_pack(td.path(), "acme.base-rule");
+        let opts2 = SnapshotOptions {
+            read_only: true,
+            injected_packs: vec![crate::config_packs::resolve_local_pack(&cand2).unwrap()],
+        };
+        let merged2 = resolve_merged_with(td.path(), Some("python"), true, true, false, &opts2);
+        assert!(
+            !merged2.merged.iter().any(|lr| lr.rule.id == "acme.base-rule"),
+            "project deny must excise the injected candidate too"
+        );
+    }
+
+    #[test]
+    fn tagged_merge_marks_candidate_provenance() {
+        let td = tempfile::tempdir().unwrap();
+        let cand = candidate_pack(td.path(), "acme.candidate-rule");
+        let inject = crate::config_packs::resolve_local_pack(&cand).unwrap();
+        let (tagged, _w) =
+            crate::config_packs::merge_pack_rules_tagged(&[inject], Some("python"));
+        let (_rule, origin) = tagged
+            .iter()
+            .find(|(r, _)| r.id == "acme.candidate-rule")
+            .expect("candidate merged");
+        assert!(origin.is_candidate(), "origin should be the candidate scope");
     }
 }

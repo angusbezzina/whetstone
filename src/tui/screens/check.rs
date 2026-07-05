@@ -78,6 +78,7 @@ pub fn load(project_dir: &Path) -> CheckView {
         scan_paths: std::slice::from_ref(&scan_root),
         lang_filter: None,
         rule_filter: None,
+        injected_packs: &[],
     };
 
     let value = match crate::check::run(opts) {
