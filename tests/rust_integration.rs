@@ -4536,3 +4536,52 @@ fn test_status_setup_derives_checklist_and_dismissal() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn test_config_conflicts_same_id_and_formatter() {
+    // whetstone-l05: same-id collisions (incl. a proposed --with-pack) and
+    // formatter-option clashes are surfaced as structured JSON.
+    let tmp = std::env::temp_dir().join(format!(
+        "wh_conf_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(tmp.join("whetstone/packs")).unwrap();
+    let p = tmp.to_str().unwrap();
+
+    // Configured pack with one rule.
+    std::fs::write(
+        tmp.join("whetstone/packs/base.yaml"),
+        "apiVersion: whetstone/v1alpha1\nkind: RulePack\nmetadata: { name: acme.base, scope: project }\nlanguage: python\nrules:\n  - id: acme.shared\n    severity: should\n    confidence: high\n    category: convention\n    description: base\n    source_url: https://x\n    approved: true\n    status: approved\n    signals: [{ id: s, strategy: ast, weight: required, ast_query: '(pass_statement) @match' }]\n    golden_examples: [{ code: \"def f(): pass\", verdict: fail, reason: y }]\n",
+    ).unwrap();
+    std::fs::write(
+        tmp.join("whetstone/whetstone.yaml"),
+        "version: 1\nextends:\n  - scope: project\n    ref: path:./whetstone/packs/base.yaml\n",
+    ).unwrap();
+
+    // Candidate that redefines acme.shared (same-id) AND adds two formatter rules
+    // that clash on ruff line-length.
+    let cand = tmp.join("cand.yaml");
+    std::fs::write(
+        &cand,
+        "apiVersion: whetstone/v1alpha1\nkind: RulePack\nmetadata: { name: rival, scope: candidate }\nlanguage: python\nrules:\n  - id: acme.shared\n    severity: may\n    confidence: high\n    category: convention\n    description: rival\n    source_url: https://y\n    approved: true\n    status: approved\n    signals: [{ id: s, strategy: ast, weight: required, ast_query: '(pass_statement) @match' }]\n    golden_examples: [{ code: \"def f(): pass\", verdict: fail, reason: y }]\n  - id: fmt.a\n    severity: should\n    confidence: high\n    category: convention\n    description: a\n    source_url: https://a\n    approved: true\n    status: approved\n    formatter: { tool: ruff, options: { line-length: 88 } }\n    golden_examples: [{ code: \"x=1\", verdict: pass, reason: y }]\n  - id: fmt.b\n    severity: should\n    confidence: high\n    category: convention\n    description: b\n    source_url: https://b\n    approved: true\n    status: approved\n    formatter: { tool: ruff, options: { line-length: 100 } }\n    golden_examples: [{ code: \"x=1\", verdict: pass, reason: y }]\n",
+    ).unwrap();
+
+    let (out, _e, ok) = run_whetstone(
+        &["config", "conflicts", "--with-pack", cand.to_str().unwrap(), "--json", "--project-dir", p],
+        p,
+    );
+    assert!(ok, "conflicts should succeed: {out}");
+    let d = parse_json(&out);
+    let conflicts = d["conflicts"].as_array().unwrap();
+    // same-id: acme.shared, candidate (later) wins over the configured base pack.
+    let same_id = conflicts.iter().find(|c| c["kind"] == "same-id" && c["rule_id"] == "acme.shared").expect("same-id conflict");
+    assert_eq!(same_id["winner"], "pack:rival");
+    assert!(same_id["losers"].as_array().unwrap().iter().any(|l| l == "pack:acme.base"));
+    // formatter-option: ruff line-length clashes between fmt.a and fmt.b.
+    let fmt = conflicts.iter().find(|c| c["kind"] == "formatter-option" && c["tool"] == "ruff" && c["option"] == "line-length").expect("formatter conflict");
+    assert_eq!(fmt["values"].as_array().unwrap().len(), 2);
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

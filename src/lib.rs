@@ -7,6 +7,7 @@ mod ci_check;
 mod cli;
 mod config;
 mod config_packs;
+mod conflicts;
 mod corpus;
 mod debt;
 mod detect;

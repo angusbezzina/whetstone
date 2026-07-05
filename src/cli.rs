@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    agent_hook, approve, check, ci_check, config, config_packs, debt, detect, doctor, extract, gen,
+    agent_hook, approve, check, ci_check, config, config_packs, conflicts, debt, detect, doctor,
+    extract, gen,
     generate_context, generate_lint, generate_tests, mcp, onboard, output, personal, report, resolve,
     review, rule_authoring, rules, rules_query, source_mgmt, status, triggers, tui, update, worklist,
 };
@@ -254,6 +255,21 @@ enum ConfigAction {
         /// Project root directory
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
+    },
+    /// List cross-layer rule conflicts (same-id shadowing, formatter-option
+    /// clashes), optionally including packs a proposed selection would add
+    Conflicts {
+        /// Project root directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Also consider a candidate pack as if imported (may be repeated)
+        #[arg(long = "with-pack", value_name = "PACK_FILE")]
+        with_pack: Vec<PathBuf>,
+
+        /// Filter by language
+        #[arg(long)]
+        lang: Option<String>,
     },
 }
 
@@ -2433,6 +2449,29 @@ pub fn run() -> i32 {
                     0
                 }
             }
+            ConfigAction::Conflicts {
+                project_dir,
+                with_pack,
+                lang,
+            } => {
+                let mut injected = Vec::new();
+                for p in &with_pack {
+                    match config_packs::resolve_local_pack(p) {
+                        Ok(pack) => injected.push(pack),
+                        Err(e) => {
+                            output::print_json(&output::error_json(
+                                &format!("could not load --with-pack {}: {e}", p.display()),
+                                "Pass a path to a valid RulePack YAML file",
+                            ));
+                            return 1;
+                        }
+                    }
+                }
+                let result =
+                    conflicts::detect(&project_dir, lang.as_deref(), &injected, true);
+                output::print_json(&result);
+                0
+            }
         },
 
         Commands::Report {
@@ -3081,9 +3120,9 @@ fn project_dir_for_command(command: &Commands) -> PathBuf {
             | SourceAction::Verify { project_dir, .. } => project_dir.clone(),
         },
         Commands::Config { action } => match action {
-            ConfigAction::Show { project_dir } | ConfigAction::Validate { project_dir } => {
-                project_dir.clone()
-            }
+            ConfigAction::Show { project_dir }
+            | ConfigAction::Validate { project_dir }
+            | ConfigAction::Conflicts { project_dir, .. } => project_dir.clone(),
         },
         Commands::Reinit { project_dir, .. } => PathBuf::from(project_dir),
         Commands::Update { .. } => PathBuf::from("."),
