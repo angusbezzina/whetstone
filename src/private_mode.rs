@@ -217,11 +217,34 @@ pub fn is_private(project_dir: &Path) -> bool {
 
 /// True if git tracks anything matching `rel` (a file, or any file under a dir).
 pub fn is_git_tracked(project_dir: &Path, rel: &str) -> bool {
-    Command::new("git")
+    let exact = Command::new("git")
         .args(["ls-files", "--error-unmatch", "--", rel])
         .current_dir(project_dir)
         .output()
         .map(|o| o.status.success())
+        .unwrap_or(false);
+    if exact {
+        return true;
+    }
+    // On a case-folding filesystem (macOS APFS by default) a tracked
+    // `.MCP.json` IS the file we would write as `.mcp.json`, but git's
+    // pathspec matching is case-sensitive — so the exact check says
+    // "untracked" and we would clobber a committed team file.
+    let want = rel.trim_end_matches('/').to_lowercase();
+    Command::new("git")
+        .args(["ls-files", "-z"])
+        .current_dir(project_dir)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .split('\0')
+                .any(|p| {
+                    let p = p.to_lowercase();
+                    p == want || p.starts_with(&format!("{want}/"))
+                })
+        })
         .unwrap_or(false)
 }
 
@@ -618,33 +641,42 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
     }))
 }
 
-/// Is `rel` present in the last commit? This is the ours/theirs question stated
-/// directly, instead of inferred from porcelain status letters — three separate
-/// releases shipped a hole in that inference (`A ` staged additions missed,
-/// then intent-to-add ` A` missed because its letter sits in the worktree
-/// column, then unmerged `AA` misread as ours even though the path IS in HEAD).
-/// A path absent from HEAD did not exist at the last commit, so private mode is
-/// what put it there. Unborn HEAD → nothing is committed → not in HEAD.
-fn in_head(project_dir: &Path, rel: &str) -> bool {
-    Command::new("git")
-        .args(["ls-tree", "-z", "HEAD", "--", rel])
-        .current_dir(project_dir)
-        .output()
-        .map(|o| o.status.success() && !o.stdout.is_empty())
+/// Does this artifact carry Whetstone's fingerprint?
+///
+/// Attribution is answered by CONTENT, not by git state. Four consecutive
+/// releases shipped a hole trying to infer "did we write this?" from the index,
+/// from HEAD, or from porcelain status letters — each fix missed a state nobody
+/// enumerated (`A `, then intent-to-add ` A`, then unmerged `AA`, then a
+/// root-relative path handed to a cwd-relative pathspec). Worse, the premise
+/// itself was false: "present in HEAD ⇒ not ours" assumed every artifact has a
+/// tracked-file guard, and `.claude/settings.local.json` had none.
+///
+/// A file either bears our mark or it does not. That question has the same
+/// answer in every git state, at any directory depth, on any filesystem.
+fn artifact_is_ours(repo_root: &Path, rel: &str) -> bool {
+    // Paths we exclusively own: nothing else in a repo is called these.
+    if rel.to_lowercase().contains("whetstone") {
+        return true;
+    }
+    // Shared-name files (.mcp.json, .claude/settings*.json, .githooks/post-merge,
+    // .gitignore) are ours only if our content is actually in them.
+    std::fs::read_to_string(repo_root.join(rel))
+        .map(|s| s.to_lowercase().contains("whetstone"))
         .unwrap_or(false)
 }
 
-/// True when the committed copy of `rel` already carries Whetstone's
-/// personal-layer marker — i.e. the block is public history, so a working-tree
-/// change to that file is the user's, not ours.
-fn head_has_marker(project_dir: &Path, rel: &str) -> bool {
+/// True when the COMMITTED copy already bears our mark — our content is public
+/// history, so a working-tree change to that file is the user's edit, not our
+/// leak. `git show HEAD:<rel>` takes a root-relative path, which is exactly
+/// what `git status --porcelain` reports.
+fn head_copy_is_ours(repo_root: &Path, rel: &str) -> bool {
     Command::new("git")
         .args(["show", &format!("HEAD:{rel}")])
-        .current_dir(project_dir)
+        .current_dir(repo_root)
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains(crate::personal::GITIGNORE_MARKER))
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("whetstone"))
         .unwrap_or(false)
 }
 
@@ -677,26 +709,24 @@ pub fn exposed_artifacts(project_dir: &Path, prefix: &str) -> Result<Vec<String>
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    let hidden: Vec<String> = EXCLUDE_ENTRIES
+    // `git status --porcelain` paths are REPO-ROOT-relative, so every path
+    // check below must be too — regardless of how deep `project_dir` sits.
+    let repo_root = repo_toplevel(project_dir)?;
+    let candidates: Vec<String> = EXCLUDE_ENTRIES
         .iter()
+        .chain(SHARED_ARTIFACTS.iter())
         .map(|e| format!("{prefix}{e}"))
+        .chain(std::iter::once(format!("{prefix}.gitignore")))
         .collect();
-    let shared: Vec<String> = SHARED_ARTIFACTS
-        .iter()
-        .map(|e| format!("{prefix}{e}"))
-        .collect();
-    let gitignore = format!("{prefix}.gitignore");
-    // `.gitignore` is ours only when it carries the personal-layer block a
-    // previous `wh init --personal` (or a publish) wrote. An unrelated edit by
-    // the user is not our leak.
-    let gitignore_is_ours = std::fs::read_to_string(project_dir.join(".gitignore"))
-        .map(|s| s.contains(crate::personal::GITIGNORE_MARKER))
-        .unwrap_or(false);
 
-    let matches = |path: &str, owned: &[String]| {
-        owned.iter().any(|o| {
+    // Case-insensitively: on a case-folding filesystem `.MCP.json` and
+    // `.mcp.json` are the same file, so a case variant must still match.
+    let matches = |path: &str| {
+        let p = path.to_lowercase();
+        candidates.iter().any(|o| {
+            let o = o.to_lowercase();
             let o_dir = o.trim_end_matches('/');
-            path == o.as_str() || path == o_dir || path.starts_with(&format!("{o_dir}/"))
+            p == o || p == o_dir || p.starts_with(&format!("{o_dir}/"))
         })
     };
 
@@ -714,33 +744,42 @@ pub fn exposed_artifacts(project_dir: &Path, prefix: &str) -> Result<Vec<String>
         if code.starts_with('R') || code.starts_with('C') {
             let _ = records.next();
         }
-        // Ask HEAD, don't decode status letters. Anything git lists here is
-        // visible; the only question is whether WE put it there, and "absent
-        // from the last commit" answers that totally, for every status code
-        // including intent-to-add and unmerged states.
-        let absent_from_head = code.starts_with("??") || !in_head(project_dir, path);
-        if matches(path, &hidden) {
-            if absent_from_head {
-                exposed.push(format!("{path} (visible to git — if it is staged, `git restore --staged {path}`; otherwise an in-tree .gitignore may re-include it, and `git check-ignore -v {path}` shows which rule wins)"));
-            }
-        } else if matches(path, &shared) {
-            exposed.push(format!(
-                "{path} (a Whetstone CI workflow is inherently shared — delete it, or commit it and accept that it is public)"
-            ));
-        } else if path == gitignore && gitignore_is_ours {
-            // Same attribution rule. If HEAD's copy ALREADY carries the marker,
-            // the block is committed and public: a later modification is the
-            // user's own edit, not ours, and hard-failing on it would wedge
-            // every `wh init` (the round-6 fix applied to only half of this).
-            let committed_block = !absent_from_head && head_has_marker(project_dir, &gitignore);
-            if !committed_block {
-                exposed.push(format!(
-                    "{path} (carries Whetstone's personal-layer block, which cannot be hidden — remove those lines, or commit them and accept that they are public)"
-                ));
-            }
+        if !matches(path) {
+            continue;
         }
+        // Content decides authorship — no status-code or index/HEAD inference.
+        if !artifact_is_ours(&repo_root, path) {
+            continue;
+        }
+        // ...unless our content is already committed. Then it is public
+        // history, and a working-tree change to it is the user's edit.
+        if head_copy_is_ours(&repo_root, path) {
+            continue;
+        }
+        let hint = if path.to_lowercase().ends_with(".gitignore") {
+            "carries Whetstone's personal-layer block, which cannot be hidden — remove those lines, or commit them and accept that they are public"
+        } else if path.to_lowercase().contains("workflows/whetstone-check.yml") {
+            "a Whetstone CI workflow is inherently shared — delete it, or commit it and accept that it is public"
+        } else {
+            "a Whetstone artifact is visible to git — if you staged it, `git restore --staged <path>`; otherwise an in-tree .gitignore may re-include it, and `git check-ignore -v <path>` shows which rule wins"
+        };
+        exposed.push(format!("{path} ({hint})"));
     }
     Ok(exposed)
+}
+
+/// The repository root. Every verifier path is relative to this.
+fn repo_toplevel(project_dir: &Path) -> Result<PathBuf> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(project_dir)
+        .output()
+        .context("run git rev-parse")?;
+    if !out.status.success() {
+        return Err(anyhow!("not a git repository"));
+    }
+    let root = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
+    Ok(root.canonicalize().unwrap_or(root))
 }
 
 /// The flip: remove the exclude block, write real `.gitignore` entries for the

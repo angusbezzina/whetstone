@@ -1020,6 +1020,110 @@ fn an_untracked_user_post_merge_hook_is_never_overwritten() {
     std::fs::remove_dir_all(&repo).ok();
 }
 
+/// Round-9 F1 regression: `git status` paths are repo-root-relative, but the
+/// old HEAD probe passed them to a cwd-relative pathspec — so in a monorepo
+/// package every check asked about `<prefix><prefix><artifact>`. That both
+/// hard-failed the developer's own tweak and could hide a real leak.
+#[test]
+fn attribution_is_correct_from_a_monorepo_package() {
+    let repo = seeded_repo("monoattr");
+    let pkg = repo.join("packages/api");
+    std::fs::create_dir_all(pkg.join(".claude")).unwrap();
+    std::fs::write(
+        pkg.join("package.json"),
+        "{\n  \"name\": \"api\",\n  \"dependencies\": { \"react\": \"^18.0.0\" }\n}\n",
+    )
+    .unwrap();
+    // The team commits their own settings.json (no Whetstone content).
+    std::fs::write(pkg.join(".claude/settings.json"), "{\n  \"model\": \"opus\"\n}\n").unwrap();
+    git_ok(&repo, &["add", "-A"]);
+    git_ok(&repo, &["commit", "-q", "-m", "team package"]);
+    // The developer's own uncommitted tweak.
+    std::fs::write(
+        pkg.join(".claude/settings.json"),
+        "{\n  \"model\": \"opus\",\n  \"mine\": true\n}\n",
+    )
+    .unwrap();
+
+    let (out, err, ok) = run_wh(&pkg, &["init", "--claude", "--private", "--json"]);
+    assert!(
+        ok,
+        "a package developer's own edit must not fail private mode: {out} {err}"
+    );
+
+    // And a genuine leak in the same package is still caught.
+    git_ok(&repo, &["add", "-f", "packages/api/.mcp.json"]);
+    let (out2, err2, ok2) = run_wh(&pkg, &["init", "--claude", "--private", "--json"]);
+    assert!(
+        !ok2,
+        "a staged Whetstone artifact in a package must be reported: {out2} {err2}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Round-9 F2 regression: `.claude/settings.local.json` was the one artifact
+/// written with no tracked-file guard — so when a team tracked BOTH settings
+/// files, private mode modified a tracked file and reported success.
+#[test]
+fn a_tracked_settings_overlay_is_never_modified() {
+    let repo = seeded_repo("overlay");
+    std::fs::create_dir_all(repo.join(".claude")).unwrap();
+    let settings = "{\n  \"model\": \"opus\"\n}\n";
+    let overlay = "{\n  \"env\": { \"MINE\": \"1\" }\n}\n";
+    std::fs::write(repo.join(".claude/settings.json"), settings).unwrap();
+    std::fs::write(repo.join(".claude/settings.local.json"), overlay).unwrap();
+    git_ok(&repo, &["add", "-Af"]);
+    git_ok(&repo, &["commit", "-q", "-m", "team tracks both"]);
+
+    let (out, err, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok, "init should succeed, reporting what it skipped: {out} {err}");
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".claude/settings.local.json")).unwrap(),
+        overlay,
+        "a tracked overlay must not be modified"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".claude/settings.json")).unwrap(),
+        settings,
+        "the tracked settings file must not be modified"
+    );
+    assert_eq!(git_status_porcelain(&repo), "", "no visible change at all");
+    assert!(
+        out.contains("both git-tracked") || out.contains("NOT installed"),
+        "the skip must be reported honestly: {out}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Round-9 F3 regression: the user's OWN staged file that Whetstone never
+/// touched was called our leak, with advice (`git restore --staged`) that would
+/// have discarded their work. Content decides authorship now.
+#[test]
+fn the_users_own_staged_file_is_not_our_leak() {
+    let repo = seeded_repo("userstaged");
+    // The developer writes and stages their own .mcp.json, unrelated to us.
+    std::fs::write(
+        repo.join(".mcp.json"),
+        "{\n  \"mcpServers\": { \"theirs\": { \"command\": \"x\" } }\n}\n",
+    )
+    .unwrap();
+    git_ok(&repo, &["add", "-f", ".mcp.json"]);
+
+    let (out, err, ok) = run_wh(&repo, &["init", "--hooks", "--private", "--json"]);
+    assert!(
+        ok,
+        "the user's own staged file must not be reported as our leak: {out} {err}"
+    );
+    assert!(
+        std::fs::read_to_string(repo.join(".mcp.json")).unwrap().contains("theirs"),
+        "and it must be untouched"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
 /// MAJOR B regression (round 2): in a linked worktree `.git` is a FILE, so the
 /// naive `.git/hooks` probe reported "no hooks" and core.hooksPath was written
 /// into the SHARED config — disabling the main worktree's live pre-commit.

@@ -149,31 +149,36 @@ for the exclude file itself — git treats it as *bytes*, so a non-UTF-8 or
 unreadable file is an error, never an implicit empty file (treating it as empty
 destroyed the user's personal ignores and made `publish` a silent no-op).
 
-The verifier distinguishes **our** footprint from **the user's** by asking git
-one direct question per visible artifact: **is this path in HEAD?**
-(`git ls-tree HEAD -- <path>`). Absent from HEAD ⇒ it did not exist at the last
-commit ⇒ private mode put it there ⇒ it is a leak. Present in HEAD ⇒ it cannot
-be ours, because `skip_tracked` stops us writing a tracked file — flagging those
-would hard-fail the very case private mode exists for, a developer with their
-own uncommitted tweak to a team-committed `.claude/settings.json`.
+The verifier distinguishes **our** footprint from **the user's** by asking the
+**file**, not git: does its content bear Whetstone's mark? Paths we exclusively
+own (anything with `whetstone` in the path) are ours by name; the shared-name
+files (`.mcp.json`, `.claude/settings*.json`, `.githooks/post-merge`,
+`.gitignore`) are ours only if our content is actually in them. One exemption:
+if the **committed** copy already bears our mark, our content is public history,
+so a working-tree change to it is the user's edit rather than our leak.
 
-**Do not reintroduce status-code pattern matching here.** Three consecutive
-releases shipped a hole in exactly that inference, each time in a state nobody
-enumerated:
+**Do not reintroduce git-state inference here.** Four consecutive releases
+shipped a hole trying to deduce authorship from the index, from HEAD, or from
+porcelain status letters — each fix missed a state nobody enumerated:
 
 | Attempt | Missed |
 |---|---|
 | "is it in the index?" | `A ` — an artifact `git add`ed after we wrote it (what `wh publish` itself instructs) |
 | `??` or `A*` (index column) | ` A` — intent-to-add (`git add -N`), whose `A` sits in the *worktree* column |
 | same | `AA`/`AU` — unmerged paths that **are** in HEAD, wrongly claimed as ours |
+| `git ls-tree HEAD -- <path>` | a root-relative path handed to a **cwd-relative** pathspec — off-root, every check asked about `<prefix><prefix><artifact>` |
 
-The porcelain code has many states (`??`, `A `, `AM`, `AD`, ` A`, ` M`, `M `,
-`MM`, `AA`, `UU`, `R `, `C `, …) and getting the set right requires enumerating
-all of them correctly; "is it in HEAD" is total and needs no enumeration.
+The deeper problem was the premise, not the encoding: *"present in HEAD ⇒ not
+ours"* assumed every artifact has a tracked-file guard, and
+`.claude/settings.local.json` — the file private mode deliberately redirects
+writes into — had none. Content attribution has no such premise. It gives the
+same answer in every git state, at any directory depth, on any filesystem.
 
-One parsing detail the codes still matter for: `-z` emits a rename or copy as
-`R  <new>\0<old>\0`, so the bare original-path field must be consumed or it gets
-rescanned as a record and its first three characters read as a status code.
+Two mechanical details still matter. `git status --porcelain` paths are
+**repo-root-relative**, so every path check must resolve against the git root,
+not `project_dir`. And `-z` emits a rename or copy as `R  <new>\0<old>\0`, so
+the bare original-path field must be consumed or it gets rescanned as a record
+with its first three characters read as a status code.
 
 `.gitignore` follows the same rule with one extra step: it is ours only when it
 carries Whetstone's personal-layer marker, and if **HEAD's copy already has that

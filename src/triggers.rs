@@ -308,16 +308,29 @@ fn install_session_hooks(project_dir: &Path) -> Result<SessionHookOutcome> {
     // user's Claude Code config. In private mode a git-tracked settings.json is
     // never modified — hooks land in settings.local.json (Claude Code's per-user
     // overlay) instead; `wh publish` migrates them back (whetstone-xdr).
-    let settings_path = if crate::private_mode::is_private(project_dir)
-        && crate::private_mode::is_git_tracked(project_dir, ".claude/settings.json")
-    {
+    let private = crate::private_mode::is_private(project_dir);
+    let settings_tracked =
+        private && crate::private_mode::is_git_tracked(project_dir, ".claude/settings.json");
+    let settings_path = if settings_tracked {
         claude_dir.join("settings.local.json")
     } else {
         claude_dir.join("settings.json")
     };
-    let merged = merge_claude_settings(&settings_path, &claude_path, &posttool_path);
-    crate::state::atomic_write(&settings_path, &merged);
-    written.push(settings_path);
+    // The overlay needs the SAME tracked-file guard as everything else. It was
+    // the one artifact written unconditionally, so when a team tracked both
+    // settings files private mode modified a tracked file and reported success.
+    let overlay_tracked = settings_tracked
+        && crate::private_mode::is_git_tracked(project_dir, ".claude/settings.local.json");
+    if overlay_tracked {
+        skipped.push(
+            ".claude/settings.json and .claude/settings.local.json are both git-tracked — in-session enforcement hooks were NOT installed (private mode never modifies a tracked file). Register them per-user instead, or run `wh publish` to share them."
+                .to_string(),
+        );
+    } else {
+        let merged = merge_claude_settings(&settings_path, &claude_path, &posttool_path);
+        crate::state::atomic_write(&settings_path, &merged);
+        written.push(settings_path);
+    }
 
     // Cursor has no standard PostToolUse hook API, so in-session enforcement is
     // not mechanical there. We write an honest advisory pointing at the CLI/MCP
