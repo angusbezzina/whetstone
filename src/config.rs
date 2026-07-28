@@ -47,6 +47,10 @@ const SUPPORTED_KEYS: &[&str] = &[
     "resolve.workers",
     "check.paths",
     "check.fail_on",
+    // Onboarding state, written by the setup oracles (never by hand):
+    // `wh onboard dismiss` and `wh init --private` / `wh publish`.
+    "setup.dismissed",
+    "setup.private",
     // Global-only keys:
     "default_languages",
     "default_formats",

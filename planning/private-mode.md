@@ -21,7 +21,7 @@ committed** — the canonical git feature for personal ignores. Private mode wri
 fenced, machine-managed block there; `wh publish` removes exactly that block.
 
 ```
-# >>> whetstone private mode (managed by `wh`; `wh publish` removes this block) >>>
+# >>> whetstone private mode [.] (managed by `wh`; `wh publish` removes this block) >>>
 /whetstone/
 /.mcp.json
 /.claude/settings.json
@@ -30,8 +30,15 @@ fenced, machine-managed block there; `wh publish` removes exactly that block.
 /.claude/whetstone-posttooluse-hook.sh
 /.cursor/whetstone-session.md
 /.githooks/post-merge
-# <<< whetstone private mode <<<
+# <<< whetstone private mode [.] <<<
 ```
+
+**Blocks are labelled with the project's path** (`[.]` at the repo root,
+`[packages/api]` for a package). One repo can have several private packages at
+once: `enable` and `publish` only ever read and write their own label, so
+onboarding a second package never re-exposes the first. Glob metacharacters in
+a real directory name (`pkg[1]`) are escaped in the entries — `.git/info/exclude`
+is gitignore syntax, and an unescaped `[` matches nothing.
 
 The path is resolved via `git rev-parse --git-path info/exclude` so worktrees and
 non-standard git dirs work. Entries are static (excluding an already-tracked path
@@ -75,14 +82,23 @@ leave artifacts exposed on a re-run. Both the exclude file and the
      `.claude/whetstone-*.sh` scripts tracked → skipped (already shared).
 
    Related, and not limited to private mode: **`core.hooksPath` is never set
-   when `.git/hooks/` holds live executable hooks.** Redirecting it silently
-   stops a `pre-commit install` / lefthook setup from firing, with no diff to
-   notice. `enable` reports the situation in `warnings` instead.
+   when the repo's hooks dir holds live executable hooks.** Redirecting it
+   silently stops a `pre-commit install` / lefthook setup from firing, with no
+   diff to notice. The dir is resolved with `git rev-parse --git-path hooks`,
+   not `project_dir/.git/hooks` — in a linked worktree `.git` is a *file* and in
+   a monorepo package it doesn't exist, and either way a naive probe reports "no
+   hooks" and redirects the SHARED config. It is also left alone when the
+   project isn't the git root (`core.hooksPath` is repo-wide) or is already set.
+   Every skip is reported in `install_hooks`' `warnings`, and `wh init --claude`
+   downgrades its "enforcement installed" line when any caveat is present —
+   silence would claim a hook is running when it can never fire.
 4. **`--ci` is refused in private mode.** A workflow file is inherently shared.
    `wh publish --ci` writes it at flip time.
 5. **`wh publish` never runs `git add` or `git commit`.** It removes the exclude
    block, writes the real `.gitignore` entries (`.state`/`.personal`/metrics — the
-   existing `personal::ensure_gitignore_entries`), sets `setup.private: false`,
+   existing `personal::ensure_gitignore_entries`), *removes* the `setup.private`
+   key (writing `false` would ship a private-mode artifact to the whole team in
+   the very file publish makes trackable),
    completes any wiring skipped under decision 3 (now that sharing is intended,
    including migrating our hook entries out of `settings.local.json` into
    `settings.json`), and **prints** the file list + suggested `git add` command.

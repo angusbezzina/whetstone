@@ -32,24 +32,32 @@ pub fn install_hooks(project_dir: &Path, opts: &HookOptions) -> Result<Value> {
 
     if opts.post_merge {
         match install_post_merge_hook(project_dir) {
-            Ok(path) => wrote.push(json!({
-                "kind": "git-hook",
-                "name": "post-merge",
-                "path": path.display().to_string(),
-            })),
+            Ok(path) => {
+                wrote.push(json!({
+                    "kind": "git-hook",
+                    "name": "post-merge",
+                    "path": path.display().to_string(),
+                }));
+                match wire_hooks_path(project_dir) {
+                    Ok(Some(reason)) => warnings.push(format!("post-merge hook: {reason}")),
+                    Ok(None) => {}
+                    Err(e) => warnings.push(format!("post-merge hook: {e}")),
+                }
+            }
             Err(e) => warnings.push(format!("post-merge hook: {e}")),
         }
     }
 
     if opts.session {
         match install_session_hooks(project_dir) {
-            Ok(paths) => {
-                for p in paths {
+            Ok(outcome) => {
+                for p in outcome.wrote {
                     wrote.push(json!({
                         "kind": "session-hook",
                         "path": p.display().to_string(),
                     }));
                 }
+                warnings.extend(outcome.skipped);
             }
             Err(e) => warnings.push(format!("session hook: {e}")),
         }
@@ -93,7 +101,29 @@ pub fn install_ci_workflow(project_dir: &Path, schedule: &str) -> Result<Value> 
 /// silently disable every one of them — a `pre-commit install` / lefthook
 /// layout is the common case.
 pub fn has_local_git_hooks(project_dir: &Path) -> bool {
-    let git_hooks = project_dir.join(".git").join("hooks");
+    // Resolve via git, not `project_dir/.git/hooks`: in a linked worktree
+    // `.git` is a FILE, and in a monorepo package it does not exist at all —
+    // in both cases a naive path check reports "no hooks" and we would redirect
+    // core.hooksPath in the SHARED config, killing the user's live hooks.
+    let Ok(out) = Command::new("git")
+        .args(["rev-parse", "--git-path", "hooks"])
+        .current_dir(project_dir)
+        .output()
+    else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let git_hooks = {
+        let p = PathBuf::from(&raw);
+        if p.is_absolute() {
+            p
+        } else {
+            project_dir.join(p)
+        }
+    };
     let Ok(entries) = std::fs::read_dir(&git_hooks) else {
         return false;
     };
@@ -129,44 +159,106 @@ fn install_post_merge_hook(project_dir: &Path) -> Result<PathBuf> {
     std::fs::write(&path, POST_MERGE_HOOK_BODY)?;
     set_executable(&path)?;
 
-    // Wire core.hooksPath so `git pull` actually runs the hook. We avoid
-    // overwriting an existing value that may intentionally point elsewhere —
-    // and never redirect away from a live .git/hooks/ setup, which would
-    // silently stop the user's pre-commit gate from firing.
-    if project_dir.join(".git").exists() && !has_local_git_hooks(project_dir) {
-        if let Ok(current) = Command::new("git")
-            .args(["config", "--get", "core.hooksPath"])
-            .current_dir(project_dir)
-            .output()
-        {
-            let existing = String::from_utf8_lossy(&current.stdout).trim().to_string();
-            if existing.is_empty() {
-                let status = Command::new("git")
-                    .args(["config", "core.hooksPath", ".githooks"])
-                    .current_dir(project_dir)
-                    .status()
-                    .with_context(|| "git config failed")?;
-                if !status.success() {
-                    return Err(anyhow!("git config core.hooksPath returned non-zero"));
-                }
-            }
+    Ok(path)
+}
+
+/// Wire `core.hooksPath` so `git pull` actually runs the post-merge hook, and
+/// say plainly when we don't. Silence here means claiming a hook is installed
+/// when it can never fire. Returns a reason when the hook is left unwired.
+fn wire_hooks_path(project_dir: &Path) -> Result<Option<String>> {
+    if has_local_git_hooks(project_dir) {
+        return Ok(Some(
+            "left core.hooksPath alone: this repo has executable hooks in its git hooks dir (a pre-commit/lefthook setup). Whetstone's post-merge advisory will not run; your existing hooks keep working.".to_string(),
+        ));
+    }
+    let in_repo = Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(project_dir)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !in_repo {
+        return Ok(Some(
+            "not a git repository: the post-merge hook was written but is not wired.".to_string(),
+        ));
+    }
+    // A package inside a monorepo: core.hooksPath is repo-wide and relative to
+    // the repo root, so pointing it at this package's .githooks would hijack
+    // hooks for the whole repository.
+    let toplevel = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(project_dir)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim().to_string()));
+    let is_root = match toplevel {
+        Some(root) => {
+            let root = root.canonicalize().unwrap_or(root);
+            let proj = project_dir
+                .canonicalize()
+                .unwrap_or_else(|_| project_dir.to_path_buf());
+            root == proj
         }
+        None => false,
+    };
+    if !is_root {
+        return Ok(Some(
+            "left core.hooksPath alone: this project is not the git root, and core.hooksPath is repo-wide. The post-merge hook was written but is not wired.".to_string(),
+        ));
     }
 
-    Ok(path)
+    let Ok(current) = Command::new("git")
+        .args(["config", "--get", "core.hooksPath"])
+        .current_dir(project_dir)
+        .output()
+    else {
+        return Ok(None);
+    };
+    let existing = String::from_utf8_lossy(&current.stdout).trim().to_string();
+    if !existing.is_empty() {
+        return Ok(Some(format!(
+            "left core.hooksPath alone: already set to `{existing}`. The post-merge hook was written but is not wired."
+        )));
+    }
+    let status = Command::new("git")
+        .args(["config", "core.hooksPath", ".githooks"])
+        .current_dir(project_dir)
+        .status()
+        .with_context(|| "git config failed")?;
+    if !status.success() {
+        return Err(anyhow!("git config core.hooksPath returned non-zero"));
+    }
+    Ok(None)
 }
 
 /// Claude Code + Cursor both look for project-level settings at known paths.
 /// We install a minimal config that runs `wh status` advisorially on startup.
-fn install_session_hooks(project_dir: &Path) -> Result<Vec<PathBuf>> {
+/// What `install_session_hooks` did — and, just as importantly, what it
+/// deliberately did not do. A silent skip reads as "installed".
+struct SessionHookOutcome {
+    wrote: Vec<PathBuf>,
+    skipped: Vec<String>,
+}
+
+fn skip_note(rel: &str) -> String {
+    format!(
+        "{rel} is git-tracked and private mode never modifies tracked files — left unchanged (the committed copy is what will run)"
+    )
+}
+
+fn install_session_hooks(project_dir: &Path) -> Result<SessionHookOutcome> {
     let mut written = Vec::new();
+    let mut skipped = Vec::new();
     // Claude Code hook. Each script is skipped when private mode would
     // otherwise overwrite a tracked copy (the file already exists there, so the
     // settings entry still resolves).
     let claude_dir = project_dir.join(".claude");
     std::fs::create_dir_all(&claude_dir)?;
     let claude_path = claude_dir.join("whetstone-session-hook.sh");
-    if !crate::private_mode::skip_tracked(project_dir, ".claude/whetstone-session-hook.sh") {
+    if crate::private_mode::skip_tracked(project_dir, ".claude/whetstone-session-hook.sh") {
+        skipped.push(skip_note(".claude/whetstone-session-hook.sh"));
+    } else {
         std::fs::write(&claude_path, SESSION_HOOK_BODY)?;
         set_executable(&claude_path)?;
         written.push(claude_path.clone());
@@ -177,7 +269,9 @@ fn install_session_hooks(project_dir: &Path) -> Result<Vec<PathBuf>> {
     // wrapper script no-ops if `wh` is not on PATH, so a missing binary never
     // wedges the agent.
     let posttool_path = claude_dir.join("whetstone-posttooluse-hook.sh");
-    if !crate::private_mode::skip_tracked(project_dir, ".claude/whetstone-posttooluse-hook.sh") {
+    if crate::private_mode::skip_tracked(project_dir, ".claude/whetstone-posttooluse-hook.sh") {
+        skipped.push(skip_note(".claude/whetstone-posttooluse-hook.sh"));
+    } else {
         std::fs::write(&posttool_path, POSTTOOLUSE_HOOK_BODY)?;
         set_executable(&posttool_path)?;
         written.push(posttool_path.clone());
@@ -206,7 +300,11 @@ fn install_session_hooks(project_dir: &Path) -> Result<Vec<PathBuf>> {
     let cursor_dir = project_dir.join(".cursor");
     let cursor_path = cursor_dir.join("whetstone-session.md");
     if crate::private_mode::skip_tracked(project_dir, ".cursor/whetstone-session.md") {
-        return Ok(written);
+        skipped.push(skip_note(".cursor/whetstone-session.md"));
+        return Ok(SessionHookOutcome {
+            wrote: written,
+            skipped,
+        });
     }
     std::fs::create_dir_all(&cursor_dir)?;
     std::fs::write(
@@ -222,7 +320,10 @@ fn install_session_hooks(project_dir: &Path) -> Result<Vec<PathBuf>> {
     )?;
     written.push(cursor_path);
 
-    Ok(written)
+    Ok(SessionHookOutcome {
+        wrote: written,
+        skipped,
+    })
 }
 
 fn merge_claude_settings(path: &Path, session_hook: &Path, posttooluse_hook: &Path) -> Value {

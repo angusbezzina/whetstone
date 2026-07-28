@@ -263,9 +263,23 @@ pub fn claude(project_dir: &Path) -> Result<Value> {
     } else {
         wired.push("registered the MCP server in .mcp.json (rules_query + scan)".to_string());
     }
-    wired.push(
-        "installed hooks: SessionStart advisory + PostToolUse in-session enforcement".to_string(),
-    );
+    // Don't claim enforcement is wired when a step was skipped — a tracked hook
+    // script we didn't write may do something else entirely.
+    let hook_warnings = hooks
+        .get("warnings")
+        .and_then(|w| w.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    if hook_warnings == 0 {
+        wired.push(
+            "installed hooks: SessionStart advisory + PostToolUse in-session enforcement"
+                .to_string(),
+        );
+    } else {
+        wired.push(format!(
+            "hooks installed with {hook_warnings} caveat(s) — see hooks.warnings; verify in-session enforcement before relying on it"
+        ));
+    }
 
     Ok(json!({
         "status": "ok",
@@ -350,6 +364,10 @@ pub fn set_dismissed(project_dir: &Path, dismissed: bool) -> Result<()> {
 /// Persist the private-mode marker as `setup.private` in whetstone.yaml
 /// (whetstone-xdr). The file itself is excluded while private, so the marker is
 /// invisible to teammates. Same round-trip discipline as `set_dismissed`.
+///
+/// Turning it OFF removes the key rather than writing `false`: after `wh
+/// publish` this file IS committed, and a leftover `setup.private: false` would
+/// ship a private-mode artifact to everyone on the team.
 pub fn set_private(project_dir: &Path, private: bool) -> Result<()> {
     let path = project_dir.join("whetstone").join("whetstone.yaml");
     let mut doc: Value = if path.exists() {
@@ -366,10 +384,16 @@ pub fn set_private(project_dir: &Path, private: bool) -> Result<()> {
     if !setup.is_object() {
         *setup = json!({});
     }
-    setup
-        .as_object_mut()
-        .unwrap()
-        .insert("private".to_string(), json!(private));
+    let setup_obj = setup.as_object_mut().unwrap();
+    if private {
+        setup_obj.insert("private".to_string(), json!(true));
+    } else {
+        setup_obj.remove("private");
+    }
+    let setup_empty = setup_obj.is_empty();
+    if setup_empty {
+        obj.remove("setup");
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

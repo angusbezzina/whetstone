@@ -275,6 +275,139 @@ fn monorepo_subdirectory_has_zero_footprint() {
     std::fs::remove_dir_all(&repo).ok();
 }
 
+/// MAJOR A regression (round 2): two packages in one monorepo, both private.
+/// The block was marker-fenced but not labelled, so the second enable replaced
+/// the first's block — silently re-exposing a package Whetstone still reported
+/// as private. Publish had the mirror bug.
+#[test]
+fn two_private_packages_coexist_in_one_repo() {
+    let repo = seeded_repo("twopkg");
+    for name in ["api", "web"] {
+        let pkg = repo.join("packages").join(name);
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            "{\n  \"name\": \"x\",\n  \"dependencies\": { \"react\": \"^18.0.0\" }\n}\n",
+        )
+        .unwrap();
+    }
+    git_ok(&repo, &["add", "."]);
+    git_ok(&repo, &["commit", "-q", "-m", "packages"]);
+
+    let api = repo.join("packages/api");
+    let web = repo.join("packages/web");
+
+    let (out_a, err_a, ok_a) = run_wh(&api, &["init", "--claude", "--private", "--json"]);
+    assert!(ok_a, "api private init failed: {out_a} {err_a}");
+    assert_eq!(git_status_porcelain(&repo), "", "api must be hidden");
+
+    let (out_w, err_w, ok_w) = run_wh(&web, &["init", "--claude", "--private", "--json"]);
+    assert!(ok_w, "web private init failed: {out_w} {err_w}");
+    assert_eq!(
+        git_status_porcelain(&repo),
+        "",
+        "enabling web must not un-hide api"
+    );
+
+    // Publishing one package must leave the other private.
+    let (pub_a, _, pub_a_ok) = run_wh(&api, &["publish", "--json"]);
+    assert!(pub_a_ok, "api publish failed: {pub_a}");
+    let status = git_status_porcelain(&repo);
+    assert!(
+        status.contains("packages/api/whetstone/"),
+        "api must become trackable: {status}"
+    );
+    assert!(
+        !status.contains("packages/web/whetstone/"),
+        "web must stay hidden after api publishes: {status}"
+    );
+
+    // ...and web can still publish itself afterwards.
+    let (pub_w, _, pub_w_ok) = run_wh(&web, &["publish", "--json"]);
+    assert!(pub_w_ok, "web publish failed: {pub_w}");
+    let status2 = git_status_porcelain(&repo);
+    assert!(status2.contains("packages/web/whetstone/"), "web trackable: {status2}");
+    let exclude = std::fs::read_to_string(repo.join(".git/info/exclude")).unwrap_or_default();
+    assert!(!exclude.contains("whetstone"), "no blocks left: {exclude}");
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// MAJOR B regression (round 2): in a linked worktree `.git` is a FILE, so the
+/// naive `.git/hooks` probe reported "no hooks" and core.hooksPath was written
+/// into the SHARED config — disabling the main worktree's live pre-commit.
+#[test]
+fn worktree_does_not_disable_shared_git_hooks() {
+    let repo = seeded_repo("wt");
+    let pre_commit = repo.join(".git/hooks/pre-commit");
+    std::fs::write(&pre_commit, "#!/bin/sh\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut p = std::fs::metadata(&pre_commit).unwrap().permissions();
+        p.set_mode(0o755);
+        std::fs::set_permissions(&pre_commit, p).unwrap();
+    }
+
+    let wt = repo.parent().unwrap().join(format!(
+        "{}-linked",
+        repo.file_name().unwrap().to_string_lossy()
+    ));
+    git_ok(
+        &repo,
+        &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "feature"],
+    );
+
+    let (out, err, ok) = run_wh(&wt, &["init", "--claude", "--private", "--json"]);
+    assert!(ok, "init in a worktree failed: {out} {err}");
+
+    let cfg = git(&repo, &["config", "--get", "core.hooksPath"]);
+    let value = String::from_utf8_lossy(&cfg.stdout).trim().to_string();
+    assert!(
+        value.is_empty(),
+        "a worktree must not redirect the shared core.hooksPath (got {value})"
+    );
+    assert!(
+        out.contains("core.hooksPath"),
+        "the skip must be reported, not silent: {out}"
+    );
+
+    // The main worktree's gate still fires.
+    std::fs::write(repo.join("y.txt"), "y").unwrap();
+    git_ok(&repo, &["add", "y.txt"]);
+    let commit = git(&repo, &["commit", "-m", "blocked"]);
+    assert!(!commit.status.success(), "pre-commit must still block");
+
+    git(&repo, &["worktree", "remove", "--force", wt.to_str().unwrap()]);
+    std::fs::remove_dir_all(&repo).ok();
+    std::fs::remove_dir_all(&wt).ok();
+}
+
+/// MINOR F regression: publish must not ship `setup.private: false` to the
+/// whole team in the file it makes trackable.
+#[test]
+fn publish_leaves_no_private_marker_behind() {
+    let repo = seeded_repo("marker");
+    let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok);
+    let (_, _, pub_ok) = run_wh(&repo, &["publish", "--json"]);
+    assert!(pub_ok);
+
+    let yaml = std::fs::read_to_string(repo.join("whetstone/whetstone.yaml")).unwrap();
+    assert!(
+        !yaml.contains("private"),
+        "published config must not carry the private marker: {yaml}"
+    );
+    // And no config-key warnings on a normal command.
+    let (out, err, _) = run_wh(&repo, &["status", "--setup", "--json"]);
+    assert!(
+        !out.contains("unknown config key") && !err.contains("unknown config key"),
+        "setup keys must be known to the config validator: {out} {err}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
 /// MAJOR 2 regression: every artifact private mode can write must be skipped
 /// when tracked — not just .mcp.json and settings.json. Overwriting a
 /// teammate's committed .githooks/post-merge destroyed their content.
