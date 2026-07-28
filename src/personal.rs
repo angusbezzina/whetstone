@@ -13,13 +13,17 @@ use std::path::Path;
 
 const PERSONAL_SUBDIRS: &[&str] = &["rules", "evals", "lint", "context"];
 
-const GITIGNORE_MARKER: &str = "# Whetstone personal layer (do not commit)";
+pub(crate) const GITIGNORE_MARKER: &str = "# Whetstone personal layer (do not commit)";
 const GITIGNORE_RULES: &[&str] = &[
     "whetstone/.personal/",
     "whetstone/.cache/",
     "whetstone/.state/",
     "whetstone/.metrics.jsonl",
     "whetstone/.last-run",
+    // Claude Code's per-user overlay: private mode puts hooks here when
+    // settings.json is tracked, and publish leaves it behind when it still
+    // holds user content. It is personal by definition — never commit it.
+    ".claude/settings.local.json",
 ];
 
 const DEFAULT_PERSONAL_CONFIG: &str = r#"# whetstone/.personal/config.yaml

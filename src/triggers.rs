@@ -155,6 +155,17 @@ fn install_post_merge_hook(project_dir: &Path) -> Result<PathBuf> {
             ".githooks/post-merge is git-tracked and private mode never modifies tracked files — left unchanged"
         ));
     }
+    // Never blind-overwrite a COMMITTED hook we did not author, in either mode:
+    // this is a whole-file write, so a team's post-merge would be destroyed.
+    // (`wh publish` calls this implicitly, which made it a silent side effect.)
+    if crate::private_mode::is_git_tracked(project_dir, ".githooks/post-merge") {
+        let existing = std::fs::read_to_string(&path).unwrap_or_default();
+        if !existing.is_empty() && existing != POST_MERGE_HOOK_BODY {
+            return Err(anyhow!(
+                ".githooks/post-merge is git-tracked and was not written by Whetstone — left unchanged rather than overwriting your team's hook"
+            ));
+        }
+    }
     std::fs::create_dir_all(path.parent().unwrap())?;
     std::fs::write(&path, POST_MERGE_HOOK_BODY)?;
     set_executable(&path)?;

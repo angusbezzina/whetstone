@@ -149,6 +149,14 @@ for the exclude file itself — git treats it as *bytes*, so a non-UTF-8 or
 unreadable file is an error, never an implicit empty file (treating it as empty
 destroyed the user's personal ignores and made `publish` a silent no-op).
 
+The verifier distinguishes **our** footprint from **the user's**. For hidden
+artifacts only an *untracked* path counts as a leak: a tracked-but-modified one
+cannot be ours (`skip_tracked` guarantees private mode never writes a tracked
+file), so flagging it would hard-fail the very case private mode exists for — a
+developer with their own uncommitted tweak to a team-committed
+`.claude/settings.json`. `.gitignore` is checked only when it carries
+Whetstone's personal-layer marker, so an unrelated edit is never blamed on us.
+
 The verifier covers the hidden artifacts **and** the inherently-shared ones.
 `.github/workflows/whetstone-check.yml` is never hidden — a workflow only means
 anything if the team has it — but `wh init --ci` before going private left it
@@ -186,6 +194,10 @@ Whetstone owns. A footprint created anywhere else is outside what it can check �
 e.g. `.git/info/exclude` symlinked to a *tracked* worktree file (refused up
 front for that reason), or `wh debt --beads` shelling out to `bd`, which writes
 `.beads/` on purpose because filing an issue in the team tracker is a shared act.
+- User content in `.git/info/exclude` survives both operations verbatim,
+  including CRLF endings, with exactly one normalization: a file that had no
+  final newline gains one (enable must separate its block from the last line,
+  and publish cannot know whether that newline was originally there).
 - **Publish is one-way in one respect:** it writes real `.gitignore` entries, and
   re-enabling private mode afterwards cannot hide `.gitignore` (a legitimately
   shared file). So `enable → publish → enable` leaves that one visible change.

@@ -56,7 +56,7 @@ fn end_line(label: &str) -> String {
 /// fence prefix to match. Unlabelled (pre-label) fences resolve to the root.
 /// Safe against brackets in paths because the written label is encoded.
 fn fence_label(line: &str, kind: &str) -> Option<String> {
-    let rest = line.strip_prefix(kind)?;
+    let rest = line.trim_end_matches(['\n', '\r']).strip_prefix(kind)?;
     Some(match (rest.find('['), rest.find(']')) {
         (Some(a), Some(b)) if b > a => rest[a + 1..b].to_string(),
         _ => ROOT_LABEL.to_string(),
@@ -104,7 +104,9 @@ fn read_exclude(path: &Path) -> Result<String> {
             )
         }),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-        Err(e) => Err(e).with_context(|| format!("read {}", path.display())),
+        // Keep the OS cause in the message itself — the JSON error surface only
+        // renders the top-level string, so a bare "read <path>" hides why.
+        Err(e) => Err(anyhow!("read {}: {e}", path.display())),
     }
 }
 
@@ -112,11 +114,29 @@ fn read_exclude(path: &Path) -> Result<String> {
 /// writing through it would modify a tracked file, which private mode promises
 /// never to do (and which the artifact-scoped verifier cannot see).
 fn guard_symlinked_into_worktree(project_dir: &Path, exclude: &Path) -> Result<()> {
+    // Only a real symlink can redirect our write somewhere unexpected. (The
+    // exclude file itself lives under `<root>/.git/`, which is inside the repo
+    // path but not part of the working tree — so a plain path must not trip
+    // the worktree check below.)
+    match std::fs::symlink_metadata(exclude) {
+        Ok(meta) if meta.file_type().is_symlink() => {}
+        _ => return Ok(()),
+    }
     let Ok(target) = std::fs::canonicalize(exclude) else {
         return Ok(());
     };
-    if target == exclude {
-        return Ok(());
+    let git_dir = Command::new("git")
+        .args(["rev-parse", "--absolute-git-dir"])
+        .current_dir(project_dir)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim().to_string()))
+        .map(|p| p.canonicalize().unwrap_or(p));
+    if let Some(git_dir) = git_dir {
+        if target.starts_with(&git_dir) {
+            return Ok(()); // Still inside the git dir — invisible to git status.
+        }
     }
     let Ok(out) = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
@@ -130,14 +150,15 @@ fn guard_symlinked_into_worktree(project_dir: &Path, exclude: &Path) -> Result<(
     let Ok(rel) = target.strip_prefix(&root) else {
         return Ok(()); // Outside the worktree (the normal dotfiles case) — fine.
     };
-    let rel = rel.to_string_lossy().to_string();
-    if is_git_tracked(project_dir, &rel) {
-        return Err(anyhow!(
-            ".git/info/exclude is a symlink to {rel}, which git tracks — writing it would modify \
-             a tracked file. Private mode never does that; point the symlink outside the worktree."
-        ));
-    }
-    Ok(())
+    // Tracked or not: a file inside the working tree is visible to `git status`
+    // (or is a tracked file we would be modifying), so writing our block into
+    // it breaks the promise either way.
+    Err(anyhow!(
+        ".git/info/exclude is a symlink to {}, which is inside the working tree — writing the \
+         managed block there would put it in `git status` (or modify a tracked file). \
+         Point the symlink outside the repository.",
+        rel.to_string_lossy()
+    ))
 }
 
 /// True when this clone has more than one worktree. They SHARE
@@ -441,6 +462,7 @@ fn lock_exclude(exclude: &Path) -> Result<ExcludeLock> {
 /// bound a TORN block: without it, a block missing its terminator would eat
 /// every user line that follows to EOF.
 fn is_managed_entry(line: &str) -> bool {
+    let line = line.trim_end_matches(['\n', '\r']);
     let Some(rest) = line.strip_prefix('/') else {
         return false;
     };
@@ -468,7 +490,10 @@ fn is_managed_entry(line: &str) -> bool {
 /// packages private at once, and clobbering a sibling's block would silently
 /// expose its artifacts.
 fn strip_block(content: &str, label: &str) -> String {
-    let mut lines: Vec<&str> = content.lines().collect();
+    // `split_inclusive` keeps each line's own terminator, so CRLF endings and a
+    // missing final newline survive the round-trip — `lines()` would silently
+    // rewrite the user's file.
+    let mut lines: Vec<&str> = content.split_inclusive('\n').collect();
     // Repeat so duplicated blocks for this label are all removed.
     while let Some(begin) = lines.iter().position(|l| fence_is(l, BEGIN_PREFIX, label)) {
         let end = lines
@@ -504,12 +529,8 @@ fn strip_block(content: &str, label: &str) -> String {
             }
         }
     }
-    let mut out = String::new();
-    for line in lines {
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
+    // Lines already carry their own terminators — do not add any.
+    lines.concat()
 }
 
 /// Enable private mode: write the managed exclude block + the `setup.private`
@@ -576,11 +597,9 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
     let exposed = exposed_artifacts(project_dir, &prefix)?;
     if !exposed.is_empty() {
         return Err(anyhow!(
-            "private mode is NOT in effect: git can still see {}. \
-             A CI workflow (.github/workflows/whetstone-check.yml) is inherently shared — delete it, or commit it and accept it is public. \
-             Otherwise an in-tree .gitignore usually re-includes the path (`git check-ignore -v <path>` shows which rule wins); \
-             .git/info/exclude cannot override that.",
-            exposed.join(", ")
+            "private mode is NOT fully in effect — git can still see:\n  {}\n\
+             Resolve the above, then re-run. To leave private mode entirely, run `wh publish`.",
+            exposed.join("\n  ")
         ));
     }
 
@@ -628,25 +647,55 @@ pub fn exposed_artifacts(project_dir: &Path, prefix: &str) -> Result<Vec<String>
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    // Hidden artifacts AND the inherently-shared ones: a visible CI workflow is
-    // still a Whetstone file the user was told is invisible.
-    let owned: Vec<String> = EXCLUDE_ENTRIES
+    let hidden: Vec<String> = EXCLUDE_ENTRIES
         .iter()
-        .chain(SHARED_ARTIFACTS.iter())
         .map(|e| format!("{prefix}{e}"))
         .collect();
-    Ok(String::from_utf8_lossy(&out.stdout)
-        .split('\0')
-        .filter(|rec| rec.len() > 3)
-        .filter_map(|rec| rec.get(3..))
-        .filter(|path| {
-            owned.iter().any(|o| {
-                let o_dir = o.trim_end_matches('/');
-                *path == o.as_str() || *path == o_dir || path.starts_with(&format!("{o_dir}/"))
-            })
+    let shared: Vec<String> = SHARED_ARTIFACTS
+        .iter()
+        .map(|e| format!("{prefix}{e}"))
+        .collect();
+    let gitignore = format!("{prefix}.gitignore");
+    // `.gitignore` is ours only when it carries the personal-layer block a
+    // previous `wh init --personal` (or a publish) wrote. An unrelated edit by
+    // the user is not our leak.
+    let gitignore_is_ours = std::fs::read_to_string(project_dir.join(".gitignore"))
+        .map(|s| s.contains(crate::personal::GITIGNORE_MARKER))
+        .unwrap_or(false);
+
+    let matches = |path: &str, owned: &[String]| {
+        owned.iter().any(|o| {
+            let o_dir = o.trim_end_matches('/');
+            path == o.as_str() || path == o_dir || path.starts_with(&format!("{o_dir}/"))
         })
-        .map(str::to_string)
-        .collect())
+    };
+
+    let mut exposed = Vec::new();
+    for rec in String::from_utf8_lossy(&out.stdout).split('\0') {
+        if rec.len() < 4 {
+            continue;
+        }
+        let (code, path) = rec.split_at(3);
+        let untracked = code.starts_with("??");
+        if matches(path, &hidden) {
+            // Only an UNTRACKED artifact is our leak. A tracked-but-modified
+            // path cannot be ours — `skip_tracked` guarantees private mode
+            // never writes a tracked file — so flagging it would hard-fail the
+            // exact "trial it on the team repo" case private mode exists for.
+            if untracked {
+                exposed.push(format!("{path} (untracked — an in-tree .gitignore may re-include it; `git check-ignore -v {path}` shows which rule wins)"));
+            }
+        } else if matches(path, &shared) {
+            exposed.push(format!(
+                "{path} (a Whetstone CI workflow is inherently shared — delete it, or commit it and accept that it is public)"
+            ));
+        } else if path == gitignore && gitignore_is_ours {
+            exposed.push(format!(
+                "{path} (carries Whetstone's personal-layer block, which cannot be hidden — remove those lines, or commit them and accept that they are public)"
+            ));
+        }
+    }
+    Ok(exposed)
 }
 
 /// The flip: remove the exclude block, write real `.gitignore` entries for the

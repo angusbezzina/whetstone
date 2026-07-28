@@ -1275,10 +1275,9 @@ pub fn run() -> i32 {
                         setup.insert("status".to_string(), serde_json::json!("error"));
                         output::print_json(&serde_json::Value::Object(setup));
                         eprintln!(
-                            "whetstone: private mode is NOT in effect — git can still see: {}.\n\
-                             Run `git check-ignore -v <path>` to see which rule wins (an in-tree .gitignore\n\
-                             negation overrides .git/info/exclude).",
-                            exposed.join(", ")
+                            "whetstone: private mode is NOT fully in effect — git can still see:\n  {}\n\
+                             Resolve the above, then re-run. To leave private mode entirely, run `wh publish`.",
+                            exposed.join("\n  ")
                         );
                         return 1;
                     }

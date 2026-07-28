@@ -715,6 +715,120 @@ fn exclude_symlinked_to_a_tracked_file_is_refused() {
     std::fs::remove_dir_all(&repo).ok();
 }
 
+/// Round-6 MAJOR-1 regression: `wh init --personal` writes a Whetstone block
+/// into `.gitignore`, which no ignore mechanism can hide. Enabling private mode
+/// afterwards reported "invisible to git status" with that file visible.
+#[test]
+fn whetstone_written_gitignore_is_not_reported_invisible() {
+    let repo = seeded_repo("gitignore");
+    let (_, _, personal_ok) = run_wh(&repo, &["init", "--personal", "--json"]);
+    assert!(personal_ok, "public --personal writes .gitignore");
+    assert!(
+        git_status_porcelain(&repo).contains(".gitignore"),
+        "precondition: .gitignore is visible"
+    );
+
+    let (out, err, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(
+        !ok,
+        "a Whetstone-written .gitignore must not be reported as invisible: {out} {err}"
+    );
+    assert!(
+        out.contains(".gitignore") || err.contains(".gitignore"),
+        "the exposed file must be named: {out} {err}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Round-6 MODERATE-1 regression: a tracked artifact with the user's OWN
+/// uncommitted edit is not our leak (`skip_tracked` means we never wrote it),
+/// but it hard-failed enable and wedged the repo — in exactly the
+/// "trial Whetstone on the team's repo" case private mode exists for.
+#[test]
+fn a_users_own_edit_to_a_tracked_artifact_is_not_a_leak() {
+    let repo = seeded_repo("useredit");
+    std::fs::create_dir_all(repo.join(".claude")).unwrap();
+    std::fs::write(repo.join(".claude/settings.json"), "{\n  \"model\": \"opus\"\n}\n").unwrap();
+    git_ok(&repo, &["add", "."]);
+    git_ok(&repo, &["commit", "-q", "-m", "team settings"]);
+    // The user tweaks the tracked file themselves, before adopting Whetstone.
+    std::fs::write(
+        repo.join(".claude/settings.json"),
+        "{\n  \"model\": \"opus\",\n  \"mine\": true\n}\n",
+    )
+    .unwrap();
+
+    let (out, err, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(
+        ok,
+        "the user's own edit to a tracked file must not fail private mode: {out} {err}"
+    );
+    // Their edit is untouched and still theirs.
+    assert!(std::fs::read_to_string(repo.join(".claude/settings.json"))
+        .unwrap()
+        .contains("\"mine\""));
+    let status = git_status_porcelain(&repo);
+    assert!(
+        status.contains(".claude/settings.json") && !status.contains("whetstone/"),
+        "only the user's own edit shows; no Whetstone artifact leaks: {status}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Round-6 MINOR-1 regression: publish round-tripped the exclude file through
+/// `lines()`, converting CRLF to LF and forcing a trailing newline.
+#[test]
+fn publish_preserves_line_endings_byte_for_byte() {
+    let repo = seeded_repo("crlf");
+    let info = repo.join(".git/info");
+    std::fs::create_dir_all(&info).unwrap();
+    let original = "# personal\r\n*.log\r\nnotrailing";
+    std::fs::write(info.join("exclude"), original).unwrap();
+
+    let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok);
+    let (_, _, pub_ok) = run_wh(&repo, &["publish", "--json"]);
+    assert!(pub_ok);
+
+    // CRLF endings survive; the one documented normalization is that a file
+    // with no final newline gains one (enable must add a separator before its
+    // block, and publish cannot know afterwards whether it was already there).
+    assert_eq!(
+        std::fs::read_to_string(info.join("exclude")).unwrap(),
+        format!("{original}\n"),
+        "publish must restore the exclude file, preserving CRLF"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Round-6 MINOR-4 regression: publish calls install_hooks implicitly, which
+/// wrote `.githooks/post-merge` wholesale — destroying a team's committed hook.
+#[test]
+fn a_tracked_team_post_merge_hook_is_never_overwritten() {
+    let repo = seeded_repo("teamhook");
+    std::fs::create_dir_all(repo.join(".githooks")).unwrap();
+    let body = "#!/bin/sh\necho team-post-merge\n";
+    std::fs::write(repo.join(".githooks/post-merge"), body).unwrap();
+    git_ok(&repo, &["add", "."]);
+    git_ok(&repo, &["commit", "-q", "-m", "team hook"]);
+
+    let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok);
+    let (pub_out, _, pub_ok) = run_wh(&repo, &["publish", "--json"]);
+    assert!(pub_ok, "publish should succeed: {pub_out}");
+
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".githooks/post-merge")).unwrap(),
+        body,
+        "the team's committed hook must survive publish"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
 /// MAJOR B regression (round 2): in a linked worktree `.git` is a FILE, so the
 /// naive `.git/hooks` probe reported "no hooks" and core.hooksPath was written
 /// into the SHARED config — disabling the main worktree's live pre-commit.
