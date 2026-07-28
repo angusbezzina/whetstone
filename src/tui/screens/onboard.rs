@@ -876,6 +876,54 @@ mod tests {
         matches!(s.on_key(k, dir), Outcome::Exit)
     }
 
+    fn home_text(s: &OnboardState) -> String {
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        render_home(&mut lines, s);
+        lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|sp| sp.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The wizard DISPLAYS private mode; it never decides it (whetstone-55u).
+    /// The flag comes from the setup_status oracle, so this asserts the skin
+    /// reflects the oracle rather than any TUI-local state.
+    #[test]
+    fn home_shows_private_mode_from_the_oracle() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wh_wizpriv_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        fs::write(tmp.join("requirements.txt"), "fastapi==0.115\n").unwrap();
+
+        let public = OnboardState::load(&tmp);
+        assert!(
+            !home_text(&public).contains("private mode"),
+            "public project must not advertise private mode"
+        );
+
+        crate::onboard::set_private(&tmp, true).unwrap();
+        let private = OnboardState::load(&tmp);
+        assert!(
+            private.setup["private_mode"].as_bool().unwrap_or(false),
+            "setup_status must carry the marker"
+        );
+        let text = home_text(&private);
+        assert!(text.contains("private mode"), "home should show the mode: {text}");
+        assert!(text.contains("wh publish"), "home should point at the flip: {text}");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
     #[test]
     fn express_review_gate_then_payoff() {
         let tmp = std::env::temp_dir().join(format!(
