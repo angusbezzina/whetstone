@@ -83,6 +83,92 @@ const EXCLUDE_ENTRIES: &[&str] = &[
     ".githooks/post-merge",
 ];
 
+/// Artifacts Whetstone writes that are INHERENTLY SHARED and therefore must
+/// never be hidden — but must still be accounted for, or `wh` would report
+/// "invisible to git status" with one of its own files plainly visible.
+/// `wh init --ci` before going private is the reachable path.
+const SHARED_ARTIFACTS: &[&str] = &[".github/workflows/whetstone-check.yml"];
+
+/// Read the exclude file as text. Git treats it as bytes, so a single non-UTF-8
+/// byte (a latin-1 pattern) used to make `read_to_string` fail and the file be
+/// treated as EMPTY — destroying the user's personal ignores on enable, and
+/// turning publish into a silent no-op that still reported success. Missing is
+/// fine (empty); unreadable or non-UTF-8 is an error.
+fn read_exclude(path: &Path) -> Result<String> {
+    match std::fs::read(path) {
+        Ok(bytes) => String::from_utf8(bytes).with_context(|| {
+            format!(
+                "{} contains non-UTF-8 bytes — Whetstone will not rewrite it, because doing so \
+                 would discard content it cannot represent. Convert the file to UTF-8 and re-run.",
+                path.display()
+            )
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(e).with_context(|| format!("read {}", path.display())),
+    }
+}
+
+/// Refuse when `.git/info/exclude` is a symlink pointing at a file git TRACKS:
+/// writing through it would modify a tracked file, which private mode promises
+/// never to do (and which the artifact-scoped verifier cannot see).
+fn guard_symlinked_into_worktree(project_dir: &Path, exclude: &Path) -> Result<()> {
+    let Ok(target) = std::fs::canonicalize(exclude) else {
+        return Ok(());
+    };
+    if target == exclude {
+        return Ok(());
+    }
+    let Ok(out) = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(project_dir)
+        .output()
+    else {
+        return Ok(());
+    };
+    let root = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
+    let root = root.canonicalize().unwrap_or(root);
+    let Ok(rel) = target.strip_prefix(&root) else {
+        return Ok(()); // Outside the worktree (the normal dotfiles case) — fine.
+    };
+    let rel = rel.to_string_lossy().to_string();
+    if is_git_tracked(project_dir, &rel) {
+        return Err(anyhow!(
+            ".git/info/exclude is a symlink to {rel}, which git tracks — writing it would modify \
+             a tracked file. Private mode never does that; point the symlink outside the worktree."
+        ));
+    }
+    Ok(())
+}
+
+/// True when this clone has more than one worktree. They SHARE
+/// `.git/info/exclude` (it lives in the common dir), so one block covers them
+/// all and `wh publish` in any worktree un-hides the others.
+fn worktree_count(project_dir: &Path) -> usize {
+    Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(project_dir)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter(|l| l.starts_with("worktree "))
+                .count()
+        })
+        .unwrap_or(1)
+}
+
+fn shared_exclude_warning(project_dir: &Path) -> Option<String> {
+    let n = worktree_count(project_dir);
+    (n > 1).then(|| {
+        format!(
+            "this clone has {n} worktrees, which SHARE .git/info/exclude — one block covers all of them, \
+             so `wh publish` in any worktree makes these artifacts visible in every worktree"
+        )
+    })
+}
+
 /// True when `rel` must be left alone: we are private AND the repo tracks it.
 /// `.git/info/exclude` cannot hide modifications to tracked files, so writing
 /// one would put a visible diff in a teammate's `git status` — and, for a
@@ -450,8 +536,9 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
         ));
     }
 
+    guard_symlinked_into_worktree(project_dir, &exclude)?;
     let _lock = lock_exclude(&exclude)?;
-    let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
+    let existing = read_exclude(&exclude)?;
     let label = label_for(&prefix);
     let wanted = render_block(&prefix);
     // Self-healing, scoped to OUR label: a block whose entries don't match what
@@ -489,13 +576,15 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
     let exposed = exposed_artifacts(project_dir, &prefix)?;
     if !exposed.is_empty() {
         return Err(anyhow!(
-            "private mode is NOT in effect: git still reports {} — {}. \
-             Most often an in-tree .gitignore re-includes a path (`git check-ignore -v <path>` shows which rule wins); \
-             .git/info/exclude cannot override it.",
-            exposed.join(", "),
-            "nothing is hidden"
+            "private mode is NOT in effect: git can still see {}. \
+             A CI workflow (.github/workflows/whetstone-check.yml) is inherently shared — delete it, or commit it and accept it is public. \
+             Otherwise an in-tree .gitignore usually re-includes the path (`git check-ignore -v <path>` shows which rule wins); \
+             .git/info/exclude cannot override that.",
+            exposed.join(", ")
         ));
     }
+
+    let warnings: Vec<String> = shared_exclude_warning(project_dir).into_iter().collect();
 
     Ok(json!({
         "status": "ok",
@@ -504,6 +593,7 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
         "path_prefix": prefix,
         "label": label,
         "entries": EXCLUDE_ENTRIES,
+        "warnings": warnings,
         "verified": true,
         "next_command": "Whetstone artifacts are now invisible to git status. When the team is ready to share them, run `wh publish`.",
     }))
@@ -538,8 +628,11 @@ pub fn exposed_artifacts(project_dir: &Path, prefix: &str) -> Result<Vec<String>
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
+    // Hidden artifacts AND the inherently-shared ones: a visible CI workflow is
+    // still a Whetstone file the user was told is invisible.
     let owned: Vec<String> = EXCLUDE_ENTRIES
         .iter()
+        .chain(SHARED_ARTIFACTS.iter())
         .map(|e| format!("{prefix}{e}"))
         .collect();
     Ok(String::from_utf8_lossy(&out.stdout)
@@ -563,8 +656,9 @@ pub fn publish(project_dir: &Path, ci: bool, schedule: &str) -> Result<Value> {
     let exclude = exclude_path(project_dir)?;
     let prefix = repo_prefix(project_dir)?;
     let label = label_for(&prefix);
+    guard_symlinked_into_worktree(project_dir, &exclude)?;
     let _lock = lock_exclude(&exclude)?;
-    let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
+    let existing = read_exclude(&exclude)?;
     let had_block = has_marker(&existing, &label);
 
     if !had_block && !is_private(project_dir) {
@@ -626,6 +720,9 @@ pub fn publish(project_dir: &Path, ci: bool, schedule: &str) -> Result<Value> {
         "hooks": hooks,
         "hooks_migrated_from_local": migrated,
         "ci": ci_result,
+        "warnings": shared_exclude_warning(project_dir)
+            .into_iter()
+            .collect::<Vec<_>>(),
         "publish_files": publish_files,
         "next_command": format!(
             "Review the artifacts, then share them: git add {}",

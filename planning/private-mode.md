@@ -144,7 +144,17 @@ to true), a quote, or a backslash — a quoted path matches no entry, so a real
 leak would be filtered out and reported as verified. `-z` output is never quoted.
 
 The check **fails closed**: if `git status` cannot run at all, that is an error,
-not a pass. "Could not verify" must never render as "nothing exposed".
+not a pass. "Could not verify" must never render as "nothing exposed". Same rule
+for the exclude file itself — git treats it as *bytes*, so a non-UTF-8 or
+unreadable file is an error, never an implicit empty file (treating it as empty
+destroyed the user's personal ignores and made `publish` a silent no-op).
+
+The verifier covers the hidden artifacts **and** the inherently-shared ones.
+`.github/workflows/whetstone-check.yml` is never hidden — a workflow only means
+anything if the team has it — but `wh init --ci` before going private left it
+visible while `wh` reported "invisible to `git status`". It is therefore part of
+the checked set: enabling fails and names it, so the user deletes it or accepts
+that it is public.
 
 Paths containing a **control character** are refused up front rather than
 verified after the fact — a newline splits the fence line and every entry, so no
@@ -165,9 +175,17 @@ artifacts are exposed. It catches what patterns alone cannot: an in-tree
   is an error with the offending paths named, never a silent pass.
 - Enforcement is mode-independent: scan / hook / MCP / status behave identically
   in private and public mode — private changes *visibility*, never *function*.
-- `enable` then `publish` leaves the repo byte-identical to never having used
-  private mode (modulo the `.gitignore` entries `init --personal` would add and
-  `setup.private: false`).
+- `enable` then `publish` restores `.git/info/exclude` byte-identical to its
+  pre-private content. The repo itself is not byte-identical to never having
+  used private mode: the `.gitignore` entries publish writes remain, and
+  `whetstone/whetstone.yaml` exists (carrying `version: 1` after the marker is
+  removed). Both are inert; neither is reverted.
+
+**Scope limit, stated honestly:** the verifier inspects the artifact paths
+Whetstone owns. A footprint created anywhere else is outside what it can check —
+e.g. `.git/info/exclude` symlinked to a *tracked* worktree file (refused up
+front for that reason), or `wh debt --beads` shelling out to `bd`, which writes
+`.beads/` on purpose because filing an issue in the team tracker is a shared act.
 - **Publish is one-way in one respect:** it writes real `.gitignore` entries, and
   re-enabling private mode afterwards cannot hide `.gitignore` (a legitimately
   shared file). So `enable → publish → enable` leaves that one visible change.

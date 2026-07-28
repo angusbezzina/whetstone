@@ -604,6 +604,117 @@ fn publish_is_a_clean_inverse_even_with_a_foreign_line_in_the_block() {
     std::fs::remove_dir_all(&repo).ok();
 }
 
+/// Round-5 #1 regression: git treats `.git/info/exclude` as BYTES. A single
+/// non-UTF-8 byte made `read_to_string` fail and the file be treated as empty —
+/// destroying the user's personal ignores on enable, and turning publish into a
+/// silent no-op that reported success and printed a failing `git add`.
+#[test]
+fn non_utf8_exclude_file_is_never_silently_discarded() {
+    let repo = seeded_repo("nonutf8");
+    let info = repo.join(".git/info");
+    std::fs::create_dir_all(&info).unwrap();
+    let original: Vec<u8> = b"# my personal ignores\n/secret-notes/\n/caf\xe9-cache/\n*.bak\n".to_vec();
+    std::fs::write(info.join("exclude"), &original).unwrap();
+
+    let (out, err, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(
+        !ok,
+        "a non-UTF-8 exclude file must be an error, not a silent rewrite: {out} {err}"
+    );
+    assert_eq!(
+        std::fs::read(info.join("exclude")).unwrap(),
+        original,
+        "the user's personal ignores must survive byte-for-byte"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Round-5 #2 regression: the CI workflow is a Whetstone artifact that is
+/// inherently shared, so it is never hidden — but it was also missing from the
+/// verifier, so `wh init --ci` then `--private` reported "invisible to git
+/// status" with a Whetstone-written file plainly visible.
+#[test]
+fn a_visible_ci_workflow_is_not_reported_as_invisible() {
+    let repo = seeded_repo("ciworkflow");
+    let (_, _, ci_ok) = run_wh(&repo, &["init", "--ci", "--json"]);
+    assert!(ci_ok, "writing the workflow before going private is allowed");
+    assert!(repo.join(".github/workflows/whetstone-check.yml").exists());
+
+    let (out, err, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(
+        !ok,
+        "a visible Whetstone artifact must not be reported as verified: {out} {err}"
+    );
+    assert!(
+        out.contains("whetstone-check.yml") || err.contains("whetstone-check.yml"),
+        "the exposed workflow must be named: {out} {err}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Round-5 #3 regression: worktrees of one clone SHARE `.git/info/exclude`, so
+/// publishing in one un-hides the others. That has to be said out loud.
+#[test]
+fn shared_worktree_exclude_is_warned_about() {
+    let repo = seeded_repo("wtwarn");
+    let wt = repo.parent().unwrap().join(format!(
+        "{}-wt2",
+        repo.file_name().unwrap().to_string_lossy()
+    ));
+    git_ok(
+        &repo,
+        &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "feat"],
+    );
+
+    let (out, err, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok, "private init with a worktree present should succeed: {out} {err}");
+    assert!(
+        out.contains("worktree"),
+        "the shared-exclude caveat must be surfaced: {out}"
+    );
+
+    let (pub_out, _, pub_ok) = run_wh(&repo, &["publish", "--json"]);
+    assert!(pub_ok);
+    assert!(
+        pub_out.contains("worktree"),
+        "publish must warn it affects every worktree: {pub_out}"
+    );
+
+    git(&repo, &["worktree", "remove", "--force", wt.to_str().unwrap()]);
+    std::fs::remove_dir_all(&repo).ok();
+    std::fs::remove_dir_all(&wt).ok();
+}
+
+/// Round-5 #5 regression: writing through a symlinked exclude that points at a
+/// TRACKED worktree file would modify a tracked file — invisibly to the
+/// artifact-scoped verifier.
+#[test]
+fn exclude_symlinked_to_a_tracked_file_is_refused() {
+    let repo = seeded_repo("symtracked");
+    std::fs::write(repo.join("ignores.txt"), "# team ignores\n").unwrap();
+    git_ok(&repo, &["add", "."]);
+    git_ok(&repo, &["commit", "-q", "-m", "tracked ignores"]);
+
+    let info = repo.join(".git/info");
+    std::fs::create_dir_all(&info).unwrap();
+    let link = info.join("exclude");
+    let _ = std::fs::remove_file(&link);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("../../ignores.txt", &link).unwrap();
+
+    let (out, err, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(!ok, "must refuse to write through a symlink to a tracked file: {out} {err}");
+    assert_eq!(
+        std::fs::read_to_string(repo.join("ignores.txt")).unwrap(),
+        "# team ignores\n",
+        "the tracked file must be untouched"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
 /// MAJOR B regression (round 2): in a linked worktree `.git` is a FILE, so the
 /// naive `.git/hooks` probe reported "no hooks" and core.hooksPath was written
 /// into the SHARED config — disabling the main worktree's live pre-commit.

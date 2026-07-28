@@ -589,7 +589,10 @@ wh init --claude --private
 ```
 
 Artifacts live at their normal paths, but a managed block in `.git/info/exclude`
-(per-clone, never committed) hides them. Enforcement is unchanged — the hook,
+(per-clone, never committed) hides them. Whetstone then asks git whether that
+actually worked and **fails loudly** if anything is still visible, so "private"
+is verified rather than assumed. Note that worktrees of one clone share the
+exclude file: `wh publish` in any of them makes the artifacts visible in all. Enforcement is unchanged — the hook,
 MCP server, and `wh scan` all work exactly as in public mode. Private mode never
 modifies files the repo already tracks: a committed `.mcp.json` is left alone
 (you get the `claude mcp add -s local` alternative), and hooks go to
