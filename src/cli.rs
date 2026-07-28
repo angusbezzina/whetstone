@@ -1273,6 +1273,19 @@ pub fn run() -> i32 {
                     if !exposed.is_empty() {
                         setup.insert("exposed_artifacts".to_string(), serde_json::json!(exposed));
                         setup.insert("status".to_string(), serde_json::json!("error"));
+                        // enable() succeeded before the later steps wrote their
+                        // files, so its optimistic fields are now false. Leaving
+                        // `verified: true` next to `status: error` would mislead
+                        // any agent keying on it.
+                        if let Some(p) = setup.get_mut("private").and_then(|v| v.as_object_mut()) {
+                            p.insert("verified".to_string(), serde_json::json!(false));
+                            p.insert(
+                                "next_command".to_string(),
+                                serde_json::json!(
+                                    "Private mode is NOT in effect — resolve the exposed artifacts and re-run, or run `wh publish` to leave private mode."
+                                ),
+                            );
+                        }
                         output::print_json(&serde_json::Value::Object(setup));
                         eprintln!(
                             "whetstone: private mode is NOT fully in effect — git can still see:\n  {}\n\

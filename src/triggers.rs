@@ -96,6 +96,9 @@ pub fn install_ci_workflow(project_dir: &Path, schedule: &str) -> Result<Value> 
 
 // ── git hooks ──
 
+/// Identifies a post-merge hook Whetstone authored, across template versions.
+const POST_MERGE_MARKER: &str = "Whetstone post-merge advisory";
+
 /// True when `.git/hooks/` holds executable hooks git is actually running
 /// (ignoring the `.sample` files git ships). Setting `core.hooksPath` would
 /// silently disable every one of them — a `pre-commit install` / lefthook
@@ -160,7 +163,11 @@ fn install_post_merge_hook(project_dir: &Path) -> Result<PathBuf> {
     // (`wh publish` calls this implicitly, which made it a silent side effect.)
     if crate::private_mode::is_git_tracked(project_dir, ".githooks/post-merge") {
         let existing = std::fs::read_to_string(&path).unwrap_or_default();
-        if !existing.is_empty() && existing != POST_MERGE_HOOK_BODY {
+        // Detect authorship by MARKER, not byte equality: an older release's
+        // body (or a teammate's tweak to ours) is still ours to update, and
+        // byte equality would permanently freeze the hook for every team that
+        // committed it the moment the template changes.
+        if !existing.is_empty() && !existing.contains(POST_MERGE_MARKER) {
             return Err(anyhow!(
                 ".githooks/post-merge is git-tracked and was not written by Whetstone — left unchanged rather than overwriting your team's hook"
             ));
@@ -177,6 +184,22 @@ fn install_post_merge_hook(project_dir: &Path) -> Result<PathBuf> {
 /// say plainly when we don't. Silence here means claiming a hook is installed
 /// when it can never fire. Returns a reason when the hook is left unwired.
 fn wire_hooks_path(project_dir: &Path) -> Result<Option<String>> {
+    // Already pointed at our own dir by a previous run: correctly wired, and
+    // nothing to warn about. Checked FIRST because `git rev-parse --git-path
+    // hooks` honours core.hooksPath — so once we set it, the executable-hooks
+    // probe below would find OUR post-merge hook and warn that the user has a
+    // pre-commit setup we must not disturb, on every idempotent re-run.
+    let current = Command::new("git")
+        .args(["config", "--get", "core.hooksPath"])
+        .current_dir(project_dir)
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if current == ".githooks" {
+        return Ok(None);
+    }
+
     if has_local_git_hooks(project_dir) {
         return Ok(Some(
             "left core.hooksPath alone: this repo has executable hooks in its git hooks dir (a pre-commit/lefthook setup). Whetstone's post-merge advisory will not run; your existing hooks keep working.".to_string(),
@@ -219,17 +242,9 @@ fn wire_hooks_path(project_dir: &Path) -> Result<Option<String>> {
         ));
     }
 
-    let Ok(current) = Command::new("git")
-        .args(["config", "--get", "core.hooksPath"])
-        .current_dir(project_dir)
-        .output()
-    else {
-        return Ok(None);
-    };
-    let existing = String::from_utf8_lossy(&current.stdout).trim().to_string();
-    if !existing.is_empty() {
+    if !current.is_empty() {
         return Ok(Some(format!(
-            "left core.hooksPath alone: already set to `{existing}`. The post-merge hook was written but is not wired."
+            "left core.hooksPath alone: already set to `{current}`. The post-merge hook was written but is not wired."
         )));
     }
     let status = Command::new("git")

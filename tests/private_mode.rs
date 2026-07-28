@@ -829,6 +829,98 @@ fn a_tracked_team_post_merge_hook_is_never_overwritten() {
     std::fs::remove_dir_all(&repo).ok();
 }
 
+/// Round-7 MAJOR regression: a STAGED artifact (`A `) is neither untracked nor
+/// in HEAD. Using index membership as the ours/theirs test dropped it from the
+/// leak set entirely — reachable by following `wh publish`'s own printed
+/// `git add` and then re-running `wh init --private`.
+#[test]
+fn staged_artifacts_are_still_reported_as_exposed() {
+    let repo = seeded_repo("staged");
+    let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok);
+
+    // The user stages artifacts (exactly what publish's next_command says).
+    git_ok(&repo, &["add", "-f", ".mcp.json", ".claude"]);
+    assert!(
+        git_status_porcelain(&repo).contains("A "),
+        "precondition: artifacts are staged"
+    );
+
+    let (out, err, ok2) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(
+        !ok2,
+        "staged artifacts are visible to git and must be reported: {out} {err}"
+    );
+    assert!(
+        out.contains(".mcp.json") || err.contains(".mcp.json"),
+        "the staged path must be named: {out} {err}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Round-7 MODERATE regression: once Whetstone's `.gitignore` block is
+/// COMMITTED, it is public history — a later edit by the user is theirs, not
+/// ours, and must not wedge every `wh init`.
+#[test]
+fn a_committed_gitignore_block_plus_user_edit_is_not_a_leak() {
+    let repo = seeded_repo("committedgi");
+    let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok);
+    let (_, _, pub_ok) = run_wh(&repo, &["publish", "--json"]);
+    assert!(pub_ok);
+
+    // The team commits the whetstone gitignore entries, then starts fresh.
+    git_ok(&repo, &["add", ".gitignore"]);
+    git_ok(&repo, &["commit", "-q", "-m", "adopt whetstone gitignore"]);
+    for p in ["whetstone", ".mcp.json", ".claude", ".cursor", ".githooks"] {
+        let path = repo.join(p);
+        let _ = std::fs::remove_dir_all(&path);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    let (out1, err1, ok1) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok1, "a clean committed block must pass: {out1} {err1}");
+
+    // The user makes their own unrelated edit to the tracked .gitignore.
+    let mut gi = std::fs::read_to_string(repo.join(".gitignore")).unwrap();
+    gi.push_str(".env\n");
+    std::fs::write(repo.join(".gitignore"), gi).unwrap();
+
+    let (out2, err2, ok2) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(
+        ok2,
+        "the user's own edit to an already-committed block must not fail: {out2} {err2}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Round-7 minor: authorship of `.githooks/post-merge` is detected by marker,
+/// not byte equality — otherwise any future edit to the template permanently
+/// freezes the hook for every team that committed it.
+#[test]
+fn an_older_whetstone_post_merge_hook_is_still_updatable() {
+    let repo = seeded_repo("oldhook");
+    let (_, _, ok) = run_wh(&repo, &["init", "--hooks", "--json"]);
+    assert!(ok);
+    // Simulate an older release's body: ours plus an extra line.
+    let mut body = std::fs::read_to_string(repo.join(".githooks/post-merge")).unwrap();
+    body.push_str("# an older release wrote this line\n");
+    std::fs::write(repo.join(".githooks/post-merge"), &body).unwrap();
+    git_ok(&repo, &["add", "-A"]);
+    git_ok(&repo, &["commit", "-q", "-m", "commit whetstone hook"]);
+
+    let (out, _, ok2) = run_wh(&repo, &["init", "--hooks", "--json"]);
+    assert!(ok2, "re-running hooks should succeed: {out}");
+    assert!(
+        !out.contains("was not written by Whetstone"),
+        "our own hook must not be misattributed: {out}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
 /// MAJOR B regression (round 2): in a linked worktree `.git` is a FILE, so the
 /// naive `.git/hooks` probe reported "no hooks" and core.hooksPath was written
 /// into the SHARED config — disabling the main worktree's live pre-commit.

@@ -149,13 +149,23 @@ for the exclude file itself — git treats it as *bytes*, so a non-UTF-8 or
 unreadable file is an error, never an implicit empty file (treating it as empty
 destroyed the user's personal ignores and made `publish` a silent no-op).
 
-The verifier distinguishes **our** footprint from **the user's**. For hidden
-artifacts only an *untracked* path counts as a leak: a tracked-but-modified one
-cannot be ours (`skip_tracked` guarantees private mode never writes a tracked
-file), so flagging it would hard-fail the very case private mode exists for — a
-developer with their own uncommitted tweak to a team-committed
-`.claude/settings.json`. `.gitignore` is checked only when it carries
-Whetstone's personal-layer marker, so an unrelated edit is never blamed on us.
+The verifier distinguishes **our** footprint from **the user's**, and the test
+is **"absent from HEAD"** — porcelain `??` (untracked) or `A*` (staged
+addition). Both mean the file did not exist at the last commit, so private mode
+put it there. Only a path already in HEAD (` M`, `M `, `MM`) cannot be ours,
+because `skip_tracked` stops us writing a tracked file; flagging those would
+hard-fail the very case private mode exists for — a developer with their own
+uncommitted tweak to a team-committed `.claude/settings.json`.
+
+*"In the index" is the wrong test and was a real leak.* An artifact written
+while untracked and then `git add`ed — exactly what `wh publish` tells the user
+to do — is `A `: neither untracked nor ours-by-index, so it fell through both
+sides and `wh` reported "invisible to git status" with five staged files.
+
+`.gitignore` follows the same rule with one extra step: it is ours only when it
+carries Whetstone's personal-layer marker, and if **HEAD's copy already has that
+marker** the block is committed and public, so a later modification is the
+user's edit rather than our leak.
 
 The verifier covers the hidden artifacts **and** the inherently-shared ones.
 `.github/workflows/whetstone-check.yml` is never hidden — a workflow only means

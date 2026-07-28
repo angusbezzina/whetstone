@@ -618,6 +618,20 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
     }))
 }
 
+/// True when the committed copy of `rel` already carries Whetstone's
+/// personal-layer marker — i.e. the block is public history, so a working-tree
+/// change to that file is the user's, not ours.
+fn head_has_marker(project_dir: &Path, rel: &str) -> bool {
+    Command::new("git")
+        .args(["show", &format!("HEAD:{rel}")])
+        .current_dir(project_dir)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains(crate::personal::GITIGNORE_MARKER))
+        .unwrap_or(false)
+}
+
 /// The project's path prefix relative to the git root (public wrapper for
 /// callers that need it to interpret `exposed_artifacts`).
 pub fn project_prefix(project_dir: &Path) -> Result<String> {
@@ -676,23 +690,36 @@ pub fn exposed_artifacts(project_dir: &Path, prefix: &str) -> Result<Vec<String>
             continue;
         }
         let (code, path) = rec.split_at(3);
-        let untracked = code.starts_with("??");
+        // Attribution test: is this path absent from HEAD? `??` (untracked) and
+        // `A*` (staged addition) are both files that did not exist in the last
+        // commit, so private mode is what put them there. Only a path already
+        // in HEAD (` M`, `M `, `MM`) cannot be ours, because `skip_tracked`
+        // stops us writing a tracked file.
+        //
+        // "In the INDEX" is the wrong test and was a real leak: an artifact we
+        // wrote while it was untracked, then `git add`ed (exactly what
+        // `wh publish` tells the user to do), is `A ` — neither untracked nor
+        // ours-by-index — and dropped out of the leak set entirely.
+        let absent_from_head = code.starts_with("??") || code.starts_with('A');
         if matches(path, &hidden) {
-            // Only an UNTRACKED artifact is our leak. A tracked-but-modified
-            // path cannot be ours — `skip_tracked` guarantees private mode
-            // never writes a tracked file — so flagging it would hard-fail the
-            // exact "trial it on the team repo" case private mode exists for.
-            if untracked {
-                exposed.push(format!("{path} (untracked — an in-tree .gitignore may re-include it; `git check-ignore -v {path}` shows which rule wins)"));
+            if absent_from_head {
+                exposed.push(format!("{path} (visible to git — if it is staged, `git restore --staged {path}`; otherwise an in-tree .gitignore may re-include it, and `git check-ignore -v {path}` shows which rule wins)"));
             }
         } else if matches(path, &shared) {
             exposed.push(format!(
                 "{path} (a Whetstone CI workflow is inherently shared — delete it, or commit it and accept that it is public)"
             ));
         } else if path == gitignore && gitignore_is_ours {
-            exposed.push(format!(
-                "{path} (carries Whetstone's personal-layer block, which cannot be hidden — remove those lines, or commit them and accept that they are public)"
-            ));
+            // Same attribution rule. If HEAD's copy ALREADY carries the marker,
+            // the block is committed and public: a later modification is the
+            // user's own edit, not ours, and hard-failing on it would wedge
+            // every `wh init` (the round-6 fix applied to only half of this).
+            let committed_block = !absent_from_head && head_has_marker(project_dir, &gitignore);
+            if !committed_block {
+                exposed.push(format!(
+                    "{path} (carries Whetstone's personal-layer block, which cannot be hidden — remove those lines, or commit them and accept that they are public)"
+                ));
+            }
         }
     }
     Ok(exposed)
