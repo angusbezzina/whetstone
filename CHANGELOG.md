@@ -6,6 +6,57 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-28
+
+The **onboarding wizard** — the human front door. Running bare `wh` in an un-onboarded
+repo now walks you from zero to governed, with review as the gate: every rule shown with
+its citation and golden examples, per-rule opt-out, and nothing enforceable until you
+confirm. Both doors (the wizard and `wh init --claude`) produce byte-identical artifacts.
+
+### Added
+- **The onboarding wizard** (bare `wh` on a TTY in an un-onboarded project): Home
+  (derived progress) → Express (accept matched starter packs in ≤3 keys) or Curated
+  (browse the corpus with live previews) → Sources (per-dependency changelog-watch
+  toggles) → Conflicts (cursor + deny resolution) → **Review, the gate** (citations +
+  golden examples per rule, per-rule deny, approves agent-proposed candidate rules) →
+  Payoff (first scan on your own code) → agent wiring (context generation, Claude
+  hooks + MCP). The TUI is a pure skin over headless oracles — zero business logic.
+- **`wh scan --with-pack <file>`** — preview a candidate pack before importing: rules
+  and live hit counts on your code, flowing the *identical* merge seam as a real import
+  (same-id shadowing and denies apply), fully read-only, each hit tagged `from_candidate`.
+- **`wh config conflicts`** — cross-layer conflict oracle: detects same-id shadowing
+  across packs / project-local / personal layers (previously silent) and formatter-option
+  clashes; accepts `--with-pack` to check a proposed selection pre-import. JSON shape
+  documented in `references/conflicts-schema.md`.
+- **`wh status --setup`** — derived onboarding checklist (dependencies detected, packs
+  imported, rules active, context generated, hooks installed, MCP registered) computed
+  from real artifacts with no stored state; works on uninitialized repos. The single
+  source of truth the wizard, skill, and external orchestrators share.
+- **`wh pack import <file>`** — the shared import primitive both front doors call
+  (copies the pack into `whetstone/packs/` + adds an idempotent `extends` entry).
+- **`wh onboard dismiss|reset`** — persist/clear the wizard skip via a real
+  `whetstone.yaml` key (`setup.dismissed`) — no TUI-only state.
+- **Resources packs**: a second bundled-pack kind (`starter` | `resource`) for opt-in
+  style guides that are never auto-imported, surfaced in the wizard picker with a
+  "style guide" tag. First pack: `packs/resources/airbnb-js.yaml`
+  (`airbnb.no-arguments-object`, Airbnb §7.6, AST-enforced).
+- **Read-only injectable snapshot seam** (`SnapshotOptions`): previews and conflict
+  checks resolve packs through the real merge pipeline with zero `whetstone/.state`
+  writes — the substrate under `--with-pack` and the wizard's live previews.
+
+### Changed
+- **Two-front-doors documentation** across README, AGENTS.md, and SKILL.md: the wizard
+  is the human door, `wh init --claude` the agent door, identical artifacts either way.
+  `wh init --claude` output now nudges "review them anytime: run `wh`" — closing the
+  delegated-consent gap for agent-driven onboarding.
+
+### Fixed
+- Previews no longer write `whetstone/.state` on already-onboarded projects — the
+  validator-timeout load and the scan CLI's config load now resolve read-only when
+  previewing (found by independent validation; guard test made non-vacuous).
+- Transient `agent_hook` test flake: sibling tests could collide on a shared temp dir
+  under parallel runs; dir names now include a per-call atomic counter.
+
 ## [0.10.0] - 2026-07-03
 
 Two big steps: a **trusted rule corpus + quality tooling**, and the **agent-governance
@@ -543,6 +594,7 @@ no Python runtime dependency.
 - **Release workflow** building Linux and macOS binaries for x86_64 and
   aarch64 with cross-compilation support.
 
+[0.11.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.11.0
 [0.10.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.10.0
 [0.9.1]: https://github.com/angusbezzina/whetstone/releases/tag/v0.9.1
 [0.9.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.9.0
