@@ -1251,6 +1251,29 @@ pub fn run() -> i32 {
                     }
                 }
 
+                // Private mode's promise is empirical, so verify it against git
+                // AFTER every step has written its files — not just after the
+                // exclude block was composed. A leak here (an in-tree
+                // .gitignore negation, a lost concurrent write) must fail
+                // loudly; silently reporting success is the one outcome private
+                // mode cannot have.
+                if private || private_mode::is_private(&project_dir) {
+                    let prefix = private_mode::project_prefix(&project_dir).unwrap_or_default();
+                    let exposed = private_mode::exposed_artifacts(&project_dir, &prefix);
+                    if !exposed.is_empty() {
+                        setup.insert("exposed_artifacts".to_string(), serde_json::json!(exposed));
+                        setup.insert("status".to_string(), serde_json::json!("error"));
+                        output::print_json(&serde_json::Value::Object(setup));
+                        eprintln!(
+                            "whetstone: private mode is NOT in effect — git can still see: {}.\n\
+                             Run `git check-ignore -v <path>` to see which rule wins (an in-tree .gitignore\n\
+                             negation overrides .git/info/exclude).",
+                            exposed.join(", ")
+                        );
+                        return 1;
+                    }
+                }
+
                 output::print_json(&serde_json::Value::Object(setup));
                 return 0;
             }

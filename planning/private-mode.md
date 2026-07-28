@@ -36,9 +36,23 @@ fenced, machine-managed block there; `wh publish` removes exactly that block.
 **Blocks are labelled with the project's path** (`[.]` at the repo root,
 `[packages/api]` for a package). One repo can have several private packages at
 once: `enable` and `publish` only ever read and write their own label, so
-onboarding a second package never re-exposes the first. Glob metacharacters in
-a real directory name (`pkg[1]`) are escaped in the entries — `.git/info/exclude`
-is gitignore syntax, and an unescaped `[` matches nothing.
+onboarding a second package never re-exposes the first. Two encodings keep that
+true for real-world paths: glob metacharacters are escaped in the *entries*
+(`.git/info/exclude` is gitignore syntax, so an unescaped `[` matches nothing),
+and `[`/`]`/`%` are percent-encoded in the *label* (it is bracket-delimited, so
+a raw bracket truncates on read — and a truncated label collides with a
+sibling's block and deletes it).
+
+**Writes are locked and atomic.** The exclude file is a single shared
+read-modify-write, so `enable`/`publish` take a lock file beside it (stale locks
+older than 30s are reclaimed) and write through a uniquely-named temp file.
+Without both, two `wh` processes onboarding different packages lose one of the
+blocks — leaving a package marked private with nothing hidden. The write follows
+a symlinked `exclude` to its target and restores the original file mode.
+
+**A torn block stops at the first foreign line.** Repairing a block with no
+terminator drops only lines that match an entry we render, so user ignores
+below a half-written fence survive.
 
 The path is resolved via `git rev-parse --git-path info/exclude` so worktrees and
 non-standard git dirs work. Entries are static (excluding an already-tracked path
@@ -110,11 +124,28 @@ leave artifacts exposed on a re-run. Both the exclude file and the
 7. **Requires a git repo.** Without `.git`, `--private` errors cleanly — there is
    nothing to hide from.
 
+## Verification: the promise is checked, not assumed
+
+Writing the right patterns is not the same as being hidden. After every step has
+written its files, `wh init --private` asks **git** whether the promise holds —
+`git status --porcelain --untracked-files=all`, filtered to this project's
+artifact paths — and **fails loudly** (non-zero, naming the exposed paths) if
+anything is visible. `--untracked-files=all` matters: the default collapses an
+untracked directory to `?? .claude/`, hiding a single re-included file inside it.
+
+This is the backstop for the whole failure class where `wh` reports success while
+artifacts are exposed. It catches what patterns alone cannot: an in-tree
+`.gitignore` negation (`.claude/*` + `!.claude/settings.json`) outranks
+`.git/info/exclude` entirely — git precedence puts the working-tree file above
+`$GIT_DIR/info/exclude`, and nothing Whetstone writes there can override it.
+
 ## Invariants
 
 - Nothing Whetstone writes in private mode is visible to `git status` on a fresh
   repo (the acceptance test drives `wh init --claude --private` then asserts
   `git status --porcelain` is empty, including after `wh scan` and a hook run).
+- **Private mode never reports success while artifacts are exposed.** Any leak
+  is an error with the offending paths named, never a silent pass.
 - Enforcement is mode-independent: scan / hook / MCP / status behave identically
   in private and public mode — private changes *visibility*, never *function*.
 - `enable` then `publish` leaves the repo byte-identical to never having used

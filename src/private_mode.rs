@@ -24,22 +24,48 @@ const BEGIN_PREFIX: &str = "# >>> whetstone private mode";
 const END_PREFIX: &str = "# <<< whetstone private mode";
 const ROOT_LABEL: &str = ".";
 
+/// Labels are delimited by `[...]`, so a path component containing a bracket
+/// would truncate on read — and a truncated label matches a SIBLING's block,
+/// whose entries then get deleted. Percent-encode the three characters that
+/// could break the round-trip; ordinary paths are unchanged.
+fn encode_label(label: &str) -> String {
+    let mut out = String::with_capacity(label.len());
+    for ch in label.chars() {
+        match ch {
+            '%' => out.push_str("%25"),
+            '[' => out.push_str("%5B"),
+            ']' => out.push_str("%5D"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 fn begin_line(label: &str) -> String {
-    format!("{BEGIN_PREFIX} [{label}] (managed by `wh`; `wh publish` removes this block) >>>")
+    format!(
+        "{BEGIN_PREFIX} [{}] (managed by `wh`; `wh publish` removes this block) >>>",
+        encode_label(label)
+    )
 }
 
 fn end_line(label: &str) -> String {
-    format!("{END_PREFIX} [{label}] <<<")
+    format!("{END_PREFIX} [{}] <<<", encode_label(label))
 }
 
-/// The label a fence line carries, if it is one of ours. `kind` is the fence
-/// prefix to match. Unlabelled (pre-label) fences resolve to the root label.
+/// The encoded label a fence line carries, if it is one of ours. `kind` is the
+/// fence prefix to match. Unlabelled (pre-label) fences resolve to the root.
+/// Safe against brackets in paths because the written label is encoded.
 fn fence_label(line: &str, kind: &str) -> Option<String> {
     let rest = line.strip_prefix(kind)?;
     Some(match (rest.find('['), rest.find(']')) {
         (Some(a), Some(b)) if b > a => rest[a + 1..b].to_string(),
         _ => ROOT_LABEL.to_string(),
     })
+}
+
+/// True when this fence line belongs to `label`.
+fn fence_is(line: &str, kind: &str, label: &str) -> bool {
+    fence_label(line, kind).as_deref() == Some(encode_label(label).as_str())
 }
 
 /// Repo-root-relative artifact paths. Anchored (leading `/`) when rendered so
@@ -194,7 +220,7 @@ fn existing_block(content: &str, label: &str) -> Option<String> {
     let mut out = String::new();
     for line in content.lines() {
         if !collecting {
-            if fence_label(line, BEGIN_PREFIX).as_deref() == Some(label) {
+            if fence_is(line, BEGIN_PREFIX, label) {
                 collecting = true;
                 out.push_str(line);
                 out.push('\n');
@@ -203,7 +229,7 @@ fn existing_block(content: &str, label: &str) -> Option<String> {
         }
         out.push_str(line);
         out.push('\n');
-        if fence_label(line, END_PREFIX).as_deref() == Some(label) {
+        if fence_is(line, END_PREFIX, label) {
             return Some(out);
         }
         // A new BEGIN before our END means the block was torn.
@@ -218,25 +244,137 @@ fn existing_block(content: &str, label: &str) -> Option<String> {
 fn has_marker(content: &str, label: &str) -> bool {
     content
         .lines()
-        .any(|l| fence_label(l, BEGIN_PREFIX).as_deref() == Some(label))
+        .any(|l| fence_is(l, BEGIN_PREFIX, label))
 }
 
 /// Write `content` to `path` via a temp file + rename, so an interrupted write
-/// never leaves a half-written exclude file.
+/// never leaves a half-written exclude file. The temp name is unique per
+/// process+call — a shared one races with a concurrent `wh` and both lose.
+/// Writes THROUGH a symlink (a dotfiles setup often links `exclude`) and
+/// restores the original file mode after the rename.
 pub(crate) fn atomic_write_str(path: &Path, content: &str) -> Result<()> {
     use std::io::Write;
-    if let Some(parent) = path.parent() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    // Resolve a symlink so we replace its TARGET, not the link itself.
+    let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let tmp = path.with_extension("wh-tmp");
+    let mode = file_mode(&target);
+    let tmp = target.with_extension(format!(
+        "wh-tmp-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::SeqCst)
+    ));
     {
         let mut f = std::fs::File::create(&tmp)
             .with_context(|| format!("create {}", tmp.display()))?;
         f.write_all(content.as_bytes())?;
         f.sync_all()?;
     }
-    std::fs::rename(&tmp, path).with_context(|| format!("write {}", path.display()))?;
+    if let Err(e) = std::fs::rename(&tmp, &target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e).with_context(|| format!("write {}", target.display()));
+    }
+    restore_mode(&target, mode);
     Ok(())
+}
+
+#[cfg(unix)]
+fn file_mode(path: &Path) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).ok().map(|m| m.permissions().mode())
+}
+
+#[cfg(not(unix))]
+fn file_mode(_path: &Path) -> Option<u32> {
+    None
+}
+
+#[cfg(unix)]
+fn restore_mode(path: &Path, mode: Option<u32>) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Some(mode) = mode {
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_mode(_path: &Path, _mode: Option<u32>) {}
+
+/// Held for the whole read-modify-write of the exclude file. Two `wh` processes
+/// onboarding different packages of one monorepo otherwise interleave and one
+/// package's block is silently lost — with its `setup.private` still true.
+struct ExcludeLock(PathBuf);
+
+impl Drop for ExcludeLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn lock_exclude(exclude: &Path) -> Result<ExcludeLock> {
+    let lock = exclude.with_extension("wh-lock");
+    if let Some(parent) = lock.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    for attempt in 0..200 {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock)
+        {
+            Ok(_) => return Ok(ExcludeLock(lock)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Reclaim a lock orphaned by a killed process.
+                let stale = std::fs::metadata(&lock)
+                    .and_then(|m| m.modified())
+                    .map(|t| t.elapsed().map(|d| d.as_secs() > 30).unwrap_or(false))
+                    .unwrap_or(false);
+                if stale {
+                    let _ = std::fs::remove_file(&lock);
+                    continue;
+                }
+                if attempt == 199 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(e) => return Err(e).with_context(|| format!("create {}", lock.display())),
+        }
+    }
+    Err(anyhow!(
+        "timed out waiting for {} — another `wh` process is updating it",
+        lock.display()
+    ))
+}
+
+/// True when `line` is one of the entries we render (for any prefix). Used to
+/// bound a TORN block: without it, a block missing its terminator would eat
+/// every user line that follows to EOF.
+fn is_managed_entry(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix('/') else {
+        return false;
+    };
+    let unescaped: String = {
+        let mut out = String::with_capacity(rest.len());
+        let mut chars = rest.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                if let Some(n) = chars.next() {
+                    out.push(n);
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    };
+    EXCLUDE_ENTRIES
+        .iter()
+        .any(|entry| unescaped == *entry || unescaped.ends_with(&format!("/{entry}")))
 }
 
 /// Remove only THIS project's managed block. User content and any other
@@ -248,7 +386,7 @@ fn strip_block(content: &str, label: &str) -> String {
     let mut inside = false;
     for line in content.lines() {
         if !inside {
-            if fence_label(line, BEGIN_PREFIX).as_deref() == Some(label) {
+            if fence_is(line, BEGIN_PREFIX, label) {
                 inside = true;
                 continue;
             }
@@ -256,13 +394,14 @@ fn strip_block(content: &str, label: &str) -> String {
             out.push('\n');
             continue;
         }
-        // Inside our block: drop lines until our END. A different project's
-        // BEGIN means ours was torn — stop dropping and keep this line.
-        if fence_label(line, END_PREFIX).as_deref() == Some(label) {
+        // Inside our block: drop until our END. Anything that is neither our
+        // END nor one of our entries means the block was torn — stop there and
+        // keep the line, so user content below a torn fence survives.
+        if fence_is(line, END_PREFIX, label) {
             inside = false;
             continue;
         }
-        if fence_label(line, BEGIN_PREFIX).is_some() {
+        if !is_managed_entry(line) {
             inside = false;
             out.push_str(line);
             out.push('\n');
@@ -284,6 +423,7 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
         ));
     }
 
+    let _lock = lock_exclude(&exclude)?;
     let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
     let label = label_for(&prefix);
     let wanted = render_block(&prefix);
@@ -315,6 +455,21 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
 
     crate::onboard::set_private(project_dir, true)?;
 
+    // Ask GIT whether the promise actually holds, rather than trusting that we
+    // wrote the right patterns. An in-tree .gitignore negation, a stale block,
+    // or a lost concurrent write would otherwise leak silently — the one
+    // failure mode private mode must never have.
+    let exposed = exposed_artifacts(project_dir, &prefix);
+    if !exposed.is_empty() {
+        return Err(anyhow!(
+            "private mode is NOT in effect: git still reports {} — {}. \
+             Most often an in-tree .gitignore re-includes a path (`git check-ignore -v <path>` shows which rule wins); \
+             .git/info/exclude cannot override it.",
+            exposed.join(", "),
+            "nothing is hidden"
+        ));
+    }
+
     Ok(json!({
         "status": "ok",
         "action": action,
@@ -322,8 +477,49 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
         "path_prefix": prefix,
         "label": label,
         "entries": EXCLUDE_ENTRIES,
+        "verified": true,
         "next_command": "Whetstone artifacts are now invisible to git status. When the team is ready to share them, run `wh publish`.",
     }))
+}
+
+/// The project's path prefix relative to the git root (public wrapper for
+/// callers that need it to interpret `exposed_artifacts`).
+pub fn project_prefix(project_dir: &Path) -> Result<String> {
+    repo_prefix(project_dir)
+}
+
+/// Artifact paths git can still SEE under this project — the empirical check
+/// that private mode is real. Untracked-but-ignored files do not appear in
+/// `git status --porcelain`, so anything listed here is genuinely exposed.
+pub fn exposed_artifacts(project_dir: &Path, prefix: &str) -> Vec<String> {
+    let Ok(out) = Command::new("git")
+        // `--untracked-files=all`: the default collapses an untracked directory
+        // to `?? .claude/`, which would hide a single re-included file inside it.
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .current_dir(project_dir)
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    let owned: Vec<String> = EXCLUDE_ENTRIES
+        .iter()
+        .map(|e| format!("{prefix}{e}"))
+        .collect();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| line.get(3..).map(str::trim))
+        .filter(|path| {
+            let path = path.trim_matches('"');
+            owned.iter().any(|o| {
+                let o_dir = o.trim_end_matches('/');
+                path == o || path == o_dir || path.starts_with(&format!("{o_dir}/"))
+            })
+        })
+        .map(str::to_string)
+        .collect()
 }
 
 /// The flip: remove the exclude block, write real `.gitignore` entries for the
@@ -333,6 +529,7 @@ pub fn publish(project_dir: &Path, ci: bool, schedule: &str) -> Result<Value> {
     let exclude = exclude_path(project_dir)?;
     let prefix = repo_prefix(project_dir)?;
     let label = label_for(&prefix);
+    let _lock = lock_exclude(&exclude)?;
     let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
     let had_block = has_marker(&existing, &label);
 
@@ -495,8 +692,50 @@ mod tests {
         let block = render_block("pkg[1]/");
         assert!(block.contains("/pkg\\[1\\]/whetstone/"), "{block}");
         assert_eq!(escape_glob("a*b?c[d]e\\f"), "a\\*b\\?c\\[d\\]e\\\\f");
-        // The label stays human-readable (it is a comment, not a pattern).
-        assert!(block.contains("[pkg[1]]"), "{block}");
+        // The label percent-encodes brackets so it round-trips (see
+        // labels_round_trip_through_brackets); ordinary paths are untouched.
+        assert!(block.contains("[pkg%5B1%5D]"), "{block}");
+        assert!(render_block("packages/api/").contains("[packages/api]"));
+    }
+
+    /// The label is bracket-delimited, so a path containing a bracket must
+    /// encode or it truncates on read — and a truncated label collides with a
+    /// SIBLING's block, deleting it.
+    #[test]
+    fn labels_round_trip_through_brackets() {
+        for label in ["pkg[1]", "a]b", "a[b", "100%", "packages/api", "."] {
+            let begin = begin_line(label);
+            assert!(
+                fence_is(&begin, BEGIN_PREFIX, label),
+                "BEGIN must match its own label {label}: {begin}"
+            );
+            assert!(fence_is(&end_line(label), END_PREFIX, label), "END for {label}");
+        }
+        // The collision that deleted a sibling: `[a]b]` used to read back as `a`.
+        assert!(!fence_is(&begin_line("a]b"), BEGIN_PREFIX, "a"));
+        assert!(!fence_is(&begin_line("pkg[1]"), BEGIN_PREFIX, "pkg[1"));
+
+        // A full block for a bracketed path is found and stripped by label only.
+        let block = render_block("a]b/");
+        let content = format!("user\n{block}");
+        assert_eq!(existing_block(&content, "a]b").as_deref(), Some(block.as_str()));
+        assert!(existing_block(&content, "a").is_none(), "must not match a sibling");
+        assert_eq!(strip_block(&content, "a"), content, "sibling strip is a no-op");
+    }
+
+    /// A torn block must stop at the first line that isn't one of ours, or it
+    /// eats every user ignore below it.
+    #[test]
+    fn torn_block_stops_at_foreign_lines() {
+        let torn = format!("keep-a\n{}\n/whetstone/\nkeep-b\nkeep-c\n", begin_line("."));
+        let stripped = strip_block(&torn, ".");
+        assert_eq!(stripped, "keep-a\nkeep-b\nkeep-c\n", "user lines must survive");
+
+        assert!(is_managed_entry("/whetstone/"));
+        assert!(is_managed_entry("/packages/api/.claude/settings.json"));
+        assert!(is_managed_entry("/pkg\\[1\\]/whetstone/"));
+        assert!(!is_managed_entry("keep-b"));
+        assert!(!is_managed_entry("/my-whetstone-notes/"));
     }
 
     /// An unlabelled fence from before labels existed is treated as the root.

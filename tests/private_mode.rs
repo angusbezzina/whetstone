@@ -333,6 +333,149 @@ fn two_private_packages_coexist_in_one_repo() {
     std::fs::remove_dir_all(&repo).ok();
 }
 
+/// F1 regression (round 3): the label is delimited by `[...]`, so a path
+/// containing `]` truncated on read — publish could not find its own block
+/// (artifacts stayed hidden while it reported success) and a sibling whose
+/// label was a prefix of the truncation had its block deleted.
+#[test]
+fn bracketed_package_paths_round_trip() {
+    let repo = seeded_repo("brackets");
+    for name in ["a", "a]b", "pkg[1]"] {
+        let pkg = repo.join(name);
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            "{\n  \"name\": \"x\",\n  \"dependencies\": { \"react\": \"^18.0.0\" }\n}\n",
+        )
+        .unwrap();
+    }
+    git_ok(&repo, &["add", "."]);
+    git_ok(&repo, &["commit", "-q", "-m", "packages"]);
+
+    for name in ["a]b", "pkg[1]", "a"] {
+        let (out, err, ok) = run_wh(&repo.join(name), &["init", "--claude", "--private", "--json"]);
+        assert!(ok, "private init failed for {name}: {out} {err}");
+        assert_eq!(
+            git_status_porcelain(&repo),
+            "",
+            "enabling {name} must hide it and leave siblings hidden"
+        );
+    }
+
+    // Re-running must be a noop, not an appended duplicate block.
+    let (again, _, again_ok) = run_wh(&repo.join("pkg[1]"), &["init", "--private", "--json"]);
+    assert!(again_ok);
+    assert!(again.contains("\"noop\""), "re-enable must find its own block: {again}");
+
+    // Publish must remove its own block and actually expose that package.
+    let (pub_out, _, pub_ok) = run_wh(&repo.join("pkg[1]"), &["publish", "--json"]);
+    assert!(pub_ok, "publish failed: {pub_out}");
+    let status = git_status_porcelain(&repo);
+    assert!(
+        status.contains("pkg[1]/whetstone/"),
+        "publish must make the package trackable: {status}"
+    );
+    assert!(
+        !status.contains("a]b/whetstone/") && !status.contains("\na/whetstone/"),
+        "siblings must stay hidden: {status}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// F2 regression (round 3): enable is a read-modify-write of one shared file.
+/// Concurrent onboarding of two packages lost a block every time, leaving a
+/// package with `setup.private: true` and nothing actually hidden.
+#[test]
+fn concurrent_enable_keeps_every_block() {
+    let repo = seeded_repo("concurrent");
+    let names = ["p1", "p2", "p3", "p4"];
+    for name in names {
+        let pkg = repo.join(name);
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            "{\n  \"name\": \"x\",\n  \"dependencies\": { \"react\": \"^18.0.0\" }\n}\n",
+        )
+        .unwrap();
+    }
+    git_ok(&repo, &["add", "."]);
+    git_ok(&repo, &["commit", "-q", "-m", "packages"]);
+
+    let handles: Vec<_> = names
+        .iter()
+        .map(|name| {
+            let dir = repo.join(name);
+            std::thread::spawn(move || run_wh(&dir, &["init", "--claude", "--private", "--json"]))
+        })
+        .collect();
+    for (name, h) in names.iter().zip(handles) {
+        let (out, err, ok) = h.join().expect("thread");
+        assert!(ok, "concurrent init failed for {name}: {out} {err}");
+    }
+
+    assert_eq!(
+        git_status_porcelain(&repo),
+        "",
+        "every concurrently-enabled package must still be hidden"
+    );
+    let exclude = std::fs::read_to_string(repo.join(".git/info/exclude")).unwrap();
+    for name in names {
+        assert!(
+            exclude.contains(&format!("/{name}/whetstone/")),
+            "{name}'s block was lost: {exclude}"
+        );
+    }
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// F3 regression (round 3): a torn block (no terminator) made strip_block eat
+/// every user line after it, violating the stated preserve-verbatim invariant.
+#[test]
+fn torn_block_preserves_user_lines_below_it() {
+    let repo = seeded_repo("tornuser");
+    let info = repo.join(".git/info");
+    std::fs::create_dir_all(&info).unwrap();
+    std::fs::write(
+        info.join("exclude"),
+        "personal-a/\n# >>> whetstone private mode [.] (managed by `wh`; `wh publish` removes this block) >>>\n/whetstone/\npersonal-b/\npersonal-c/\n",
+    )
+    .unwrap();
+
+    let (out, _, ok) = run_wh(&repo, &["init", "--private", "--json"]);
+    assert!(ok, "init failed: {out}");
+    let after = std::fs::read_to_string(info.join("exclude")).unwrap();
+    for line in ["personal-a/", "personal-b/", "personal-c/"] {
+        assert!(after.contains(line), "user line {line} must survive a repair: {after}");
+    }
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// F4 regression (round 3): an in-tree .gitignore negation outranks
+/// .git/info/exclude, so the promise silently failed. Private mode now asks git
+/// whether it actually holds and fails loudly when it doesn't.
+#[test]
+fn gitignore_negation_defeating_the_block_fails_loudly() {
+    let repo = seeded_repo("negation");
+    std::fs::write(repo.join(".gitignore"), ".claude/*\n!.claude/settings.json\n").unwrap();
+    git_ok(&repo, &["add", "."]);
+    git_ok(&repo, &["commit", "-q", "-m", "team gitignore"]);
+
+    let (out, err, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(
+        !ok,
+        "a defeated exclude must be a hard failure, not silent success: {out} {err}"
+    );
+    assert!(
+        out.contains("exposed_artifacts") || err.contains("NOT in effect"),
+        "the exposed path must be named: {out} {err}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
 /// MAJOR B regression (round 2): in a linked worktree `.git` is a FILE, so the
 /// naive `.git/hooks` probe reported "no hooks" and core.hooksPath was written
 /// into the SHARED config — disabling the main worktree's live pre-commit.
