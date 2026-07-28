@@ -52,7 +52,12 @@ a symlinked `exclude` to its target and restores the original file mode.
 
 **A torn block stops at the first foreign line.** Repairing a block with no
 terminator drops only lines that match an entry we render, so user ignores
-below a half-written fence survive.
+below a half-written fence survive. A *well-formed* block is handled differently:
+our fences and entries are removed across the whole region while foreign lines
+inside it are kept — stopping at the first foreign line there would orphan the
+rest of the block, and `publish` must be the exact inverse of `enable`. (That
+also matters for forward compatibility: removing an entry from `EXCLUDE_ENTRIES`
+in a future release turns old lines "foreign" for everyone who upgrades.)
 
 The path is resolved via `git rev-parse --git-path info/exclude` so worktrees and
 non-standard git dirs work. Entries are static (excluding an already-tracked path
@@ -128,10 +133,22 @@ leave artifacts exposed on a re-run. Both the exclude file and the
 
 Writing the right patterns is not the same as being hidden. After every step has
 written its files, `wh init --private` asks **git** whether the promise holds —
-`git status --porcelain --untracked-files=all`, filtered to this project's
+`git status --porcelain --untracked-files=all -z`, filtered to this project's
 artifact paths — and **fails loudly** (non-zero, naming the exposed paths) if
-anything is visible. `--untracked-files=all` matters: the default collapses an
+anything is visible.
+
+Both flags are load-bearing. `--untracked-files=all`: the default collapses an
 untracked directory to `?? .claude/`, hiding a single re-included file inside it.
+`-z`: git C-quotes any path containing non-ASCII bytes (`core.quotePath` defaults
+to true), a quote, or a backslash — a quoted path matches no entry, so a real
+leak would be filtered out and reported as verified. `-z` output is never quoted.
+
+The check **fails closed**: if `git status` cannot run at all, that is an error,
+not a pass. "Could not verify" must never render as "nothing exposed".
+
+Paths containing a **control character** are refused up front rather than
+verified after the fact — a newline splits the fence line and every entry, so no
+correct block can be written for such a path.
 
 This is the backstop for the whole failure class where `wh` reports success while
 artifacts are exposed. It catches what patterns alone cannot: an in-tree

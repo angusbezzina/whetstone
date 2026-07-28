@@ -476,6 +476,134 @@ fn gitignore_negation_defeating_the_block_fails_loudly() {
     std::fs::remove_dir_all(&repo).ok();
 }
 
+/// A regression (round 4): git C-quotes any path with non-ASCII bytes, a quote
+/// or a backslash (core.quotePath defaults to true). The verifier parsed
+/// unquoted paths, so a leak under such a path was filtered away and reported
+/// as `"verified": true`. `-z` output is never quoted.
+#[test]
+fn verification_sees_leaks_under_quoted_paths() {
+    for name in ["café", "qu\"ote", "back\\slash"] {
+        let repo = seeded_repo("quoted");
+        let pkg = repo.join(name);
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            "{\n  \"name\": \"x\",\n  \"dependencies\": { \"react\": \"^18.0.0\" }\n}\n",
+        )
+        .unwrap();
+        // Defeat the exclude from inside the package.
+        std::fs::write(pkg.join(".gitignore"), "!whetstone/\n").unwrap();
+        git_ok(&repo, &["add", "-A"]);
+        git_ok(&repo, &["commit", "-q", "-m", "pkg"]);
+
+        let (out, err, ok) = run_wh(&pkg, &["init", "--claude", "--private", "--json"]);
+        assert!(
+            !ok,
+            "a leak under a git-quoted path ({name}) must fail loudly: {out} {err}"
+        );
+        std::fs::remove_dir_all(&repo).ok();
+    }
+}
+
+/// B regression (round 4): a control character in a path component splits the
+/// fence line and every entry, corrupting the block — and it leaked with no
+/// user misconfiguration at all. Refuse instead of writing something broken.
+#[test]
+fn control_characters_in_the_path_are_refused() {
+    let repo = seeded_repo("ctrl");
+    let pkg = repo.join("a\nb");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(
+        pkg.join("package.json"),
+        "{\n  \"name\": \"x\",\n  \"dependencies\": { \"react\": \"^18.0.0\" }\n}\n",
+    )
+    .unwrap();
+    git_ok(&repo, &["add", "-A"]);
+    git_ok(&repo, &["commit", "-q", "-m", "pkg"]);
+
+    let (out, err, ok) = run_wh(&pkg, &["init", "--claude", "--private", "--json"]);
+    assert!(!ok, "a control char in the path must be refused: {out} {err}");
+    assert!(
+        out.contains("control character") || err.contains("control character"),
+        "the refusal must explain why: {out} {err}"
+    );
+    let exclude = std::fs::read_to_string(repo.join(".git/info/exclude")).unwrap_or_default();
+    assert!(!exclude.contains("whetstone"), "nothing may be written: {exclude}");
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// C regression (round 4): the verifier returned "nothing exposed" when git
+/// status could not run — a check that cannot run must not read as a pass.
+#[test]
+fn unverifiable_private_mode_is_an_error() {
+    let repo = seeded_repo("unverifiable");
+    let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok, "baseline private init should succeed");
+
+    // Break git's index so `git status` cannot run.
+    let index = repo.join(".git/index");
+    std::fs::write(&index, "not an index").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&index, std::fs::Permissions::from_mode(0o000)).unwrap();
+    }
+
+    let (out, err, ok2) = run_wh(&repo, &["init", "--private", "--json"]);
+    assert!(
+        !ok2,
+        "an unverifiable private mode must be an error, not a silent pass: {out} {err}"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&index, std::fs::Permissions::from_mode(0o644));
+    }
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// D regression (round 4): a foreign line inside the block made publish leave
+/// the rest of the block behind — so the printed `git add` command failed with
+/// "paths are ignored by one of your .gitignore files".
+#[test]
+fn publish_is_a_clean_inverse_even_with_a_foreign_line_in_the_block() {
+    let repo = seeded_repo("foreign");
+    let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok);
+
+    // User parks a line inside the managed block.
+    let exclude_path = repo.join(".git/info/exclude");
+    let content = std::fs::read_to_string(&exclude_path).unwrap();
+    let patched = content.replace("/.mcp.json\n", "/.mcp.json\nmy-own-ignore/\n");
+    std::fs::write(&exclude_path, patched).unwrap();
+
+    let (_, _, ok2) = run_wh(&repo, &["init", "--private", "--json"]);
+    assert!(ok2, "re-enable should repair");
+    let (_, _, pub_ok) = run_wh(&repo, &["publish", "--json"]);
+    assert!(pub_ok);
+
+    let after = std::fs::read_to_string(&exclude_path).unwrap();
+    assert!(
+        !after.contains("whetstone") && !after.contains("/.claude/"),
+        "publish must leave no managed residue: {after}"
+    );
+    assert!(after.contains("my-own-ignore/"), "user line must survive: {after}");
+
+    // The artifacts publish points at must actually be addable.
+    let status = git_status_porcelain(&repo);
+    assert!(status.contains("whetstone/"), "artifacts trackable: {status}");
+    let add = git(&repo, &["add", ".claude/settings.json"]);
+    assert!(
+        add.status.success(),
+        "publish's own git add must work: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
 /// MAJOR B regression (round 2): in a linked worktree `.git` is a FILE, so the
 /// naive `.git/hooks` probe reported "no hooks" and core.hooksPath was written
 /// into the SHARED config — disabling the main worktree's live pre-commit.

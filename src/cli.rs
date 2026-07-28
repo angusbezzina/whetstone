@@ -1259,7 +1259,17 @@ pub fn run() -> i32 {
                 // mode cannot have.
                 if private || private_mode::is_private(&project_dir) {
                     let prefix = private_mode::project_prefix(&project_dir).unwrap_or_default();
-                    let exposed = private_mode::exposed_artifacts(&project_dir, &prefix);
+                    // Fail closed: an unrunnable check is an error, not a pass.
+                    let exposed = match private_mode::exposed_artifacts(&project_dir, &prefix) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            output::print_json(&output::error_json(
+                                &e.to_string(),
+                                "Whetstone could not confirm private mode is in effect — resolve the git error and re-run `wh init --private`",
+                            ));
+                            return 1;
+                        }
+                    };
                     if !exposed.is_empty() {
                         setup.insert("exposed_artifacts".to_string(), serde_json::json!(exposed));
                         setup.insert("status".to_string(), serde_json::json!("error"));

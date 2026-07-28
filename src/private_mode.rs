@@ -382,30 +382,46 @@ fn is_managed_entry(line: &str) -> bool {
 /// packages private at once, and clobbering a sibling's block would silently
 /// expose its artifacts.
 fn strip_block(content: &str, label: &str) -> String {
-    let mut out = String::new();
-    let mut inside = false;
-    for line in content.lines() {
-        if !inside {
-            if fence_is(line, BEGIN_PREFIX, label) {
-                inside = true;
-                continue;
+    let mut lines: Vec<&str> = content.lines().collect();
+    // Repeat so duplicated blocks for this label are all removed.
+    while let Some(begin) = lines.iter().position(|l| fence_is(l, BEGIN_PREFIX, label)) {
+        let end = lines
+            .iter()
+            .skip(begin + 1)
+            .position(|l| fence_is(l, END_PREFIX, label))
+            .map(|i| i + begin + 1);
+        match end {
+            // Well-formed: drop our fences and our entries across the whole
+            // region, but KEEP anything foreign the user parked inside it.
+            // (Dropping only up to the first foreign line would orphan the
+            // rest of the block — publish must be the exact inverse of enable.)
+            Some(end) => {
+                let kept: Vec<&str> = lines[begin..=end]
+                    .iter()
+                    .copied()
+                    .filter(|l| {
+                        !(fence_is(l, BEGIN_PREFIX, label)
+                            || fence_is(l, END_PREFIX, label)
+                            || is_managed_entry(l))
+                    })
+                    .collect();
+                lines.splice(begin..=end, kept);
             }
-            out.push_str(line);
-            out.push('\n');
-            continue;
+            // Torn (no terminator): drop the fence and the entries that follow
+            // it, stopping at the first foreign line so user ignores survive.
+            None => {
+                let mut i = begin + 1;
+                while i < lines.len() && is_managed_entry(lines[i]) {
+                    i += 1;
+                }
+                lines.drain(begin..i);
+            }
         }
-        // Inside our block: drop until our END. Anything that is neither our
-        // END nor one of our entries means the block was torn — stop there and
-        // keep the line, so user content below a torn fence survives.
-        if fence_is(line, END_PREFIX, label) {
-            inside = false;
-            continue;
-        }
-        if !is_managed_entry(line) {
-            inside = false;
-            out.push_str(line);
-            out.push('\n');
-        }
+    }
+    let mut out = String::new();
+    for line in lines {
+        out.push_str(line);
+        out.push('\n');
     }
     out
 }
@@ -420,6 +436,17 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
         return Err(anyhow!(
             "whetstone/ is already git-tracked — this project is already publicly onboarded. \
              Private mode is a pre-adoption state; nothing was changed."
+        ));
+    }
+
+    // A newline (or other control char) in a path component would split the
+    // fence line and every entry across two lines, corrupting the block — and
+    // it leaks with no user misconfiguration at all. Refuse rather than write
+    // something that cannot work.
+    if prefix.chars().any(char::is_control) {
+        return Err(anyhow!(
+            "this project's path contains a control character, which cannot be expressed \
+             in .git/info/exclude — private mode is not possible here. Rename the directory."
         ));
     }
 
@@ -459,7 +486,7 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
     // wrote the right patterns. An in-tree .gitignore negation, a stale block,
     // or a lost concurrent write would otherwise leak silently — the one
     // failure mode private mode must never have.
-    let exposed = exposed_artifacts(project_dir, &prefix);
+    let exposed = exposed_artifacts(project_dir, &prefix)?;
     if !exposed.is_empty() {
         return Err(anyhow!(
             "private mode is NOT in effect: git still reports {} — {}. \
@@ -491,35 +518,42 @@ pub fn project_prefix(project_dir: &Path) -> Result<String> {
 /// Artifact paths git can still SEE under this project — the empirical check
 /// that private mode is real. Untracked-but-ignored files do not appear in
 /// `git status --porcelain`, so anything listed here is genuinely exposed.
-pub fn exposed_artifacts(project_dir: &Path, prefix: &str) -> Vec<String> {
-    let Ok(out) = Command::new("git")
+pub fn exposed_artifacts(project_dir: &Path, prefix: &str) -> Result<Vec<String>> {
+    let out = Command::new("git")
         // `--untracked-files=all`: the default collapses an untracked directory
         // to `?? .claude/`, which would hide a single re-included file inside it.
-        .args(["status", "--porcelain", "--untracked-files=all"])
+        // `-z`: NUL-separated and NEVER C-quoted. Without it git quotes any path
+        // with non-ASCII bytes (core.quotePath defaults to true), a quote, a
+        // backslash or a control char — and a quoted path matches no entry, so
+        // the leak would be filtered away and reported as verified.
+        .args(["status", "--porcelain", "--untracked-files=all", "-z"])
         .current_dir(project_dir)
         .output()
-    else {
-        return Vec::new();
-    };
+        .context("run git status to verify private mode")?;
     if !out.status.success() {
-        return Vec::new();
+        // Fail CLOSED: a check that cannot run must never read as "nothing
+        // exposed" — that is the silent-success outcome private mode forbids.
+        return Err(anyhow!(
+            "could not verify private mode: git status failed ({})",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
     }
     let owned: Vec<String> = EXCLUDE_ENTRIES
         .iter()
         .map(|e| format!("{prefix}{e}"))
         .collect();
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|line| line.get(3..).map(str::trim))
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .split('\0')
+        .filter(|rec| rec.len() > 3)
+        .filter_map(|rec| rec.get(3..))
         .filter(|path| {
-            let path = path.trim_matches('"');
             owned.iter().any(|o| {
                 let o_dir = o.trim_end_matches('/');
-                path == o || path == o_dir || path.starts_with(&format!("{o_dir}/"))
+                *path == o.as_str() || *path == o_dir || path.starts_with(&format!("{o_dir}/"))
             })
         })
         .map(str::to_string)
-        .collect()
+        .collect())
 }
 
 /// The flip: remove the exclude block, write real `.gitignore` entries for the
