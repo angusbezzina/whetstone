@@ -618,6 +618,22 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
     }))
 }
 
+/// Is `rel` present in the last commit? This is the ours/theirs question stated
+/// directly, instead of inferred from porcelain status letters — three separate
+/// releases shipped a hole in that inference (`A ` staged additions missed,
+/// then intent-to-add ` A` missed because its letter sits in the worktree
+/// column, then unmerged `AA` misread as ours even though the path IS in HEAD).
+/// A path absent from HEAD did not exist at the last commit, so private mode is
+/// what put it there. Unborn HEAD → nothing is committed → not in HEAD.
+fn in_head(project_dir: &Path, rel: &str) -> bool {
+    Command::new("git")
+        .args(["ls-tree", "-z", "HEAD", "--", rel])
+        .current_dir(project_dir)
+        .output()
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false)
+}
+
 /// True when the committed copy of `rel` already carries Whetstone's
 /// personal-layer marker — i.e. the block is public history, so a working-tree
 /// change to that file is the user's, not ours.
@@ -685,22 +701,24 @@ pub fn exposed_artifacts(project_dir: &Path, prefix: &str) -> Result<Vec<String>
     };
 
     let mut exposed = Vec::new();
-    for rec in String::from_utf8_lossy(&out.stdout).split('\0') {
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut records = stdout.split('\0');
+    while let Some(rec) = records.next() {
         if rec.len() < 4 {
             continue;
         }
         let (code, path) = rec.split_at(3);
-        // Attribution test: is this path absent from HEAD? `??` (untracked) and
-        // `A*` (staged addition) are both files that did not exist in the last
-        // commit, so private mode is what put them there. Only a path already
-        // in HEAD (` M`, `M `, `MM`) cannot be ours, because `skip_tracked`
-        // stops us writing a tracked file.
-        //
-        // "In the INDEX" is the wrong test and was a real leak: an artifact we
-        // wrote while it was untracked, then `git add`ed (exactly what
-        // `wh publish` tells the user to do), is `A ` — neither untracked nor
-        // ours-by-index — and dropped out of the leak set entirely.
-        let absent_from_head = code.starts_with("??") || code.starts_with('A');
+        // A rename/copy record is followed by a bare field holding the ORIGINAL
+        // path. Consume it, or it gets rescanned as a status record and its
+        // first three characters are read as a status code.
+        if code.starts_with('R') || code.starts_with('C') {
+            let _ = records.next();
+        }
+        // Ask HEAD, don't decode status letters. Anything git lists here is
+        // visible; the only question is whether WE put it there, and "absent
+        // from the last commit" answers that totally, for every status code
+        // including intent-to-add and unmerged states.
+        let absent_from_head = code.starts_with("??") || !in_head(project_dir, path);
         if matches(path, &hidden) {
             if absent_from_head {
                 exposed.push(format!("{path} (visible to git — if it is staged, `git restore --staged {path}`; otherwise an in-tree .gitignore may re-include it, and `git check-ignore -v {path}` shows which rule wins)"));

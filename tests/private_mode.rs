@@ -921,6 +921,105 @@ fn an_older_whetstone_post_merge_hook_is_still_updatable() {
     std::fs::remove_dir_all(&repo).ok();
 }
 
+/// Round-8 MAJOR regression: intent-to-add (`git add -N`) reports ` A` — the
+/// `A` sits in the WORKTREE column, so a predicate reading only the index
+/// column missed it. The attribution test now asks HEAD directly.
+#[test]
+fn intent_to_add_artifacts_are_reported_as_exposed() {
+    let repo = seeded_repo("intent");
+    let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--json"]);
+    assert!(ok, "public onboard first");
+    git_ok(&repo, &["add", "-N", ".mcp.json"]);
+
+    let (out, err, ok2) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(
+        !ok2,
+        "an intent-to-add artifact is visible and must be reported: {out} {err}"
+    );
+    assert!(
+        out.contains(".mcp.json") || err.contains(".mcp.json"),
+        "the path must be named: {out} {err}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Round-8 MODERATE regression: an unmerged `AA` on an artifact that IS in HEAD
+/// was misread as ours (both status letters are `A`), hard-failing every
+/// `wh init` for the duration of the user's merge conflict.
+#[test]
+fn an_unmerged_tracked_artifact_is_not_our_leak() {
+    let repo = seeded_repo("unmerged");
+    // Both branches independently add .mcp.json — a plausible MCP config clash.
+    std::fs::write(repo.join(".mcp.json"), "{\n  \"mcpServers\": { \"a\": {} }\n}\n").unwrap();
+    git_ok(&repo, &["add", "-A"]);
+    git_ok(&repo, &["commit", "-q", "-m", "main mcp"]);
+    git_ok(&repo, &["checkout", "-q", "-b", "feat", "HEAD~1"]);
+    std::fs::write(repo.join(".mcp.json"), "{\n  \"mcpServers\": { \"b\": {} }\n}\n").unwrap();
+    git_ok(&repo, &["add", "-A"]);
+    git_ok(&repo, &["commit", "-q", "-m", "feat mcp"]);
+    git_ok(&repo, &["checkout", "-q", "main"]);
+
+    let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok, "baseline private init");
+
+    // Create the conflict: .mcp.json is now unmerged (AA), but it is in HEAD.
+    let merge = git(&repo, &["merge", "feat"]);
+    assert!(!merge.status.success(), "expected a conflict");
+    assert!(git_status_porcelain(&repo).contains("AA") || git_status_porcelain(&repo).contains("UU"));
+
+    let (out, err, ok2) = run_wh(&repo, &["init", "--private", "--json"]);
+    assert!(
+        ok2,
+        "a tracked artifact in a merge conflict is the user's, not our leak: {out} {err}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Round-8 minor: porcelain `-z` emits a rename as `R  <new>\0<old>\0`. The
+/// bare original-path field was rescanned as a status record, so its first
+/// three characters parsed as a status code.
+#[test]
+fn rename_records_do_not_confuse_the_parser() {
+    let repo = seeded_repo("rename");
+    // A tracked file whose name ends in an artifact path once 3 chars are cut.
+    std::fs::write(repo.join("Abc.mcp.json"), "{}\n").unwrap();
+    git_ok(&repo, &["add", "-A"]);
+    git_ok(&repo, &["commit", "-q", "-m", "decoy"]);
+
+    let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok, "baseline");
+    git_ok(&repo, &["mv", "Abc.mcp.json", "renamed.json"]);
+
+    let (out, err, ok2) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(
+        ok2,
+        "a rename of an unrelated file must not read as an exposed artifact: {out} {err}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Round-8 minor: an UNTRACKED user hook has no committed copy to recover
+/// from, so overwriting it is worse than the tracked case, not better.
+#[test]
+fn an_untracked_user_post_merge_hook_is_never_overwritten() {
+    let repo = seeded_repo("untrackedhook");
+    std::fs::create_dir_all(repo.join(".githooks")).unwrap();
+    let body = "#!/bin/sh\necho my own hook\n";
+    std::fs::write(repo.join(".githooks/post-merge"), body).unwrap();
+
+    let (out, _, _) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".githooks/post-merge")).unwrap(),
+        body,
+        "the user's own untracked hook must survive: {out}"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
 /// MAJOR B regression (round 2): in a linked worktree `.git` is a FILE, so the
 /// naive `.git/hooks` probe reported "no hooks" and core.hooksPath was written
 /// into the SHARED config — disabling the main worktree's live pre-commit.

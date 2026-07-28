@@ -149,18 +149,31 @@ for the exclude file itself — git treats it as *bytes*, so a non-UTF-8 or
 unreadable file is an error, never an implicit empty file (treating it as empty
 destroyed the user's personal ignores and made `publish` a silent no-op).
 
-The verifier distinguishes **our** footprint from **the user's**, and the test
-is **"absent from HEAD"** — porcelain `??` (untracked) or `A*` (staged
-addition). Both mean the file did not exist at the last commit, so private mode
-put it there. Only a path already in HEAD (` M`, `M `, `MM`) cannot be ours,
-because `skip_tracked` stops us writing a tracked file; flagging those would
-hard-fail the very case private mode exists for — a developer with their own
-uncommitted tweak to a team-committed `.claude/settings.json`.
+The verifier distinguishes **our** footprint from **the user's** by asking git
+one direct question per visible artifact: **is this path in HEAD?**
+(`git ls-tree HEAD -- <path>`). Absent from HEAD ⇒ it did not exist at the last
+commit ⇒ private mode put it there ⇒ it is a leak. Present in HEAD ⇒ it cannot
+be ours, because `skip_tracked` stops us writing a tracked file — flagging those
+would hard-fail the very case private mode exists for, a developer with their
+own uncommitted tweak to a team-committed `.claude/settings.json`.
 
-*"In the index" is the wrong test and was a real leak.* An artifact written
-while untracked and then `git add`ed — exactly what `wh publish` tells the user
-to do — is `A `: neither untracked nor ours-by-index, so it fell through both
-sides and `wh` reported "invisible to git status" with five staged files.
+**Do not reintroduce status-code pattern matching here.** Three consecutive
+releases shipped a hole in exactly that inference, each time in a state nobody
+enumerated:
+
+| Attempt | Missed |
+|---|---|
+| "is it in the index?" | `A ` — an artifact `git add`ed after we wrote it (what `wh publish` itself instructs) |
+| `??` or `A*` (index column) | ` A` — intent-to-add (`git add -N`), whose `A` sits in the *worktree* column |
+| same | `AA`/`AU` — unmerged paths that **are** in HEAD, wrongly claimed as ours |
+
+The porcelain code has many states (`??`, `A `, `AM`, `AD`, ` A`, ` M`, `M `,
+`MM`, `AA`, `UU`, `R `, `C `, …) and getting the set right requires enumerating
+all of them correctly; "is it in HEAD" is total and needs no enumeration.
+
+One parsing detail the codes still matter for: `-z` emits a rename or copy as
+`R  <new>\0<old>\0`, so the bare original-path field must be consumed or it gets
+rescanned as a record and its first three characters read as a status code.
 
 `.gitignore` follows the same rule with one extra step: it is ours only when it
 carries Whetstone's personal-layer marker, and if **HEAD's copy already has that

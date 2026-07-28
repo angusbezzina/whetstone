@@ -161,17 +161,17 @@ fn install_post_merge_hook(project_dir: &Path) -> Result<PathBuf> {
     // Never blind-overwrite a COMMITTED hook we did not author, in either mode:
     // this is a whole-file write, so a team's post-merge would be destroyed.
     // (`wh publish` calls this implicitly, which made it a silent side effect.)
-    if crate::private_mode::is_git_tracked(project_dir, ".githooks/post-merge") {
-        let existing = std::fs::read_to_string(&path).unwrap_or_default();
-        // Detect authorship by MARKER, not byte equality: an older release's
-        // body (or a teammate's tweak to ours) is still ours to update, and
-        // byte equality would permanently freeze the hook for every team that
-        // committed it the moment the template changes.
-        if !existing.is_empty() && !existing.contains(POST_MERGE_MARKER) {
-            return Err(anyhow!(
-                ".githooks/post-merge is git-tracked and was not written by Whetstone — left unchanged rather than overwriting your team's hook"
-            ));
-        }
+    // Never overwrite a post-merge hook we did not author — this is a whole-file
+    // write. Applies whether or not the file is tracked: an UNTRACKED hook (or
+    // one under a gitignored `.githooks/`) has no committed copy to recover
+    // from, so clobbering it is worse, not better. Authorship is detected by
+    // MARKER rather than byte equality, so an older release's body — or a
+    // teammate's tweak to ours — is still ours to update.
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    if !existing.is_empty() && !existing.contains(POST_MERGE_MARKER) {
+        return Err(anyhow!(
+            ".githooks/post-merge already exists and was not written by Whetstone — left unchanged rather than overwriting it"
+        ));
     }
     std::fs::create_dir_all(path.parent().unwrap())?;
     std::fs::write(&path, POST_MERGE_HOOK_BODY)?;
