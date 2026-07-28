@@ -574,6 +574,16 @@ fn render_home(lines: &mut Vec<Line<'static>>, s: &OnboardState) {
         format!("{} dependencies detected.", s.deps_detected),
         Style::default().fg(theme::MUTED),
     )));
+    if s.setup
+        .get("private_mode")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        lines.push(Line::from(Span::styled(
+            "  private mode — artifacts hidden from git (`wh publish` shares them)",
+            Style::default().fg(theme::MUTED),
+        )));
+    }
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
         key("E"),

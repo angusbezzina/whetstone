@@ -412,6 +412,19 @@ and built-in) is gone.
 - `wh init --ci` — schedule `.github/workflows/whetstone-check.yml`
 - `wh init --personal` — scaffold `whetstone/.personal/`
 
+## Private mode (solo adoption on a shared repo)
+
+`wh init --claude --private` onboards with ZERO git footprint: a managed block
+in `.git/info/exclude` (per-clone, never committed) hides all artifacts, so
+`git status` stays empty for teammates. Enforcement is mode-independent —
+scan/hook/MCP work identically. Tracked files are never modified while private
+(`--ci` is refused; a tracked `.mcp.json` gets a `claude mcp add -s local`
+suggestion instead). `wh status --setup` reports `private_mode`. When the user
+wants the team in: `wh publish` removes the block, writes real `.gitignore`
+entries, completes shared wiring, and prints the `git add` list — it never runs
+git itself. Agents: if the user asks for a "just me" / "don't commit anything"
+trial, this is the flow to use.
+
 ## Refresh
 
 `wh reinit` re-resolves only changed deps and writes

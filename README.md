@@ -579,6 +579,33 @@ Today, Whetstone's shipped workflow is driven by:
 
 No transcript-mining pass is part of the default runtime.
 
+### Private mode — adopt solo on a shared repo
+
+Want Whetstone on a team repo where nobody else has opted in yet? Onboard in
+private mode and **nothing shows in `git status`** for your teammates:
+
+```bash
+wh init --claude --private
+```
+
+Artifacts live at their normal paths, but a managed block in `.git/info/exclude`
+(per-clone, never committed) hides them. Enforcement is unchanged — the hook,
+MCP server, and `wh scan` all work exactly as in public mode. Private mode never
+modifies files the repo already tracks: a committed `.mcp.json` is left alone
+(you get the `claude mcp add -s local` alternative), and hooks go to
+`.claude/settings.local.json` when `.claude/settings.json` is tracked.
+`--ci` is refused while private — a workflow file is inherently shared.
+
+When the team is ready:
+
+```bash
+wh publish        # optionally: --ci
+```
+
+This removes the exclude block, adds the real `.gitignore` entries for
+machine-local state, completes the shared wiring, and prints the `git add` list.
+It never runs git for you — sharing stays your explicit move.
+
 ## How Whetstone Fits with Existing Tools
 
 Whetstone is designed to complement — not replace — your existing toolchain.

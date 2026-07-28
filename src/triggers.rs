@@ -143,8 +143,16 @@ fn install_session_hooks(project_dir: &Path) -> Result<Vec<PathBuf>> {
 
     // settings.json merges into any existing file so user-configured hooks
     // survive. `atomic_write` guards against mid-write crashes corrupting the
-    // user's Claude Code config.
-    let settings_path = claude_dir.join("settings.json");
+    // user's Claude Code config. In private mode a git-tracked settings.json is
+    // never modified — hooks land in settings.local.json (Claude Code's per-user
+    // overlay) instead; `wh publish` migrates them back (whetstone-xdr).
+    let settings_path = if crate::private_mode::is_private(project_dir)
+        && crate::private_mode::is_git_tracked(project_dir, ".claude/settings.json")
+    {
+        claude_dir.join("settings.local.json")
+    } else {
+        claude_dir.join("settings.json")
+    };
     let merged = merge_claude_settings(&settings_path, &claude_path, &posttool_path);
     crate::state::atomic_write(&settings_path, &merged);
     written.push(settings_path);
@@ -245,6 +253,48 @@ fn merge_claude_settings(path: &Path, session_hook: &Path, posttooluse_hook: &Pa
     }
 
     root
+}
+
+/// Remove Whetstone's hook entries from `.claude/settings.local.json` — the
+/// publish-time migration for hooks that private mode redirected there
+/// (whetstone-xdr). User-authored entries in the file are untouched. Returns
+/// true when anything was removed.
+pub fn remove_whetstone_hooks_from_local(project_dir: &Path) -> Result<bool> {
+    let path = project_dir.join(".claude").join("settings.local.json");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Ok(false);
+    };
+    let Ok(mut doc) = serde_json::from_str::<Value>(&raw) else {
+        return Ok(false);
+    };
+    let mut removed = false;
+    let is_ours = |cmd: Option<&str>| {
+        cmd.map(|c| {
+            c.ends_with("whetstone-session-hook.sh") || c.ends_with("whetstone-posttooluse-hook.sh")
+        })
+        .unwrap_or(false)
+    };
+    if let Some(hooks) = doc.get_mut("hooks").and_then(|h| h.as_object_mut()) {
+        if let Some(arr) = hooks.get_mut("SessionStart").and_then(|v| v.as_array_mut()) {
+            let before = arr.len();
+            arr.retain(|e| !is_ours(e.get("command").and_then(|c| c.as_str())));
+            removed |= arr.len() != before;
+        }
+        if let Some(arr) = hooks.get_mut("PostToolUse").and_then(|v| v.as_array_mut()) {
+            let before = arr.len();
+            arr.retain(|e| {
+                !e.get("hooks")
+                    .and_then(|h| h.as_array())
+                    .map(|hs| hs.iter().any(|x| is_ours(x.get("command").and_then(|c| c.as_str()))))
+                    .unwrap_or(false)
+            });
+            removed |= arr.len() != before;
+        }
+    }
+    if removed {
+        crate::state::atomic_write(&path, &doc);
+    }
+    Ok(removed)
 }
 
 // ── helpers ──

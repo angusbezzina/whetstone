@@ -1,0 +1,99 @@
+# Private mode — solo adoption with zero shared-repo footprint
+
+> Bead: `whetstone-xdr` (epic) / `whetstone-ejx` (this design). Written 2026-07-28.
+>
+> The beads-style model: one team member adopts Whetstone and **nothing appears in
+> `git status`** for their teammates to see or accidentally commit. When the team
+> is ready, `wh publish` flips the same artifacts into normal, trackable files.
+
+## The problem
+
+`wh init --claude` writes `whetstone/**`, `.mcp.json`, `.claude/settings.json` +
+hook scripts, and `.githooks/post-merge` at the repo root — untracked but NOT
+ignored. On a team repo where only one person wants Whetstone, one careless
+`git add .` ships all of it. There is no way to trial Whetstone on a shared repo
+without a visible footprint.
+
+## The mechanism: a managed block in `.git/info/exclude`
+
+`.git/info/exclude` behaves exactly like `.gitignore` but is **per-clone and never
+committed** — the canonical git feature for personal ignores. Private mode writes a
+fenced, machine-managed block there; `wh publish` removes exactly that block.
+
+```
+# >>> whetstone private mode (managed by `wh`; `wh publish` removes this block) >>>
+/whetstone/
+/.mcp.json
+/.claude/settings.json
+/.claude/settings.local.json
+/.claude/whetstone-session-hook.sh
+/.claude/whetstone-posttooluse-hook.sh
+/.cursor/whetstone-session.md
+/.githooks/post-merge
+# <<< whetstone private mode <<<
+```
+
+The path is resolved via `git rev-parse --git-path info/exclude` so worktrees and
+non-standard git dirs work. Entries are static (excluding an already-tracked path
+is a harmless no-op — exclude only affects untracked files), which keeps
+enable/publish exactly inverse operations.
+
+## Decisions (locked)
+
+1. **Small cut, not the root refactor.** Artifacts stay at their current paths;
+   only their git *visibility* changes. The out-of-repo `WhetstoneRoots` design
+   (`~/.whetstone/projects/<hash>/`) stays future work on the epic.
+2. **Marker: `setup.private: true`** in `whetstone/whetstone.yaml`, written via the
+   same round-trip helpers as `setup.dismissed`. The file itself is excluded, so
+   the marker is invisible to teammates. Oracles read it with
+   `private_mode::is_private()`.
+3. **Tracked files are never modified in private mode.** `.git/info/exclude`
+   cannot hide changes to tracked files, so:
+   - `whetstone/` already tracked → private mode **refuses to enable** (the repo
+     is already publicly onboarded; private mode is a pre-adoption state).
+   - `.mcp.json` tracked → `register_mcp` skips it and reports the local-scope
+     alternative (`claude mcp add whetstone -s local -- wh mcp --project-dir .`).
+   - `.claude/settings.json` tracked → hooks go to `.claude/settings.local.json`
+     (Claude Code's per-user overlay) instead.
+   - `.githooks/post-merge` tracked → skipped (already shared).
+4. **`--ci` is refused in private mode.** A workflow file is inherently shared.
+   `wh publish --ci` writes it at flip time.
+5. **`wh publish` never runs `git add` or `git commit`.** It removes the exclude
+   block, writes the real `.gitignore` entries (`.state`/`.personal`/metrics — the
+   existing `personal::ensure_gitignore_entries`), sets `setup.private: false`,
+   completes any wiring skipped under decision 3 (now that sharing is intended,
+   including migrating our hook entries out of `settings.local.json` into
+   `settings.json`), and **prints** the file list + suggested `git add` command.
+   Repo mutations stay the user's move. Idempotent: re-running reports `noop`.
+6. **Private awareness lives inside the oracles**, not in callers: `register_mcp`
+   and `install_session_hooks` consult `is_private()` themselves. The TUI wizard
+   therefore inherits correct behavior with zero new TUI logic (boundary §11
+   discipline), and `wh status --setup` gains a `private_mode` field for display.
+7. **Requires a git repo.** Without `.git`, `--private` errors cleanly — there is
+   nothing to hide from.
+
+## Invariants
+
+- Nothing Whetstone writes in private mode is visible to `git status` on a fresh
+  repo (the acceptance test drives `wh init --claude --private` then asserts
+  `git status --porcelain` is empty, including after `wh scan` and a hook run).
+- Enforcement is mode-independent: scan / hook / MCP / status behave identically
+  in private and public mode — private changes *visibility*, never *function*.
+- `enable` then `publish` leaves the repo byte-identical to never having used
+  private mode (modulo the `.gitignore` entries `init --personal` would add and
+  `setup.private: false`).
+- User content outside the managed block in `.git/info/exclude` is preserved
+  verbatim by both operations.
+
+## CLI surface
+
+- `wh init --private` — enable private mode (composes: `wh init --claude --private`,
+  `wh init --hooks --private`; `--private --ci` errors).
+- `wh publish [--ci] [--schedule=…]` — the flip.
+- `wh status --setup` → `"private_mode": true|false`.
+
+## Out of scope (stays on the epic)
+
+Out-of-repo artifact root; personal-layer `extends` (truly personal packs after
+publish); `wh promote`; wizard step for choosing private at onboard time (the
+wizard *displays* the mode; enabling it is `wh init --private`).

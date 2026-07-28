@@ -86,6 +86,11 @@ pub fn setup_status(project_dir: &Path) -> Value {
         .and_then(|s| s.get("dismissed"))
         .and_then(|d| d.as_bool())
         .unwrap_or(false);
+    let private_mode = ws_doc
+        .get("setup")
+        .and_then(|s| s.get("private"))
+        .and_then(|p| p.as_bool())
+        .unwrap_or(false);
 
     // Detected deps (manifests only, no network).
     let deps_detected = crate::detect::detect_deps(project_dir, false, &[], &[], false)
@@ -117,17 +122,19 @@ pub fn setup_status(project_dir: &Path) -> Value {
         })
         .unwrap_or_default();
 
-    // Hooks: PostToolUse entry in .claude/settings.json.
-    let settings: Value = std::fs::read_to_string(project_dir.join(".claude").join("settings.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| json!({}));
-    let hooks_installed = settings
-        .get("hooks")
-        .and_then(|h| h.get("PostToolUse"))
-        .and_then(|p| p.as_array())
-        .map(|a| !a.is_empty())
-        .unwrap_or(false);
+    // Hooks: PostToolUse entry in .claude/settings.json — or settings.local.json,
+    // where private mode installs them when settings.json is git-tracked.
+    let hooks_installed = ["settings.json", "settings.local.json"].iter().any(|f| {
+        std::fs::read_to_string(project_dir.join(".claude").join(f))
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .unwrap_or_else(|| json!({}))
+            .get("hooks")
+            .and_then(|h| h.get("PostToolUse"))
+            .and_then(|p| p.as_array())
+            .map(|a| !a.is_empty())
+            .unwrap_or(false)
+    });
 
     // MCP: whetstone server in .mcp.json.
     let mcp: Value = std::fs::read_to_string(project_dir.join(".mcp.json"))
@@ -156,7 +163,7 @@ pub fn setup_status(project_dir: &Path) -> Value {
         {
             "key": "hooks_installed",
             "done": hooks_installed,
-            "evidence": if hooks_installed { ".claude/settings.json PostToolUse" } else { "" },
+            "evidence": if hooks_installed { ".claude settings PostToolUse" } else { "" },
             "next_command": "wh init --hooks",
         },
         {
@@ -180,6 +187,7 @@ pub fn setup_status(project_dir: &Path) -> Value {
         "total": total,
         "complete": done == total,
         "dismissed": dismissed,
+        "private_mode": private_mode,
         "dependencies_detected": deps_detected,
         "packs_imported": extends_count,
         "items": items,
@@ -218,8 +226,9 @@ pub fn claude(project_dir: &Path) -> Result<Value> {
     // 3. Generate terse agent context.
     let context = generate_context_step(project_dir)?;
 
-    // 4. Register the MCP server.
-    register_mcp(project_dir)?;
+    // 4. Register the MCP server (may be skipped in private mode when
+    // .mcp.json is tracked — the report carries the local-scope alternative).
+    let mcp = register_mcp(project_dir)?;
 
     // 5. Install the hooks (SessionStart advisory + PostToolUse enforcement).
     let hooks = install_hooks_step(project_dir)?;
@@ -245,7 +254,15 @@ pub fn claude(project_dir: &Path) -> Result<Value> {
     } else {
         "no agent context generated yet (no approved rules or guidance — import a pack or run `wh extract`)".to_string()
     });
-    wired.push("registered the MCP server in .mcp.json (rules_query + scan)".to_string());
+    if mcp.get("status").and_then(|s| s.as_str()) == Some("skipped") {
+        wired.push(format!(
+            "MCP not registered ({}). {}",
+            mcp.get("reason").and_then(|r| r.as_str()).unwrap_or(""),
+            mcp.get("next_command").and_then(|n| n.as_str()).unwrap_or(""),
+        ));
+    } else {
+        wired.push("registered the MCP server in .mcp.json (rules_query + scan)".to_string());
+    }
     wired.push(
         "installed hooks: SessionStart advisory + PostToolUse in-session enforcement".to_string(),
     );
@@ -255,6 +272,7 @@ pub fn claude(project_dir: &Path) -> Result<Value> {
         "imported_packs": imported,
         "detected_dependencies": deps.len(),
         "context": context,
+        "mcp": mcp,
         "hooks": hooks,
         "wired": wired,
         "next_command": "Restart your Claude Code session (or reload) so the hooks + MCP server load, then edit a source file — any rule violation is fed back in the same turn.",
@@ -329,6 +347,36 @@ pub fn set_dismissed(project_dir: &Path, dismissed: bool) -> Result<()> {
     Ok(())
 }
 
+/// Persist the private-mode marker as `setup.private` in whetstone.yaml
+/// (whetstone-xdr). The file itself is excluded while private, so the marker is
+/// invisible to teammates. Same round-trip discipline as `set_dismissed`.
+pub fn set_private(project_dir: &Path, private: bool) -> Result<()> {
+    let path = project_dir.join("whetstone").join("whetstone.yaml");
+    let mut doc: Value = if path.exists() {
+        serde_yaml::from_str(&std::fs::read_to_string(&path)?).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+    if !doc.is_object() {
+        doc = json!({});
+    }
+    let obj = doc.as_object_mut().unwrap();
+    obj.insert("version".to_string(), json!(1));
+    let setup = obj.entry("setup").or_insert_with(|| json!({}));
+    if !setup.is_object() {
+        *setup = json!({});
+    }
+    setup
+        .as_object_mut()
+        .unwrap()
+        .insert("private".to_string(), json!(private));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, serde_yaml::to_string(&doc).context("serialize whetstone.yaml")?)?;
+    Ok(())
+}
+
 /// Add rule ids to the project's `deny` list in whetstone.yaml idempotently —
 /// the wizard's per-rule opt-out during review (whetstone-eg4). Preserves other
 /// keys via a whole-doc round-trip.
@@ -365,9 +413,20 @@ pub fn add_deny(project_dir: &Path, ids: &[String]) -> Result<()> {
 }
 
 /// Register the Whetstone MCP server in .mcp.json, preserving any existing
-/// servers. Shared step (whetstone-if6).
-pub fn register_mcp(project_dir: &Path) -> Result<()> {
+/// servers. Shared step (whetstone-if6). In private mode a git-tracked
+/// .mcp.json is never modified (exclude cannot hide changes to tracked files);
+/// the caller gets the local-scope alternative to surface instead.
+pub fn register_mcp(project_dir: &Path) -> Result<Value> {
     let path = project_dir.join(".mcp.json");
+    if crate::private_mode::is_private(project_dir)
+        && crate::private_mode::is_git_tracked(project_dir, ".mcp.json")
+    {
+        return Ok(json!({
+            "status": "skipped",
+            "reason": ".mcp.json is git-tracked and private mode never modifies tracked files",
+            "next_command": "Register locally instead: claude mcp add whetstone -s local -- wh mcp --project-dir .",
+        }));
+    }
     let mut doc: Value = if path.exists() {
         serde_json::from_str(&std::fs::read_to_string(&path)?).unwrap_or_else(|_| json!({}))
     } else {
@@ -392,5 +451,8 @@ pub fn register_mcp(project_dir: &Path) -> Result<()> {
     let mut out = serde_json::to_string_pretty(&doc)?;
     out.push('\n');
     std::fs::write(&path, out)?;
-    Ok(())
+    Ok(json!({
+        "status": "ok",
+        "path": path.display().to_string(),
+    }))
 }

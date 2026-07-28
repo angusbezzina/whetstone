@@ -62,6 +62,8 @@ while the CLI settles on `wh scan`, `wh rules`, `wh sources`, and `wh sources ve
 | `wh scan --with-pack` | preview | approved rules + candidate pack, source files | — | Read-only preview of a pack as if imported; tags `from_candidate`. |
 | `wh config conflicts` | inspect | configured + proposed packs | — | Same-id + formatter-option conflicts as JSON. |
 | `wh pack import` | onboard | pack file | pack + `extends` | Shared import primitive (idempotent) behind both front doors. |
+| `wh init --private` | onboard (solo) | git repo | managed `.git/info/exclude` block + `setup.private` | Private mode: artifacts invisible to `git status`; never modifies tracked files; `--ci` refused. |
+| `wh publish` | share | private-mode repo | exclude block removed, `.gitignore` entries, shared wiring | The flip: makes artifacts trackable, prints the `git add` list, never runs git. |
 | `wh rules query` | inspect (JIT) | approved rules | — | JIT rule lookup for agents. Filters: `--file <path>` (infers language), `--lang`, `--dep`, `--severity`, `--personal-only`, `--project-only`, `--full`. Preferred over re-reading `AGENTS.md` mid-turn. |
 | `wh rules add <id>` | author | — | one rule appended to (or creates) `whetstone/(.personal/)?rules/<lang>/<dep>.yaml` as `status: approved` | Personal-taste shortcut. Required: `--description`, `--lang`, either `--match` or a dep prefix in the id. `--project` to target the committed layer. |
 | `wh rules edit <id> \| --all [--dep] [--category]` | author | approved rule files | same file, severity/confidence mutated | Bump severity (`should → must`) or confidence without hand-editing YAML. `--dry-run` to preview. Refuses candidates. |

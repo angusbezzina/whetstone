@@ -24,6 +24,7 @@ mod mcp;
 mod onboard;
 mod output;
 mod personal;
+mod private_mode;
 mod report;
 mod resolve;
 mod review;

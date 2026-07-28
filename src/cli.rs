@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use crate::{
     agent_hook, approve, check, ci_check, config, config_packs, conflicts, debt, detect, doctor,
     extract, gen,
-    generate_context, generate_lint, generate_tests, mcp, onboard, output, personal, report, resolve,
+    generate_context, generate_lint, generate_tests, mcp, onboard, output, personal, private_mode,
+    report, resolve,
     review, rule_authoring, rules, rules_query, source_mgmt, status, triggers, tui, update, worklist,
 };
 
@@ -623,6 +624,12 @@ enum Commands {
         #[arg(long)]
         ci: bool,
 
+        /// Private mode: hide all Whetstone artifacts from git via a managed
+        /// .git/info/exclude block — adopt solo on a shared repo with zero
+        /// footprint; flip to shared later with `wh publish`
+        #[arg(long, conflicts_with = "ci")]
+        private: bool,
+
         /// Schedule for the CI workflow (daily|weekly|biweekly|monthly or a 5-field cron)
         #[arg(long, default_value = "weekly")]
         schedule: String,
@@ -662,6 +669,23 @@ enum Commands {
         /// Disable fast-first limiting
         #[arg(long)]
         full_run: bool,
+    },
+
+    /// Flip private mode off: remove the .git/info/exclude block so Whetstone
+    /// artifacts become trackable, and complete any wiring private mode skipped.
+    /// Prints the `git add` list — never runs git itself.
+    Publish {
+        /// Project directory
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Also write .github/workflows/whetstone-check.yml now that sharing is intended
+        #[arg(long)]
+        ci: bool,
+
+        /// Schedule for the CI workflow (daily|weekly|biweekly|monthly or a 5-field cron)
+        #[arg(long, default_value = "weekly")]
+        schedule: String,
     },
 
     /// Resolve documentation URLs and fetch content for dependencies
@@ -1123,6 +1147,7 @@ pub fn run() -> i32 {
             hooks,
             claude,
             ci,
+            private,
             schedule,
             include_dev,
             deps,
@@ -1136,9 +1161,37 @@ pub fn run() -> i32 {
         } => {
             // Setup flags short-circuit everything else. They can compose — e.g.
             // `wh init --personal --hooks --ci --schedule=weekly`.
-            if personal || hooks || claude || ci {
+            if personal || hooks || claude || ci || private {
                 let mut setup = serde_json::Map::new();
                 setup.insert("status".to_string(), serde_json::json!("ok"));
+
+                // A workflow file is inherently shared; clap already rejects
+                // `--private --ci`, but a repo already IN private mode must
+                // refuse `--ci` on its own too.
+                if ci && private_mode::is_private(&project_dir) {
+                    output::print_json(&output::error_json(
+                        "this project is in private mode — a CI workflow file is inherently shared",
+                        "Run `wh publish --ci` when you are ready to share Whetstone with the team",
+                    ));
+                    return 1;
+                }
+
+                // Private mode goes first so the exclude block + marker are in
+                // place before --claude/--hooks write anything.
+                if private {
+                    match private_mode::enable(&project_dir) {
+                        Ok(v) => {
+                            setup.insert("private".to_string(), v);
+                        }
+                        Err(e) => {
+                            output::print_json(&output::error_json(
+                                &e.to_string(),
+                                "Private mode needs a git repository and a not-yet-committed whetstone/ dir",
+                            ));
+                            return 1;
+                        }
+                    }
+                }
 
                 if claude {
                     match onboard::claude(&project_dir) {
@@ -1323,6 +1376,24 @@ pub fn run() -> i32 {
                 }
             }
         }
+
+        Commands::Publish {
+            project_dir,
+            ci,
+            schedule,
+        } => match private_mode::publish(&project_dir, ci, &schedule) {
+            Ok(v) => {
+                output::print_json(&v);
+                0
+            }
+            Err(e) => {
+                output::print_json(&output::error_json(
+                    &e.to_string(),
+                    "Publish needs a git repository; enable private mode first with `wh init --private`",
+                ));
+                1
+            }
+        },
 
         Commands::SetSources {
             input,
@@ -3048,6 +3119,7 @@ fn launch_tui_screen(project_dir: &Path, screen: tui::msg::Screen) -> i32 {
 fn command_title(command: &Commands) -> &'static str {
     match command {
         Commands::Init { .. } => "INIT",
+        Commands::Publish { .. } => "PUBLISH",
         Commands::SetSources { .. } => "SET-SOURCES",
         Commands::Status { .. } => "STATUS",
         Commands::Context { .. } => "CONTEXT",
@@ -3129,6 +3201,7 @@ fn success_screen_for_command(command: &Commands) -> Option<tui::msg::Screen> {
 fn project_dir_for_command(command: &Commands) -> PathBuf {
     match command {
         Commands::Init { project_dir, .. }
+        | Commands::Publish { project_dir, .. }
         | Commands::SetSources { project_dir, .. }
         | Commands::Status { project_dir, .. }
         | Commands::Context { project_dir, .. }

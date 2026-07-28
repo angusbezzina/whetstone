@@ -55,7 +55,14 @@ pub fn init_personal(project_dir: &Path) -> Result<Value> {
         skipped.push(paths.personal_config.display().to_string());
     }
 
-    let gitignore_status = ensure_gitignore_entries(project_dir)?;
+    // In private mode .gitignore is likely tracked, so editing it would be the
+    // one visible footprint; the exclude block already hides the whole layer.
+    // `wh publish` writes these entries at flip time.
+    let gitignore_status = if crate::private_mode::is_private(project_dir) {
+        json!({ "action": "skipped", "reason": "private mode — covered by .git/info/exclude until `wh publish`" })
+    } else {
+        ensure_gitignore_entries(project_dir)?
+    };
 
     Ok(json!({
         "status": "ok",
@@ -67,7 +74,7 @@ pub fn init_personal(project_dir: &Path) -> Result<Value> {
     }))
 }
 
-fn ensure_gitignore_entries(project_dir: &Path) -> Result<Value> {
+pub(crate) fn ensure_gitignore_entries(project_dir: &Path) -> Result<Value> {
     let gi_path = project_dir.join(".gitignore");
     let existing = fs::read_to_string(&gi_path).unwrap_or_default();
 
