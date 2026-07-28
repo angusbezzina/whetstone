@@ -373,7 +373,12 @@ pub fn set_private(project_dir: &Path, private: bool) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&path, serde_yaml::to_string(&doc).context("serialize whetstone.yaml")?)?;
+    // Atomic: a torn write here would leave the marker unset while the exclude
+    // block is in place — private mode silently off.
+    crate::private_mode::atomic_write_str(
+        &path,
+        &serde_yaml::to_string(&doc).context("serialize whetstone.yaml")?,
+    )?;
     Ok(())
 }
 

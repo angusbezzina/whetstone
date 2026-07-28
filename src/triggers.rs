@@ -88,16 +88,52 @@ pub fn install_ci_workflow(project_dir: &Path, schedule: &str) -> Result<Value> 
 
 // ── git hooks ──
 
+/// True when `.git/hooks/` holds executable hooks git is actually running
+/// (ignoring the `.sample` files git ships). Setting `core.hooksPath` would
+/// silently disable every one of them — a `pre-commit install` / lefthook
+/// layout is the common case.
+pub fn has_local_git_hooks(project_dir: &Path) -> bool {
+    let git_hooks = project_dir.join(".git").join("hooks");
+    let Ok(entries) = std::fs::read_dir(&git_hooks) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        let path = e.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("sample") || !path.is_file() {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::metadata(&path)
+                .map(|m| m.permissions().mode() & 0o111 != 0)
+                .unwrap_or(false)
+        }
+        #[cfg(not(unix))]
+        {
+            true
+        }
+    })
+}
+
 fn install_post_merge_hook(project_dir: &Path) -> Result<PathBuf> {
-    let hooks_dir = project_dir.join(".githooks");
-    std::fs::create_dir_all(&hooks_dir)?;
-    let path = hooks_dir.join("post-merge");
+    let path = project_dir.join(".githooks").join("post-merge");
+    // Private mode never modifies tracked files — exclude cannot hide the diff,
+    // and overwriting a teammate's committed hook would destroy it.
+    if crate::private_mode::skip_tracked(project_dir, ".githooks/post-merge") {
+        return Err(anyhow!(
+            ".githooks/post-merge is git-tracked and private mode never modifies tracked files — left unchanged"
+        ));
+    }
+    std::fs::create_dir_all(path.parent().unwrap())?;
     std::fs::write(&path, POST_MERGE_HOOK_BODY)?;
     set_executable(&path)?;
 
     // Wire core.hooksPath so `git pull` actually runs the hook. We avoid
-    // overwriting an existing value that may intentionally point elsewhere.
-    if project_dir.join(".git").exists() {
+    // overwriting an existing value that may intentionally point elsewhere —
+    // and never redirect away from a live .git/hooks/ setup, which would
+    // silently stop the user's pre-commit gate from firing.
+    if project_dir.join(".git").exists() && !has_local_git_hooks(project_dir) {
         if let Ok(current) = Command::new("git")
             .args(["config", "--get", "core.hooksPath"])
             .current_dir(project_dir)
@@ -124,22 +160,28 @@ fn install_post_merge_hook(project_dir: &Path) -> Result<PathBuf> {
 /// We install a minimal config that runs `wh status` advisorially on startup.
 fn install_session_hooks(project_dir: &Path) -> Result<Vec<PathBuf>> {
     let mut written = Vec::new();
-    // Claude Code hook
+    // Claude Code hook. Each script is skipped when private mode would
+    // otherwise overwrite a tracked copy (the file already exists there, so the
+    // settings entry still resolves).
     let claude_dir = project_dir.join(".claude");
     std::fs::create_dir_all(&claude_dir)?;
     let claude_path = claude_dir.join("whetstone-session-hook.sh");
-    std::fs::write(&claude_path, SESSION_HOOK_BODY)?;
-    set_executable(&claude_path)?;
-    written.push(claude_path.clone());
+    if !crate::private_mode::skip_tracked(project_dir, ".claude/whetstone-session-hook.sh") {
+        std::fs::write(&claude_path, SESSION_HOOK_BODY)?;
+        set_executable(&claude_path)?;
+        written.push(claude_path.clone());
+    }
 
     // In-session enforcement hook: PostToolUse scans the edited file and feeds
     // violations back to the agent in the same turn (whetstone-cpt). A tiny
     // wrapper script no-ops if `wh` is not on PATH, so a missing binary never
     // wedges the agent.
     let posttool_path = claude_dir.join("whetstone-posttooluse-hook.sh");
-    std::fs::write(&posttool_path, POSTTOOLUSE_HOOK_BODY)?;
-    set_executable(&posttool_path)?;
-    written.push(posttool_path.clone());
+    if !crate::private_mode::skip_tracked(project_dir, ".claude/whetstone-posttooluse-hook.sh") {
+        std::fs::write(&posttool_path, POSTTOOLUSE_HOOK_BODY)?;
+        set_executable(&posttool_path)?;
+        written.push(posttool_path.clone());
+    }
 
     // settings.json merges into any existing file so user-configured hooks
     // survive. `atomic_write` guards against mid-write crashes corrupting the
@@ -162,8 +204,11 @@ fn install_session_hooks(project_dir: &Path) -> Result<Vec<PathBuf>> {
     // path (Cursor reads the generated context files; run `wh scan` / use the MCP
     // server for lookups) rather than pretending parity with Claude Code.
     let cursor_dir = project_dir.join(".cursor");
-    std::fs::create_dir_all(&cursor_dir)?;
     let cursor_path = cursor_dir.join("whetstone-session.md");
+    if crate::private_mode::skip_tracked(project_dir, ".cursor/whetstone-session.md") {
+        return Ok(written);
+    }
+    std::fs::create_dir_all(&cursor_dir)?;
     std::fs::write(
         &cursor_path,
         "# Whetstone in Cursor\n\n\
@@ -292,7 +337,22 @@ pub fn remove_whetstone_hooks_from_local(project_dir: &Path) -> Result<bool> {
         }
     }
     if removed {
-        crate::state::atomic_write(&path, &doc);
+        // Don't leave a hollow `{"hooks":{"PostToolUse":[],"SessionStart":[]}}`
+        // behind — that would be a brand-new untracked file introduced by
+        // publish. Drop empty hook lists, then the file itself if nothing of
+        // the user's remains.
+        if let Some(hooks) = doc.get_mut("hooks").and_then(|h| h.as_object_mut()) {
+            hooks.retain(|_, v| !v.as_array().map(|a| a.is_empty()).unwrap_or(false));
+            let hooks_empty = hooks.is_empty();
+            if hooks_empty {
+                doc.as_object_mut().map(|o| o.remove("hooks"));
+            }
+        }
+        if doc.as_object().map(|o| o.is_empty()).unwrap_or(false) {
+            let _ = std::fs::remove_file(&path);
+        } else {
+            crate::state::atomic_write(&path, &doc);
+        }
     }
     Ok(removed)
 }

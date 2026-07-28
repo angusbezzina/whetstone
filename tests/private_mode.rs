@@ -214,11 +214,169 @@ fn tracked_wiring_files_are_never_modified() {
     let settings_after = std::fs::read_to_string(repo.join(".claude/settings.json")).unwrap();
     assert!(settings_after.contains("whetstone-posttooluse-hook.sh"));
     assert!(settings_after.contains("\"model\""), "user settings must survive");
-    let local_after = std::fs::read_to_string(repo.join(".claude/settings.local.json")).unwrap();
+    // MINOR 7: no hollow settings.local.json left behind as a new untracked file.
+    let local_path = repo.join(".claude/settings.local.json");
+    if local_path.exists() {
+        let local_after = std::fs::read_to_string(&local_path).unwrap();
+        assert!(
+            !local_after.contains("whetstone-"),
+            "publish must migrate our hooks out of settings.local.json: {local_after}"
+        );
+    }
+    let after_status = git_status_porcelain(&repo);
     assert!(
-        !local_after.contains("whetstone-"),
-        "publish must migrate our hooks out of settings.local.json: {local_after}"
+        !after_status.contains("settings.local.json"),
+        "publish must not introduce a hollow settings.local.json: {after_status}"
     );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// MAJOR 1 regression: the exclude file lives at the REPO ROOT, so a package
+/// inside a monorepo needs its path prefix on every entry. Root-anchored
+/// entries matched nothing and exposed every artifact while reporting success.
+#[test]
+fn monorepo_subdirectory_has_zero_footprint() {
+    let repo = seeded_repo("monorepo");
+    let pkg = repo.join("packages/api");
+    std::fs::create_dir_all(pkg.join("src")).unwrap();
+    std::fs::write(
+        pkg.join("pyproject.toml"),
+        "[project]\nname = \"api\"\nversion = \"0.1.0\"\ndependencies = [\"fastapi>=0.110\"]\n",
+    )
+    .unwrap();
+    git_ok(&repo, &["add", "."]);
+    git_ok(&repo, &["commit", "-q", "-m", "package"]);
+
+    let (out, err, ok) = run_wh(&pkg, &["init", "--claude", "--private", "--json"]);
+    assert!(ok, "private init in a subdirectory failed: {out} {err}");
+    assert_eq!(
+        git_status_porcelain(&repo),
+        "",
+        "a monorepo package must have the same zero footprint as a root repo"
+    );
+    assert!(pkg.join("whetstone/whetstone.yaml").exists(), "artifacts still written");
+
+    // The block must be anchored under the package, not the repo root.
+    let exclude = std::fs::read_to_string(repo.join(".git/info/exclude")).unwrap();
+    assert!(
+        exclude.contains("/packages/api/whetstone/"),
+        "entries must carry the package prefix: {exclude}"
+    );
+
+    // And publish must flip it back correctly from the same directory.
+    let (pub_out, _, pub_ok) = run_wh(&pkg, &["publish", "--json"]);
+    assert!(pub_ok, "publish from a subdirectory failed: {pub_out}");
+    let status = git_status_porcelain(&repo);
+    assert!(status.contains("packages/api/whetstone/"), "artifacts trackable: {status}");
+    let exclude_after = std::fs::read_to_string(repo.join(".git/info/exclude")).unwrap();
+    assert!(!exclude_after.contains("whetstone"), "block removed: {exclude_after}");
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// MAJOR 2 regression: every artifact private mode can write must be skipped
+/// when tracked — not just .mcp.json and settings.json. Overwriting a
+/// teammate's committed .githooks/post-merge destroyed their content.
+#[test]
+fn every_tracked_artifact_is_left_untouched() {
+    let cases: &[(&str, &str)] = &[
+        (".githooks/post-merge", "#!/bin/sh\necho team-post-merge\n"),
+        (".cursor/whetstone-session.md", "# team cursor notes\n"),
+        (".claude/whetstone-session-hook.sh", "#!/bin/sh\necho team-session\n"),
+        (
+            ".claude/whetstone-posttooluse-hook.sh",
+            "#!/bin/sh\necho team-posttool\n",
+        ),
+    ];
+
+    for (rel, body) in cases {
+        let repo = seeded_repo("guard");
+        let path = repo.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, body).unwrap();
+        git_ok(&repo, &["add", "."]);
+        git_ok(&repo, &["commit", "-q", "-m", "team file"]);
+
+        let (out, err, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+        assert!(ok, "init failed with tracked {rel}: {out} {err}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            *body,
+            "tracked {rel} must not be modified in private mode"
+        );
+        assert_eq!(
+            git_status_porcelain(&repo),
+            "",
+            "tracked {rel} produced a visible diff"
+        );
+        std::fs::remove_dir_all(&repo).ok();
+    }
+}
+
+/// MAJOR 3 regression: setting core.hooksPath silently disables every hook in
+/// .git/hooks/ (the `pre-commit install` layout), with no signal to the user.
+#[test]
+fn existing_git_hooks_are_not_disabled() {
+    let repo = seeded_repo("hookspath");
+    let pre_commit = repo.join(".git/hooks/pre-commit");
+    std::fs::write(&pre_commit, "#!/bin/sh\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut p = std::fs::metadata(&pre_commit).unwrap().permissions();
+        p.set_mode(0o755);
+        std::fs::set_permissions(&pre_commit, p).unwrap();
+    }
+
+    let (out, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok, "init failed: {out}");
+
+    let cfg = git(&repo, &["config", "--get", "core.hooksPath"]);
+    let value = String::from_utf8_lossy(&cfg.stdout).trim().to_string();
+    assert!(
+        value.is_empty(),
+        "core.hooksPath must not be redirected away from live .git/hooks (got {value})"
+    );
+    assert!(
+        out.contains("core.hooksPath"),
+        "the situation must be reported, not silent: {out}"
+    );
+    // Proof the user's gate still fires.
+    std::fs::write(repo.join("x.txt"), "x").unwrap();
+    git_ok(&repo, &["add", "x.txt"]);
+    let commit = git(&repo, &["commit", "-m", "should be blocked"]);
+    assert!(
+        !commit.status.success(),
+        "the pre-commit hook must still block the commit"
+    );
+
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// MINOR 4 regression: a torn/stale block was trusted on the BEGIN marker
+/// alone, so a re-run left artifacts exposed instead of repairing it.
+#[test]
+fn enable_repairs_a_torn_block() {
+    let repo = seeded_repo("torn");
+    let info = repo.join(".git/info");
+    std::fs::create_dir_all(&info).unwrap();
+    std::fs::write(
+        info.join("exclude"),
+        "user-stuff\n# >>> whetstone private mode (managed by `wh`; `wh publish` removes this block) >>>\n/whetstone/\n",
+    )
+    .unwrap();
+
+    let (out, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok, "init failed: {out}");
+    assert!(out.contains("\"repaired\""), "torn block must be repaired: {out}");
+    assert_eq!(
+        git_status_porcelain(&repo),
+        "",
+        "a repaired block must hide every artifact"
+    );
+    let exclude = std::fs::read_to_string(info.join("exclude")).unwrap();
+    assert!(exclude.contains("user-stuff"), "user content preserved: {exclude}");
 
     std::fs::remove_dir_all(&repo).ok();
 }

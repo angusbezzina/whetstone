@@ -6,6 +6,29 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Private mode — adopt Whetstone solo on a shared repo with zero git footprint.**
+  `wh init --claude --private` onboards a team repo so that **nothing** Whetstone
+  writes appears in `git status`: artifacts stay at their normal paths, hidden by a
+  fenced, machine-managed block in `.git/info/exclude` (per-clone, never committed,
+  resolved via `git rev-parse --git-path` so worktrees work). Enforcement is
+  mode-independent — the PostToolUse hook, MCP server, and `wh scan` behave exactly
+  as in public mode. Private mode never modifies files the repo already tracks: a
+  tracked `.mcp.json` is left alone (you get the `claude mcp add -s local`
+  alternative), hooks land in `.claude/settings.local.json` when
+  `.claude/settings.json` is tracked, and enabling is refused outright when
+  `whetstone/` is already committed. `--ci` is refused while private (a workflow
+  file is inherently shared). Design: `planning/private-mode.md`.
+- **`wh publish` — the flip to shared.** Removes the exclude block, writes the real
+  `.gitignore` entries for machine-local state (`.state`, `.personal`, metrics),
+  clears the marker, completes the wiring private mode skipped (migrating our hook
+  entries out of `settings.local.json`), optionally writes the CI workflow
+  (`--ci`), and **prints** the `git add` list. It never runs git for you — sharing
+  stays an explicit decision. Idempotent in both directions.
+- **`wh status --setup` reports `private_mode`**, and the onboarding wizard's home
+  screen shows the mode with a pointer to `wh publish` (display only — the wizard
+  reads the oracle and holds no state of its own).
+
 ## [0.11.0] - 2026-07-28
 
 The **onboarding wizard** — the human front door. Running bare `wh` in an un-onboarded

@@ -38,6 +38,18 @@ non-standard git dirs work. Entries are static (excluding an already-tracked pat
 is a harmless no-op — exclude only affects untracked files), which keeps
 enable/publish exactly inverse operations.
 
+**The exclude file lives at the repo root**, so every entry is anchored under the
+project's path relative to that root (`repo_prefix`, from
+`git rev-parse --show-toplevel`). A package inside a monorepo gets
+`/packages/api/whetstone/`; without the prefix the entries would match nothing
+and expose every artifact while reporting success.
+
+**The block is self-healing.** `enable` compares the block on disk to what it
+would write now and replaces it on any mismatch — a torn write, or a block left
+by a different project directory. Trusting the `>>>` marker alone would silently
+leave artifacts exposed on a re-run. Both the exclude file and the
+`whetstone.yaml` marker are written atomically (temp + rename).
+
 ## Decisions (locked)
 
 1. **Small cut, not the root refactor.** Artifacts stay at their current paths;
@@ -48,14 +60,24 @@ enable/publish exactly inverse operations.
    the marker is invisible to teammates. Oracles read it with
    `private_mode::is_private()`.
 3. **Tracked files are never modified in private mode.** `.git/info/exclude`
-   cannot hide changes to tracked files, so:
+   cannot hide changes to tracked files — and for a committed hook script,
+   overwriting it would destroy a teammate's content, which is data loss, not
+   just a leak. Every artifact private mode can write is guarded via
+   `private_mode::skip_tracked`:
    - `whetstone/` already tracked → private mode **refuses to enable** (the repo
      is already publicly onboarded; private mode is a pre-adoption state).
    - `.mcp.json` tracked → `register_mcp` skips it and reports the local-scope
      alternative (`claude mcp add whetstone -s local -- wh mcp --project-dir .`).
    - `.claude/settings.json` tracked → hooks go to `.claude/settings.local.json`
-     (Claude Code's per-user overlay) instead.
-   - `.githooks/post-merge` tracked → skipped (already shared).
+     (Claude Code's per-user overlay) instead; `wh publish` migrates them back
+     and deletes the overlay if nothing of the user's remains in it.
+   - `.githooks/post-merge`, `.cursor/whetstone-session.md`, and both
+     `.claude/whetstone-*.sh` scripts tracked → skipped (already shared).
+
+   Related, and not limited to private mode: **`core.hooksPath` is never set
+   when `.git/hooks/` holds live executable hooks.** Redirecting it silently
+   stops a `pre-commit install` / lefthook setup from firing, with no diff to
+   notice. `enable` reports the situation in `warnings` instead.
 4. **`--ci` is refused in private mode.** A workflow file is inherently shared.
    `wh publish --ci` writes it at flip time.
 5. **`wh publish` never runs `git add` or `git commit`.** It removes the exclude
@@ -82,6 +104,11 @@ enable/publish exactly inverse operations.
 - `enable` then `publish` leaves the repo byte-identical to never having used
   private mode (modulo the `.gitignore` entries `init --personal` would add and
   `setup.private: false`).
+- **Publish is one-way in one respect:** it writes real `.gitignore` entries, and
+  re-enabling private mode afterwards cannot hide `.gitignore` (a legitimately
+  shared file). So `enable → publish → enable` leaves that one visible change.
+  This is intended — publish is the decision to share — but it means "un-publish"
+  is not a supported operation; revert the `.gitignore` hunk by hand if needed.
 - User content outside the managed block in `.git/info/exclude` is preserved
   verbatim by both operations.
 
