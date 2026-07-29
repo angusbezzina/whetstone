@@ -23,11 +23,28 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `.gitignore` entries for machine-local state (`.state`, `.personal`, metrics),
   clears the marker, completes the wiring private mode skipped (migrating our hook
   entries out of `settings.local.json`), optionally writes the CI workflow
-  (`--ci`), and **prints** the `git add` list. It never runs git for you — sharing
-  stays an explicit decision. Idempotent in both directions.
+  (`--ci`), and **prints** the `git add` list. It never stages or commits anything
+  — sharing stays an explicit decision. Re-running it is a no-op, and re-entering
+  private mode afterwards works (the published `.gitignore` stays visible, which
+  is reported rather than treated as a leak).
+- **The promise is verified, not assumed.** After every step has written its files,
+  `wh init --private` asks *git* whether anything is still visible
+  (`git status --porcelain --untracked-files=all -z`, filtered to this project's
+  artifacts) and fails loudly, naming the paths, rather than reporting a success it
+  cannot back up. The check fails closed: if it cannot run, that is an error, never
+  a pass. `wh status` re-runs it every session (via the SessionStart hook), so a
+  teammate's committed `.gitignore` negation arriving on `git pull` does not break
+  private mode silently. A refusal leaves no half-private repo behind.
 - **`wh status --setup` reports `private_mode`**, and the onboarding wizard's home
   screen shows the mode with a pointer to `wh publish` (display only — the wizard
   reads the oracle and holds no state of its own).
+
+### Fixed
+- **The SessionStart advisory hook was a permanent no-op.** Its `awk` anchored on
+  the first line with a separator that assumed no space after the colon, but
+  `wh status --json` is pretty-printed — so every advisory it existed to deliver
+  (stale rules, drift, and now private mode) was silently dropped. It parses the
+  whole document now.
 
 ## [0.11.0] - 2026-07-28
 
