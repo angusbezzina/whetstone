@@ -513,7 +513,33 @@ fn lock_exclude(exclude: &Path) -> Result<ExcludeLock> {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(25));
             }
-            Err(e) => return Err(e).with_context(|| format!("create {}", lock.display())),
+            // Not every filesystem supports hard links (FAT, some network
+            // mounts). Fall back to the plain atomic create — it leaves a brief
+            // window where a peer sees the lock without a pid, which the grace
+            // period above already handles — rather than refusing to lock at all.
+            Err(_) => {
+                let _ = std::fs::remove_file(&tmp);
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&lock)
+                {
+                    Ok(mut f) => {
+                        use std::io::Write;
+                        let _ = f.write_all(stamp.to_string().as_bytes());
+                        return Ok(ExcludeLock(lock));
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        if attempt == 399 {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(25));
+                    }
+                    Err(e) => {
+                        return Err(e).with_context(|| format!("create {}", lock.display()))
+                    }
+                }
+            }
         }
     }
     Err(anyhow!(
