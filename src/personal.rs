@@ -101,18 +101,22 @@ pub(crate) fn ensure_gitignore_entries(project_dir: &Path) -> Result<Value> {
         }));
     }
 
+    // Match the file's existing line ending, so appending to a CRLF .gitignore
+    // does not leave it with mixed endings (a needless diff for the teammate who
+    // reviews the publish commit).
+    let eol = if existing.contains("\r\n") { "\r\n" } else { "\n" };
     let mut new_content = existing.clone();
     if !new_content.is_empty() && !new_content.ends_with('\n') {
-        new_content.push('\n');
+        new_content.push_str(eol);
     }
     if !new_content.contains(GITIGNORE_MARKER) {
-        new_content.push('\n');
+        new_content.push_str(eol);
         new_content.push_str(GITIGNORE_MARKER);
-        new_content.push('\n');
+        new_content.push_str(eol);
     }
     for rule in &to_add {
         new_content.push_str(rule);
-        new_content.push('\n');
+        new_content.push_str(eol);
     }
     fs::write(&gi_path, new_content)?;
 

@@ -52,7 +52,34 @@ pub fn compute_status(
         }));
     }
 
-    let (rule_files, load_warnings) = load_rule_files(&rules_dir);
+    let (rule_files, mut load_warnings) = load_rule_files(&rules_dir);
+
+    // Private mode is verified at enable time, but the repo moves underneath it:
+    // a teammate can commit a `.gitignore` negation that re-includes our
+    // artifacts, and nothing would have re-checked. `wh status` is what the
+    // SessionStart hook runs every session, so it is the natural re-check.
+    // Advisory here — status reports, it does not gate.
+    if crate::private_mode::is_private(project_dir) {
+        if let Ok(prefix) = crate::private_mode::project_prefix(project_dir) {
+            match crate::private_mode::exposed_artifacts(project_dir, &prefix) {
+                Ok(exposed) => {
+                    let (blocking, _advisory) =
+                        crate::private_mode::partition_exposures(&exposed);
+                    for line in blocking {
+                        load_warnings.push(format!(
+                            "private mode is NO LONGER in effect for {line} — re-run `wh init --private` after resolving, or `wh publish` to share deliberately"
+                        ));
+                    }
+                }
+                // Fail closed in the message, not the exit code: a check that
+                // could not run must never read as "nothing exposed".
+                Err(e) => load_warnings.push(format!(
+                    "could not verify private mode is still in effect: {e}"
+                )),
+            }
+        }
+    }
+
     let mut drift_info = Value::Null;
 
     let changed_only_deps_data = if changed_only {

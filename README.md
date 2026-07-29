@@ -607,7 +607,13 @@ wh publish        # optionally: --ci
 
 This removes the exclude block, adds the real `.gitignore` entries for
 machine-local state, completes the shared wiring, and prints the `git add` list.
-It never runs git for you — sharing stays your explicit move.
+It never stages or commits anything — sharing stays your explicit move.
+
+Two honest caveats. `wh init --hooks` may set `core.hooksPath` in your local
+`.git/config` so the post-merge hook fires (per-clone, never committed, and
+skipped when your repo already has live hooks). And publishing is one-way: the
+`.gitignore` entries it writes are a legitimately shared file, so re-entering
+private mode afterwards leaves that one visible change.
 
 ## How Whetstone Fits with Existing Tools
 

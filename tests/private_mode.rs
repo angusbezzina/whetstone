@@ -728,14 +728,18 @@ fn whetstone_written_gitignore_is_not_reported_invisible() {
         "precondition: .gitignore is visible"
     );
 
+    // Round-10 correction: this is ADVISORY, not fatal. The file holds ignore
+    // lines only (no rules or config) and is legitimately shared — blocking on it
+    // made `enable → publish → enable` impossible. It must still be NAMED, so
+    // `wh` never claims a visible artifact is invisible.
     let (out, err, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
     assert!(
-        !ok,
-        "a Whetstone-written .gitignore must not be reported as invisible: {out} {err}"
+        ok,
+        "a Whetstone-written .gitignore is advisory, not blocking: {out} {err}"
     );
     assert!(
         out.contains(".gitignore") || err.contains(".gitignore"),
-        "the exposed file must be named: {out} {err}"
+        "the exposed file must still be named: {out} {err}"
     );
 
     std::fs::remove_dir_all(&repo).ok();
@@ -1365,5 +1369,168 @@ fn user_content_in_exclude_file_is_preserved() {
     assert!(after.contains("scratch/"), "user content must survive publish: {after}");
     assert!(!after.contains("/whetstone/"), "managed entries must be gone: {after}");
 
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+// ── round-10 regressions ──
+
+/// The user's own `whetstone/` ignore line is NOT our leak. This is the most
+/// natural first move a cautious solo adopter makes before running the tool, and
+/// it used to hard-refuse onboarding with a false diagnosis — leaving the repo
+/// flagged private with nothing onboarded.
+#[test]
+fn users_own_gitignore_whetstone_line_does_not_block_enable() {
+    for line in ["whetstone/\n", "whetstone-scratch/\n", "# TODO: try whetstone\n"] {
+        let repo = seeded_repo("giown");
+        let mut gi = std::fs::read_to_string(repo.join(".gitignore")).unwrap_or_default();
+        gi.push_str(line);
+        std::fs::write(repo.join(".gitignore"), &gi).unwrap();
+
+        let (out, err, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+        assert!(
+            ok,
+            "a user-authored {line:?} must not block private mode: {out} {err}"
+        );
+        // Fully onboarded, not half-written.
+        assert!(repo.join("whetstone/packs").exists(), "packs must exist: {out}");
+        // The user's own .gitignore edit is the ONLY thing git can see.
+        let status = git_status_porcelain(&repo);
+        assert!(
+            status.ends_with(".gitignore") && status.lines().count() == 1,
+            "only the user's own .gitignore may be visible, got: {status:?}"
+        );
+        std::fs::remove_dir_all(&repo).ok();
+    }
+}
+
+/// A blocking refusal must not leave the project flagged private with nothing
+/// onboarded — enable reverts exactly what it created.
+#[test]
+fn blocking_refusal_reverts_marker_and_block() {
+    let repo = seeded_repo("revert");
+    // An inherently-shared CI workflow cannot be hidden → blocking.
+    let (_, _, ci_ok) = run_wh(&repo, &["init", "--ci", "--json"]);
+    assert!(ci_ok);
+
+    let (out, _, ok) = run_wh(&repo, &["init", "--private", "--json"]);
+    assert!(!ok, "must refuse while a CI workflow is present: {out}");
+
+    let ws = std::fs::read_to_string(repo.join("whetstone/whetstone.yaml")).unwrap_or_default();
+    assert!(
+        !ws.contains("private: true"),
+        "marker must be reverted after a blocking refusal: {ws}"
+    );
+    let exclude = std::fs::read_to_string(repo.join(".git/info/exclude")).unwrap_or_default();
+    assert!(
+        !exclude.contains("whetstone private mode"),
+        "block must be reverted after a blocking refusal: {exclude}"
+    );
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// `enable → publish → enable` succeeds; the published `.gitignore` is advisory.
+#[test]
+fn private_mode_can_be_re_entered_after_publish() {
+    let repo = seeded_repo("reenter");
+    let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok);
+    let (_, _, pub_ok) = run_wh(&repo, &["publish", "--json"]);
+    assert!(pub_ok);
+
+    let (out, err, again) = run_wh(&repo, &["init", "--private", "--json"]);
+    assert!(again, "re-entering private mode after publish must work: {out} {err}");
+    assert!(
+        out.contains("exposed_advisory") || out.contains("warnings"),
+        "the shared .gitignore should be reported as advisory: {out}"
+    );
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Publish must not delete the user's own exclude lines that merely END with one
+/// of our filenames — unrecoverable data loss in the file we promise to preserve.
+#[test]
+fn publish_keeps_user_paths_that_share_our_filenames() {
+    let repo = seeded_repo("suffix");
+    let (_, _, ok) = run_wh(&repo, &["init", "--private", "--json"]);
+    assert!(ok);
+
+    let path = repo.join(".git/info/exclude");
+    let content = std::fs::read_to_string(&path).unwrap();
+    // Park the user's own same-named paths INSIDE our fenced block.
+    let injected = content.replace(
+        "/whetstone/\n",
+        "/whetstone/\n/tools/legacy/.mcp.json\n/vendor/x/.githooks/post-merge\n/my/own/whetstone/\nKEEP-ME/\n",
+    );
+    std::fs::write(&path, injected).unwrap();
+
+    let (_, _, pub_ok) = run_wh(&repo, &["publish", "--json"]);
+    assert!(pub_ok);
+    let after = std::fs::read_to_string(&path).unwrap();
+    for keep in [
+        "/tools/legacy/.mcp.json",
+        "/vendor/x/.githooks/post-merge",
+        "/my/own/whetstone/",
+        "KEEP-ME/",
+    ] {
+        assert!(after.contains(keep), "{keep} must survive publish: {after}");
+    }
+    assert!(
+        !after.contains("whetstone private mode"),
+        "our fence must be gone: {after}"
+    );
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// An orphaned lock (no live holder) is reclaimed immediately, not after 30s of
+/// "another `wh` process is updating it".
+#[test]
+fn orphaned_lock_is_reclaimed_immediately() {
+    let repo = seeded_repo("lock");
+    let lock = repo.join(".git/info/exclude.wh-lock");
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    // A dead pid: PID 1 is alive, so use a very high one that cannot exist.
+    std::fs::write(&lock, "4294967290").unwrap();
+
+    let start = std::time::Instant::now();
+    let (out, err, ok) = run_wh(&repo, &["init", "--private", "--json"]);
+    let elapsed = start.elapsed();
+    assert!(ok, "an orphaned lock must not block: {out} {err}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(4),
+        "reclaim must be immediate, took {elapsed:?}"
+    );
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// `wh status` re-checks the promise, so a teammate's `.gitignore` negation
+/// arriving via `git pull` does not go unnoticed.
+#[test]
+fn status_rechecks_private_mode_and_warns_when_broken() {
+    let repo = seeded_repo("recheck");
+    let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok);
+
+    let (clean, _, clean_ok) = run_wh(&repo, &["status", "--json"]);
+    assert!(clean_ok);
+    assert!(
+        !clean.contains("NO LONGER in effect"),
+        "a healthy private repo must not warn: {clean}"
+    );
+
+    // A teammate re-includes our artifacts.
+    std::fs::write(
+        repo.join(".gitignore"),
+        "node_modules/\n!.mcp.json\n!.claude/settings.json\n",
+    )
+    .unwrap();
+    git_ok(&repo, &["add", ".gitignore"]);
+    git_ok(&repo, &["commit", "-q", "-m", "teammate change"]);
+
+    let (broken, _, broken_ok) = run_wh(&repo, &["status", "--json"]);
+    assert!(broken_ok, "status stays a read-only health command");
+    assert!(
+        broken.contains("NO LONGER in effect"),
+        "status must warn that private mode broke: {broken}"
+    );
     std::fs::remove_dir_all(&repo).ok();
 }

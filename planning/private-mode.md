@@ -181,9 +181,33 @@ the bare original-path field must be consumed or it gets rescanned as a record
 with its first three characters read as a status code.
 
 `.gitignore` follows the same rule with one extra step: it is ours only when it
-carries Whetstone's personal-layer marker, and if **HEAD's copy already has that
-marker** the block is committed and public, so a later modification is the
-user's edit rather than our leak.
+carries Whetstone's personal-layer marker (`personal::GITIGNORE_MARKER`), and if
+**HEAD's copy already has that marker** the block is committed and public, so a
+later modification is the user's edit rather than our leak. Matching the bare
+substring `whetstone` here instead of the marker was a real defect: a
+hand-written `whetstone/` ignore line — the most natural first move a cautious
+solo adopter makes *before* running the tool — read as our leak and refused
+onboarding with a false diagnosis.
+
+**An exposed `.gitignore` is advisory, not blocking.** It holds ignore lines
+only — never rules, config, or taste — and it is a legitimately shared file, so
+it is *reported* (in `warnings`, and as `exposed_advisory`) but never fatal.
+Treating it as fatal made `enable → publish → enable` impossible, because
+publish writes those very entries. Every other exposure stays blocking.
+
+**A blocking refusal leaves no half-private repo.** `enable` writes the block and
+the marker before it can ask git anything, and the caller aborts on error — so
+the artifacts never got written while the project sat flagged private. On a
+blocking exposure, `enable` now reverts exactly what that call created (a repo
+that was *already* private keeps its state; only the error is reported).
+
+**Verification is not one-shot.** The repo moves underneath a verified enable: a
+teammate commits `.claude/*` + `!.claude/settings.json`, it arrives on `git pull`,
+and our artifacts are visible again with nothing having re-checked. `wh status`
+— what the SessionStart hook runs every session — re-runs the same check and
+reports any blocking exposure in `warnings`. It reports rather than gates
+(status is a read-only health command), and it fails closed in the message: a
+check that could not run says so instead of reading as "nothing exposed".
 
 The verifier covers the hidden artifacts **and** the inherently-shared ones.
 `.github/workflows/whetstone-check.yml` is never hidden — a workflow only means
@@ -228,9 +252,15 @@ front for that reason), or `wh debt --beads` shelling out to `bd`, which writes
   and publish cannot know whether that newline was originally there).
 - **Publish is one-way in one respect:** it writes real `.gitignore` entries, and
   re-enabling private mode afterwards cannot hide `.gitignore` (a legitimately
-  shared file). So `enable → publish → enable` leaves that one visible change.
-  This is intended — publish is the decision to share — but it means "un-publish"
-  is not a supported operation; revert the `.gitignore` hunk by hand if needed.
+  shared file). So `enable → publish → enable` **succeeds** and leaves that one
+  visible change, reported as an advisory exposure. This is intended — publish is
+  the decision to share — but it means "un-publish" is not a supported
+  operation; revert the `.gitignore` hunk by hand if needed.
+- **Attribution is content-based, and that cuts both ways.** A user who strips
+  Whetstone's name out of an artifact owns that file as far as the verifier is
+  concerned; it will no longer be recognised as ours. This is the deliberate
+  trade for an attribution rule that holds in every git state (see the table
+  above) rather than one that guesses from the index.
 - User content outside the managed block in `.git/info/exclude` is preserved
   verbatim by both operations.
 

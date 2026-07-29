@@ -445,29 +445,70 @@ impl Drop for ExcludeLock {
     }
 }
 
+/// True when no process with this pid is alive, i.e. the lock is an orphan.
+/// The mtime-only staleness check this replaces could never fire: the threshold
+/// (30s) exceeded the whole retry budget (5s), so a lock left by a `kill -9`
+/// wedged every later run for 30s and blamed "another `wh` process".
+fn holder_is_gone(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // `kill -0` probes liveness without signalling.
+        !Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(true)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
 fn lock_exclude(exclude: &Path) -> Result<ExcludeLock> {
     let lock = exclude.with_extension("wh-lock");
     if let Some(parent) = lock.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    for attempt in 0..200 {
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock)
-        {
-            Ok(_) => return Ok(ExcludeLock(lock)),
+    // The pid is written into a temp file and hard-linked into place, so the
+    // lock is NEVER observable without its owner's pid — a plain create-then-
+    // write leaves a window where a peer reads it empty and cannot tell an
+    // orphan from a live holder.
+    let stamp = std::process::id();
+    for attempt in 0..400 {
+        let tmp = lock.with_extension(format!("wh-lock-{stamp}-{attempt}"));
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::write(&tmp, stamp.to_string())
+            .with_context(|| format!("write {}", tmp.display()))?;
+        match std::fs::hard_link(&tmp, &lock) {
+            Ok(()) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Ok(ExcludeLock(lock));
+            }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                // Reclaim a lock orphaned by a killed process.
-                let stale = std::fs::metadata(&lock)
-                    .and_then(|m| m.modified())
-                    .map(|t| t.elapsed().map(|d| d.as_secs() > 30).unwrap_or(false))
-                    .unwrap_or(false);
-                if stale {
+                let _ = std::fs::remove_file(&tmp);
+                let holder = std::fs::read_to_string(&lock)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u32>().ok());
+                let reclaim = match holder {
+                    // A dead holder's lock is reclaimed at once.
+                    Some(pid) => holder_is_gone(pid),
+                    // No parseable pid: either a foreign file or a crash from
+                    // before this scheme. Reclaim only after a grace period, so
+                    // it can never race a live holder mid-handshake.
+                    None => std::fs::metadata(&lock)
+                        .and_then(|m| m.modified())
+                        .map(|t| t.elapsed().map(|d| d.as_secs() >= 5).unwrap_or(false))
+                        .unwrap_or(false),
+                };
+                if reclaim {
                     let _ = std::fs::remove_file(&lock);
                     continue;
                 }
-                if attempt == 199 {
+                if attempt == 399 {
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(25));
@@ -481,10 +522,13 @@ fn lock_exclude(exclude: &Path) -> Result<ExcludeLock> {
     ))
 }
 
-/// True when `line` is one of the entries we render (for any prefix). Used to
-/// bound a TORN block: without it, a block missing its terminator would eat
-/// every user line that follows to EOF.
-fn is_managed_entry(line: &str) -> bool {
+/// True when `line` is EXACTLY one of the entries we render for `label`'s
+/// project. Scoped and exact on purpose: a suffix match (`ends_with("/.mcp.json")`)
+/// claimed the user's own `/tools/legacy/.mcp.json` as ours and silently deleted
+/// it on publish — unrecoverable data loss in the one file we promise to preserve
+/// verbatim. Used to bound a TORN block, which would otherwise eat every user
+/// line to EOF.
+fn is_managed_entry(line: &str, label: &str) -> bool {
     let line = line.trim_end_matches(['\n', '\r']);
     let Some(rest) = line.strip_prefix('/') else {
         return false;
@@ -503,9 +547,15 @@ fn is_managed_entry(line: &str) -> bool {
         }
         out
     };
+    // The prefix this label's entries carry ("" at the repo root).
+    let prefix = if label == ROOT_LABEL {
+        String::new()
+    } else {
+        format!("{label}/")
+    };
     EXCLUDE_ENTRIES
         .iter()
-        .any(|entry| unescaped == *entry || unescaped.ends_with(&format!("/{entry}")))
+        .any(|entry| unescaped == format!("{prefix}{entry}"))
 }
 
 /// Remove only THIS project's managed block. User content and any other
@@ -536,7 +586,7 @@ fn strip_block(content: &str, label: &str) -> String {
                     .filter(|l| {
                         !(fence_is(l, BEGIN_PREFIX, label)
                             || fence_is(l, END_PREFIX, label)
-                            || is_managed_entry(l))
+                            || is_managed_entry(l, label))
                     })
                     .collect();
                 lines.splice(begin..=end, kept);
@@ -545,7 +595,7 @@ fn strip_block(content: &str, label: &str) -> String {
             // it, stopping at the first foreign line so user ignores survive.
             None => {
                 let mut i = begin + 1;
-                while i < lines.len() && is_managed_entry(lines[i]) {
+                while i < lines.len() && is_managed_entry(lines[i], label) {
                     i += 1;
                 }
                 lines.drain(begin..i);
@@ -618,15 +668,29 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
     // or a lost concurrent write would otherwise leak silently — the one
     // failure mode private mode must never have.
     let exposed = exposed_artifacts(project_dir, &prefix)?;
-    if !exposed.is_empty() {
+    let (blocking, advisory) = partition_exposures(&exposed);
+    if !blocking.is_empty() {
+        // Leave no half-private repo behind. A refusal that still wrote the
+        // block and the marker left the project flagged private with nothing
+        // onboarded, and the caller aborts before the remaining steps run — so
+        // undo exactly what THIS call created. A repo that was already private
+        // keeps its state; only its error is reported.
+        if !had_marker {
+            let reverted = read_exclude(&exclude)
+                .map(|c| strip_block(&c, &label))
+                .and_then(|c| atomic_write_str(&exclude, &c));
+            let _ = reverted;
+            let _ = crate::onboard::set_private(project_dir, false);
+        }
         return Err(anyhow!(
             "private mode is NOT fully in effect — git can still see:\n  {}\n\
              Resolve the above, then re-run. To leave private mode entirely, run `wh publish`.",
-            exposed.join("\n  ")
+            blocking.join("\n  ")
         ));
     }
 
-    let warnings: Vec<String> = shared_exclude_warning(project_dir).into_iter().collect();
+    let mut warnings: Vec<String> = shared_exclude_warning(project_dir).into_iter().collect();
+    warnings.extend(advisory);
 
     Ok(json!({
         "status": "ok",
@@ -654,14 +718,33 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
 /// A file either bears our mark or it does not. That question has the same
 /// answer in every git state, at any directory depth, on any filesystem.
 fn artifact_is_ours(repo_root: &Path, rel: &str) -> bool {
+    // `.gitignore` is the user's file that we merely APPEND a fenced block to,
+    // so it is ours only when it carries that exact marker. A substring match
+    // here made any hand-written `whetstone/` ignore line — the most natural
+    // first move a cautious solo adopter makes — read as our leak, and refused
+    // onboarding with a false diagnosis.
+    if is_gitignore(rel) {
+        return file_has_marker(repo_root, rel);
+    }
     // Paths we exclusively own: nothing else in a repo is called these.
     if rel.to_lowercase().contains("whetstone") {
         return true;
     }
-    // Shared-name files (.mcp.json, .claude/settings*.json, .githooks/post-merge,
-    // .gitignore) are ours only if our content is actually in them.
+    // Shared-name files (.mcp.json, .claude/settings*.json, .githooks/post-merge)
+    // are ours only if our content is actually in them.
     std::fs::read_to_string(repo_root.join(rel))
         .map(|s| s.to_lowercase().contains("whetstone"))
+        .unwrap_or(false)
+}
+
+/// A repo-root-relative path naming a `.gitignore` (at any depth).
+fn is_gitignore(rel: &str) -> bool {
+    Path::new(rel).file_name().and_then(|n| n.to_str()) == Some(".gitignore")
+}
+
+fn file_has_marker(repo_root: &Path, rel: &str) -> bool {
+    std::fs::read_to_string(repo_root.join(rel))
+        .map(|s| s.contains(crate::personal::GITIGNORE_MARKER))
         .unwrap_or(false)
 }
 
@@ -676,7 +759,16 @@ fn head_copy_is_ours(repo_root: &Path, rel: &str) -> bool {
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("whetstone"))
+        .map(|o| {
+            let text = String::from_utf8_lossy(&o.stdout);
+            // Same asymmetry as `artifact_is_ours`: for `.gitignore` only our
+            // fenced marker counts, never a bare mention of the name.
+            if is_gitignore(rel) {
+                text.contains(crate::personal::GITIGNORE_MARKER)
+            } else {
+                text.to_lowercase().contains("whetstone")
+            }
+        })
         .unwrap_or(false)
 }
 
@@ -689,7 +781,39 @@ pub fn project_prefix(project_dir: &Path) -> Result<String> {
 /// Artifact paths git can still SEE under this project — the empirical check
 /// that private mode is real. Untracked-but-ignored files do not appear in
 /// `git status --porcelain`, so anything listed here is genuinely exposed.
-pub fn exposed_artifacts(project_dir: &Path, prefix: &str) -> Result<Vec<String>> {
+/// One artifact git can still see. `blocking` separates a genuine leak (rules,
+/// config, agent wiring — private mode must refuse) from an advisory one: a
+/// `.gitignore` carrying our personal-layer block holds only ignore lines, never
+/// rules or taste, and is a legitimately shared file. Blocking on it made
+/// `enable → publish → enable` impossible, contradicting the design contract.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Exposure {
+    pub path: String,
+    pub hint: String,
+    pub blocking: bool,
+}
+
+impl Exposure {
+    pub fn display(&self) -> String {
+        format!("{} ({})", self.path, self.hint)
+    }
+}
+
+/// Split exposures into blocking and advisory display lines.
+pub fn partition_exposures(exposed: &[Exposure]) -> (Vec<String>, Vec<String>) {
+    let mut blocking = Vec::new();
+    let mut advisory = Vec::new();
+    for e in exposed {
+        if e.blocking {
+            blocking.push(e.display());
+        } else {
+            advisory.push(e.display());
+        }
+    }
+    (blocking, advisory)
+}
+
+pub fn exposed_artifacts(project_dir: &Path, prefix: &str) -> Result<Vec<Exposure>> {
     let out = Command::new("git")
         // `--untracked-files=all`: the default collapses an untracked directory
         // to `?? .claude/`, which would hide a single re-included file inside it.
@@ -756,14 +880,28 @@ pub fn exposed_artifacts(project_dir: &Path, prefix: &str) -> Result<Vec<String>
         if head_copy_is_ours(&repo_root, path) {
             continue;
         }
-        let hint = if path.to_lowercase().ends_with(".gitignore") {
-            "carries Whetstone's personal-layer block, which cannot be hidden — remove those lines, or commit them and accept that they are public"
+        let (hint, blocking) = if is_gitignore(path) {
+            (
+                "carries Whetstone's personal-layer block (ignore lines only — no rules or config), \
+                 which cannot be hidden: commit it, or remove those lines",
+                false,
+            )
         } else if path.to_lowercase().contains("workflows/whetstone-check.yml") {
-            "a Whetstone CI workflow is inherently shared — delete it, or commit it and accept that it is public"
+            (
+                "a Whetstone CI workflow is inherently shared — delete it, or commit it and accept that it is public",
+                true,
+            )
         } else {
-            "a Whetstone artifact is visible to git — if you staged it, `git restore --staged <path>`; otherwise an in-tree .gitignore may re-include it, and `git check-ignore -v <path>` shows which rule wins"
+            (
+                "a Whetstone artifact is visible to git — if you staged it, `git restore --staged <path>`; otherwise an in-tree .gitignore may re-include it, and `git check-ignore -v <path>` shows which rule wins",
+                true,
+            )
         };
-        exposed.push(format!("{path} ({hint})"));
+        exposed.push(Exposure {
+            path: path.to_string(),
+            hint: hint.to_string(),
+            blocking,
+        });
     }
     Ok(exposed)
 }
@@ -995,11 +1133,45 @@ mod tests {
         let stripped = strip_block(&torn, ".");
         assert_eq!(stripped, "keep-a\nkeep-b\nkeep-c\n", "user lines must survive");
 
-        assert!(is_managed_entry("/whetstone/"));
-        assert!(is_managed_entry("/packages/api/.claude/settings.json"));
-        assert!(is_managed_entry("/pkg\\[1\\]/whetstone/"));
-        assert!(!is_managed_entry("keep-b"));
-        assert!(!is_managed_entry("/my-whetstone-notes/"));
+        assert!(is_managed_entry("/whetstone/", "."));
+        assert!(is_managed_entry(
+            "/packages/api/.claude/settings.json",
+            "packages/api"
+        ));
+        assert!(is_managed_entry("/pkg\\[1\\]/whetstone/", "pkg[1]"));
+        assert!(!is_managed_entry("keep-b", "."));
+        assert!(!is_managed_entry("/my-whetstone-notes/", "."));
+    }
+
+    /// Entries are matched EXACTLY for this label's project. A suffix match
+    /// claimed the user's own same-named paths and publish deleted them.
+    #[test]
+    fn managed_entry_match_is_scoped_and_exact() {
+        // The user's own file that merely ENDS with one of our names.
+        assert!(!is_managed_entry("/tools/legacy/.mcp.json", "."));
+        assert!(!is_managed_entry("/vendor/x/.githooks/post-merge", "."));
+        assert!(!is_managed_entry("/my/own/whetstone/", "."));
+        // Another project's entry is not ours.
+        assert!(!is_managed_entry("/packages/api/.mcp.json", "."));
+        assert!(!is_managed_entry("/.mcp.json", "packages/api"));
+    }
+
+    /// Publish must not delete a user line parked inside our fenced block just
+    /// because it ends with one of our filenames.
+    #[test]
+    fn strip_block_keeps_user_lines_that_merely_end_with_our_names() {
+        let content = format!(
+            "{}\n/whetstone/\n/tools/legacy/.mcp.json\nKEEP-ME/\n{}\n",
+            begin_line("."),
+            end_line(".")
+        );
+        let stripped = strip_block(&content, ".");
+        assert!(
+            stripped.contains("/tools/legacy/.mcp.json"),
+            "the user's own path must survive: {stripped}"
+        );
+        assert!(stripped.contains("KEEP-ME/"), "foreign lines survive: {stripped}");
+        assert!(!stripped.contains("/whetstone/"), "our entry goes: {stripped}");
     }
 
     /// An unlabelled fence from before labels existed is treated as the root.

@@ -1270,8 +1270,19 @@ pub fn run() -> i32 {
                             return 1;
                         }
                     };
-                    if !exposed.is_empty() {
-                        setup.insert("exposed_artifacts".to_string(), serde_json::json!(exposed));
+                    let (blocking, advisory) = private_mode::partition_exposures(&exposed);
+                    // Advisory exposures (a `.gitignore` carrying our
+                    // personal-layer block — ignore lines only) are reported but
+                    // never fatal: blocking on one made re-entering private mode
+                    // after `wh publish` impossible.
+                    if !advisory.is_empty() {
+                        setup.insert(
+                            "exposed_advisory".to_string(),
+                            serde_json::json!(advisory),
+                        );
+                    }
+                    if !blocking.is_empty() {
+                        setup.insert("exposed_artifacts".to_string(), serde_json::json!(blocking));
                         setup.insert("status".to_string(), serde_json::json!("error"));
                         // enable() succeeded before the later steps wrote their
                         // files, so its optimistic fields are now false. Leaving
@@ -1290,7 +1301,7 @@ pub fn run() -> i32 {
                         eprintln!(
                             "whetstone: private mode is NOT fully in effect — git can still see:\n  {}\n\
                              Resolve the above, then re-run. To leave private mode entirely, run `wh publish`.",
-                            exposed.join("\n  ")
+                            blocking.join("\n  ")
                         );
                         return 1;
                     }
