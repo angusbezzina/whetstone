@@ -641,8 +641,22 @@ if [ -z "$status_json" ]; then
     exit 0
 fi
 
-label="$(printf '%s' "$status_json" | awk -F'"label":"' 'NR==1 {split($2, a, "\""); print a[1]; exit}')"
-score="$(printf '%s' "$status_json" | awk -F'"score":' 'NR==1 {n=$2+0; print n; exit}')"
+# `wh status --json` is PRETTY-printed, so anchoring on NR==1 (and on a
+# separator with no space after the colon) matched nothing and made this hook a
+# permanent no-op for every advisory it exists to deliver. Parse the whole
+# document, tolerating any spacing.
+label="$(printf '%s' "$status_json" | sed -n 's/.*"label"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+score="$(printf '%s' "$status_json" | sed -n 's/.*"score"[[:space:]]*:[[:space:]]*\([0-9.]*\).*/\1/p' | head -1)"
+
+# Private mode can be broken by a teammate's committed .gitignore negation
+# arriving on `git pull`. `wh status` re-checks and reports it in warnings; this
+# is the line that actually reaches the user in-session.
+printf '%s' "$status_json" \
+    | sed -n 's/.*\(private mode is NO LONGER in effect[^"]*\).*/\1/p' \
+    | head -3 \
+    | while IFS= read -r w; do
+        [ -n "$w" ] && printf 'Whetstone: %s\n' "$w" >&2
+    done
 
 case "$label" in
     Healthy|"")

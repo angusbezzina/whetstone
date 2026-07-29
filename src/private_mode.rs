@@ -204,15 +204,26 @@ pub fn skip_tracked(project_dir: &Path, rel: &str) -> bool {
 /// which is itself excluded, so teammates never see it.
 pub fn is_private(project_dir: &Path) -> bool {
     let path = project_dir.join("whetstone").join("whetstone.yaml");
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_yaml::from_str::<Value>(&s).ok())
-        .and_then(|d| {
-            d.get("setup")
-                .and_then(|s| s.get("private"))
-                .and_then(|p| p.as_bool())
-        })
-        .unwrap_or(false)
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        // Absent → not private (the common, correct case). Present but
+        // UNREADABLE → fail safe below, never fail open: reading "public" from a
+        // file we cannot parse silently disengaged every tracked-file guard, so
+        // `wh init --hooks` modified a teammate's committed settings.json while
+        // reporting success (round 11). The exclude read was hardened for exactly
+        // this; the marker read was not.
+        return path.exists();
+    };
+    match serde_yaml::from_str::<Value>(&raw) {
+        Ok(doc) => doc
+            .get("setup")
+            .and_then(|s| s.get("private"))
+            .and_then(|p| p.as_bool())
+            .unwrap_or(false),
+        // Unparseable: treat as private. The guards it keeps engaged only ever
+        // SKIP writes to tracked files, so the safe direction is also the
+        // conservative one.
+        Err(_) => true,
+    }
 }
 
 /// True if git tracks anything matching `rel` (a file, or any file under a dir).
@@ -481,8 +492,13 @@ fn lock_exclude(exclude: &Path) -> Result<ExcludeLock> {
     for attempt in 0..400 {
         let tmp = lock.with_extension(format!("wh-lock-{stamp}-{attempt}"));
         let _ = std::fs::remove_file(&tmp);
-        std::fs::write(&tmp, stamp.to_string())
-            .with_context(|| format!("write {}", tmp.display()))?;
+        // Keep the OS cause in the message itself: the JSON error surface renders
+        // only the top-level string, so a bare "write <path>" hid "Permission
+        // denied" on a read-only .git/info. Same shape as `read_exclude` — a
+        // match, not `map_err`, which Whetstone's own anyhow rule forbids.
+        if let Err(e) = std::fs::write(&tmp, stamp.to_string()) {
+            return Err(anyhow!("write {}: {e}", tmp.display()));
+        }
         match std::fs::hard_link(&tmp, &lock) {
             Ok(()) => {
                 let _ = std::fs::remove_file(&tmp);
@@ -494,18 +510,36 @@ fn lock_exclude(exclude: &Path) -> Result<ExcludeLock> {
                     .ok()
                     .and_then(|s| s.trim().parse::<u32>().ok());
                 let reclaim = match holder {
-                    // A dead holder's lock is reclaimed at once.
-                    Some(pid) => holder_is_gone(pid),
+                    // A dead holder's lock is reclaimed — but `holder_is_gone`
+                    // forks, which takes long enough that the lock may already
+                    // have been replaced by a LIVE peer's. Re-read and require
+                    // the same pid before unlinking, so we never steal a valid
+                    // lock. (The verify-and-retry around every write is the real
+                    // guarantee; this just keeps the window small.)
+                    Some(pid) => {
+                        holder_is_gone(pid)
+                            && std::fs::read_to_string(&lock)
+                                .ok()
+                                .and_then(|s| s.trim().parse::<u32>().ok())
+                                == Some(pid)
+                    }
                     // No parseable pid: either a foreign file or a crash from
                     // before this scheme. Reclaim only after a grace period, so
                     // it can never race a live holder mid-handshake.
-                    None => std::fs::metadata(&lock)
+                    // `symlink_metadata`: a symlinked lock must not have its
+                    // TARGET's mtime consulted (a dangling link never ages out,
+                    // bricking private mode forever).
+                    None => std::fs::symlink_metadata(&lock)
                         .and_then(|m| m.modified())
                         .map(|t| t.elapsed().map(|d| d.as_secs() >= 5).unwrap_or(false))
                         .unwrap_or(false),
                 };
                 if reclaim {
-                    let _ = std::fs::remove_file(&lock);
+                    // A lock that is a directory needs remove_dir; without this
+                    // a stray `mkdir exclude.wh-lock` bricked every later run.
+                    if std::fs::remove_file(&lock).is_err() {
+                        let _ = std::fs::remove_dir_all(&lock);
+                    }
                     continue;
                 }
                 if attempt == 399 {
@@ -545,6 +579,47 @@ fn lock_exclude(exclude: &Path) -> Result<ExcludeLock> {
     Err(anyhow!(
         "timed out waiting for {} — another `wh` process is updating it",
         lock.display()
+    ))
+}
+
+/// Read-modify-write the exclude file, then VERIFY the intent actually landed —
+/// retrying if a concurrent writer clobbered it.
+///
+/// The lock alone is not sufficient, and round 11 proved it: any scheme that can
+/// reclaim an orphaned lock can, in a narrow window, reclaim a LIVE holder's, and
+/// then two writers interleave a read-modify-write of one shared file. The loser's
+/// update vanishes — silently leaving a package exposed (enable) or its block
+/// behind while `publish` reports success (publish). Verification makes
+/// correctness independent of the lock's judgment: each writer re-reads after
+/// releasing and retries until its own intent is present, so concurrent writers
+/// with different labels converge instead of losing updates.
+fn update_exclude_verified(
+    exclude: &Path,
+    compose: impl Fn(&str) -> String,
+    landed: impl Fn(&str) -> bool,
+    what: &str,
+) -> Result<()> {
+    for attempt in 0..8 {
+        {
+            let _lock = lock_exclude(exclude)?;
+            let existing = read_exclude(exclude)?;
+            let next = compose(&existing);
+            if next != existing {
+                atomic_write_str(exclude, &next)?;
+            }
+            // Lock released here on purpose: the re-read below must be able to
+            // observe a concurrent writer's clobber, which is exactly what we
+            // are retrying against.
+        }
+        if landed(&read_exclude(exclude)?) {
+            return Ok(());
+        }
+        // Jittered by attempt so two contending processes don't resynchronize.
+        std::thread::sleep(std::time::Duration::from_millis(10 + 15 * attempt as u64));
+    }
+    Err(anyhow!(
+        "could not {what} {} — a concurrent `wh` process kept overwriting it. Re-run.",
+        exclude.display()
     ))
 }
 
@@ -657,35 +732,52 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
     }
 
     guard_symlinked_into_worktree(project_dir, &exclude)?;
-    let _lock = lock_exclude(&exclude)?;
-    let existing = read_exclude(&exclude)?;
     let label = label_for(&prefix);
     let wanted = render_block(&prefix);
+    // Did the project config exist before this call? Decides whether a refusal
+    // may delete it during revert.
+    let had_config = project_dir
+        .join("whetstone")
+        .join("whetstone.yaml")
+        .exists();
+
+    // State BEFORE any write, read under the lock, so `action` and the revert
+    // decision below describe what this call actually found.
+    let (had_marker, action) = {
+        let _lock = lock_exclude(&exclude)?;
+        let existing = read_exclude(&exclude)?;
+        let had_marker = has_marker(&existing, &label);
+        let action = match existing_block(&existing, &label).as_deref() {
+            Some(b) if b == wanted => "noop",
+            _ if had_marker => "repaired",
+            _ => "enabled",
+        };
+        (had_marker, action)
+    };
+
     // Self-healing, scoped to OUR label: a block whose entries don't match what
     // we'd write now (a torn write, or hand-edited entries) is REPLACED, not
     // trusted. Trusting the marker alone would silently leave artifacts
     // exposed on a re-run. Sibling packages' blocks are never touched.
-    let current = existing_block(&existing, &label);
-    let had_marker = has_marker(&existing, &label);
-    let action = match current.as_deref() {
-        Some(b) if b == wanted => "noop",
-        _ if had_marker => "repaired",
-        _ => "enabled",
-    };
-    if action != "noop" {
-        // `had_marker` without a complete block means a torn write; strip_block
-        // drops from our marker to our terminator (or the next fence), clearing it.
-        let mut content = if had_marker {
-            strip_block(&existing, &label)
-        } else {
-            existing
-        };
-        if !content.is_empty() && !content.ends_with('\n') {
-            content.push('\n');
-        }
-        content.push_str(&wanted);
-        atomic_write_str(&exclude, &content)?;
-    }
+    update_exclude_verified(
+        &exclude,
+        |existing| {
+            // `has_marker` without a complete block means a torn write;
+            // strip_block clears it before we append the fresh one.
+            let mut content = if has_marker(existing, &label) {
+                strip_block(existing, &label)
+            } else {
+                existing.to_string()
+            };
+            if !content.is_empty() && !content.ends_with('\n') {
+                content.push('\n');
+            }
+            content.push_str(&wanted);
+            content
+        },
+        |after| existing_block(after, &label).as_deref() == Some(wanted.as_str()),
+        "add this project's block to",
+    )?;
 
     crate::onboard::set_private(project_dir, true)?;
 
@@ -702,11 +794,23 @@ pub fn enable(project_dir: &Path) -> Result<Value> {
         // undo exactly what THIS call created. A repo that was already private
         // keeps its state; only its error is reported.
         if !had_marker {
-            let reverted = read_exclude(&exclude)
-                .map(|c| strip_block(&c, &label))
-                .and_then(|c| atomic_write_str(&exclude, &c));
-            let _ = reverted;
+            let _ = update_exclude_verified(
+                &exclude,
+                |existing| strip_block(existing, &label),
+                |after| !has_marker(after, &label),
+                "revert this project's block in",
+            );
             let _ = crate::onboard::set_private(project_dir, false);
+            // `set_private` had to CREATE whetstone/whetstone.yaml to hold the
+            // marker. Clearing the key left `?? whetstone/` visible on the
+            // shared repo — a footprint from a call that refused to do anything.
+            // Remove what we created, never what was already there.
+            if !had_config {
+                let ws_dir = project_dir.join("whetstone");
+                let _ = std::fs::remove_file(ws_dir.join("whetstone.yaml"));
+                // Only if empty: a concurrent step may have written packs.
+                let _ = std::fs::remove_dir(&ws_dir);
+            }
         }
         return Err(anyhow!(
             "private mode is NOT fully in effect — git can still see:\n  {}\n\
@@ -954,9 +1058,10 @@ pub fn publish(project_dir: &Path, ci: bool, schedule: &str) -> Result<Value> {
     let prefix = repo_prefix(project_dir)?;
     let label = label_for(&prefix);
     guard_symlinked_into_worktree(project_dir, &exclude)?;
-    let _lock = lock_exclude(&exclude)?;
-    let existing = read_exclude(&exclude)?;
-    let had_block = has_marker(&existing, &label);
+    let had_block = {
+        let _lock = lock_exclude(&exclude)?;
+        has_marker(&read_exclude(&exclude)?, &label)
+    };
 
     if !had_block && !is_private(project_dir) {
         return Ok(json!({
@@ -966,9 +1071,16 @@ pub fn publish(project_dir: &Path, ci: bool, schedule: &str) -> Result<Value> {
         }));
     }
 
-    // Only our own block — a sibling package may still be private.
+    // Only our own block — a sibling package may still be private. Verified and
+    // retried: a lost update here left the block in place while publish reported
+    // success, printing a `git add` list that git then refused (round 11).
     if had_block {
-        atomic_write_str(&exclude, &strip_block(&existing, &label))?;
+        update_exclude_verified(
+            &exclude,
+            |existing| strip_block(existing, &label),
+            |after| !has_marker(after, &label),
+            "remove this project's block from",
+        )?;
     }
 
     // The entries `wh init --personal` would have added: .state/.personal/metrics

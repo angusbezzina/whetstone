@@ -123,7 +123,9 @@ pub fn compute_status(
                 "extraction_readiness": [],
                 "metrics": {"rules_approved": 0, "rules_proposed": 0, "approval_rate": 0, "must_rules": 0, "dependencies_covered": 0, "dependencies_total": 0, "dependency_coverage": 0, "deterministic_coverage": 0, "pending_drift": 0},
                 "recommendations": [{"priority": "low", "action": "info", "message": "No dependency drift detected. Everything is current.", "command": null}],
-                "warnings": [],
+                // Carry the warnings through: hardcoding [] here dropped the
+                // private-mode re-check on `wh status --changed-only`.
+                "warnings": load_warnings,
                 "next_command": "wh status",
                 "message": "No dependency drift detected.",
             }));

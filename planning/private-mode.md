@@ -43,12 +43,23 @@ and `[`/`]`/`%` are percent-encoded in the *label* (it is bracket-delimited, so
 a raw bracket truncates on read — and a truncated label collides with a
 sibling's block and deletes it).
 
-**Writes are locked and atomic.** The exclude file is a single shared
-read-modify-write, so `enable`/`publish` take a lock file beside it (stale locks
-older than 30s are reclaimed) and write through a uniquely-named temp file.
-Without both, two `wh` processes onboarding different packages lose one of the
-blocks — leaving a package marked private with nothing hidden. The write follows
-a symlinked `exclude` to its target and restores the original file mode.
+**Writes are locked, atomic, and VERIFIED.** The exclude file is a single shared
+read-modify-write, so `enable`/`publish` take a lock file beside it and write
+through a uniquely-named temp file. The lock carries its holder's pid — hard-linked
+into place so it is never observable without one — and a dead holder's lock is
+reclaimed at once (an mtime grace covers foreign or pre-pid lock files; a
+`hard_link`-less filesystem falls back to a plain atomic create).
+
+**The lock is not the guarantee.** Any scheme that can reclaim an orphaned lock
+can, in a narrow window, reclaim a *live* holder's — and then two writers
+interleave and one update vanishes, leaving a package exposed (`enable`) or its
+block in place while `publish` reports success and prints a `git add` list git
+then refuses. So every write goes through a read-modify-write-**verify-retry**
+loop: after releasing the lock, the writer re-reads and confirms its own intent
+landed, retrying if a concurrent writer clobbered it. Writers with different
+labels converge instead of losing updates, and correctness no longer depends on
+the lock's judgment. The write follows a symlinked `exclude` to its target and
+restores the original file mode.
 
 **A torn block stops at the first foreign line.** Repairing a block with no
 terminator drops only lines that match an entry we render, so user ignores
@@ -198,8 +209,25 @@ publish writes those very entries. Every other exposure stays blocking.
 **A blocking refusal leaves no half-private repo.** `enable` writes the block and
 the marker before it can ask git anything, and the caller aborts on error — so
 the artifacts never got written while the project sat flagged private. On a
-blocking exposure, `enable` now reverts exactly what that call created (a repo
-that was *already* private keeps its state; only the error is reported).
+blocking exposure, `enable` now reverts exactly what that call created: the
+block, the marker, and `whetstone/whetstone.yaml` itself when it had to create it
+(clearing only the key left `?? whetstone/` visible on the shared repo — a
+footprint from a call that refused to do anything). A repo that was *already*
+private keeps its state; only the error is reported.
+
+**Scope of that revert:** it covers `enable`'s own refusal. The post-step check in
+`wh init --claude --private` runs *after* packs, context, and wiring are written,
+and it does NOT revert — deleting freshly imported packs would be a worse
+surprise than a loud error. That refusal exits non-zero with the exposed paths
+named and the project still marked private; resolve the cause and re-run, or
+`wh publish` to leave private mode.
+
+**The marker read fails SAFE, not open.** `whetstone/whetstone.yaml` is a file
+users hand-edit. An absent one means "not private", but a *present but unreadable
+or unparseable* one is treated as private, because the guards that reading keeps
+engaged only ever SKIP writes to tracked files. Reading "public" from a file we
+cannot parse silently disengaged every tracked-file guard, and `wh init --hooks`
+then modified a teammate's committed `settings.json` while reporting success.
 
 **Verification is not one-shot.** The repo moves underneath a verified enable: a
 teammate commits `.claude/*` + `!.claude/settings.json`, it arrives on `git pull`,

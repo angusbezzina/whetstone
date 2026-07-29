@@ -1534,3 +1534,269 @@ fn status_rechecks_private_mode_and_warns_when_broken() {
     );
     std::fs::remove_dir_all(&repo).ok();
 }
+
+// ── round-11 regressions ──
+
+/// `is_private` must fail SAFE. An unparseable whetstone.yaml used to read as
+/// "public", disengaging every tracked-file guard so `wh init --hooks` modified a
+/// teammate's committed settings.json while reporting success.
+#[test]
+fn unparseable_marker_file_does_not_disengage_tracked_guards() {
+    let repo = seeded_repo("failsafe");
+    std::fs::create_dir_all(repo.join(".claude")).unwrap();
+    let settings = "{\n  \"hooks\": {\n    \"PostToolUse\": [{\"matcher\": \"Edit\", \"hooks\": [{\"type\": \"command\", \"command\": \"team-hook.sh\"}]}]\n  }\n}\n";
+    std::fs::write(repo.join(".claude/settings.json"), settings).unwrap();
+    git_ok(&repo, &["add", "."]);
+    git_ok(&repo, &["commit", "-q", "-m", "team hook"]);
+
+    let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok);
+    assert_eq!(git_status_porcelain(&repo), "");
+
+    // The user mangles the config they are documented to hand-edit.
+    std::fs::write(
+        repo.join("whetstone/whetstone.yaml"),
+        "setup:\n  private: true\n\tbroken: 1\n",
+    )
+    .unwrap();
+
+    let (out, _, hooks_ok) = run_wh(&repo, &["init", "--hooks", "--json"]);
+    assert!(hooks_ok, "should still succeed: {out}");
+    assert_eq!(
+        std::fs::read_to_string(repo.join(".claude/settings.json")).unwrap(),
+        settings,
+        "an unreadable marker must NOT let us modify a tracked file"
+    );
+    assert_eq!(
+        git_status_porcelain(&repo),
+        "",
+        "no tracked file may be modified: {out}"
+    );
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// A refused enable must leave no footprint at all — not even `?? whetstone/`.
+#[test]
+fn refused_enable_leaves_no_whetstone_dir() {
+    let repo = seeded_repo("nodir");
+    // UNTRACKED: a committed workflow is legitimately public and no leak at all.
+    // An uncommitted one is a Whetstone artifact git can see, so enable refuses.
+    let (_, _, ci_ok) = run_wh(&repo, &["init", "--ci", "--json"]);
+    assert!(ci_ok);
+
+    let (out, _, ok) = run_wh(&repo, &["init", "--private", "--json"]);
+    assert!(!ok, "must refuse with an inherently-shared workflow: {out}");
+    assert!(
+        !repo.join("whetstone").exists(),
+        "a refusal must not leave whetstone/ behind: {out}"
+    );
+    // The workflow the user created is the ONLY thing visible — nothing of ours.
+    let status = git_status_porcelain(&repo);
+    assert!(
+        status.lines().all(|l| l.contains(".github")),
+        "a refusal must add no footprint of its own, got: {status:?}"
+    );
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Concurrent enables across packages must not lose a block. This is the
+/// round-11 MAJOR: a reclaimed live lock let two writers interleave the
+/// read-modify-write and one block vanished.
+#[test]
+fn concurrent_enables_never_lose_a_block() {
+    let repo = seeded_repo("concurrent");
+    let n = 8;
+    for i in 0..n {
+        let pkg = repo.join(format!("p{i}"));
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            format!("{{\"name\":\"p{i}\",\"dependencies\":{{\"react\":\"^18.2.0\"}}}}\n"),
+        )
+        .unwrap();
+    }
+    git_ok(&repo, &["add", "."]);
+    git_ok(&repo, &["commit", "-q", "-m", "packages"]);
+
+    let mut handles = Vec::new();
+    for i in 0..n {
+        let dir = repo.join(format!("p{i}"));
+        handles.push(std::thread::spawn(move || {
+            Command::new(whetstone_bin())
+                .args(["init", "--private", "--json"])
+                .current_dir(&dir)
+                .env("WHETSTONE_NO_TUI", "1")
+                .output()
+                .expect("run whetstone")
+                .status
+                .success()
+        }));
+    }
+    for h in handles {
+        assert!(h.join().unwrap(), "every concurrent enable must succeed");
+    }
+
+    let exclude = std::fs::read_to_string(repo.join(".git/info/exclude")).unwrap();
+    let blocks = exclude
+        .lines()
+        .filter(|l| l.starts_with("# >>> whetstone private mode"))
+        .count();
+    assert_eq!(blocks, n, "every package's block must survive: {exclude}");
+    assert_eq!(
+        git_status_porcelain(&repo),
+        "",
+        "no package may be left exposed"
+    );
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// Concurrent publish + enable must converge: publish's removal cannot be lost.
+#[test]
+fn concurrent_publish_and_enable_both_land() {
+    let repo = seeded_repo("pubrace");
+    for i in 0..4 {
+        let pkg = repo.join(format!("q{i}"));
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(
+            pkg.join("package.json"),
+            format!("{{\"name\":\"q{i}\",\"dependencies\":{{\"react\":\"^18.2.0\"}}}}\n"),
+        )
+        .unwrap();
+    }
+    git_ok(&repo, &["add", "."]);
+    git_ok(&repo, &["commit", "-q", "-m", "packages"]);
+    for i in 0..4 {
+        let (_, _, ok) = run_wh(&repo.join(format!("q{i}")), &["init", "--private", "--json"]);
+        assert!(ok);
+    }
+
+    // q0 publishes while q1..q3 re-enable concurrently.
+    let mut handles = Vec::new();
+    for i in 0..4 {
+        let dir = repo.join(format!("q{i}"));
+        let args: Vec<&str> = if i == 0 {
+            vec!["publish", "--json"]
+        } else {
+            vec!["init", "--private", "--json"]
+        };
+        handles.push(std::thread::spawn(move || {
+            Command::new(whetstone_bin())
+                .args(&args)
+                .current_dir(&dir)
+                .env("WHETSTONE_NO_TUI", "1")
+                .output()
+                .expect("run whetstone")
+                .status
+                .success()
+        }));
+    }
+    for h in handles {
+        assert!(h.join().unwrap(), "every concurrent op must succeed");
+    }
+
+    let exclude = std::fs::read_to_string(repo.join(".git/info/exclude")).unwrap();
+    assert!(
+        !exclude.contains("[q0]"),
+        "publish's removal must not be lost: {exclude}"
+    );
+    for i in 1..4 {
+        assert!(
+            exclude.contains(&format!("[q{i}]")),
+            "sibling q{i} must stay hidden: {exclude}"
+        );
+    }
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// A lock held by a LIVE process must be waited for, never stolen.
+#[test]
+fn a_live_holders_lock_is_not_stolen() {
+    let repo = seeded_repo("livelock");
+    let lock = repo.join(".git/info/exclude.wh-lock");
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    // Our own pid is definitionally alive.
+    std::fs::write(&lock, std::process::id().to_string()).unwrap();
+
+    let (out, _, ok) = run_wh(&repo, &["init", "--private", "--json"]);
+    assert!(!ok, "must not steal a live holder's lock: {out}");
+    assert!(out.contains("another"), "should report contention: {out}");
+    std::fs::remove_file(&lock).ok();
+    std::fs::remove_dir_all(&repo).ok();
+}
+
+/// A lock left as a directory or a dangling symlink must not brick private mode.
+#[test]
+fn pathological_lock_files_do_not_brick_private_mode() {
+    for kind in ["dir", "symlink"] {
+        let repo = seeded_repo("badlock");
+        let lock = repo.join(".git/info/exclude.wh-lock");
+        std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+        if kind == "dir" {
+            std::fs::create_dir(&lock).unwrap();
+        } else {
+            #[cfg(unix)]
+            std::os::unix::fs::symlink("/nonexistent-whetstone-target", &lock).unwrap();
+        }
+        // Age it past the grace period.
+        let (out, _, ok) = run_wh(&repo, &["init", "--private", "--json"]);
+        // Either it recovers, or it fails with a clear message — never a
+        // permanent brick with a misleading cause.
+        assert!(
+            ok || out.contains("another") || out.contains("lock"),
+            "{kind} lock must give an actionable outcome: {out}"
+        );
+        std::fs::remove_dir_all(&repo).ok();
+    }
+}
+
+/// The SessionStart hook must actually parse `wh status --json` (pretty-printed)
+/// and surface a broken private mode. It was a permanent no-op.
+#[test]
+fn session_hook_surfaces_broken_private_mode() {
+    let repo = seeded_repo("hookparse");
+    let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+    assert!(ok);
+
+    let hook = repo.join(".claude/whetstone-session-hook.sh");
+    assert!(hook.exists(), "the session hook should be installed");
+
+    // Break private mode the way a teammate would.
+    std::fs::write(
+        repo.join(".gitignore"),
+        "node_modules/\n!.mcp.json\n!.claude/settings.json\n",
+    )
+    .unwrap();
+    git_ok(&repo, &["add", ".gitignore"]);
+    git_ok(&repo, &["commit", "-q", "-m", "teammate negation"]);
+
+    let wh_dir = whetstone_bin().parent().unwrap().to_path_buf();
+    let path = format!(
+        "{}:{}",
+        wh_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    // The hook calls `wh`; the built binary is named `whetstone`, so expose it
+    // under the name the hook expects.
+    let shim = wh_dir.join("wh");
+    if !shim.exists() {
+        let _ = std::fs::hard_link(whetstone_bin(), &shim);
+    }
+
+    let out = Command::new("sh")
+        .arg(&hook)
+        .current_dir(&repo)
+        .env("PATH", &path)
+        .env("WHETSTONE_NO_TUI", "1")
+        .output()
+        .expect("run hook");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        combined.contains("NO LONGER in effect"),
+        "the hook must surface the broken promise in-session, got: {combined:?}"
+    );
+    std::fs::remove_dir_all(&repo).ok();
+}
