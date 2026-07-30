@@ -59,6 +59,17 @@ pub fn compute_status(
     // artifacts, and nothing would have re-checked. `wh status` is what the
     // SessionStart hook runs every session, so it is the natural re-check.
     // Advisory here — status reports, it does not gate.
+    if crate::private_mode::marker_state(project_dir)
+        == crate::private_mode::MarkerState::Indeterminate
+    {
+        // Say what is actually wrong. Reporting "private mode broke" here would
+        // send the user hunting a leak when the real problem is their config.
+        load_warnings.push(
+            "whetstone/whetstone.yaml is unreadable or malformed, so Whetstone cannot tell whether this project is private. \
+             It is treating the project as PRIVATE (skipping writes to git-tracked files) until the file is fixed."
+                .to_string(),
+        );
+    }
     if crate::private_mode::is_private(project_dir) {
         if let Ok(prefix) = crate::private_mode::project_prefix(project_dir) {
             match crate::private_mode::exposed_artifacts(project_dir, &prefix) {

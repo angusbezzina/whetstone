@@ -1800,3 +1800,58 @@ fn session_hook_surfaces_broken_private_mode() {
     );
     std::fs::remove_dir_all(&repo).ok();
 }
+
+/// `is_private` must fail SAFE for every config shape it cannot understand — not
+/// just unparseable YAML. A list, a bare scalar, an empty file, `setup: null`, or
+/// a non-bool `private` all used to read as "public" and let us modify a tracked
+/// file. A well-formed public config must still be public.
+#[test]
+fn every_unintelligible_marker_shape_fails_safe() {
+    let malformed = [
+        ("unparseable", "setup:\n  private: true\n\tbad: 1\n"),
+        ("list", "- a\n- b\n"),
+        ("scalar", "hello\n"),
+        ("empty", ""),
+        ("null_setup", "setup: null\n"),
+        ("string_bool", "setup:\n  private: \"yes\"\n"),
+    ];
+    let settings = "{\n  \"hooks\": {\n    \"PostToolUse\": [{\"matcher\": \"Edit\", \"hooks\": [{\"type\": \"command\", \"command\": \"team.sh\"}]}]\n  }\n}\n";
+
+    for (name, body) in malformed {
+        let repo = seeded_repo("shape");
+        std::fs::create_dir_all(repo.join(".claude")).unwrap();
+        std::fs::write(repo.join(".claude/settings.json"), settings).unwrap();
+        git_ok(&repo, &["add", "."]);
+        git_ok(&repo, &["commit", "-q", "-m", "team settings"]);
+        let (_, _, ok) = run_wh(&repo, &["init", "--claude", "--private", "--json"]);
+        assert!(ok);
+
+        std::fs::write(repo.join("whetstone/whetstone.yaml"), body).unwrap();
+        let (out, _, _) = run_wh(&repo, &["init", "--hooks", "--json"]);
+        assert_eq!(
+            std::fs::read_to_string(repo.join(".claude/settings.json")).unwrap(),
+            settings,
+            "{name}: an unintelligible marker must not let us modify a tracked file: {out}"
+        );
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    // ...but a well-formed PUBLIC config must still be public, or every ordinary
+    // project would silently stop wiring itself up.
+    let repo = seeded_repo("publicshape");
+    std::fs::create_dir_all(repo.join(".claude")).unwrap();
+    std::fs::write(repo.join(".claude/settings.json"), settings).unwrap();
+    git_ok(&repo, &["add", "."]);
+    git_ok(&repo, &["commit", "-q", "-m", "team settings"]);
+    std::fs::create_dir_all(repo.join("whetstone")).unwrap();
+    std::fs::write(repo.join("whetstone/whetstone.yaml"), "version: 1\n").unwrap();
+
+    let (out, _, ok) = run_wh(&repo, &["init", "--hooks", "--json"]);
+    assert!(ok, "{out}");
+    assert_ne!(
+        std::fs::read_to_string(repo.join(".claude/settings.json")).unwrap(),
+        settings,
+        "a well-formed public config must still get its hooks written: {out}"
+    );
+    std::fs::remove_dir_all(&repo).ok();
+}

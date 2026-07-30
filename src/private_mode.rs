@@ -202,28 +202,66 @@ pub fn skip_tracked(project_dir: &Path, rel: &str) -> bool {
 
 /// Read the `setup.private` marker. The marker lives in whetstone/whetstone.yaml,
 /// which is itself excluded, so teammates never see it.
-pub fn is_private(project_dir: &Path) -> bool {
+/// What the `setup.private` marker says. `Indeterminate` exists because reading
+/// "public" from a config we cannot understand silently disengages every
+/// tracked-file guard — `wh init --hooks` then modified a teammate's committed
+/// settings.json while reporting success. Fail SAFE, never open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerState {
+    /// No config file: the ordinary not-yet-private case.
+    Absent,
+    /// A well-formed config that does not set `setup.private: true`.
+    Public,
+    Private,
+    /// Present, but unreadable / unparseable / not the expected shape. Treated
+    /// as private everywhere, because the guards that keeps engaged only ever
+    /// SKIP writes to tracked files.
+    Indeterminate,
+}
+
+pub fn marker_state(project_dir: &Path) -> MarkerState {
     let path = project_dir.join("whetstone").join("whetstone.yaml");
     let Ok(raw) = std::fs::read_to_string(&path) else {
-        // Absent → not private (the common, correct case). Present but
-        // UNREADABLE → fail safe below, never fail open: reading "public" from a
-        // file we cannot parse silently disengaged every tracked-file guard, so
-        // `wh init --hooks` modified a teammate's committed settings.json while
-        // reporting success (round 11). The exclude read was hardened for exactly
-        // this; the marker read was not.
-        return path.exists();
+        return if path.exists() {
+            MarkerState::Indeterminate
+        } else {
+            MarkerState::Absent
+        };
     };
-    match serde_yaml::from_str::<Value>(&raw) {
-        Ok(doc) => doc
-            .get("setup")
-            .and_then(|s| s.get("private"))
-            .and_then(|p| p.as_bool())
-            .unwrap_or(false),
-        // Unparseable: treat as private. The guards it keeps engaged only ever
-        // SKIP writes to tracked files, so the safe direction is also the
-        // conservative one.
-        Err(_) => true,
+    let Ok(doc) = serde_yaml::from_str::<Value>(&raw) else {
+        return MarkerState::Indeterminate;
+    };
+    // A config that is not a mapping (a list, a bare scalar, an empty file) tells
+    // us nothing about the mode — it is not "public".
+    let Some(obj) = doc.as_object() else {
+        return MarkerState::Indeterminate;
+    };
+    match obj.get("setup") {
+        // No `setup` block at all is the normal public config.
+        None => MarkerState::Public,
+        Some(setup) => {
+            let Some(setup_obj) = setup.as_object() else {
+                // `setup: null`, `setup: "x"` — malformed, not public.
+                return MarkerState::Indeterminate;
+            };
+            match setup_obj.get("private") {
+                None => MarkerState::Public,
+                Some(v) => match v.as_bool() {
+                    Some(true) => MarkerState::Private,
+                    Some(false) => MarkerState::Public,
+                    // `private: "yes"` — a value we will not guess at.
+                    None => MarkerState::Indeterminate,
+                },
+            }
+        }
     }
+}
+
+pub fn is_private(project_dir: &Path) -> bool {
+    matches!(
+        marker_state(project_dir),
+        MarkerState::Private | MarkerState::Indeterminate
+    )
 }
 
 /// True if git tracks anything matching `rel` (a file, or any file under a dir).
