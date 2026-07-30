@@ -6,6 +6,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-30
+
+**Private mode** — try Whetstone on your team's repo without your teammates seeing
+a thing. Onboard solo with zero git footprint, work normally with full enforcement,
+and flip to shared with one command when the team is ready.
+
 ### Added
 - **Private mode — adopt Whetstone solo on a shared repo with zero git footprint.**
   `wh init --claude --private` onboards a team repo so that **nothing** Whetstone
@@ -634,6 +640,7 @@ no Python runtime dependency.
 - **Release workflow** building Linux and macOS binaries for x86_64 and
   aarch64 with cross-compilation support.
 
+[0.12.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.12.0
 [0.11.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.11.0
 [0.10.0]: https://github.com/angusbezzina/whetstone/releases/tag/v0.10.0
 [0.9.1]: https://github.com/angusbezzina/whetstone/releases/tag/v0.9.1
