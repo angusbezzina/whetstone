@@ -49,6 +49,8 @@ backup/
 
 # Dolt database (managed by Dolt remotes, not git)
 dolt/
+# Embedded Dolt database directory — a local DB, never committable.
+embeddeddolt/
 dolt-access.lock
 
 # NOTE: Do NOT add negation patterns (e.g., !issues.jsonl) here.
