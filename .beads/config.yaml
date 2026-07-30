@@ -67,3 +67,5 @@
 
 # Beads Dolt SQL server port. Keep explicit so bd never falls back to port 0.
 dolt.port: 63487
+sync:
+    remote: "git+ssh://git@github.com/angusbezzina/whetstone.git"

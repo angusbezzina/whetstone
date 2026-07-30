@@ -51,6 +51,8 @@ backup/
 dolt/
 # Embedded Dolt database directory — a local DB, never committable.
 embeddeddolt/
+# ...including copies set aside during a recovery.
+embeddeddolt.*/
 dolt-access.lock
 
 # NOTE: Do NOT add negation patterns (e.g., !issues.jsonl) here.
@@ -58,3 +60,16 @@ dolt-access.lock
 # contributors to accidentally commit upstream issue databases.
 # The JSONL files (issues.jsonl, interactions.jsonl) and config files
 # are tracked by git by default since no pattern above ignores them.
+
+# Added by bd (missing required patterns)
+.env
+bd.sock.startlock
+export-state.json
+last_pull
+proxieddb/
+ephemeral.sqlite3
+dolt-server.activity
+daemon.*
+*.lock
+*.corrupt.backup/
+proxied_server_client_info.json
