@@ -82,6 +82,12 @@ async function main() {
       (await page.locator("#brief").innerText()).includes("Dolt"),
       "One-pager explains Dolt-backed state",
     );
+    const brief = await page.locator("#brief").innerText();
+    check(
+      brief.includes("Repair → recheck → finish") &&
+        !brief.includes("Evidence you can inspect"),
+      "One-pager ends in correction and verification rather than a report",
+    );
     await page.screenshot({
       path: path.join(output, "01-one-pager.png"),
       fullPage: true,
@@ -108,6 +114,183 @@ async function main() {
       path: path.join(output, "02-workspace.png"),
       fullPage: true,
     });
+    const referenceBefore = await page.locator("#rule-rows").innerText();
+    const sharingBefore = await page.locator("#sharing-status").innerText();
+    check(
+      (await page.locator(".reference-label").innerText()).includes(
+        "not the task replay",
+      ),
+      "Task simulation is explicitly separate from the reference PR",
+    );
+    for (const [scenario, task, states] of [
+      [
+        "routine",
+        "T-042",
+        ["Working", "Repair needed", "Recheck required", "Task verified"],
+      ],
+      [
+        "owner",
+        "T-043",
+        ["Working", "Owner required", "Awaiting decision", "Blocked — owner"],
+      ],
+      [
+        "unavailable",
+        "T-044",
+        [
+          "Working",
+          "Checker unavailable",
+          "Retry budget reached",
+          "Blocked — verification",
+        ],
+      ],
+    ]) {
+      await page.locator("#loop-scenario").selectOption(scenario);
+      check(
+        (await page.locator("#loop-task-caption").innerText()).includes(task),
+        `${scenario} uses its own task identity`,
+      );
+      for (let step = 0; step < 4; step += 1) {
+        check(
+          (await page.locator("#loop-status").innerText()) === states[step],
+          `${scenario} step ${step + 1} exposes the correct state`,
+        );
+        check(
+          (
+            await page.locator('#loop-steps [aria-current="step"]').innerText()
+          ).startsWith(`${step + 1}.`),
+          `${scenario} announces the current stage`,
+        );
+        const result = await page.locator("#loop-result").innerText();
+        check(
+          result.includes("NO COMMAND EXECUTED"),
+          `${scenario} is clearly a simulation`,
+        );
+        if (scenario === "routine" && step === 1) {
+          for (const token of [
+            "ARCH-01",
+            "retry.ts:18",
+            "Why:",
+            "Next:",
+            "Verify:",
+            "c0ffee1",
+          ]) {
+            check(result.includes(token), `Feedback is actionable: ${token}`);
+          }
+          await page.screenshot({
+            path: path.join(output, "09-feedback.png"),
+            fullPage: true,
+          });
+        }
+        if (scenario === "routine" && step === 2) {
+          check(
+            result.includes("c0ffee2") &&
+              result.includes("invalid for c0ffee2"),
+            "Repair invalidates the old receipt",
+          );
+          check(
+            result.includes("Policy, checker, tests, baselines: unchanged"),
+            "Repair does not weaken safeguards",
+          );
+          check(
+            !result.includes("Task result: verified"),
+            "An edit is not premature completion",
+          );
+        }
+        if (scenario === "routine" && step === 3) {
+          for (const token of [
+            "code c0ffee2",
+            "policy v1.3",
+            "checks-v3",
+            "0 owner interruptions",
+            "not triggered",
+            "production health remains unknown",
+          ]) {
+            check(
+              result.includes(token),
+              `Final verification preserves ${token}`,
+            );
+          }
+          check(
+            result.includes("same code/policy/check snapshot"),
+            "Final required CI checks are bound to the repaired snapshot",
+          );
+          await page.screenshot({
+            path: path.join(output, "10-verified-repair.png"),
+            fullPage: true,
+          });
+        }
+        if (scenario === "owner" && step === 2) {
+          for (const token of [
+            "Decision needed:",
+            "Why you:",
+            "Recommended:",
+            "Alternative:",
+            "Impact:",
+            "Evidence:",
+            "Review target:",
+          ]) {
+            check(result.includes(token), `Owner package includes ${token}`);
+          }
+          await page.screenshot({
+            path: path.join(output, "11-owner-decision.png"),
+            fullPage: true,
+          });
+        }
+        if (scenario === "owner" && step === 3) {
+          check(
+            result.includes("expected current revision 3") &&
+              result.includes("Stale response: reject"),
+            "Owner handoff is revision-safe",
+          );
+          check(
+            result.includes("NOT COMPLETE"),
+            "Missing owner authority blocks completion",
+          );
+        }
+        if (scenario === "unavailable" && step === 3) {
+          check(
+            result.includes("Attempts: 2") &&
+              result.includes("NOT COMPLETE") &&
+              result.includes("result: unknown"),
+            "Checker failure has bounded retries and cannot pass",
+          );
+          check(
+            result.includes("expected current revision 4") &&
+              result.includes("code c0ffee3") &&
+              result.includes("required policy v1.3") &&
+              result.includes("Platform environment maintainer"),
+            "Unavailable-checker handoff pins its revision, snapshot, policy, and responsible owner",
+          );
+          await page.screenshot({
+            path: path.join(output, "12-checker-unavailable.png"),
+            fullPage: true,
+          });
+        }
+        if (step < 3) await page.locator("#loop-next").click();
+      }
+      check(
+        await page.locator("#loop-next").isDisabled(),
+        `${scenario} stops at its terminal state`,
+      );
+      check(
+        (await page.locator("#rule-rows").innerText()) === referenceBefore,
+        `${scenario} does not change unrelated reference gates`,
+      );
+      check(
+        (await page.locator("#sharing-status").innerText()) === sharingBefore,
+        `${scenario} does not publish or approve policy`,
+      );
+      await page.locator("#loop-reset").click();
+      check(
+        (await page.locator("#loop-status").innerText()) === "Working",
+        `${scenario} restart clears its result`,
+      );
+      check(
+        !(await page.locator("#loop-next").isDisabled()),
+        `${scenario} can be replayed`,
+      );
+    }
+    await page.locator("#loop-scenario").selectOption("routine");
     for (const [filter, count, id] of [
       ["automated", 4, "ARCH-01"],
       ["human", 1, "PROC-05"],
@@ -202,6 +385,10 @@ async function main() {
       "Preview includes exactly the selected draft",
     );
     check(
+      payload.destination === "team / northstar-policies (fictional)",
+      "Sharing preview explicitly identifies its destination",
+    );
+    check(
       !JSON.stringify(payload).includes("P-001") &&
         !JSON.stringify(payload).includes("explicit exports"),
       "Outgoing payload excludes private identity and content",
@@ -229,6 +416,10 @@ async function main() {
     check(
       payload.approval === "pending" && payload.baseAgreement === "v1.3",
       "Publication pins the base agreement and remains a proposal",
+    );
+    check(
+      payload.destination === "team / northstar-policies (fictional)",
+      "Confirmed publication preserves the reviewed destination",
     );
     check(
       payload.changes.length === 1 && payload.changes[0].id === "L-007",
@@ -264,8 +455,14 @@ async function main() {
     );
     check(
       pullReceipt.includes("preserved") &&
-        pullReceipt.includes("v1.3 stays at 250 ms"),
-      "Pull preserves the local draft and active policy",
+        pullReceipt.includes("Accepted: v1.4") &&
+        pullReceipt.includes("Required for this release: v1.3") &&
+        pullReceipt.includes("Installed: v1.3"),
+      "Pull preserves drafts and distinguishes accepted, required, and installed policy",
+    );
+    check(
+      pullReceipt.includes("old v1.3 checks cannot establish compliance"),
+      "Local conflicts cannot downgrade future required team policy",
     );
     check(
       (await page.locator("#sharing-status").innerText()) === sharedStatus,
@@ -301,6 +498,12 @@ async function main() {
       'Ship "reliable" changes <without> hidden trade-offs & surprises.';
     await page.locator("#setup-mission").fill(mission);
     await page.locator("#setup-owner").fill("Architecture maintainers");
+    await page
+      .locator("#setup-values")
+      .fill("Reliability & explicit ownership");
+    await page
+      .locator("#setup-outcome")
+      .fill("More successful journeys without increased support burden");
     await page
       .locator("#setup-philosophy")
       .selectOption("Team-defined mixed approach");
@@ -360,6 +563,26 @@ async function main() {
       "Download preserves philosophy",
     );
     check(
+      proposal.agreement.values === "Reliability & explicit ownership",
+      "Download preserves editable core values",
+    );
+    check(
+      proposal.agreement.outcome.includes("successful journeys"),
+      "Mission outcome is distinct from the safeguard",
+    );
+    check(
+      proposal.reviewRequired.some((item) =>
+        item.includes("known-good recheck"),
+      ),
+      "Setup proves correction, not just detection",
+    );
+    check(
+      proposal.reviewRequired.some((item) =>
+        item.includes("bounded escalation"),
+      ),
+      "Setup proves the blocked path as well",
+    );
+    check(
       proposal.standards.every(
         (rule) => rule.status === "candidate" && rule.evidence === "not-run",
       ),
@@ -398,6 +621,24 @@ async function main() {
       }
     }
     await page.locator('[data-flow="agent"]').click();
+    await page.locator(".workflow-contract summary").click();
+    const contract = await page.locator(".workflow-contract").innerText();
+    for (const token of [
+      "needs_execution_approval",
+      "stale answers are rejected",
+      "private or unavailable dependency",
+      "protected activation record",
+      "experiments have separate results",
+      "owner-approved scoped exception",
+      "known-bad and known-good",
+      "false blocks",
+    ]) {
+      check(
+        contract.toLowerCase().includes(token.toLowerCase()),
+        `Operating contract includes ${token}`,
+      );
+    }
+    await page.locator(".workflow-contract summary").click();
     await page.screenshot({
       path: path.join(output, "04-agent-flow.png"),
       fullPage: true,
@@ -553,6 +794,15 @@ async function main() {
         );
       }
       await navigate("workspace");
+      await page.locator("#loop-scenario").selectOption("owner");
+      for (let step = 0; step < 3; step += 1)
+        await page.locator("#loop-next").click();
+      check(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+        `Long blocked handoff fits at ${width}px`,
+      );
       await page.locator("#preview-push").click();
       check(
         await page
@@ -581,6 +831,10 @@ async function main() {
         "2 local drafts",
       ),
       "Reload resets simulated sharing rather than implying durable storage",
+    );
+    check(
+      (await page.locator("#loop-status").textContent()) === "Working",
+      "Reload resets simulated task completion",
     );
     await page.keyboard.press("Tab");
     check(
