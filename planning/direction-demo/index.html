@@ -2064,6 +2064,157 @@
           display: none;
         }
       }
+
+      .command-strip {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        margin: 18px 0 0;
+        background: white;
+      }
+      .command-strip a {
+        padding: 10px 12px;
+        text-decoration: none;
+      }
+      .command-strip a + a {
+        border-left: 1px solid var(--line);
+      }
+      .command-strip a:hover {
+        background: var(--soft);
+      }
+      .command-strip code {
+        display: block;
+        color: var(--green);
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .command-strip small {
+        display: block;
+        font-size: 10px;
+        color: var(--muted);
+        margin-top: 3px;
+      }
+      .sync-strip {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 14px;
+        padding: 15px 18px;
+        margin-bottom: 22px;
+      }
+      .sync-strip h2 {
+        font-size: 14px;
+      }
+      .sync-strip p {
+        color: var(--muted);
+        font-size: 11px;
+        margin-top: 4px;
+      }
+      .sync-strip .actions {
+        gap: 7px;
+      }
+      #sync-receipt {
+        flex-basis: 100%;
+        border-top: 1px solid var(--line);
+        padding-top: 12px;
+        font-size: 11px;
+      }
+      .share-choice {
+        display: flex;
+        align-items: flex-start;
+        gap: 11px;
+        border-top: 1px solid var(--line);
+        padding: 15px 0;
+      }
+      .share-choice input {
+        accent-color: var(--green);
+        margin: 4px 0 0;
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+      }
+      .share-choice strong {
+        display: block;
+        font-size: 12px;
+        font-weight: 550;
+      }
+      .share-choice small {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        margin-top: 4px;
+      }
+      .share-choices {
+        border: 0;
+        padding: 0;
+        margin: 18px 0 0;
+        min-width: 0;
+      }
+      .share-choices legend {
+        font: 10px var(--mono);
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+      #push-dialog .notice {
+        font-size: 11px;
+      }
+      #push-payload {
+        background: var(--soft);
+        border: 1px solid var(--line);
+        padding: 13px;
+        margin: 15px 0;
+        max-height: 300px;
+        overflow: auto;
+        font-size: 10px;
+      }
+      #push-dialog .actions {
+        margin-top: 20px;
+      }
+      #push-dialog .dialog-body > p {
+        margin-bottom: 12px;
+      }
+      @media (max-width: 650px) {
+        .command-strip {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        .command-strip a {
+          padding: 10px;
+        }
+        .command-strip a:nth-child(4) {
+          border-left: 0;
+        }
+        .command-strip a:nth-child(n + 4) {
+          border-top: 1px solid var(--line);
+        }
+        .sync-strip .actions {
+          width: 100%;
+        }
+        .sync-strip .actions .btn {
+          flex: 1;
+        }
+      }
+      @media print {
+        .command-strip {
+          grid-template-columns: repeat(6, minmax(0, 1fr));
+          margin-top: 13px;
+          break-inside: avoid;
+        }
+        .command-strip a {
+          padding: 7px 8px;
+        }
+        .command-strip code {
+          font-size: 9px;
+        }
+        .command-strip small {
+          font-size: 8px;
+        }
+        .brief-bottom {
+          margin-top: 15px;
+          padding-top: 12px;
+        }
+      }
     </style>
   </head>
   <body>
@@ -2133,7 +2284,7 @@
       <a class="brand" href="#brief"
         ><svg aria-hidden="true"><use href="#i-mark" /></svg>whetstone</a
       >
-      <div class="edition">DIRECTION STUDY / 01</div>
+      <div class="edition">DIRECTION STUDY / 02</div>
       <div class="nav-caption">THE WORKING AGREEMENT</div>
       <nav class="nav">
         <a href="#brief" data-nav="brief" aria-current="page"
@@ -2159,12 +2310,10 @@
       </nav>
       <div class="sidebar-bottom">
         <div class="eyebrow">
-          <span class="live-dot"></span>REPO-OWNED. AGENT-NEUTRAL.
+          <span class="live-dot"></span>LOCAL-FIRST. SHARE BY CHOICE.
         </div>
         <strong>Small enough to understand.<br />Useful enough to keep.</strong>
-        <p>
-          Readable files. Existing tools.<br />No account or service required.
-        </p>
+        <p>Six commands. Readable records.<br />No hosted service required.</p>
       </div>
     </aside>
     <div class="shell">
@@ -2195,8 +2344,8 @@
               </h1>
               <p class="lede">
                 Whetstone turns a team’s engineering agreement into working
-                safeguards for people and agents. Define what matters, connect
-                the right checks, and evolve deliberately.
+                safeguards for people and agents. Work locally, check your
+                changes, and share with the team when you choose.
               </p>
               <div class="actions">
                 <a class="btn primary" href="#workspace"
@@ -2251,9 +2400,8 @@
               <h2>Your team’s way of building.</h2>
               <p>
                 Start with existing code, docs, and tools. Confirm the mission,
-                values, implementation philosophy, and success measures. Ask
-                engineers to resolve meaningful gaps—not repeat what is already
-                decided.
+                values, implementation philosophy, measures, and owners. Connect
+                a few trusted checks and prove they work.
               </p>
             </article>
             <article class="brief-pillar">
@@ -2270,17 +2418,16 @@
               <div class="eyebrow">03 / EVOLVE</div>
               <h2>Change with intent, not drift.</h2>
               <p>
-                Revisit rules and metrics when evidence or priorities change.
-                Route trade-offs to the right owner. Preserve decisions,
-                exceptions, and superseded choices throughout the project’s
-                lifetime.
+                Experiment locally. Push selected changes for team review.
+                Preserve key decisions from day one, including why standards and
+                measures changed and what they superseded.
               </p>
             </article>
           </div>
           <div class="brief-setup">
             <div class="section-label">
-              <h2>A small setup. A continuous loop.</h2>
-              <span class="eyebrow">HUMAN + AGENT, SAME RECORDS</span>
+              <h2>One setup flow. Six everyday commands.</h2>
+              <span class="eyebrow">wh init · HUMAN OR AGENT</span>
             </div>
             <div class="setup-strip">
               <article class="strip-step">
@@ -2303,8 +2450,8 @@
                 <span class="number">03</span>
                 <h3>Wire</h3>
                 <p>
-                  Preview the diff. With approval, connect existing tools and
-                  install scoped agent guidance.
+                  Review the local diff, connect existing tools, and install
+                  scoped agent guidance. Nothing is published.
                 </p>
               </article>
               <article class="strip-step">
@@ -2317,36 +2464,56 @@
               </article>
             </div>
           </div>
+
+          <nav class="command-strip" aria-label="The six proposed commands">
+            <a href="#setup"><code>wh init</code><small>Establish</small></a>
+            <a href="#workspace"
+              ><code>wh dash</code><small>Inspect &amp; edit</small></a
+            >
+            <a href="#workflows"
+              ><code>wh change</code><small>Work locally</small></a
+            >
+            <a href="#workspace"
+              ><code>wh check</code><small>Validate</small></a
+            >
+            <a href="#workflows"
+              ><code>wh push</code><small>Share selected</small></a
+            >
+            <a href="#workflows"
+              ><code>wh pull</code><small>Receive updates</small></a
+            >
+          </nav>
           <div class="brief-bottom">
             <div>
-              <h3>Lightweight by construction.</h3>
+              <h3>Local state. Optional sharing.</h3>
               <p>
-                Readable Markdown + structured metadata, stored in Git. A thin
-                deterministic CLI, portable skills, and an optional local or
-                hosted viewer. The same records power every surface; no
-                mandatory database, agent vendor, or subscription.
+                Dolt owns versioned agreements and history; Markdown/JSON
+                exports keep them portable. Private state stays separate from
+                shareable history. No code-repository commits are needed for
+                these records. A remote is optional.
               </p>
               <p style="margin-top: 9px">
-                Adopt a few trusted safeguards first. Success means fewer
-                preventable mistakes and less supervision—not more rules.
+                Shared enforcement still needs protected CI or equivalent
+                platform configuration. Existing tools do the actual checking.
               </p>
             </div>
             <div>
               <h3>The boundary that makes it trustworthy.</h3>
               <p>
-                Executable checks, human judgment, and advisory guidance stay
-                distinct. Unknown evidence never becomes a pass. Agents cannot
-                approve their own policy exceptions. The viewer reports a
-                revision and evidence age.
+                A push shares a proposal; it does not approve it. Local
+                preferences cannot weaken mandatory team gates. Check receipts
+                identify code and agreement revisions; stale evidence stays
+                unknown.
               </p>
               <div class="mini-tree" style="margin-top: 10px">
-                Intent → standard → check / review → evidence<br />Decision
-                history explains every deliberate change.
+                Local draft → Shared proposal → Accepted team standard<br />
+                Pull preserves local work. Nothing is published automatically.
               </div>
             </div>
           </div>
           <footer class="footnote">
-            <span>WHETSTONE / DIRECTION 01 · OPEN, TEAM-OWNED TOOLING</span
+            <span
+              >WHETSTONE / DIRECTION 02 · LOCAL-FIRST, TEAM-OWNED TOOLING</span
             ><span>Concept only. Proposed workflows; fictional demo data.</span>
           </footer>
         </section>
@@ -2370,7 +2537,7 @@
               </p>
               <div class="workspace-meta">
                 <span class="tag">main @ a1b2c3d</span
-                ><span class="tag">agreement v1.3</span
+                ><span class="tag">team agreement v1.3 · Dolt</span
                 ><span class="tag">local snapshot · 07 Sep, 10:42</span>
               </div>
             </div>
@@ -2404,12 +2571,28 @@
               <div class="stat-note">Judgment · never shown as a pass</div>
             </div>
           </div>
+
+          <section class="card sync-strip" aria-labelledby="sharing-title">
+            <div>
+              <h2 id="sharing-title">Local until you choose to share.</h2>
+              <p id="sharing-status">
+                2 local drafts · 1 private preference · team v1.3 unchanged
+              </p>
+            </div>
+            <div class="actions">
+              <button class="btn small" id="preview-push">Preview push</button
+              ><button class="btn small ghost" id="demo-pull">
+                Simulate pull
+              </button>
+            </div>
+            <div id="sync-receipt" aria-live="polite" hidden></div>
+          </section>
           <div class="workspace-grid">
             <div class="card">
               <div class="table-head">
                 <div class="section-label" style="margin-bottom: 0">
                   <h2>Standards &amp; processes</h2>
-                  <span class="eyebrow">6 ACCEPTED</span>
+                  <span class="eyebrow">6 TEAM-ACCEPTED</span>
                 </div>
                 <div class="filters" aria-label="Filter standards">
                   <button class="filter" data-filter="all" aria-pressed="true">
@@ -2533,9 +2716,9 @@
                 Agree once. Put it to work.
               </h1>
               <p>
-                A short, reviewable setup for professional engineers. The GUI
-                and your agent produce the same proposal, approval requirements,
-                and file diff.
+                One resumable wh init flow: inspect, agree, wire, and prove. The
+                GUI and your agent use the same local records. Sharing is
+                optional and always explicit.
               </p>
             </div>
             <span class="tag proposal">PROPOSED SETUP FLOW</span>
@@ -2544,9 +2727,9 @@
             <svg aria-hidden="true"><use href="#i-info" /></svg>
             <p>
               This is a local simulation. Edit the sample preferences and
-              download a <strong>proposal</strong>. Nothing is installed,
-              approved, or written to your repository. Changes in this demo
-              reset when you reload.
+              download a <strong>local proposal</strong>. This HTML has no Dolt
+              backend and makes no network requests. Nothing is installed or
+              approved. Reload resets the demo.
             </p>
           </div>
           <div class="setup-layout">
@@ -2604,18 +2787,14 @@
           </div>
           <div class="setup-command terminal">
             <div class="terminal-head">
-              <span>THE SAME STEP, THROUGH THE CLI</span
+              <span>ONE COMMAND, FOUR STEPS · wh init</span
               ><span>PROPOSED · DOES NOT EXECUTE</span>
             </div>
             <div class="terminal-body"><pre id="setup-cli"></pre></div>
           </div>
           <footer class="footnote">
-            <span
-              >FACTS → PROPOSAL → SCOPED APPROVAL → DIFF → VERIFIED GATES</span
-            ><span
-              >A preference is not accepted merely because an agent inferred
-              it.</span
-            >
+            <span>LOCAL AGREEMENT → REVIEWED WIRING → VERIFIED GATES</span
+            ><span>wh push is a separate, optional sharing step.</span>
           </footer>
         </section>
         <section
@@ -2631,8 +2810,9 @@
                 Same agreement.<br />Human or agent.
               </h1>
               <p>
-                Follow a change from context to verified evidence. Select a step
-                to inspect the proposed command and its contract.
+                Work locally, check the result, and share only when intended.
+                People and agents use the same six commands and approval
+                boundaries.
               </p>
             </div>
             <div class="workflow-switch" aria-label="Choose workflow">
@@ -2675,129 +2855,79 @@
               </div>
             </div>
           </div>
+
           <details class="command-reference">
             <summary>
-              CLI reference · proposed surface and existing foundations
+              Six commands · the complete proposed public surface
             </summary>
             <div class="reference-scroll">
               <table class="command-table">
                 <thead>
                   <tr>
                     <th scope="col">Command</th>
-                    <th scope="col">Purpose</th>
-                    <th scope="col">Availability</th>
+                    <th scope="col">Responsibility</th>
+                    <th scope="col">Boundary</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr>
-                    <td><code>wh setup inspect --json</code></td>
+                  <tr data-command="init">
+                    <td><code>wh init</code></td>
                     <td>
-                      Read-only discovery; return facts, inferred preferences,
-                      missing decisions.
+                      Inspect, agree, wire, and prove. One resumable local setup
+                      flow.
                     </td>
-                    <td class="command-status">PROPOSED</td>
+                    <td class="command-status">No publication</td>
                   </tr>
-                  <tr>
-                    <td><code>wh setup draft --from repo</code></td>
+                  <tr data-command="dash">
+                    <td><code>wh dash</code></td>
                     <td>
-                      Prepare an unapproved setup proposal with agent
-                      assistance.
+                      Open the local dashboard. Inspect history, edit drafts,
+                      and explicitly run checks.
                     </td>
-                    <td class="command-status">PROPOSED</td>
+                    <td class="command-status">No automatic sync</td>
                   </tr>
-                  <tr>
-                    <td><code>wh setup accept &lt;proposal&gt;</code></td>
+                  <tr data-command="change">
+                    <td><code>wh change</code></td>
                     <td>
-                      Record scoped owner approval for a specific proposal
-                      digest.
+                      Start or resume a local change to mission, values,
+                      philosophy, tools, or infrastructure.
                     </td>
-                    <td class="command-status">PROPOSED</td>
+                    <td class="command-status">Local only</td>
                   </tr>
-                  <tr>
+                  <tr data-command="check">
+                    <td><code>wh check</code></td>
                     <td>
-                      <code
-                        >wh setup wire --dry-run<br />wh setup wire --approved
-                        &lt;digest&gt;</code
-                      >
+                      Run applicable checks and report evidence against
+                      identified code and agreement revisions.
                     </td>
-                    <td>
-                      Preview; then apply the approved integration diff. No
-                      silent overwrite.
-                    </td>
-                    <td class="command-status">PROPOSED</td>
+                    <td class="command-status">No policy changes</td>
                   </tr>
-                  <tr>
-                    <td><code>wh context --scope &lt;path&gt; --json</code></td>
+                  <tr data-command="push">
+                    <td><code>wh push</code></td>
                     <td>
-                      Return the accepted agreement, relevant decisions,
-                      required checks and owners.
+                      Preview and share selected changes. Private records and
+                      private history stay local.
                     </td>
-                    <td class="command-status">PROPOSED</td>
+                    <td class="command-status">Explicit publication</td>
                   </tr>
-                  <tr>
-                    <td><code>wh verify --scope &lt;path&gt; --json</code></td>
+                  <tr data-command="pull">
+                    <td><code>wh pull</code></td>
                     <td>
-                      Aggregate current-revision check receipts, review
-                      requirements, and evidence freshness.
+                      Receive team updates, preserving local drafts and
+                      surfacing conflicts.
                     </td>
-                    <td class="command-status">PROPOSED</td>
-                  </tr>
-                  <tr>
-                    <td>
-                      <code
-                        >wh decision propose &lt;file&gt;<br />wh decision
-                        approve &lt;id&gt;</code
-                      >
-                    </td>
-                    <td>
-                      Submit rationale and impacts; authorised owners approve
-                      through a protected workflow.
-                    </td>
-                    <td class="command-status">PROPOSED</td>
-                  </tr>
-                  <tr>
-                    <td>
-                      <code
-                        >wh decisions list --all<br />wh decisions show
-                        &lt;id&gt; --as-of &lt;date&gt;</code
-                      >
-                    </td>
-                    <td>
-                      Inspect the full history, including superseded decisions
-                      and historical scope.
-                    </td>
-                    <td class="command-status">PROPOSED</td>
-                  </tr>
-                  <tr>
-                    <td>
-                      <code
-                        >wh ui<br />wh ui export --output
-                        &lt;directory&gt;</code
-                      >
-                    </td>
-                    <td>
-                      Open a loopback viewer or export a read-only snapshot for
-                      authenticated hosting.
-                    </td>
-                    <td class="command-status">PROPOSED</td>
-                  </tr>
-                  <tr>
-                    <td>
-                      <code
-                        >wh init · wh extract<br />wh rules approve · wh actions
-                        all<br />wh scan · wh status · wh mcp</code
-                      >
-                    </td>
-                    <td>
-                      Existing dependency-rule workflow: bootstrap, extract,
-                      approve, generate, scan, inspect health, and expose MCP.
-                      Not the broader governance contracts above.
-                    </td>
-                    <td class="command-status">EXISTS IN v0.12</td>
+                    <td class="command-status">Inbound only</td>
                   </tr>
                 </tbody>
               </table>
             </div>
+            <p class="muted" style="font-size: 11px; margin-top: 13px">
+              Bare <code>wh</code> gives a read-only orientation;
+              <code>--json</code> exposes structured state without opening a
+              human wizard. Approval, history, wiring, and conflict resolution
+              are steps inside these workflows—not extra commands. These
+              contracts are proposed, not implemented in v0.12.
+            </p>
           </details>
           <footer class="footnote">
             <span
@@ -2824,9 +2954,9 @@
                 The reasons stay with the code.
               </h1>
               <p>
-                Every key decision, its context, and the standards it shaped.
-                Superseded decisions remain visible; the current agreement stays
-                unambiguous.
+                Accepted team history at v1.3, from the first decision onward.
+                Dolt preserves context and supersession. Local drafts and shared
+                proposals are not silently included as accepted decisions.
               </p>
             </div>
             <span class="tag">NORTHSTAR · FICTIONAL HISTORY</span>
@@ -2913,6 +3043,20 @@
         </button>
       </div>
       <div class="dialog-body" id="dialog-body"></div>
+    </dialog>
+
+    <dialog id="push-dialog" aria-labelledby="push-title">
+      <div class="dialog-head">
+        <h2 id="push-title">Choose what to share.</h2>
+        <button
+          class="btn small ghost"
+          id="close-push"
+          aria-label="Close sharing preview"
+        >
+          <svg aria-hidden="true"><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <div class="dialog-body" id="push-body"></div>
     </dialog>
     <div class="toast" id="toast" role="status" hidden></div>
     <script>
@@ -3137,8 +3281,8 @@
           `<div class="terminal"><div class="terminal-head"><span>VERIFICATION / FICTIONAL RECEIPT REPLAY</span><span>NO COMMAND EXECUTED</span></div><div class="terminal-body"><pre class="comment">Loading the sample evidence for a1b2c3d…</pre></div></div>`;
         setTimeout(() => {
           $("#check-output .terminal-body").innerHTML =
-            `<pre><span class="prompt">$ wh verify --scope src/modules/checkout --json</span>
-<span class="comment"># Proposed CLI · aggregate checks and review receipts</span>
+            `<pre><span class="prompt">$ wh check --json</span>
+<span class="comment"># Proposed CLI · team v1.3 + local overlay · no publication</span>
 
 <span class="failure">FAIL     ARCH-01  private payment adapter import</span>
 <span class="success">PASS     UI-02    shared tokens</span>
@@ -3149,13 +3293,166 @@ ADVISORY GUIDE-06 no deterministic verdict
 
 <span class="failure">MERGE: BLOCKED</span>   failing check + missing required review
 <span class="warn">DEPLOY: BLOCKED</span> stale required production evidence
-<span class="comment">Policy v1.3 · revision a1b2c3d · exit 1 (illustrative)</span></pre>`;
+<span class="comment">Code a1b2c3d · team policy v1.3 · local overlay L-01\nRemote unchanged · CI uses accepted team policy · exit 1 (illustrative)</span></pre>`;
           button.disabled = false;
           button.innerHTML = `${icon("terminal")}Replay demo checks`;
           toast(
             "Sample receipts replayed. No real checks ran; merge and deployment remain blocked.",
           );
         }, 650);
+      });
+
+      const localChanges = [
+        {
+          id: "L-007",
+          title: "Tighten checkout p95 to 220 ms",
+          rule: "PERF-04",
+          visibility: "shareable",
+          state: "local",
+        },
+        {
+          id: "L-008",
+          title: "Require an accessibility smoke test",
+          rule: "UI-02",
+          visibility: "shareable",
+          state: "local",
+        },
+        {
+          id: "P-001",
+          title: "Prefer explicit exports",
+          visibility: "private",
+          state: "local",
+        },
+      ];
+      const selectedChanges = new Set();
+      let lastPushPayload = null;
+      function renderSharingStatus() {
+        const drafts = localChanges.filter(
+          (change) =>
+            change.visibility === "shareable" && change.state === "local",
+        ).length;
+        const shared = localChanges.filter(
+          (change) => change.state === "shared",
+        ).length;
+        $("#sharing-status").textContent =
+          drafts +
+          " local draft" +
+          (drafts === 1 ? "" : "s") +
+          (shared
+            ? " · " + shared + " shared proposal" + (shared === 1 ? "" : "s")
+            : "") +
+          " · 1 private preference · team v1.3 unchanged";
+      }
+      function outgoingProposal() {
+        return {
+          kind: "proposal",
+          baseAgreement: "v1.3",
+          approval: "pending",
+          changes: localChanges
+            .filter(
+              (change) =>
+                change.visibility === "shareable" &&
+                change.state === "local" &&
+                selectedChanges.has(change.id),
+            )
+            .map((change) => ({
+              id: change.id,
+              title: change.title,
+              rule: change.rule,
+            })),
+        };
+      }
+      function refreshPushPreview() {
+        const payload = outgoingProposal();
+        $("#push-payload").textContent = JSON.stringify(payload, null, 2);
+        $("#confirm-push").disabled = payload.changes.length === 0;
+        $("#confirm-push").textContent =
+          "Simulate push (" + payload.changes.length + ")";
+      }
+      function renderPushPreview() {
+        const choices = localChanges.filter(
+          (change) => change.visibility === "shareable",
+        );
+        $("#push-body").innerHTML =
+          '<div class="eyebrow">wh push · OUTBOUND PREVIEW · SIMULATION</div>' +
+          "<p>Choose the changes to share. A push creates proposals for review; it does not change accepted team policy.</p>" +
+          '<fieldset class="share-choices"><legend>SHAREABLE LOCAL CHANGES</legend>' +
+          choices
+            .map(
+              (change) =>
+                '<label class="share-choice"><input type="checkbox" data-share-id="' +
+                change.id +
+                '" ' +
+                (change.state === "shared"
+                  ? "disabled"
+                  : selectedChanges.has(change.id)
+                    ? "checked"
+                    : "") +
+                "><span><strong>" +
+                escapeHTML(change.title) +
+                "</strong><small>" +
+                change.id +
+                " · " +
+                (change.state === "shared"
+                  ? "Shared proposal · approval pending"
+                  : "Local draft · not shared") +
+                "</small></span></label>",
+            )
+            .join("") +
+          '</fieldset><div class="notice"><span><strong>Always stays local:</strong> P-001 · Prefer explicit exports. Private records and their history are excluded from the publication path.</span></div>' +
+          '<h3>Exactly what would be sent</h3><pre id="push-payload"></pre><p style="font-size:10px">No full local database or private ancestry is copied. Required dependencies must be explicitly reviewed too. This HTML sends nothing.</p>' +
+          '<div class="actions"><button class="btn primary" id="confirm-push" disabled>Simulate push (0)</button><button class="btn ghost" id="cancel-push">Keep local</button></div>';
+        refreshPushPreview();
+      }
+      $("#preview-push").addEventListener("click", () => {
+        renderPushPreview();
+        $("#push-dialog").showModal();
+      });
+      $("#close-push").addEventListener("click", () =>
+        $("#push-dialog").close(),
+      );
+      $("#push-body").addEventListener("change", (event) => {
+        const input = event.target.closest("[data-share-id]");
+        if (!input || input.disabled) return;
+        if (input.checked) selectedChanges.add(input.dataset.shareId);
+        else selectedChanges.delete(input.dataset.shareId);
+        refreshPushPreview();
+      });
+      $("#push-body").addEventListener("click", (event) => {
+        if (event.target.closest("#cancel-push")) {
+          $("#push-dialog").close();
+          return;
+        }
+        if (!event.target.closest("#confirm-push")) return;
+        const payload = outgoingProposal();
+        if (!payload.changes.length) return;
+        lastPushPayload = payload;
+        payload.changes.forEach((sent) => {
+          localChanges.find((change) => change.id === sent.id).state = "shared";
+          selectedChanges.delete(sent.id);
+        });
+        renderSharingStatus();
+        $("#push-body").innerHTML =
+          '<div class="eyebrow">SIMULATED PUBLICATION · NO NETWORK REQUEST</div>' +
+          "<p><strong>Shared proposal" +
+          (payload.changes.length === 1 ? "" : "s") +
+          " created in the demo.</strong> Approval is pending. The accepted team agreement remains v1.3.</p>" +
+          '<pre id="push-payload"></pre><div class="notice">Private preferences and unrelated drafts remain local. Sharing does not activate a rule or install tooling.</div>' +
+          '<div class="actions"><button class="btn primary" id="cancel-push">Back to workspace</button></div>';
+        $("#push-payload").textContent = JSON.stringify(
+          lastPushPayload,
+          null,
+          2,
+        );
+        $("#push-body").setAttribute("tabindex", "-1");
+        $("#push-body").focus();
+      });
+      $("#demo-pull").addEventListener("click", () => {
+        $("#sync-receipt").hidden = false;
+        $("#sync-receipt").innerHTML =
+          "<strong>Incoming preview: team v1.4 · conflict on PERF-04</strong><p>Local L-007 proposes 220 ms; the incoming approved update specifies 225 ms. Your local version is preserved. Active team v1.3 stays at 250 ms until reconciled.</p><p><code>wh change</code> resolves the conflict and reviews wiring. No local drafts were pushed, no scripts ran, and no infrastructure changed. This is a simulated pull.</p>";
+        $("#demo-pull").textContent = "Replay pull";
+        renderSharingStatus();
       });
 
       const setupState = {
@@ -3167,10 +3464,10 @@ ADVISORY GUIDE-06 no deterministic verdict
       };
       let setupStep = 0;
       const setupCommands = [
-        "$ wh setup inspect --json\n# Read-only discovery: confirmed facts, inferences, missing decisions.\n# Existing tools and documents remain the source; no files are changed.",
-        "$ wh setup draft --from repo\n# Agent-assisted proposal: mission, standards, measures, scope, owners.\n# Output is a candidate. Inference is never treated as approval.",
-        "$ wh setup wire --dry-run\n# Preview native config changes, agent adapters, and CI requirements.\n# Detect conflicts; preserve existing files. No commands are installed.",
-        "$ wh setup accept setup-proposal.json\n# FUTURE: authorised owner approves this proposal digest.\n$ wh setup wire --approved <digest>\n$ wh verify --scope src/modules/checkout --json\n# FUTURE: prove a known violation fails, then retain current-revision evidence.\n# This demo only downloads a proposal; none of these commands run.",
+        "$ wh init\n# Step 1/4: read-only discovery of facts, preferences, and gaps.\n# Start a local Dolt workspace; connect an optional team remote.\n# No publication. Existing project files are preserved.",
+        "$ wh init\n# Step 2/4: resume the same setup; confirm mission, values,\n# implementation philosophy, initial measures, and change authority.\n# Save a local draft. Inferred preferences need confirmation.",
+        "$ wh init\n# Step 3/4: preview native check and agent integration diffs.\n# Review before writing locally; prove a known bad change is caught.\n# This is still local setup, not a push to the team.",
+        "$ wh init\n# Step 4/4: complete the reviewed local setup and retain its evidence.\n$ wh check\n# Validate against identified code and agreement revisions.\n# Share later, only if you choose:\n$ wh push\n# Preview selected records. Publication is not team approval.\n# This HTML only downloads a local proposal; nothing executes.",
       ];
       function saveSetupFields() {
         $$("[data-setup-field]").forEach((input) => {
@@ -3185,10 +3482,10 @@ ADVISORY GUIDE-06 no deterministic verdict
           else button.removeAttribute("aria-current");
         });
         const panels = [
-          `<div class="eyebrow">STEP 01 / READ-ONLY DISCOVERY</div><h2>You already have a starting point.</h2><p class="muted">Bring existing decisions into view. Whetstone distinguishes what the team documented from what the code merely suggests.</p><div class="source-list"><div class="source-row"><div><strong>Project mission &amp; engineering values</strong><small>README.md · docs/engineering.md</small></div>${badge("Documented", "pass")}</div><div class="source-row"><div><strong>Lint, types, and checkout tests</strong><small>package.json · .github/workflows/ci.yml</small></div>${badge("Detected", "pass")}</div><div class="source-row"><div><strong>Functional core preference</strong><small>Observed code shape; needs the team’s confirmation</small></div>${badge("Inferred", "pending")}</div><div class="source-row"><div><strong>Authority for boundary changes</strong><small>No explicit exception or approval policy found</small></div>${badge("Needs a decision", "pending")}</div></div><div class="notice">This fictional inspection proposes six initial standards. Existing projects can start with fewer; there is no mandatory policy catalogue.</div>`,
-          `<div class="eyebrow">STEP 02 / THE DECISIONS ONLY YOUR TEAM CAN MAKE</div><h2>Confirm the intent and the boundaries.</h2><p class="muted">Edit the sample agreement. Routine implementation should not require the same people to repeat settled preferences.</p><div class="field"><label for="setup-mission">Project mission</label><input id="setup-mission" type="text" maxlength="250" data-setup-field="mission" value="${escapeHTML(setupState.mission)}"><small>Engineering values: operational simplicity, dependable changes, explicit ownership.</small></div><div class="field-row"><div class="field"><label for="setup-philosophy">Implementation philosophy</label><select id="setup-philosophy" data-setup-field="philosophy">${["Functional core, effects at boundaries", "Object-oriented domain boundaries", "Team-defined mixed approach"].map((value) => `<option${value === setupState.philosophy ? " selected" : ""}>${value}</option>`).join("")}</select></div><div class="field"><label for="setup-owner">Architecture &amp; exception owner</label><input id="setup-owner" type="text" maxlength="80" data-setup-field="owner" value="${escapeHTML(setupState.owner)}"></div></div><div class="field"><label for="setup-metric">Initial operational safeguard</label><input id="setup-metric" type="text" maxlength="120" data-setup-field="metric" value="${escapeHTML(setupState.metric)}"><small>Metric edits are proposals only. Source, window, cohort, threshold, and freshness must be validated before wiring.</small></div><div class="notice" style="margin-top:20px">Review philosophy and metrics when user feedback, incidents, scale, or priorities change. The responsible owner approves amendments; personal preferences cannot weaken mandatory team rules.</div>`,
-          `<div class="eyebrow">STEP 03 / PREVIEW, THEN APPROVE</div><h2>Use the tools the project already trusts.</h2><p class="muted">The proposed diff connects accepted standards to existing tools. Generated context never replaces a protected enforcement gate.</p><div class="wiring-grid"><article class="wiring-item"><h3>Native checks</h3><p>Architecture tests, token lint, and checkout browser tests.</p><code>3 required CI checks</code></article><article class="wiring-item"><h3>Process gates</h3><p>Owner review for boundary changes and changes to the gates themselves.</p><code>Repository protection + ownership</code></article><article class="wiring-item"><h3>Metrics adapter</h3><p>Checkout latency with an explicit source, sample window, and freshness limit.</p><code>1 deployment evidence gate</code></article><article class="wiring-item"><h3>People &amp; agents</h3><p>Readable agreement, scoped skills, and host-specific discovery adapters.</p><code>Advisory ≠ enforced</code></article></div><div class="notice warning" style="margin-top:19px">This is a proposed integration plan, not measured coverage. Missing tool support remains “not covered.” Wiring requires scoped approval and a reviewed diff.</div>`,
-          `<div class="eyebrow">STEP 04 / REVIEWABLE HANDOFF</div><h2>A small agreement. A visible proof.</h2><p class="muted">The setup produces a candidate for your team to review. It does not approve its own assumptions or report gates as passing.</p><div class="proposal-summary"><h3>${escapeHTML(setupState.mission || "Mission needs confirmation")}</h3><dl><dt>Implementation</dt><dd>${escapeHTML(setupState.philosophy)}</dd><dt>Change authority</dt><dd>${escapeHTML(setupState.owner || "Owner needs confirmation")}</dd><dt>Initial safeguard</dt><dd>${escapeHTML(setupState.metric || "Metric needs definition")}</dd><dt>Proposed coverage</dt><dd>4 automated gates · 1 required review · 1 advisory standard</dd><dt>Accepted / installed</dt><dd>No / No</dd></dl></div><p class="muted">After approval: apply the reviewed wiring, prove a known bad change is rejected, and capture the first evidence receipt. Keep the original decision; append future amendments.</p><div class="actions" style="margin-top:19px"><button id="download-proposal" class="btn primary">Download demo proposal ${icon("down")}</button><a href="#workspace" class="btn ghost">Inspect the sample workspace</a></div><p class="muted" style="margin-top:12px;font-size:10px">Download is concept JSON, not an accepted CLI input schema. The workspace remains the original fictional snapshot; your draft does not silently change it.</p>`,
+          `<div class="eyebrow">STEP 01 / READ-ONLY DISCOVERY</div><h2>You already have a starting point.</h2><p class="muted">Bring existing decisions into a local Dolt workspace. Separate documented facts from inferred preferences. The team remote is optional.</p><div class="source-list"><div class="source-row"><div><strong>Project mission &amp; engineering values</strong><small>README.md · docs/engineering.md</small></div>${badge("Documented", "pass")}</div><div class="source-row"><div><strong>Lint, types, and checkout tests</strong><small>package.json · .github/workflows/ci.yml</small></div>${badge("Detected", "pass")}</div><div class="source-row"><div><strong>Functional core preference</strong><small>Observed code shape; needs the team’s confirmation</small></div>${badge("Inferred", "pending")}</div><div class="source-row"><div><strong>Authority for boundary changes</strong><small>No explicit exception or approval policy found</small></div>${badge("Needs a decision", "pending")}</div></div><div class="notice">This sample proposes six initial standards. Start with fewer if useful. Your draft stays local until you explicitly choose to push.</div>`,
+          `<div class="eyebrow">STEP 02 / THE DECISIONS ONLY YOUR TEAM CAN MAKE</div><h2>Confirm the intent and the boundaries.</h2><p class="muted">Edit the local agreement. The CLI, dashboard, and agent all use the same change workflow; editing an exported document creates a draft, not a second source of truth.</p><div class="field"><label for="setup-mission">Project mission</label><input id="setup-mission" type="text" maxlength="250" data-setup-field="mission" value="${escapeHTML(setupState.mission)}"><small>Engineering values: operational simplicity, dependable changes, explicit ownership.</small></div><div class="field-row"><div class="field"><label for="setup-philosophy">Implementation philosophy</label><select id="setup-philosophy" data-setup-field="philosophy">${["Functional core, effects at boundaries", "Object-oriented domain boundaries", "Team-defined mixed approach"].map((value) => `<option${value === setupState.philosophy ? " selected" : ""}>${value}</option>`).join("")}</select></div><div class="field"><label for="setup-owner">Architecture &amp; exception owner</label><input id="setup-owner" type="text" maxlength="80" data-setup-field="owner" value="${escapeHTML(setupState.owner)}"></div></div><div class="field"><label for="setup-metric">Initial operational safeguard</label><input id="setup-metric" type="text" maxlength="120" data-setup-field="metric" value="${escapeHTML(setupState.metric)}"><small>Metric edits are proposals only. Source, window, cohort, threshold, and freshness must be validated before wiring.</small></div><div class="notice" style="margin-top:20px">Review philosophy and metrics when user feedback, incidents, scale, or priorities change. The responsible owner approves amendments; personal preferences cannot weaken mandatory team rules.</div>`,
+          `<div class="eyebrow">STEP 03 / PREVIEW, THEN APPROVE</div><h2>Use the tools the project already trusts.</h2><p class="muted">Preview the local diff. Dolt stores the agreement; readable exports serve people and agents. Existing native tools enforce the precise checks.</p><div class="wiring-grid"><article class="wiring-item"><h3>Native checks</h3><p>Architecture tests, token lint, and checkout browser tests.</p><code>3 required CI checks</code></article><article class="wiring-item"><h3>Process gates</h3><p>Owner review for boundary changes and changes to the gates themselves.</p><code>Repository protection + ownership</code></article><article class="wiring-item"><h3>Metrics adapter</h3><p>Checkout latency with an explicit source, sample window, and freshness limit.</p><code>1 deployment evidence gate</code></article><article class="wiring-item"><h3>People &amp; agents</h3><p>Readable agreement, scoped skills, and host-specific discovery adapters.</p><code>Advisory ≠ enforced</code></article></div><div class="notice warning" style="margin-top:19px">Dolt state and readable exports need no code-repository commit. Shared CI and platform gates still need their own protected configuration. No sharing or infrastructure change happens implicitly.</div>`,
+          `<div class="eyebrow">STEP 04 / REVIEWABLE HANDOFF</div><h2>A small agreement. A visible proof.</h2><p class="muted">The setup saves locally. You can use the checks without publishing your draft. Pushing later shares only selected records for the team’s review.</p><div class="proposal-summary"><h3>${escapeHTML(setupState.mission || "Mission needs confirmation")}</h3><dl><dt>Implementation</dt><dd>${escapeHTML(setupState.philosophy)}</dd><dt>Change authority</dt><dd>${escapeHTML(setupState.owner || "Owner needs confirmation")}</dd><dt>Initial safeguard</dt><dd>${escapeHTML(setupState.metric || "Metric needs definition")}</dd><dt>Proposed coverage</dt><dd>4 automated gates · 1 required review · 1 advisory standard</dd><dt>Storage model</dt><dd>Local Dolt · readable exports · optional remote</dd><dt>Visibility</dt><dd>Local only · nothing published</dd><dt>Accepted / installed</dt><dd>No / No</dd></dl></div><p class="muted">Review and apply the local wiring, prove a known bad change is rejected, and keep the receipt. wh push is optional. CI always uses accepted team policy, never an unapproved local experiment.</p><div class="actions" style="margin-top:19px"><button id="download-proposal" class="btn primary">Download local proposal ${icon("down")}</button><a href="#workspace" class="btn ghost">Inspect the sample workspace</a></div><p class="muted" style="margin-top:12px;font-size:10px">Download is concept JSON, not an accepted CLI input schema. The workspace keeps its fictional team snapshot. Your draft does not update it or any remote.</p>`,
         ];
         $("#setup-panel").innerHTML = panels[setupStep];
         $("#setup-cli").textContent = setupCommands[setupStep];
@@ -3226,6 +3523,14 @@ ADVISORY GUIDE-06 no deterministic verdict
           status: "candidate",
           approved: false,
           installed: false,
+          published: false,
+          visibility: "local-only",
+          storage: {
+            proposedBackend: "dolt",
+            actualDemo: "in-memory",
+            remoteConfigured: false,
+            portableExports: ["markdown", "json"],
+          },
           agreement: { ...setupState },
           standards: standards.map(({ id, name, kind }) => ({
             id,
@@ -3256,161 +3561,159 @@ ADVISORY GUIDE-06 no deterministic verdict
         link.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
         toast(
-          "Demo proposal downloaded. Nothing has been approved or installed.",
+          "Local proposal downloaded. Nothing has been installed, approved, or published.",
         );
       });
 
       const flows = {
         human: [
           {
-            title: "Understand the relevant agreement",
-            text: "Start with the scope you are changing, its standards, and their rationale.",
-            actor: "Engineer · read-only",
-            command: "wh context --scope src/modules/checkout",
+            title: "Inspect the agreement",
+            text: "Open the dashboard for standards, their rationale, current evidence, and local drafts.",
+            actor: "Engineer · read-only until you act",
+            command: "wh dash",
             output:
-              "Agreement: v1.3\nScope: checkout + payment boundary\nRequired: architecture, browser tests, owner review\nRationale: D-002 · modular monolith\nAdvisory: functional core",
+              "Team agreement: v1.3\nLocal: 2 drafts + 1 private preference\nRemote: unchanged\n\nInspect · edit locally · run checks · review sharing\nNothing publishes merely because the dashboard is open.",
             explanation:
-              "The same readable records are available in the viewer, your editor, and the CLI. You do not need an agent to participate.",
+              "Dolt holds versioned state. The dashboard and readable exports expose the same agreement without requiring code-repository commits.",
             boundary:
-              "Context retrieval changes no policy and grants no authority.",
+              "Editing documents starts a local change. It cannot silently replace accepted team policy.",
           },
           {
-            title: "Make the change with local feedback",
-            text: "Use existing tools; get fast feedback before submitting a review.",
-            actor: "Engineer + native tools",
-            command: "npm run test:architecture\nnpm run test:checkout",
+            title: "Make a local change",
+            text: "Change mission, values, philosophy, a rule, or its tooling. Inspect the impact and local diff.",
+            actor: "Engineer + existing tools",
+            command: "wh change",
             output:
-              "Architecture: 1 prohibited import\nCheckout journeys: 3 passed\n\nFix: import the public payment interface.\nPassing tests alone do not satisfy owner review.",
+              "Local draft L-007\nChange: checkout p95 250 ms → 220 ms\nAffected: PERF-04\nRequired team approver: Reliability owners\n\nSaved locally. Not shared. Team target stays 250 ms.",
             explanation:
-              "Whetstone connects the standard to its native checker. It does not replace your test runner, compiler, or linter.",
+              "One resumable flow captures intent, shows the diff, and coordinates implementation. The engineer or agent does the work; Whetstone records the decision and its safeguards.",
             boundary:
-              "These npm scripts are fictional project bindings, not Whetstone commands. Local checks support feedback; protected CI is the merge boundary.",
+              "Local experiments stay separate. Changing infrastructure or weakening a mandatory gate still requires the appropriate authority.",
           },
           {
-            title: "Inspect the verification receipt",
-            text: "Check the current revision, failing gates, and missing evidence.",
-            actor: "Deterministic CLI · read-only aggregation",
-            command: "wh verify --scope src/modules/checkout --json",
+            title: "Check before sharing",
+            text: "Run applicable native checks and inspect evidence against the local and team agreements.",
+            actor: "Deterministic CLI + native checks",
+            command: "wh check",
             output:
-              '{\n  "revision": "a1b2c3d",\n  "agreement": "v1.3",\n  "merge": "blocked",\n  "deploy": "blocked",\n  "reasons": ["ARCH-01 failed",\n    "PROC-05 pending", "PERF-04 stale"]\n}',
+              "Code: a1b2c3d\nTeam agreement: v1.3\nLocal draft overlay: L-007\n\nFAIL     architecture boundary\nUNKNOWN  fresh production latency evidence needed\nPENDING  required owner review\n\nNo fixes applied. No remote state changed.",
             explanation:
-              "Every receipt identifies its code and policy revision. Evidence that is absent, stale, or from a different revision cannot count as current success.",
+              "Reports distinguish local experiments from team compliance. Check receipts identify code, team policy, local overlay, and evidence age.",
             boundary:
-              "Production outcome evidence is distinct from pre-merge checks. Each gate declares where it applies.",
+              "Local preferences cannot relax required team gates. A local pass is not proof of accepted team compliance.",
           },
           {
-            title: "Resolve gates, then merge normally",
-            text: "Fix the violation, obtain the required review, and let protected CI verify the final revision.",
-            actor: "Engineer + scoped owner + CI",
-            command:
-              "# Your existing repository workflow\n# Push the fix; request the platform-owner review.\n# Required CI reruns on the final revision.",
+            title: "Share only when you choose",
+            text: "Preview the outgoing selection. Leave private preferences and unrelated drafts on your machine.",
+            actor: "Engineer · explicit outbound action",
+            command: "wh push",
             output:
-              "Approval is bound to the reviewed change.\nBoundary checks must pass on the final revision.\nProduction metric evidence must be fresh to deploy.\n\nNo Whetstone “override all” shortcut.",
+              "Selected: L-007 · tighten checkout target\nRemaining local: L-008 + private preference\n\nAfter confirmation:\n  Shared proposal: P-007\n  Approval: pending Reliability owners\n  Accepted team agreement: still v1.3",
             explanation:
-              "Whetstone explains what remains and who can decide. The repository’s actual permissions, checks, and deployment controls enforce the boundary.",
+              "Sharing is optional. The publication path contains selected shareable records and their dependencies, not a blind copy of private Dolt state or history.",
             boundary:
-              "An authorised exception is an explicit, scoped, recorded decision—not a check silently removed from the PR.",
+              "A push publishes a proposal; it does not approve the rule or deploy its tooling. Actual code changes keep their normal Git workflow.",
           },
         ],
         agent: [
           {
-            title: "Load the project skill and scoped context",
-            text: "The agent reads the entry point and retrieves only the standards relevant to the task.",
+            title: "Read the project state",
+            text: "Load the project skill and ask for structured context instead of driving a human wizard.",
             actor: "Agent skill → deterministic CLI",
-            command: "wh context --scope src/modules/checkout --json",
+            command: "wh --json",
             output:
-              '{\n  "agreement": "v1.3",\n  "required_checks": ["ARCH-01", "TEST-03"],\n  "required_review": "Platform owners",\n  "guidance": ["GUIDE-06"],\n  "can_approve_exceptions": false\n}',
+              '{\n  "team_agreement": "v1.3",\n  "local_drafts": [\n    "L-007",\n    "L-008"\n  ],\n  "required_review": "Reliability owners",\n  "can_publish": false,\n  "next_action": "inspect relevant standards"\n}',
             explanation:
-              "The skill owns interpretation and planning. The CLI returns stable, scoped data. Host adapters expose the same agreement without assuming every agent supports identical hooks.",
+              "Bare wh is the read-only orientation. The same workflow commands support structured input and output; incomplete decisions return an explicit next action without blocking on a TUI.",
             boundary:
-              "A task request does not grant authority to weaken team policy or approve a conflicting change.",
+              "Reading state does not contact or mutate a remote automatically, grant approval, or authorise publication.",
           },
           {
-            title: "Implement and run the bound checks",
-            text: "The agent uses native tools, fixes violations, and preserves the applicable policy revision.",
-            actor: "Agent + native checks",
-            command: "npm run test:architecture\nnpm run test:checkout",
+            title: "Draft and implement locally",
+            text: "Use the agreed scope, existing tools, and relevant standards. Keep the change in the local workspace.",
+            actor: "Agent skill + local change record",
+            command: 'wh change "Tighten checkout latency" --json',
             output:
-              "ARCH-01: prohibited private import\n→ use public interface; rerun\n\nTEST-03: preserve passing browser journeys\n→ retain fixture and code revision in receipt",
+              '{\n  "change": "L-007",\n  "visibility": "local-only",\n  "base_agreement": "v1.3",\n  "state": "needs_metric_evidence",\n  "next_action": "collect baseline and propose threshold",\n  "published": false\n}',
             explanation:
-              "Agent hooks can shorten the feedback loop where supported. A contributor who skips the skill is still subject to repository-enforced checks.",
+              "The skill supplies judgment and performs scoped work. The CLI stores the draft, validates structure, and tracks what still requires confirmation.",
             boundary:
-              "The agent may fix code within scope. It may not silently rewrite a gate, change a baseline, or edit accepted policy to make a failure disappear.",
+              "The agent cannot turn an inferred preference into accepted policy, or bypass review by changing a checker or baseline.",
           },
           {
-            title: "Stop at the judgment boundary",
-            text: "Present the owner with the conflict, options, recommendation, and evidence.",
-            actor: "Agent prepares · owner decides",
-            command: "wh decision propose boundary-exception.md",
+            title: "Check and leave a handoff",
+            text: "Return evidence, remaining gates, and the next decision. The draft can stay local indefinitely.",
+            actor: "CLI receipt → durable local handoff",
+            command: "wh check --json",
             output:
-              "Proposal P-018 · candidate\nAffected: ARCH-01 / checkout-payment boundary\nOptions: use public interface; scoped exception\nRecommendation: use public interface\nRequired approver: Platform owners\n\nWaiting for authorised decision. No approval recorded.",
+              '{\n  "code": "a1b2c3d",\n  "team_agreement": "v1.3",\n  "local_overlay": "L-007",\n  "result": "blocked",\n  "remaining": [\n    "architecture violation",\n    "stale latency receipt",\n    "owner review"\n  ],\n  "published": false\n}',
             explanation:
-              "Escalate only a real policy trade-off. If the public interface satisfies the task, the agent can fix the implementation without asking to change the architecture.",
+              "A later person or agent can resume from the local record. Raw telemetry stays in its existing system; Whetstone stores definitions and compact evidence receipts.",
             boundary:
-              "The agent cannot approve its own proposal. Human approval must come through an authenticated, protected mechanism.",
+              "Checking does not fix, approve, push, or silently pull policy. Protected CI independently evaluates accepted team requirements.",
           },
           {
-            title: "Verify and leave a durable handoff",
-            text: "Return current evidence and remaining decisions, ready for a person or another agent.",
-            actor: "CLI receipt → agent handoff",
-            command: "wh verify --scope src/modules/checkout --json",
+            title: "Publish only with explicit scope",
+            text: "If the user asks to share, preview the exact changes and request any missing publication authority.",
+            actor: "Agent · scoped publication only",
+            command: "wh push --json",
             output:
-              "Handoff\n  objective: update checkout safely\n  policy: v1.3\n  revision: latest reviewed commit\n  evidence: bound check receipts\n  unresolved: owner review / stale metric\n  next: request review; refresh production receipt\n\nDo not report “done” while required gates remain.",
+              '{\n  "state": "needs_confirmation",\n  "selected": [\n    "L-007"\n  ],\n  "remote": "team",\n  "approval_after_push": "pending",\n  "next_action": "confirm outgoing selection"\n}',
             explanation:
-              "The handoff lives with the project and its task records. A long-running task can resume without relying on one agent’s conversation history.",
+              "For agents, the push workflow exposes the selection, remote, required authority, and result as structured state. A local save is never described as synced.",
             boundary:
-              "Protected CI independently verifies the final code and policy revision; the agent’s report is not the enforcement mechanism.",
+              "Private history and unrelated drafts stay local. Permission to implement is not permission to publish or approve a team standard.",
           },
         ],
         evolve: [
           {
-            title: "Start with a reason to reconsider",
-            text: "An incident, changed product goal, new scale, or evidence exposes a mismatch.",
-            actor: "Anyone · evidence-backed proposal",
-            command: "wh decisions show D-004",
+            title: "Experiment without affecting the team",
+            text: "Start from an existing decision and propose an evidence-backed amendment locally.",
+            actor: "Human or agent · local workspace",
+            command: "wh change\nwh check",
             output:
-              "Current: checkout API p95 ≤ 250 ms\nReason: customer feedback + measured baseline\nOwner: Reliability owners\nRevisit: cohort changes, new latency evidence,\n         material cost or architecture trade-offs",
+              "Local draft L-007\nBased on D-004 / team v1.3\nProposed target: 220 ms\nCurrent team target: 250 ms\n\nKeep private while testing. History records the rationale.",
             explanation:
-              "The original context and revisit conditions help distinguish a useful amendment from an attempt to evade a failing check.",
+              "The same flow handles mission, core values, engineering philosophy, rules, tools, and infrastructure. Revert through a new recorded change rather than erasing history.",
             boundary:
-              "A new best-practice recommendation or model opinion does not automatically override the team’s accepted decision.",
+              "An experimental target does not alter the accepted team rule or its production gate.",
           },
           {
-            title: "Describe the amendment and its impact",
-            text: "Show the old and new rule, rationale, affected checks, and migration needs.",
-            actor: "Human or agent · candidate only",
-            command: "wh decision propose latency-amendment.md",
+            title: "Push the selected proposal",
+            text: "Choose what to share, inspect the outgoing payload, and confirm the remote.",
+            actor: "Contributor · explicit sharing",
+            command: "wh push",
             output:
-              "Candidate D-007\nSupersedes: D-004 (if approved)\nDiff: measurement cohort and target\nImpacts: PERF-04 adapter + deployment gate\nRequired: reliability owner; fresh baseline\nStatus: awaiting review",
+              "Share L-007 only\nLocal private state excluded\nTeam proposal P-007 created after confirmation\n\nApproval pending. No active policy or tooling changed.",
             explanation:
-              "Metric changes include definition, source, sample window, and threshold. Philosophy changes include affected scopes, standards, and a transition plan.",
+              "Whetstone separates private storage/history from the shareable publication path. A proposal carries only intentionally shared rationale, changes, and necessary dependencies.",
             boundary:
-              "The existing rule remains effective while its replacement is only a proposal.",
+              "Dolt versioning is not an approval system. Publication does not grant permission to change the team’s agreement.",
           },
           {
-            title: "Approve through the designated owner",
-            text: "Record the explicit decision against the precise proposed change.",
+            title: "Review through the designated owner",
+            text: "The owner reviews rationale, evidence, impact, and rollout conditions in the dashboard.",
             actor: "Authorised owner · protected review",
-            command: "wh decision approve D-007",
+            command: "wh dash",
             output:
-              "# Proposed owner-facing command\nValidates trusted approval for proposal digest.\nRecords approver, rationale, scope and date.\nCreates a reviewable policy amendment.\nDoes not bypass merge controls or install it alone.",
+              "Review P-007\nOwner: Reliability owners\nEvidence: baseline + proposed adapter diff\n\nAccept, request changes, or decline.\nAcceptance records trusted identity and proposal digest.\nActivation still requires verified enforcement.",
             explanation:
-              "Policy and generated-check changes are reviewed together. The owner’s approval is auditable and cannot be fabricated by a local author field.",
+              "Decision review is a step inside the dashboard and change workflow, not another command family. The shared acceptance record must be published before others can receive it.",
             boundary:
-              "Approval requires real permissions and identity. A flag, a name in YAML, or possession of the CLI is not sufficient authority.",
+              "A contributor editing approved_by locally cannot authorise a team change. Access controls must protect the accepted-policy publication path.",
           },
           {
-            title: "Activate together and preserve history",
-            text: "Merge the approved policy and wiring, verify the new gates, and keep the superseded record.",
-            actor: "CI + repository history",
-            command:
-              "wh setup wire --approved <digest>\nwh verify --scope src/modules/checkout --json\nwh decisions list --all",
+            title: "Pull, reconcile, and check",
+            text: "Receive shared records without losing local work. Reconcile conflicts before activating new wiring.",
+            actor: "Inbound sync → reviewed local change",
+            command: "wh pull\nwh change\nwh check",
             output:
-              "Policy and gate diff must merge together.\nRequired verification runs on the new revision.\n\nHistory after activation:\nD-003 → D-004 → D-007\nOriginal rationale and past effective states remain.",
+              "Incoming approved policy: v1.4\nLocal draft preserved: L-007\nConflict: local 220 ms / incoming 225 ms\n\nActive agreement remains v1.3 until reconciled.\nNo scripts or infrastructure changes run during pull.\nRecord final code + policy revisions when checking.",
             explanation:
-              "The viewer shows both the current agreement and the historical one. The chronology never loses a key decision because a standard was replaced.",
+              "Pull retrieves team updates; change resolves conflicts and reviews the local integration diff. Full decision history stays available, including superseded policies.",
             boundary:
-              "A failed or incomplete rollout is visible. Approval alone is not proof that the new enforcement is installed and working.",
+              "Pull never publishes local drafts. Failed sync, unresolved conflicts, and incomplete rollout remain visible—not silently marked successful.",
           },
         ],
       };
@@ -3701,6 +4004,7 @@ ADVISORY GUIDE-06 no deterministic verdict
           event.target.close();
       });
 
+      renderSharingStatus();
       renderStandards();
       renderSetup();
       renderFlow();

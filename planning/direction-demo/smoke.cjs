@@ -27,6 +27,34 @@ async function main() {
   };
 
   try {
+    const htmlSource = await fs.readFile(
+      path.join(__dirname, "index.html"),
+      "utf8",
+    );
+    const allowedCommands = ["init", "dash", "change", "check", "push", "pull"];
+    const commandNames = [
+      ...new Set(
+        Array.from(
+          htmlSource.matchAll(/\bwh (init|dash|change|check|push|pull)\b/g),
+          (match) => match[1],
+        ),
+      ),
+    ];
+    check(
+      !/\bwh (setup|context|verify|decisions?|ui|extract|rules|actions|scan|status|mcp)\b/.test(
+        htmlSource,
+      ),
+      "The previous command tree is removed",
+    );
+    check(
+      allowedCommands.every((command) => commandNames.includes(command)),
+      "Every agreed command appears in the artefact",
+    );
+    check(
+      !htmlSource.includes("stored in Git") &&
+        !htmlSource.includes("mandatory database"),
+      "The previous Git-authoritative model is removed",
+    );
     const context = await browser.newContext({
       viewport: { width: 1440, height: 1080 },
       reducedMotion: "reduce",
@@ -46,6 +74,14 @@ async function main() {
       "Default view is the brief",
     );
     check(await page.locator("#brief").isVisible(), "Brief is visible");
+    check(
+      (await page.locator(".command-strip code").count()) === 6,
+      "One-pager exposes six commands",
+    );
+    check(
+      (await page.locator("#brief").innerText()).includes("Dolt"),
+      "One-pager explains Dolt-backed state",
+    );
     await page.screenshot({
       path: path.join(output, "01-one-pager.png"),
       fullPage: true,
@@ -133,6 +169,132 @@ async function main() {
       check(receipt.includes(text), `Receipt preserves ${text}`);
     }
 
+    check(
+      (await page.locator("#sharing-status").innerText()).includes(
+        "2 local drafts",
+      ),
+      "Running checks does not publish local drafts",
+    );
+    await page.locator("#preview-push").click();
+    check(await page.locator("#push-dialog").isVisible(), "Push preview opens");
+    check(
+      await page.locator("#confirm-push").isDisabled(),
+      "Sharing requires an explicit selection",
+    );
+    check(
+      (await page.locator("[data-share-id]").count()) === 2,
+      "Only shareable drafts can be selected",
+    );
+    check(
+      (await page.locator('[data-share-id="P-001"]').count()) === 0,
+      "Private preference is not selectable",
+    );
+    check(
+      (await page.locator("#push-body").innerText()).includes(
+        "Private records and their history",
+      ),
+      "Privacy includes unpublished history",
+    );
+    await page.locator('[data-share-id="L-007"]').check();
+    let payload = JSON.parse(await page.locator("#push-payload").innerText());
+    check(
+      payload.changes.length === 1 && payload.changes[0].id === "L-007",
+      "Preview includes exactly the selected draft",
+    );
+    check(
+      !JSON.stringify(payload).includes("P-001") &&
+        !JSON.stringify(payload).includes("explicit exports"),
+      "Outgoing payload excludes private identity and content",
+    );
+    await page.locator("#cancel-push").click();
+    check(
+      (await page.locator("#sharing-status").innerText()).includes(
+        "2 local drafts",
+      ),
+      "Cancelling a preview leaves all drafts local",
+    );
+    await page.locator("#preview-push").click();
+    await page.screenshot({
+      path: path.join(output, "07-push-preview.png"),
+      fullPage: true,
+    });
+    await page.locator("#confirm-push").click();
+    check(
+      (await page.locator("#push-body").innerText()).includes(
+        "Approval is pending",
+      ),
+      "Publishing does not grant approval",
+    );
+    payload = JSON.parse(await page.locator("#push-payload").innerText());
+    check(
+      payload.approval === "pending" && payload.baseAgreement === "v1.3",
+      "Publication pins the base agreement and remains a proposal",
+    );
+    check(
+      payload.changes.length === 1 && payload.changes[0].id === "L-007",
+      "Confirmed publication matches the preview",
+    );
+    await page.keyboard.press("Escape");
+    check(
+      !(await page.locator("#push-dialog").isVisible()),
+      "Sharing dialog dismisses with Escape",
+    );
+    const sharedStatus = await page.locator("#sharing-status").innerText();
+    check(
+      sharedStatus.includes("1 local draft") &&
+        sharedStatus.includes("1 shared proposal") &&
+        sharedStatus.includes("1 private preference"),
+      "Unselected and private records remain local",
+    );
+    check(
+      sharedStatus.includes("team v1.3 unchanged"),
+      "Publishing does not replace the accepted team agreement",
+    );
+    check(
+      (await page.locator("#rule-rows tr").count()) === 6,
+      "Shared proposals are not inserted as accepted standards",
+    );
+    await page.locator("#demo-pull").click();
+    const pullReceipt = await page.locator("#sync-receipt").innerText();
+    check(
+      pullReceipt.includes("conflict") &&
+        pullReceipt.includes("220 ms") &&
+        pullReceipt.includes("225 ms"),
+      "Pull surfaces both sides of a conflicting change",
+    );
+    check(
+      pullReceipt.includes("preserved") &&
+        pullReceipt.includes("v1.3 stays at 250 ms"),
+      "Pull preserves the local draft and active policy",
+    );
+    check(
+      (await page.locator("#sharing-status").innerText()) === sharedStatus,
+      "Pull does not publish pending local changes",
+    );
+    await page.locator("#demo-pull").click();
+    check(
+      (await page.locator("#sync-receipt").innerText()) === pullReceipt,
+      "Repeated pull is a stable replay",
+    );
+    await page.locator("#preview-push").click();
+    check(
+      await page.locator('[data-share-id="L-007"]').isDisabled(),
+      "Already shared changes cannot be accidentally resent",
+    );
+    check(
+      await page.locator("#confirm-push").isDisabled(),
+      "A subsequent push requires another explicit selection",
+    );
+    check(
+      !(await page.locator('[data-share-id="L-008"]').isDisabled()),
+      "The unshared draft is still available locally",
+    );
+    await page.locator("#close-push").click();
+    await page.screenshot({
+      path: path.join(output, "08-local-and-shared.png"),
+      fullPage: true,
+    });
+
     await navigate("setup");
     await page.locator("#setup-next").click();
     const mission =
@@ -176,6 +338,15 @@ async function main() {
     const proposalPath = path.join(output, download.suggestedFilename());
     await download.saveAs(proposalPath);
     const proposal = JSON.parse(await fs.readFile(proposalPath, "utf8"));
+    check(
+      proposal.published === false && proposal.visibility === "local-only",
+      "Setup exports remain local and unpublished",
+    );
+    check(
+      proposal.storage.proposedBackend === "dolt" &&
+        proposal.storage.actualDemo === "in-memory",
+      "Proposal distinguishes intended Dolt backend from this simulation",
+    );
     check(
       proposal.approved === false && proposal.installed === false,
       "Download is an unapproved, uninstalled proposal",
@@ -244,16 +415,24 @@ async function main() {
     );
     check(
       (await page.evaluate(() => window.getSelection().toString())).includes(
-        "wh context",
+        "wh --json",
       ),
       "Clipboard fallback selects the example",
     );
     await page.locator(".command-reference summary").click();
     check(
-      (await page.locator(".command-table").innerText()).includes(
-        "EXISTS IN v0.12",
+      (await page.locator(".command-reference").innerText()).includes(
+        "not implemented in v0.12",
       ),
-      "Reference distinguishes existing commands",
+      "Reference distinguishes the concept from shipped functionality",
+    );
+    const listedCommands = await page
+      .locator(".command-table [data-command]")
+      .evaluateAll((rows) => rows.map((row) => row.dataset.command));
+    check(
+      listedCommands.length === 6 &&
+        allowedCommands.every((command) => listedCommands.includes(command)),
+      "Reference has exactly six command families",
     );
 
     await navigate("decisions");
@@ -373,6 +552,19 @@ async function main() {
           `No horizontal page overflow: ${view} at ${width}px`,
         );
       }
+      await navigate("workspace");
+      await page.locator("#preview-push").click();
+      check(
+        await page
+          .locator("#push-dialog")
+          .evaluate(
+            (dialog) =>
+              dialog.getBoundingClientRect().right <= innerWidth &&
+              dialog.getBoundingClientRect().left >= 0,
+          ),
+        `Sharing preview fits at ${width}px`,
+      );
+      await page.keyboard.press("Escape");
       if (width === 390) {
         await navigate("workspace");
         await page.screenshot({
@@ -384,6 +576,12 @@ async function main() {
 
     await page.setViewportSize({ width: 1440, height: 1080 });
     await page.goto(pathToFileURL(path.join(__dirname, "index.html")).href);
+    check(
+      (await page.locator("#sharing-status").textContent()).includes(
+        "2 local drafts",
+      ),
+      "Reload resets simulated sharing rather than implying durable storage",
+    );
     await page.keyboard.press("Tab");
     check(
       await page
