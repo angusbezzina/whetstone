@@ -1299,12 +1299,53 @@ mod tests {
     }
 
     fn tempdir() -> PathBuf {
+        tempdir_at(rand_part())
+    }
+
+    fn tempdir_at(timestamp: u128) -> PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
         let base = std::env::temp_dir().join(format!(
-            "wh-check-test-{}",
-            std::process::id() as u128 * 1_000_000 + rand_part()
+            "wh-check-test-{}-{timestamp}-{}",
+            std::process::id(),
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(&base).unwrap();
+        // A clock tick may be shared by parallel tests. Never reuse a fixture
+        // directory: the atomic suffix isolates calls and create_dir fails closed.
+        std::fs::create_dir(&base).unwrap();
         base
+    }
+
+    #[test]
+    fn tempdirs_are_isolated_when_parallel_calls_share_a_timestamp() {
+        let barrier = std::sync::Barrier::new(32);
+        let timestamp = rand_part();
+        let paths = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..32)
+                .map(|index| {
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        barrier.wait();
+                        let path = tempdir_at(timestamp);
+                        write_file(&path.join("marker.txt"), &index.to_string());
+                        path
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        let unique: std::collections::HashSet<_> = paths.iter().collect();
+        assert_eq!(unique.len(), 32);
+        for (index, path) in paths.iter().enumerate() {
+            assert_eq!(
+                std::fs::read_to_string(path.join("marker.txt")).unwrap(),
+                index.to_string()
+            );
+            std::fs::remove_dir_all(path).unwrap();
+        }
     }
 
     fn rand_part() -> u128 {
