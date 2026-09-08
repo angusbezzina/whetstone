@@ -5,13 +5,20 @@ artefact: no build, server, network requests, account, or runtime dependencies.
 
 The five views are:
 
-- **One-pager:** the closed correction loop, one setup flow, and six proposed
+- **One-pager:** delegated work, bounded correction, accountable acceptance, and
+  outcome follow-through; one setup flow and six proposed
   commands: `wh init`, `wh dash`, `wh change`, `wh check`, `wh push`, and `wh pull`.
   “Print one-pager” prints this brief from any view.
 - **Workspace:** a four-stage task replay: intent, feedback, response, and fresh
-  verification or a precise blocker. Three cases show an agent repairing its
+  verification or a precise blocker. Three original cases show an agent repairing its
   mistake without owner interruption, stopping for a real owner decision, and
   stopping after a bounded retry when a required checker is unavailable.
+  Two new cases extend this through the outer loop: checks pass but the owner
+  redirects a costly approach, and an accepted/released change produces an
+  adverse outcome that opens an authorized local repair. Verification,
+  authorization, and outcome have separate states. Reverification does not
+  approve the revised candidate or resolve a live incident. Sample shortcuts
+  foreground routine work, consequential decisions, and follow-through.
   Nothing automatically advances: each button simulates the next stage, and
   restart/case selection resets that task. No agent or command actually runs.
   Below it, six fictional standards belong to a **separate reference PR** with
@@ -25,6 +32,11 @@ The five views are:
 - **Setup:** inspect, agree, preview wiring, and prove feedback → repair → recheck.
   Mission, values, philosophy, owner, desired outcome, and safeguard are
   editable and can be downloaded as an explicitly unapproved concept proposal.
+  Expand delegation and follow-through defaults to edit permitted work,
+  exclusions, review triggers, budgets, observation source/owner/window, and
+  recovery. These are inherited proposals, not per-task forms or permission
+  grants. The preview distinguishes enforceable host/platform restrictions from
+  advisory constraints. Downloading does not activate authority or monitoring.
   Draft edits do not change the workspace snapshot. Reload resets the draft.
 - **Workflows:** ordinary engineer and agent correction loops, plus a separate
   policy-amendment walkthrough, with selectable
@@ -45,6 +57,10 @@ boundary if desired.
 
 ## Feedback and completion model (proposed)
 
+This direction applies the distinction between routine automation and accountable
+decisions in [Addy Osmani’s Own the Outer Loop](https://addyosmani.com/blog/own-the-outer-loop/).
+The following are Whetstone design proposals, not capabilities implemented here.
+
 - Fast relevant checks feed failures into the active worker's context. Use host
   hooks where supported and explicit CLI checkpoints elsewhere. Broader checks
   and an acceptance/scope review are required before task completion.
@@ -60,6 +76,21 @@ boundary if desired.
   is needed for every edit. Explicit path/operation limits can be checked;
   semantic task relevance and taste remain judgment, not deterministic claims.
   Task-scope support is a proposed expansion beyond the current shipped boundary.
+- Inherit explicit standing authority for routine work, with exclusions,
+  retry/time/resource limits, and suspension conditions. Bind enforceable limits
+  to real host permissions and protected gates; unsupported limits are advisory.
+  Routine code-work authority never silently authorizes Whetstone publication.
+- Separate verification, authorization, and outcome. Owners may redirect or
+  reject technically verified work for cost, priorities, or risk. Consequential
+  verdicts recorded through `wh dash` / `wh change` bind the reviewed candidate;
+  changed code requires fresh verification and the applicable new verdict.
+  A second agent is not a substitute for accountable authority.
+- Acceptance includes the expected effect, observation source, release cohort,
+  freshness, responsible owner, review window, and recovery action. Existing
+  monitoring and release tools remain authoritative for their events. An adverse
+  result alerts the operator and feeds a bounded investigation/repair to the
+  agent. Missing data stays unknown. Local passing tests do not close a live
+  incident; release/rollback needs authority and a fresh observation follows it.
 - Missing authority stops immediately. Retry/time budgets and repeated no
   progress bound other repairs. A blocked handoff carries the exact question,
   recommendation, options, evidence, revision, and permitted next action.
@@ -69,6 +100,17 @@ boundary if desired.
 - Gradual adoption preserves existing safeguards and makes legacy debt explicit.
   Prove a known-bad change, an authorized repair, a known-good recheck, and a real
   escalation. Mission outcomes are distinct from stage-specific blocking gates.
+- Test the loop itself: real mistakes are repaired, valid alternatives survive,
+  stale approvals and changed checkers block, user requirements cannot disappear
+  behind narrow tests, and authority gaps reach the right owner. Re-evaluate after
+  model, skill, or integration changes. Measure false blocks, unnecessary
+  interruptions, escaped failures, decision effort, and overdue follow-through—not
+  simply the number of green checks or how rarely humans are involved.
+- Preserve linked intent, constraints, changes, verification, decisions, and
+  outcomes, including accepted/rejected examples with rationale. Supply only
+  relevant context to agents. Dolt records and stable portable interfaces suffice;
+  no graph database, replacement tracker, fleet manager, or custom telemetry.
+  First implementation: one repository and one existing CI/release integration.
 
 ## State and sharing model (proposed)
 
@@ -100,6 +142,8 @@ boundary if desired.
 The HTML itself uses only in-memory sample data, not Dolt or an actual remote.
 All simulated sharing, selections, and edits reset on reload. The accepted
 history view deliberately remains the fixed fictional v1.3 snapshot.
+The outer-loop cases have their own isolated task/decision/observation IDs; their
+simulated decisions never append to that separate reference history.
 
 ## Browser smoke test
 
@@ -117,7 +161,9 @@ PDF in a uniquely named temporary directory and prints its location.
 
 Coverage includes the six-command contract, navigation, the bounded repair loop,
 fresh re-verification, owner escalation, unavailable-checker blocking, reset and
-scenario isolation, standard filters and details, blocked reference check replay,
+scenario isolation, verified-but-redirected work, outcome-triggered repair,
+separate authority/outcome states, inherited defaults without permission grants,
+standard filters and details, blocked reference check replay,
 selective publication, private-record exclusion,
 no implicit approval, pull conflicts and preserved local drafts, dialog
 dismissal, setup edits and proposal download, all three workflows, clipboard

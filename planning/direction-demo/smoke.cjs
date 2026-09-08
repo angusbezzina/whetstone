@@ -84,9 +84,11 @@ async function main() {
     );
     const brief = await page.locator("#brief").innerText();
     check(
-      brief.includes("Repair → recheck → finish") &&
+      brief.includes("Check → repair → recheck") &&
+        brief.includes("Decide → observe → improve") &&
+        brief.includes("Verified ≠ authorized ≠ a healthy outcome") &&
         !brief.includes("Evidence you can inspect"),
-      "One-pager ends in correction and verification rather than a report",
+      "One-pager connects correction to accountable decisions and outcomes",
     );
     await page.screenshot({
       path: path.join(output, "01-one-pager.png"),
@@ -143,6 +145,26 @@ async function main() {
           "Blocked — verification",
         ],
       ],
+      [
+        "redirect",
+        "T-045",
+        [
+          "Verified — decision needed",
+          "Redirected — narrower scope",
+          "Reworked — recheck required",
+          "Reverified — acceptance pending",
+        ],
+      ],
+      [
+        "outcome",
+        "T-046",
+        [
+          "Accepted — observation pending",
+          "Outcome breach — follow-up open",
+          "Repair candidate — recheck required",
+          "Repair verified — follow-through open",
+        ],
+      ],
     ]) {
       await page.locator("#loop-scenario").selectOption(scenario);
       check(
@@ -165,6 +187,18 @@ async function main() {
           result.includes("NO COMMAND EXECUTED"),
           `${scenario} is clearly a simulation`,
         );
+        check(
+          (await page.locator(".loop-axes dt").allTextContents()).join("|") ===
+            "Verification|Authorization|Outcome",
+          `${scenario} step ${step + 1} separates all three completion axes`,
+        );
+        for (const axis of ["verification", "authorization", "outcome"]) {
+          check(
+            (await page.locator(`[data-axis="${axis}"]`).innerText()).length >
+              10,
+            `${scenario} step ${step + 1} exposes a meaningful ${axis} state`,
+          );
+        }
         if (scenario === "routine" && step === 1) {
           for (const token of [
             "ARCH-01",
@@ -266,6 +300,126 @@ async function main() {
             fullPage: true,
           });
         }
+        if (scenario === "redirect") {
+          const required = [
+            [
+              "Passed · abc4501",
+              "New service not authorized",
+              "existing queue",
+              "Platform owners",
+              "expected task revision 1",
+            ],
+            [
+              "new service rejected despite passing checks",
+              "operational simplicity",
+              "2 repair attempts / 20 minutes",
+              "Stale reply",
+              "local rework only",
+            ],
+            [
+              "V-045.1 is invalid for abc4502",
+              "not acceptance or release",
+              "Existing",
+              "wh check",
+            ],
+            [
+              "V-045.2",
+              "Acceptance: PENDING",
+              "expected",
+              "NOT COMPLETE",
+              "No automatic merge, deployment, or publication",
+            ],
+          ];
+          // Rework explicitly preserves existing safeguards, regardless of prose case.
+          for (const token of required[step])
+            check(
+              result.toLowerCase().includes(token.toLowerCase()),
+              `Redirect stage ${step + 1} preserves ${token}`,
+            );
+          check(
+            !(await page.locator('[data-axis="outcome"]').innerText()).includes(
+              "healthy",
+            ),
+            "An undeployed candidate cannot claim a healthy outcome",
+          );
+          if (step === 1) {
+            await page.evaluate(() => window.scrollTo(0, 0));
+            await page.screenshot({
+              path: path.join(output, "13-verified-but-redirected.png"),
+              fullPage: true,
+            });
+          }
+        }
+        if (scenario === "outcome") {
+          const required = [
+            [
+              "D-046.1",
+              "separately authorized release",
+              "Expected:",
+              "O-046.1",
+              "Window:",
+              "Freshness:",
+              "Owner:",
+              "Recovery:",
+              "no production writes",
+            ],
+            [
+              "1,240",
+              "3 confirmed duplicate charges",
+              "Causality: not yet established",
+              "INC-046",
+              "Payments on-call",
+              "Next for agent:",
+              "2 attempts / 20 min",
+            ],
+            [
+              "redacted fixture",
+              "do not cover abc4602",
+              "no silent promotion",
+              "Incident INC-046 remains open",
+              "wh change",
+            ],
+            [
+              "V-046.2",
+              "Acceptance / release of abc4602: PENDING",
+              "D-046.1 cannot authorize",
+              "expected task revision 4",
+              "fresh 24h observation",
+              "live outcome unresolved",
+              "no automatic deployment or wh push",
+            ],
+          ];
+          for (const token of required[step])
+            check(
+              result.includes(token),
+              `Outcome stage ${step + 1} preserves ${token}`,
+            );
+          if (step === 3) {
+            check(
+              (
+                await page.locator('[data-axis="verification"]').innerText()
+              ).startsWith("Passed"),
+              "Repair verification can pass",
+            );
+            check(
+              (
+                await page.locator('[data-axis="authorization"]').innerText()
+              ).includes("pending"),
+              "Repair verification cannot authorize its own release",
+            );
+            check(
+              (
+                await page.locator('[data-axis="outcome"]').innerText()
+              ).startsWith("Unresolved"),
+              "Local repair cannot close the operational outcome",
+            );
+            await page.evaluate(() => window.scrollTo(0, 0));
+            await page.screenshot({
+              path: path.join(output, "14-outcome-follow-through.png"),
+              fullPage: true,
+            });
+          }
+        }
         if (step < 3) await page.locator("#loop-next").click();
       }
       check(
@@ -282,13 +436,27 @@ async function main() {
       );
       await page.locator("#loop-reset").click();
       check(
-        (await page.locator("#loop-status").innerText()) === "Working",
+        (await page.locator("#loop-status").innerText()) === states[0],
         `${scenario} restart clears its result`,
       );
       check(
         !(await page.locator("#loop-next").isDisabled()),
         `${scenario} can be replayed`,
       );
+    }
+    for (const scenario of ["redirect", "outcome", "routine"]) {
+      await page.locator(`[data-case="${scenario}"]`).click();
+      check(
+        (await page.locator("#loop-scenario").inputValue()) === scenario,
+        `${scenario} shortcut opens the correct case`,
+      );
+      check(
+        (
+          await page.locator('#loop-steps [aria-current="step"]').innerText()
+        ).startsWith("1."),
+        "Case shortcut starts a fresh replay",
+      );
+      await page.locator("#loop-next").click();
     }
     await page.locator("#loop-scenario").selectOption("routine");
     for (const [filter, count, id] of [
@@ -508,6 +676,17 @@ async function main() {
       .locator("#setup-philosophy")
       .selectOption("Team-defined mixed approach");
     await page.locator("#setup-metric").fill("Checkout p95 ≤ 220 ms");
+    check(
+      !(await page.locator("#setup-delegation").getAttribute("open")),
+      "Inherited defaults stay condensed until requested",
+    );
+    await page.locator("#setup-delegation summary").click();
+    const allowed = 'Checkout edits <only> & existing "trusted" checks';
+    await page.locator("#setup-allowed").fill(allowed);
+    await page.locator("#setup-observationOwner").fill("Reliability on-call");
+    await page
+      .locator("#setup-limits")
+      .fill("2 attempts / 15 minutes; no new permissions");
     await page.locator("#setup-next").click();
     check(
       (await page.locator("#setup-panel").innerText()).includes(
@@ -525,6 +704,15 @@ async function main() {
         "Architecture maintainers",
       "Owner draft preserved",
     );
+    check(
+      (await page.locator("#setup-allowed").inputValue()) === allowed,
+      "Delegation defaults survive backward navigation and escaping",
+    );
+    check(
+      (await page.locator("#setup-observationOwner").inputValue()) ===
+        "Reliability on-call",
+      "Follow-through owner survives backward navigation",
+    );
     await page.locator("#setup-next").click();
     await page.locator("#setup-next").click();
     check(
@@ -534,6 +722,13 @@ async function main() {
     check(
       (await page.locator(".proposal-summary").innerText()).includes("No / No"),
       "Setup does not imply approval or installation",
+    );
+    await page.locator("#setup-defaults-summary summary").click();
+    check(
+      (await page.locator("#setup-defaults-summary").innerText()).includes(
+        allowed,
+      ),
+      "Default summary displays user values literally",
     );
     const downloaded = page.waitForEvent("download");
     await page.locator("#download-proposal").click();
@@ -554,6 +749,33 @@ async function main() {
       proposal.approved === false && proposal.installed === false,
       "Download is an unapproved, uninstalled proposal",
     );
+    check(
+      proposal.authorityGranted === false &&
+        proposal.outcomeMonitoringActive === false,
+      "Downloading defaults grants no authority and activates no monitoring",
+    );
+    check(
+      proposal.agreement.allowed === allowed &&
+        proposal.agreement.limits.includes("15 minutes"),
+      "Export preserves scoped delegation and limits",
+    );
+    check(
+      proposal.agreement.observationOwner === "Reliability on-call" &&
+        proposal.agreement.observationSource.includes("telemetry") &&
+        proposal.agreement.observationWindow.includes("24h") &&
+        proposal.agreement.recovery.includes("rollback"),
+      "Export includes owner, source, window, and recovery path",
+    );
+    for (const token of [
+      "standing authority",
+      "adverse outcome",
+      "valid alternatives",
+      "model, skill",
+    ])
+      check(
+        proposal.reviewRequired.some((item) => item.includes(token)),
+        `Setup requires review of ${token}`,
+      );
     check(
       proposal.agreement.mission === mission,
       "Download preserves edited mission",
@@ -632,9 +854,21 @@ async function main() {
       "owner-approved scoped exception",
       "known-bad and known-good",
       "false blocks",
+      "unsupported constraints are advisory",
+      "standing code-work authority never authorizes wh push",
+      "local repair cannot close a live incident",
+      "stale approval or changed checker",
+      "failed user requirement",
+      "accepted and rejected preference examples",
+      "unnecessary owner interruptions",
+      "escaped failures",
+      "overdue follow-through",
     ]) {
       check(
-        contract.toLowerCase().includes(token.toLowerCase()),
+        contract
+          .toLowerCase()
+          .replace(/\s+/g, " ")
+          .includes(token.toLowerCase()),
         `Operating contract includes ${token}`,
       );
     }
@@ -803,6 +1037,18 @@ async function main() {
         ),
         `Long blocked handoff fits at ${width}px`,
       );
+      for (const scenario of ["redirect", "outcome"]) {
+        await page.locator("#loop-scenario").selectOption(scenario);
+        for (let step = 0; step < 4; step += 1) {
+          check(
+            await page.evaluate(
+              () => document.documentElement.scrollWidth <= innerWidth,
+            ),
+            `${scenario} stage ${step + 1} fits at ${width}px`,
+          );
+          if (step < 3) await page.locator("#loop-next").click();
+        }
+      }
       await page.locator("#preview-push").click();
       check(
         await page
