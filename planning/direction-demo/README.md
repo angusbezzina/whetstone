@@ -72,25 +72,50 @@ The five views are:
 ## Implementation epic
 
 `bd show whetstone-k5r` opens the canonical detailed plan; use
-`bd list --parent whetstone-k5r --limit 0` to inspect its 30 children.
-The epic contains 90 blocking prerequisite links and these delivery gates:
+`bd list --parent whetstone-k5r --limit 0` to inspect its live children and
+dependencies. The epic converts **this repository in place**, with mandatory
+removal before any new foundations:
 
-| Stage | Scope                                                                            | Exit / starting issue   |
-| ----- | -------------------------------------------------------------------------------- | ----------------------- |
-| M0    | Contract/cutover, storage feasibility, trust roots                               | Start `whetstone-k5r.1` |
-| M1    | Useful local agreement, native checks, agent loop, dashboard, history            | `whetstone-k5r.16`      |
-| M2    | Private-safe sharing, independent approval, protected activation, two hosts      | `whetstone-k5r.20`      |
-| M3    | Observations, mandates, deduplicated work, proactive repair, context maintenance | `whetstone-k5r.27`      |
-| M4    | Portable integration, migration/distribution, implementation readiness           | `whetstone-k5r.30`      |
+`whetstone-k5r.1` (exhaustive inventory) → `.31` (runtime/CLI removal) → `.32`
+(dependency/build/test/docs pruning) → `.33` (independently verified lean baseline).
+
+Every original downstream child `.2` through `.30` directly depends on `.33`.
+Default **remove**: each surviving primitive needs a named minimum-MVP consumer,
+a genuine quality/security-gate purpose, or narrow read-only data-recovery need,
+with its dependencies and live tests justified. Potential later reuse does not
+qualify. Remove actual source, dispatch, package paths and obsolete active
+instructions—not merely CLI help, and not a hidden legacy app alongside the new
+one. Unclassified or deferred non-essential residue blocks the gate.
+
+| Stage | Scope                                                                                                                            | Exit / starting issue               |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| R0    | Exhaustive keep/remove inventory, real removal, independent verification; lean foundation **not an MVP**                         | Start `whetstone-k5r.1`; exit `.33` |
+| M0    | Storage feasibility and trust-root decisions, only after pruning                                                                 | `whetstone-k5r.2` / `.3`            |
+| M1    | Installable local alpha: agreements, native checks, agent repair loop, dashboard, history                                        | `whetstone-k5r.16`                  |
+| M2    | **Minimum team-capable engineering MVP:** all six workflows, private-safe sharing, independent approval, protected CI, two hosts | `whetstone-k5r.20`                  |
+| M3    | Later extension: observations, mandates, proactive repair, context maintenance                                                   | `whetstone-k5r.27`                  |
+| M4    | Later portable integration, wider distribution, narrow legacy-data import and full-direction readiness                           | `whetstone-k5r.30`                  |
 
 Every child has scope, acceptance tests, dependencies and handoff requirements.
-The plan explicitly distinguishes the v0.12 CLI from this direction, audits
-existing modules for reuse, and leaves all implementation children open.
-Dolt feasibility, the first real identity/CI trust root, migration policy, and
-dogfood budgets are early owner-reviewed decisions, not assumptions hidden in
-the prototype. Existing private-mode and distribution work remains separately
-tracked. The Beads epic is authoritative; this is only a navigation index, not a
-second implementation backlog. No release/tag is authorized by creating the plan.
+R0 protects user-owned rules, guidance, hooks/configuration, privacy exclusions,
+provenance and Git/Beads/decision history. Retained invariants keep real test
+coverage; tests for retired behavior need an explicit removal/replacement map.
+All eight existing quality gates remain meaningful: no skipped checks, empty
+success stubs or weakened thresholds. Independent review verifies actual source,
+build/package closure, user-data canaries and recovery at the exact lean revision.
+Historic source remains available through Git, not a copied executable archive.
+Later data import cannot justify retaining legacy writers or a coexistence window.
+
+Minimal installation and recovery ship with the local alpha and team MVP, not
+only in M4. Proactive autonomy and broad integrations are not required for the
+minimum MVP; the whole epic stays open until the full roadmap is accepted.
+Dolt feasibility and the first real identity/CI trust root remain post-prune
+owner-reviewed decisions; the first repo and measurable dogfood budgets are
+defined in the inventory. Existing private-mode and distribution work remains
+separately tracked. The Beads epic is authoritative; this is only a navigation
+index, not a second implementation backlog. This correction updates the plan;
+source removal and new backend implementation have **not** started. All
+implementation children remain open. No release/tag is authorized by the plan.
 
 All Northstar data, dates, authors, checks, receipts, and approvals are fictional.
 The proposed CLI, governance records, integrations, and permission model are not
