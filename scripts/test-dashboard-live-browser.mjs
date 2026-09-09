@@ -109,15 +109,15 @@ let cdp;
 try {
   const activePort = await waitForFile(join(profile, "DevToolsActivePort"));
   const port = activePort.split("\n")[0];
-  let pages;
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  let page;
+  for (let attempt = 0; attempt < 400; attempt += 1) {
     try {
-      pages = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json());
-      if (pages.length) break;
+      const pages = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json());
+      page = pages.find((candidate) => candidate.type === "page" && !candidate.url.startsWith("chrome-extension:"));
+      if (page) break;
     } catch {}
     await delay(25);
   }
-  const page = pages?.find((candidate) => candidate.type === "page" && !candidate.url.startsWith("chrome-extension:"));
   assert.ok(page, "Chrome did not expose a page target");
   cdp = new Cdp(page.webSocketDebuggerUrl);
   await cdp.open();
