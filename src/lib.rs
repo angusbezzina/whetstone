@@ -1,6 +1,7 @@
 mod ast;
 mod check;
 mod cli;
+pub mod domain;
 mod output;
 mod rules;
 mod types;

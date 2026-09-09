@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "source": "planning/direction-demo/index.html Direction 05",
+  "cases": [
+    { "id": "T-042", "name": "routine feedback repair", "required_records": ["mandate", "verification_receipt"] },
+    { "id": "T-043", "name": "architectural boundary escalation", "required_records": ["proposal", "verification_receipt", "decision"] },
+    { "id": "T-044", "name": "missing checker remains unknown", "required_records": ["verification_receipt"] },
+    { "id": "T-045", "name": "owner redirect and rework", "required_records": ["proposal", "verification_receipt", "decision"] },
+    { "id": "T-046", "name": "accepted change with adverse outcome", "required_records": ["proposal", "verification_receipt", "decision", "observation_receipt"] },
+    { "id": "T-047", "name": "trusted observation starts bounded work", "required_records": ["mandate", "observation_receipt", "verification_receipt"] },
+    { "id": "P-048", "name": "personal experiment proposed then activated", "required_records": ["standard", "proposal", "decision", "activation"] },
+    { "id": "C-049", "name": "stale context archived with history", "required_records": ["source_snapshot", "proposal", "decision", "retirement"] },
+    { "id": "X-050", "name": "contradictory local standard", "expected_error": "contradictory_standard" },
+    { "id": "X-051", "name": "missing observation", "expected_axes": { "freshness": "missing", "outcome": "unknown" } },
+    { "id": "X-052", "name": "declined proposal", "proposal_state": "declined", "decision_verdict": "decline" },
+    { "id": "X-053", "name": "superseded proposal", "proposal_state": "superseded", "required_records": ["proposal"] }
+  ]
+}
