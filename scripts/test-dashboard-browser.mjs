@@ -26,6 +26,8 @@ const assets = {
   "/": ["text/html; charset=utf-8", readFileSync(join(root, "assets/dashboard/index.html"))],
   "/app.css": ["text/css; charset=utf-8", readFileSync(join(root, "assets/dashboard/app.css"))],
   "/app.js": ["text/javascript; charset=utf-8", readFileSync(join(root, "assets/dashboard/app.js"))],
+  "/edit.js": ["text/javascript; charset=utf-8", readFileSync(join(root, "assets/dashboard/edit.js"))],
+  "/views.js": ["text/javascript; charset=utf-8", readFileSync(join(root, "assets/dashboard/views.js"))],
 };
 
 const maliciousMission = '<img src=x onerror="globalThis.whetstoneXss=true">Own the outer loop';
@@ -78,7 +80,17 @@ function inspection(mode = "normal") {
   );
   const value = agreementRecord("core_value", { name: "Evidence", description: "Evidence before assertion" }, "value.evidence");
   const philosophy = agreementRecord("implementation_philosophy", { statement: "Typed services own replayable work", review_triggers: ["Architecture changes"] }, "philosophy.project");
-  const items = mode === "empty" ? [] : [mission, standard];
+  const metric = agreementRecord("metric_definition", {
+    name: "Repair loop completion",
+    rationale: "Show whether the first safeguard is proven",
+    source: { system: "whetstone", locator: "repair-proof" },
+    cohort: "current project",
+    window: "current revision",
+    direction: "maintain",
+    threshold: "complete",
+    freshness_seconds: 300,
+  }, "metric.repair");
+  const items = mode === "empty" ? [] : [mission, standard, metric];
   const nextAction = mode === "draft" ? {
     title: "Inspect your 2 local draft proposal(s)",
     explanation: "These drafts remain private and inactive until reviewed.",
@@ -147,7 +159,42 @@ function inspection(mode = "normal") {
           next_action: nextAction,
           pending_operations: ["prove one current repair"],
         },
+        foundations: [
+          ["mission", null, "governs", "Mission", mission, missionStatement, null],
+          ["core_values", "mission", "guides", "Core values", value, "Evidence before assertion", null],
+          ["desired_outcome", "mission", "defines success", "Desired outcome", mission, "Keep work aligned", null],
+          ["implementation_philosophy", "mission", "guides implementation", "Engineering philosophy", philosophy, "Typed services own replayable work", "Architecture changes"],
+          ["initial_safeguard", "implementation_philosophy", "guides validation", "Initial safeguard", standard, "Do not weaken a failing gate.", "Repository"],
+        ].map(([kind, parent, relationship, label, item, content, detail]) => ({
+          kind, parent, relationship, label, content, detail, state: "current",
+          reference: item.reference, owner: "Owner", changed_at: item.record.provenance.recorded_at,
+        })),
+        metrics: [{
+          reference: metric.reference,
+          name: "Repair loop completion",
+          rationale: "Show whether the first safeguard is proven",
+          source: { system: "whetstone", locator: "repair-proof" },
+          cohort: "current project", window: "current revision", direction: "maintain",
+          threshold: "complete", freshness_seconds: 300, lifecycle: "current", state: "not_observed",
+          latest_observation: null, owner: "Owner", changed_at: metric.record.provenance.recorded_at,
+        }],
+        controls: [{
+          reference: standard.reference, kind: "standard", statement: "Do not weaken a failing gate.",
+          rationale: "A green result must retain its meaning.", strength: "must", mechanism: "Test: cargo test",
+          scope: "project-browser", lifecycle: "current", execution: "not_checked", currentness: "unknown",
+          last_checked: null, owner: "Owner", changed_at: standard.record.provenance.recorded_at,
+        }],
+        attention_items: [{
+          priority: 2, kind: "repair_proof", title: nextAction.title, explanation: nextAction.explanation,
+          actor: nextAction.actor, route: nextAction.route, permitted_next_action: nextAction.permitted_next_action,
+          agent_instruction: nextAction.agent_instruction,
+        }],
       },
+      changelog: mode === "empty" ? [] : [{
+        id: "browser-init", recorded_at: mission.record.provenance.recorded_at,
+        title: "Project foundations established", summary: "Added mission, values, philosophy, and safeguard.",
+        status: "added", owner: "Owner", area: "foundations", records: [mission, value, philosophy, standard],
+      }],
       workflows: [
         ["init", "available", "inspect or establish private agreement"],
         ["dash", "available", "inspect local system and history"],
@@ -361,15 +408,15 @@ try {
   );
   assert.equal(await cdp.evaluate('document.querySelector("#state").hidden'), true);
   assert.equal(await cdp.evaluate('document.querySelectorAll("[role=tab]").length'), 4);
-  assert.equal(await cdp.evaluate('document.querySelector("#mission").textContent'), maliciousMission);
-  assert.equal(await cdp.evaluate('document.querySelector("#mission img") === null'), true);
-  assert.equal(await cdp.evaluate("globalThis.whetstoneXss === undefined"), true);
-
   assert.equal(await cdp.evaluate('document.querySelector("#attention-title").textContent'), "Test your first safeguard");
   await cdp.evaluate('document.querySelector("#attention-continue").click()');
+  await waitFor('document.querySelector("#tab-enforcement").getAttribute("aria-selected") === "true" && document.querySelector("#agent-instruction").textContent.length > 0', "enforcement view did not render");
   assert.equal(await cdp.evaluate('document.querySelector("#tab-enforcement").getAttribute("aria-selected")'), "true");
   assert.equal(await cdp.evaluate('document.activeElement.id'), "agent-handoff");
   assert.equal(await cdp.evaluate('document.querySelector("#agent-instruction").textContent'), "In /fixture/project, run the exact repair proof.");
+  assert.equal(await cdp.evaluate('document.querySelector("#mission").textContent'), maliciousMission);
+  assert.equal(await cdp.evaluate('document.querySelector("#mission img") === null'), true);
+  assert.equal(await cdp.evaluate("globalThis.whetstoneXss === undefined"), true);
   await cdp.evaluate('document.querySelector("#tab-dashboard").focus()');
   await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", code: "ArrowRight" });
   await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowRight", code: "ArrowRight" });
@@ -388,6 +435,9 @@ try {
   await waitFor('document.querySelector("#announcement").textContent.includes("cancelled")', "cancel was not announced");
   assert.equal(counters.cancel, 1);
   assert.equal(counters.agree, 0);
+
+  await cdp.evaluate('document.querySelector("#edit").click()');
+  await waitFor('!document.querySelector("#init-form").hidden', "edit did not reopen after cancellation");
 
   await cdp.evaluate(`(() => {
     const form = document.querySelector("#init-form");
@@ -419,7 +469,7 @@ try {
     nativeVirtualKeyCode: 27,
   });
   await waitFor('!document.querySelector("#review-dialog").open', "escape did not cancel review");
-  assert.equal(await cdp.evaluate('document.activeElement.textContent'), "Review changes");
+  assert.equal(await cdp.evaluate('document.activeElement.textContent'), "Review foundations");
   assert.equal(counters.agree, 0);
 
   await cdp.evaluate('document.querySelector("#init-form button[type=submit]").click()');
@@ -465,10 +515,12 @@ try {
     search.value = "__empty__";
     search.dispatchEvent(new Event("input", { bubbles: true }));
   })()`);
-  await waitFor('document.querySelector("#decision-history").textContent.includes("No decisions")', "empty state was not rendered");
+  await waitFor('document.querySelector("#decision-history").textContent.includes("No consequential")', "empty state was not rendered");
+  await cdp.evaluate('document.querySelector("#enable-checks").click()');
+  await waitFor('!document.querySelector("#check-form").hidden', "check form was not enabled");
   await cdp.evaluate('document.querySelector("#check-form button[type=submit]").click()');
   await waitFor('document.querySelector("#command-state").textContent === "command unknown"', "check result was not retained");
-  await waitFor('document.querySelector("#decision-history").textContent.includes("No decisions")', "check refresh discarded the active history query");
+  await waitFor('document.querySelector("#decision-history").textContent.includes("No consequential")', "check refresh discarded the active history query");
   assert.equal(counters.lastInspect.search, "__empty__");
   await cdp.evaluate(`(() => {
     const search = document.querySelector("#decision-search");
@@ -492,7 +544,7 @@ try {
     search.value = "__missing_current__";
     search.dispatchEvent(new Event("input", { bubbles: true }));
   })()`);
-  await waitFor('document.querySelector("#attention-title").textContent === "Could not determine the next step"', "missing current state was not fail-closed");
+  await waitFor('document.querySelector("#attention-title").textContent === "Project state unavailable"', "missing current state was not fail-closed");
   assert.equal(await cdp.evaluate('document.querySelector("#attention-continue").hidden'), true);
   await cdp.evaluate(`(() => {
     const search = document.querySelector("#decision-search");
@@ -501,7 +553,7 @@ try {
   })()`);
   await waitFor('document.querySelector("#state").textContent === "unavailable"', "error state was not rendered");
   assert.equal(await cdp.evaluate('document.querySelector("#state").hidden'), false);
-  assert.equal(await cdp.evaluate('document.querySelector("#attention-title").textContent'), "Could not determine the next step");
+  assert.equal(await cdp.evaluate('document.querySelector("#attention-title").textContent'), "Project state unavailable");
   assert.ok(counters.inspectQueries >= 3, "history controls did not use the typed inspection endpoint");
 
   console.log("PASS dashboard browser behavior at 320/390/768/1024 widths");

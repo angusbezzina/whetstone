@@ -1023,6 +1023,8 @@ fn stale_change_is_rejected_and_standard_needs_a_decision() {
             "standard.boundary",
             "--content",
             "Do not import private modules.",
+            "--definition",
+            r#"{"type":"standard","strength":"must","enforcement":{"enforcement":"test","command_ref":"cargo test"}}"#,
             "--rationale",
             "Protect module boundaries.",
             "--source",
@@ -1044,6 +1046,10 @@ fn stale_change_is_rejected_and_standard_needs_a_decision() {
     assert_eq!(json(&decision)["state"], "needs_decision");
     assert_eq!(json(&decision)["data"]["recorded"], true);
     assert_eq!(json(&decision)["data"]["base_revision"], 0);
+    assert_eq!(
+        json(&decision)["data"]["diff"]["after"]["record_type"],
+        "standard"
+    );
 }
 
 #[test]

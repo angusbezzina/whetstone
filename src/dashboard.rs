@@ -23,6 +23,9 @@ const APP_CSS: &str = include_str!("../assets/dashboard/app.css");
 
 const APP_JS: &str = include_str!("../assets/dashboard/app.js");
 
+const EDIT_JS: &str = include_str!("../assets/dashboard/edit.js");
+const VIEWS_JS: &str = include_str!("../assets/dashboard/views.js");
+
 /// Adapter implemented by a thin wrapper over `CommandService`.
 ///
 /// Transport code never edits files, evaluates authority, or executes tools.
@@ -305,6 +308,16 @@ fn handle_connection(
             status: 200,
             content_type: "text/javascript; charset=utf-8",
             body: APP_JS.as_bytes().to_vec(),
+        },
+        ("GET", "/edit.js") => BackendResponse {
+            status: 200,
+            content_type: "text/javascript; charset=utf-8",
+            body: EDIT_JS.as_bytes().to_vec(),
+        },
+        ("GET", "/views.js") => BackendResponse {
+            status: 200,
+            content_type: "text/javascript; charset=utf-8",
+            body: VIEWS_JS.as_bytes().to_vec(),
         },
         ("POST", "/session/bootstrap") => {
             if !same_origin(&request, expected_origin)

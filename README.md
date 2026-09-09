@@ -41,22 +41,24 @@ those records atomically without editing project files or creating shared
 state. Setup remains incomplete until the bounded repair loop has a current
 known-bad to known-good proof for the exact code snapshot.
 
-Interactive `wh dash` serves three dependency-free local assets and opens on a
-minimal Dashboard: the accepted mission, key outcome, enforcement health,
-latest consequential change, and at most one clear next action. Foundations
-makes mission, core values, engineering philosophy, safeguards, ownership, and
-review triggers inspectable and editable. Enforcement holds active rules,
-native checks, verification, and bounded agent repair feedback. Decisions keeps
-the complete append-only history searchable from project start.
+Interactive `wh dash` serves a dependency-free local UI and opens on a minimal
+Dashboard: mission-linked metrics, deterministic gates, one primary action, all
+secondary concerns, and the latest consequential change. Foundations is a
+versioned living tree from mission and values to outcomes, metrics, engineering
+philosophy, safeguards, and gates; definitions are editable as governed local
+drafts. Enforcement separates policy lifecycle from check results and keeps
+scope, mechanisms, failures, exact rechecks, and bounded agent repair feedback
+practical. Decisions presents the complete append-only history as a searchable,
+newest-first changelog with exact records behind disclosure.
 The standalone Direction 05 one-pager is a planning artifact, not a product
 view. Inspection is credential-free on the loopback listener; mutation
 requires the one-time browser handoff and a second explicit edit-mode step.
 Search and as-of queries execute through the same typed history service as
 `wh dash --json`; they never replace the unfiltered current-state projection.
-Foundation editing resumes from persisted owner decisions, and change forms bind a base
-before authoring, request a typed server-side before/after preview, then freeze
-the exact request and capabilities before confirmation. Pull and push remain
-explicitly unavailable in the CLI and service; they are never simulated.
+Foundation editing resumes from persisted owner decisions. Change forms bind a
+base before authoring, request a typed server-side before/after preview, then
+freeze the exact request and capabilities before confirmation. Pull and push
+remain explicitly unavailable in the CLI and service; they are never simulated.
 
 Three hidden developer gates keep the surviving deterministic kernel
 non-vacuous while the rest of the MVP is built:

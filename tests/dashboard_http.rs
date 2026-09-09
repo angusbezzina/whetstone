@@ -284,6 +284,30 @@ fn traversal_oversize_and_security_header_fixtures_fail_closed() {
         asset_bytes < 24 * 1024,
         "complete dashboard HTML, CSS, and JavaScript exceed 24 KiB"
     );
+    let edit = send(
+        handle.address(),
+        &format!("GET /edit.js HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+    );
+    assert!(edit.starts_with("HTTP/1.1 200"), "{edit}");
+    let edit_body = edit.split_once("\r\n\r\n").expect("edit body").1;
+    assert!(
+        edit_body.len() < 12 * 1024,
+        "lazy edit module exceeds 12 KiB"
+    );
+    assert!(!edit_body.contains("http://"));
+    assert!(!edit_body.contains("https://"));
+    let views = send(
+        handle.address(),
+        &format!("GET /views.js HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+    );
+    assert!(views.starts_with("HTTP/1.1 200"), "{views}");
+    let views_body = views.split_once("\r\n\r\n").expect("views body").1;
+    assert!(
+        views_body.len() < 12 * 1024,
+        "lazy views module exceeds 12 KiB"
+    );
+    assert!(!views_body.contains("http://"));
+    assert!(!views_body.contains("https://"));
 }
 
 #[test]
@@ -648,11 +672,11 @@ fn dashboard_assets_expose_minimal_accessible_views_exact_review_and_safe_render
         assert!(html.contains(&format!("id={view}")), "missing {view}");
     }
     assert_eq!(html.matches("role=tab ").count(), 4);
-    assert!(html.contains("id=tab-dashboard aria-controls=dashboard aria-selected=true"));
+    assert!(html.contains("id=tab-dashboard"));
     assert!(html.contains("Mission"));
     assert!(html.contains("Core values"));
     assert!(html.contains("Engineering philosophy"));
-    assert!(html.contains("Active rules and guidance"));
+    assert!(html.contains("Rules and gates"));
     assert!(html.contains("aria-live=polite"));
     assert!(html.contains("review-dialog"));
     assert!(html.contains("Show agent handoff") || html.contains("attention-continue"));
@@ -664,12 +688,29 @@ fn dashboard_assets_expose_minimal_accessible_views_exact_review_and_safe_render
         &format!("GET /app.js HTTP/1.1\r\nHost: {host}\r\n\r\n"),
     );
     let script = script.split_once("\r\n\r\n").expect("script body").1;
-    assert!(script.contains("Object.freeze"));
     assert!(script.contains("ArrowLeft"));
-    assert!(script.contains("returnFocus"));
     assert!(script.contains("textContent"));
     assert!(!script.contains("innerHTML"));
-    assert!(script.contains("sessionStorage.getItem(\"whetstone_csrf\")"));
+
+    let edit = send(
+        handle.address(),
+        &format!("GET /edit.js HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+    );
+    let edit = edit.split_once("\r\n\r\n").expect("edit body").1;
+    assert!(edit.contains("Object.freeze"));
+    assert!(edit.contains("whetstone_csrf"));
+    assert!(edit.contains("definition"));
+    assert!(!edit.contains("innerHTML"));
+
+    let views = send(
+        handle.address(),
+        &format!("GET /views.js HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+    );
+    let views = views.split_once("\r\n\r\n").expect("views body").1;
+    assert!(views.contains("foundation-metrics"));
+    assert!(views.contains("Validation gates"));
+    assert!(views.contains("Show exact changes"));
+    assert!(!views.contains("innerHTML"));
 
     let css = send(
         handle.address(),
@@ -724,6 +765,10 @@ fn dashboard_change_check_conflict_and_permission_paths_preserve_service_semanti
         kind: None,
         record_id: Some("guidance.local".into()),
         content: None,
+        definition: None,
+        desired_outcome: None,
+        review_triggers: None,
+        new_owner: None,
         rationale: None,
         source: None,
         expected_effect: None,
@@ -749,6 +794,10 @@ fn dashboard_change_check_conflict_and_permission_paths_preserve_service_semanti
         kind: Some(ChangeKind::Guidance),
         record_id: Some("guidance.local".into()),
         content: Some("Use typed boundaries.".into()),
+        definition: None,
+        desired_outcome: None,
+        review_triggers: None,
+        new_owner: None,
         rationale: Some("Keep responsibilities explicit.".into()),
         source: Some("owner:dashboard".into()),
         expected_effect: Some("Fewer accidental dependencies.".into()),
@@ -764,6 +813,10 @@ fn dashboard_change_check_conflict_and_permission_paths_preserve_service_semanti
                     kind: None,
                     record_id: Some("guidance.local".into()),
                     content: None,
+                    definition: None,
+                    desired_outcome: None,
+                    review_triggers: None,
+                    new_owner: None,
                     rationale: None,
                     source: None,
                     expected_effect: None,

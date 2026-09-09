@@ -1,5 +1,6 @@
 //! Shared command services used by CLI and future HTTP adapters.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -12,14 +13,16 @@ use walkdir::WalkDir;
 
 use crate::check;
 use crate::domain::{
-    AgreementRecord, AuthorizationAxis, ContentDigest, CoreValue, EvidenceRef, ExternalRef,
-    ExternalSystem, Freshness, Guidance, ImplementationPhilosophy, Mission, PolicyStateSnapshot,
-    PrincipalKind, PrincipalRef, Proposal, ProposalState, Provenance, ProvenanceAuthority,
-    ProvenanceKind, RecordBody, RecordId, Scope, VerificationAxis, VerificationReceipt,
+    AgreementRecord, AuthorizationAxis, ContentDigest, CoreValue, Enforcement, EvidenceRef,
+    ExternalRef, ExternalSystem, Freshness, Guidance, ImplementationPhilosophy, MetricDefinition,
+    MetricDirection, Mission, PolicyStateSnapshot, PrincipalKind, PrincipalRef, Proposal,
+    ProposalState, Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId,
+    RecordRef, Scope, Standard, StandardStrength, VerificationAxis, VerificationReceipt,
     SCHEMA_VERSION_V1,
 };
 use crate::history::{
-    AccessBoundary, HistoryCursor, HistoryError, HistoryInspectionRequest, HistoryInspectionService,
+    AccessBoundary, HistoryCursor, HistoryError, HistoryInspection, HistoryInspectionRequest,
+    HistoryInspectionService, HistoryItem,
 };
 use crate::onboarding;
 use crate::storage::{AppendRequest, DoltRepository, ProjectLayout, StorageError, StoreKind};
@@ -102,8 +105,27 @@ pub enum ChangeKind {
     Mission,
     Value,
     Philosophy,
+    Metric,
     Guidance,
     Standard,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ChangeDefinition {
+    Metric {
+        source_system: String,
+        source_locator: String,
+        cohort: String,
+        window: String,
+        direction: MetricDirection,
+        threshold: String,
+        freshness_seconds: u64,
+    },
+    Standard {
+        strength: StandardStrength,
+        enforcement: Enforcement,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +135,10 @@ pub struct ChangeRequest {
     pub kind: Option<ChangeKind>,
     pub record_id: Option<String>,
     pub content: Option<String>,
+    pub definition: Option<Box<ChangeDefinition>>,
+    pub desired_outcome: Option<String>,
+    pub review_triggers: Option<String>,
+    pub new_owner: Option<String>,
     pub rationale: Option<String>,
     pub source: Option<String>,
     pub expected_effect: Option<String>,
@@ -412,6 +438,7 @@ impl CommandService {
                 response.blocking_questions.push(prompt.question.clone());
             }
         }
+        let changelog = dashboard_changelog(history.as_ref());
         response.data = json!({
             "setup": setup,
             "progress": progress,
@@ -420,6 +447,7 @@ impl CommandService {
             "history": history,
             "history_state": history_state,
             "history_detail": history_detail,
+            "changelog": changelog,
             "current": current_projection,
             "workflows": [
                 {"name": "init", "state": "available", "effect": "inspect or establish private agreement"},
@@ -912,19 +940,18 @@ impl CommandService {
                 return needs_input("change", request_id, current_revision, resume, question)
             }
         };
-        let mut body = match change_body(
-            request.kind,
-            request.content.as_deref(),
-            request.rationale.as_deref(),
-            &request.examples,
-            id_text,
-        ) {
+        let mut body = match change_body(&request, id_text) {
             Ok(body) => body,
             Err(question) => {
                 return needs_input("change", request_id, current_revision, resume, question)
             }
         };
-        preserve_agreement_companions(&mut body, current.as_ref());
+        preserve_agreement_companions(
+            &mut body,
+            current.as_ref(),
+            request.desired_outcome.is_none(),
+            request.review_triggers.is_none(),
+        );
         let existing = match private.by_idempotency_key(&request_id) {
             Ok(existing) => existing,
             Err(error) => return storage_error("change", request_id, error),
@@ -1005,9 +1032,22 @@ impl CommandService {
             };
             (existing, reference)
         } else {
-            let owner_display = current
-                .as_ref()
-                .and_then(|record| record.owner.display_name.as_deref());
+            let new_owner = request
+                .new_owner
+                .as_deref()
+                .map(|owner| bounded_input(Some(owner.to_string()), "accountable owner", 200))
+                .transpose();
+            let new_owner = match new_owner {
+                Ok(owner) => owner,
+                Err(question) => {
+                    return needs_input("change", request_id, current_revision, resume, question)
+                }
+            };
+            let owner_display = new_owner.as_deref().or_else(|| {
+                current
+                    .as_ref()
+                    .and_then(|record| record.owner.display_name.as_deref())
+            });
             let mut record =
                 match agreement_record(&layout, id_text, request_id.clone(), body, owner_display) {
                     Ok(record) => record,
@@ -1368,6 +1408,79 @@ struct DashboardAgreementProjection {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct DashboardFoundationNode {
+    kind: String,
+    parent: Option<String>,
+    relationship: String,
+    label: String,
+    content: String,
+    detail: Option<String>,
+    state: String,
+    reference: Option<RecordRef>,
+    owner: Option<String>,
+    changed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DashboardMetricSummary {
+    reference: RecordRef,
+    name: String,
+    rationale: String,
+    source: EvidenceRef,
+    cohort: String,
+    window: String,
+    direction: String,
+    threshold: String,
+    freshness_seconds: u64,
+    lifecycle: String,
+    state: String,
+    latest_observation: Option<AgreementRecord>,
+    owner: Option<String>,
+    changed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DashboardControlSummary {
+    reference: RecordRef,
+    kind: String,
+    statement: String,
+    rationale: String,
+    strength: Option<String>,
+    mechanism: String,
+    scope: String,
+    lifecycle: String,
+    execution: String,
+    currentness: String,
+    last_checked: Option<String>,
+    owner: Option<String>,
+    changed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DashboardAttentionItem {
+    priority: u8,
+    kind: String,
+    title: String,
+    explanation: String,
+    actor: String,
+    route: String,
+    permitted_next_action: String,
+    agent_instruction: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DashboardChangeGroup {
+    id: String,
+    recorded_at: String,
+    title: String,
+    summary: String,
+    status: String,
+    owner: Option<String>,
+    area: String,
+    records: Vec<HistoryItem>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct DashboardWorkspaceProjection {
     latest_verification: Option<AgreementRecord>,
     verification_currentness: String,
@@ -1438,10 +1551,360 @@ fn dashboard_next_action(
     }
 }
 
+fn dashboard_record_state(record: &AgreementRecord, draft_records: &BTreeSet<RecordRef>) -> String {
+    match record.reference() {
+        Ok(reference) if draft_records.contains(&reference) => "local_draft",
+        _ => "current",
+    }
+    .into()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dashboard_foundation_node(
+    kind: &str,
+    parent: Option<&str>,
+    relationship: &str,
+    label: &str,
+    record: Option<&AgreementRecord>,
+    content: Option<String>,
+    detail: Option<String>,
+    draft_records: &BTreeSet<RecordRef>,
+) -> DashboardFoundationNode {
+    DashboardFoundationNode {
+        kind: kind.into(),
+        parent: parent.map(str::to_owned),
+        relationship: relationship.into(),
+        label: label.into(),
+        content: content.unwrap_or_else(|| "Not established".into()),
+        detail,
+        state: record
+            .map(|record| dashboard_record_state(record, draft_records))
+            .unwrap_or_else(|| "missing".into()),
+        reference: record.and_then(|record| record.reference().ok()),
+        owner: record.and_then(|record| record.owner.display_name.clone()),
+        changed_at: record.map(|record| record.provenance.recorded_at.clone()),
+    }
+}
+
+fn standard_mechanism(standard: &crate::domain::Standard) -> String {
+    match &standard.enforcement {
+        crate::domain::Enforcement::Ast { query } => format!("AST query: {query}"),
+        crate::domain::Enforcement::LintProxy { tool, code } => {
+            format!("{tool} rule {code}")
+        }
+        crate::domain::Enforcement::Formatter { tool } => format!("Formatter: {tool}"),
+        crate::domain::Enforcement::Test { command_ref } => format!("Test: {command_ref}"),
+        crate::domain::Enforcement::Validator { command_ref } => {
+            format!("Validator: {command_ref}")
+        }
+    }
+}
+
+fn dashboard_attention_items(
+    needed_decision: Option<&DashboardDecisionPrompt>,
+    metrics: &[DashboardMetricSummary],
+    controls: &[DashboardControlSummary],
+    has_repair_proof: bool,
+    draft_count: usize,
+    next_action: Option<&DashboardNextAction>,
+) -> Vec<DashboardAttentionItem> {
+    let mut items = Vec::new();
+    if let Some(decision) = needed_decision {
+        items.push(DashboardAttentionItem {
+            priority: 0,
+            kind: "human_decision".into(),
+            title: decision.question.clone(),
+            explanation: decision.consequence.clone(),
+            actor: decision.owner.clone(),
+            route: "foundations".into(),
+            permitted_next_action: decision.permitted_next_action.clone(),
+            agent_instruction: None,
+        });
+    }
+    if metrics.is_empty() {
+        items.push(DashboardAttentionItem {
+            priority: 1,
+            kind: "human_decision".into(),
+            title: "No key metric is defined".into(),
+            explanation: "Whetstone cannot show whether the mission is succeeding without a versioned metric definition and source.".into(),
+            actor: "project owner".into(),
+            route: "foundations".into(),
+            permitted_next_action: "Define a mission-linked metric without treating an engineering gate as an outcome.".into(),
+            agent_instruction: None,
+        });
+    }
+    if !controls.iter().any(|control| control.kind == "standard") {
+        items.push(DashboardAttentionItem {
+            priority: 1,
+            kind: "human_decision".into(),
+            title: "No validation gate is defined".into(),
+            explanation: "Whetstone cannot deterministically enforce the engineering philosophy until a trusted mechanism is recorded and independently activated.".into(),
+            actor: "project owner".into(),
+            route: "foundations".into(),
+            permitted_next_action: "Define a deterministic gate; keep it a local draft until its checker and reviewer are known.".into(),
+            agent_instruction: None,
+        });
+    }
+    for metric in metrics.iter().filter(|metric| metric.state != "fresh") {
+        items.push(DashboardAttentionItem {
+            priority: 1,
+            kind: "outcome_signal".into(),
+            title: format!("{} is {}", metric.name, metric.state.replace('_', " ")),
+            explanation: format!(
+                "Target {} over {}; source {}:{}.",
+                metric.threshold, metric.window, metric.source.system, metric.source.locator
+            ),
+            actor: metric
+                .owner
+                .clone()
+                .unwrap_or_else(|| "metric owner".into()),
+            route: "foundations".into(),
+            permitted_next_action:
+                "Inspect the metric source or revise the definition through review.".into(),
+            agent_instruction: None,
+        });
+    }
+    for control in controls
+        .iter()
+        .filter(|control| control.kind == "standard" && control.execution != "pass")
+    {
+        items.push(DashboardAttentionItem {
+            priority: if control.execution == "fail" { 0 } else { 1 },
+            kind: "validation_gate".into(),
+            title: format!(
+                "{} is {}",
+                control.statement,
+                control.execution.replace('_', " ")
+            ),
+            explanation: format!("{} · {}", control.scope, control.mechanism),
+            actor: control
+                .owner
+                .clone()
+                .unwrap_or_else(|| "control owner".into()),
+            route: "enforcement".into(),
+            permitted_next_action:
+                "Inspect evidence, repair within scope, and run the exact check again.".into(),
+            agent_instruction: None,
+        });
+    }
+    if !has_repair_proof {
+        if let Some(action) = next_action {
+            items.push(DashboardAttentionItem {
+                priority: 2,
+                kind: "repair_proof".into(),
+                title: action.title.clone(),
+                explanation: action.explanation.clone(),
+                actor: action.actor.clone(),
+                route: action.route.clone(),
+                permitted_next_action: action.permitted_next_action.clone(),
+                agent_instruction: action.agent_instruction.clone(),
+            });
+        }
+    } else if draft_count > 0 {
+        if let Some(action) = next_action {
+            items.push(DashboardAttentionItem {
+                priority: 2,
+                kind: "local_draft".into(),
+                title: action.title.clone(),
+                explanation: action.explanation.clone(),
+                actor: action.actor.clone(),
+                route: action.route.clone(),
+                permitted_next_action: action.permitted_next_action.clone(),
+                agent_instruction: action.agent_instruction.clone(),
+            });
+        }
+    }
+    items.sort_by(|left, right| {
+        (left.priority, left.title.as_str()).cmp(&(right.priority, right.title.as_str()))
+    });
+    items
+}
+
+fn changelog_key(record: &AgreementRecord) -> String {
+    let key = record
+        .idempotency_key
+        .strip_suffix(":proposal")
+        .unwrap_or(&record.idempotency_key);
+    key.find(":base-")
+        .map_or_else(|| key.to_string(), |index| key[..index].to_string())
+}
+
+fn changelog_area(record: &AgreementRecord) -> &'static str {
+    match record.body {
+        RecordBody::Mission(_)
+        | RecordBody::CoreValue(_)
+        | RecordBody::ImplementationPhilosophy(_) => "foundations",
+        RecordBody::MetricDefinition(_) | RecordBody::ObservationReceipt(_) => "metrics",
+        RecordBody::Standard(_)
+        | RecordBody::Guidance(_)
+        | RecordBody::VerificationReceipt(_)
+        | RecordBody::RepairSession(_)
+        | RecordBody::RepairHandoff(_)
+        | RecordBody::RepairAuthorityReservation(_)
+        | RecordBody::RepairOperationClaim(_) => "rules_and_gates",
+        _ => "governance",
+    }
+}
+
+fn changelog_record_title(record: &AgreementRecord) -> String {
+    match &record.body {
+        RecordBody::Mission(_) => "Mission changed".into(),
+        RecordBody::CoreValue(_) => "Core values changed".into(),
+        RecordBody::ImplementationPhilosophy(_) => "Engineering philosophy changed".into(),
+        RecordBody::MetricDefinition(metric) => format!("Metric changed: {}", metric.name),
+        RecordBody::Standard(standard) => {
+            format!("Validation gate changed: {}", standard.statement)
+        }
+        RecordBody::Guidance(guidance) => format!("Guidance changed: {}", guidance.statement),
+        RecordBody::Proposal(proposal) => proposal.title.clone(),
+        RecordBody::Decision(decision) => {
+            format!("Proposal {:?}", decision.verdict).to_ascii_lowercase()
+        }
+        RecordBody::Activation(_) => "Policy activated".into(),
+        RecordBody::Retirement(_) => "Policy retired".into(),
+        _ => "Governance record changed".into(),
+    }
+}
+
+fn dashboard_changelog(history: Option<&HistoryInspection>) -> Vec<DashboardChangeGroup> {
+    let Some(history) = history else {
+        return Vec::new();
+    };
+    let mut grouped = BTreeMap::<String, Vec<HistoryItem>>::new();
+    for item in &history.decision_history.items {
+        let Some(record) = item.record.as_ref() else {
+            grouped
+                .entry(format!(
+                    "redacted:{}:{}",
+                    item.reference.id.as_str(),
+                    item.reference.revision
+                ))
+                .or_default()
+                .push(item.clone());
+            continue;
+        };
+        if matches!(
+            record.body,
+            RecordBody::VerificationReceipt(_)
+                | RecordBody::ObservationReceipt(_)
+                | RecordBody::RepairSession(_)
+                | RecordBody::RepairHandoff(_)
+                | RecordBody::RepairAuthorityReservation(_)
+                | RecordBody::RepairOperationClaim(_)
+        ) {
+            continue;
+        }
+        grouped
+            .entry(changelog_key(record))
+            .or_default()
+            .push(item.clone());
+    }
+    let mut result = grouped
+        .into_iter()
+        .map(|(id, mut items)| {
+            items.sort_by(|left, right| {
+                (
+                    left.recorded_at.as_str(),
+                    left.reference.id.as_str(),
+                    left.reference.revision,
+                )
+                    .cmp(&(
+                        right.recorded_at.as_str(),
+                        right.reference.id.as_str(),
+                        right.reference.revision,
+                    ))
+            });
+            let recorded_at = items
+                .iter()
+                .map(|item| item.recorded_at.as_str())
+                .max()
+                .unwrap_or_default()
+                .to_string();
+            let records = items
+                .iter()
+                .filter_map(|item| item.record.as_ref())
+                .collect::<Vec<_>>();
+            let proposal = records.iter().find_map(|record| match &record.body {
+                RecordBody::Proposal(proposal) => Some(proposal),
+                _ => None,
+            });
+            let decision = records.iter().find_map(|record| match &record.body {
+                RecordBody::Decision(decision) => Some(decision),
+                _ => None,
+            });
+            let initial_foundations = records.len() > 1
+                && records.iter().all(|record| {
+                    matches!(
+                        record.body,
+                        RecordBody::Mission(_)
+                            | RecordBody::CoreValue(_)
+                            | RecordBody::ImplementationPhilosophy(_)
+                            | RecordBody::Guidance(_)
+                    )
+                });
+            let title = if initial_foundations {
+                "Project foundations established".into()
+            } else if let Some(proposal) = proposal {
+                proposal.title.clone()
+            } else {
+                records.last().map_or_else(
+                    || "Unavailable historical record".into(),
+                    |record| changelog_record_title(record),
+                )
+            };
+            let summary = if initial_foundations {
+                "Added the mission, core values, engineering philosophy, and initial safeguard."
+                    .into()
+            } else if let Some(proposal) = proposal {
+                proposal.rationale.clone()
+            } else if let Some(decision) = decision {
+                decision.rationale.clone()
+            } else {
+                "The exact before and after records are available below.".into()
+            };
+            let status = if let Some(decision) = decision {
+                format!("{:?}", decision.verdict).to_ascii_lowercase()
+            } else if let Some(proposal) = proposal {
+                format!("{:?}", proposal.state).to_ascii_lowercase()
+            } else if records.iter().any(|record| record.supersedes.is_some()) {
+                "changed".into()
+            } else {
+                "added".into()
+            };
+            let owner = records
+                .last()
+                .and_then(|record| record.owner.display_name.clone());
+            let area = records
+                .last()
+                .map_or("governance", |record| changelog_area(record))
+                .into();
+            DashboardChangeGroup {
+                id,
+                recorded_at,
+                title,
+                summary,
+                status,
+                owner,
+                area,
+                records: items,
+            }
+        })
+        .collect::<Vec<_>>();
+    result.sort_by(|left, right| {
+        (right.recorded_at.as_str(), right.id.as_str())
+            .cmp(&(left.recorded_at.as_str(), left.id.as_str()))
+    });
+    result
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct DashboardCurrentProjection {
     local_agreement: DashboardAgreementProjection,
     workspace: DashboardWorkspaceProjection,
+    foundations: Vec<DashboardFoundationNode>,
+    metrics: Vec<DashboardMetricSummary>,
+    controls: Vec<DashboardControlSummary>,
+    attention_items: Vec<DashboardAttentionItem>,
 }
 
 fn dashboard_current_projection(
@@ -1478,10 +1941,33 @@ fn dashboard_current_projection(
                 next_action: None,
                 pending_operations: vec!["complete the explicit private onboarding agreement".into()],
             },
+            foundations: Vec::new(),
+            metrics: Vec::new(),
+            controls: Vec::new(),
+            attention_items: vec![DashboardAttentionItem {
+                priority: 0,
+                kind: "human_decision".into(),
+                title: "Establish the project foundations".into(),
+                explanation: "Mission, values, success measures, engineering philosophy, and safeguards are not established.".into(),
+                actor: "project owner".into(),
+                route: "foundations".into(),
+                permitted_next_action: "Complete the private project agreement.".into(),
+                agent_instruction: None,
+            }],
         });
     }
     let repository = DoltRepository::open_existing(&store_path, StoreKind::Private)?;
     let records = repository.all_records()?;
+    let draft_records = records
+        .iter()
+        .filter_map(|record| match &record.body {
+            RecordBody::Proposal(proposal) if proposal.state == ProposalState::Draft => {
+                Some(proposal.proposed_records.iter().cloned())
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect::<BTreeSet<_>>();
     let canonical = |id: &str| -> Result<Option<AgreementRecord>, StorageError> {
         let id = RecordId::new(id).map_err(StorageError::Domain)?;
         repository.latest(&id)
@@ -1531,16 +2017,19 @@ fn dashboard_current_projection(
     if draft_count > 0 {
         pending_operations.push(format!("review {draft_count} local draft proposal(s)"));
     }
+    let mission = canonical("mission.project")?;
+    let values = canonical("value.core")?;
+    let philosophy = canonical("philosophy.implementation")?;
+    let initial_safeguard = canonical("guidance.initial-safeguard")?;
     let needed_decision =
         progress
             .missing_decisions
             .first()
             .map(|decision| DashboardDecisionPrompt {
                 question: format!("What should the project's {decision} be?"),
-                owner: canonical("mission.project")
-                    .ok()
-                    .flatten()
-                    .and_then(|record| record.owner.display_name)
+                owner: mission
+                    .as_ref()
+                    .and_then(|record| record.owner.display_name.clone())
                     .unwrap_or_else(|| "project owner (not yet identified)".into()),
                 consequence: format!(
                 "The private agreement remains incomplete until {decision} is explicitly confirmed."
@@ -1548,11 +2037,10 @@ fn dashboard_current_projection(
                 permitted_next_action:
                     "review the exact onboarding proposal, then confirm or cancel it".into(),
             });
-    let safeguard = canonical("guidance.initial-safeguard")
-        .ok()
-        .flatten()
-        .and_then(|record| match record.body {
-            RecordBody::Guidance(guidance) => Some(guidance.statement),
+    let safeguard = initial_safeguard
+        .as_ref()
+        .and_then(|record| match &record.body {
+            RecordBody::Guidance(guidance) => Some(guidance.statement.clone()),
             _ => None,
         })
         .unwrap_or_else(|| "the accepted initial safeguard".into());
@@ -1563,6 +2051,197 @@ fn dashboard_current_projection(
         layout.project_root(),
         &safeguard,
     );
+    let mut visible_by_id = BTreeMap::<&str, &AgreementRecord>::new();
+    for record in &records {
+        if matches!(
+            record.body,
+            RecordBody::MetricDefinition(_) | RecordBody::Standard(_) | RecordBody::Guidance(_)
+        ) && visible_by_id
+            .get(record.id.as_str())
+            .map_or(true, |current| current.revision < record.revision)
+        {
+            visible_by_id.insert(record.id.as_str(), record);
+        }
+    }
+    let visible_records = visible_by_id.into_values().collect::<Vec<_>>();
+    let mut metrics = Vec::new();
+    let mut controls = Vec::new();
+    for record in visible_records {
+        let Ok(reference) = record.reference() else {
+            continue;
+        };
+        match &record.body {
+            RecordBody::MetricDefinition(metric) => {
+                let observation = records
+                    .iter()
+                    .filter(|candidate| {
+                        matches!(&candidate.body, RecordBody::ObservationReceipt(body) if body.metric == reference)
+                    })
+                    .max_by_key(|candidate| candidate.provenance.recorded_at.as_str())
+                    .cloned();
+                let state =
+                    observation
+                        .as_ref()
+                        .map_or("not_observed", |record| match &record.body {
+                            RecordBody::ObservationReceipt(body) => match body.freshness {
+                                Freshness::Fresh => "fresh",
+                                Freshness::Stale => "stale",
+                                Freshness::Missing => "missing",
+                            },
+                            _ => "unknown",
+                        });
+                metrics.push(DashboardMetricSummary {
+                    reference,
+                    name: metric.name.clone(),
+                    rationale: metric.rationale.clone(),
+                    source: metric.source.clone(),
+                    cohort: metric.cohort.clone(),
+                    window: metric.window.clone(),
+                    direction: format!("{:?}", metric.direction).to_ascii_lowercase(),
+                    threshold: metric.threshold.clone(),
+                    freshness_seconds: metric.freshness_seconds,
+                    lifecycle: dashboard_record_state(record, &draft_records),
+                    state: state.into(),
+                    latest_observation: observation,
+                    owner: record.owner.display_name.clone(),
+                    changed_at: record.provenance.recorded_at.clone(),
+                });
+            }
+            RecordBody::Standard(standard) => {
+                let verification = records
+                    .iter()
+                    .filter(|candidate| {
+                        matches!(&candidate.body, RecordBody::VerificationReceipt(body) if body.related_records.contains(&reference))
+                    })
+                    .max_by_key(|candidate| candidate.provenance.recorded_at.as_str());
+                let (execution, currentness, last_checked) = verification.map_or(
+                    ("not_checked".into(), "unknown".into(), None),
+                    |receipt| match &receipt.body {
+                        RecordBody::VerificationReceipt(body) => (
+                            format!("{:?}", body.verification).to_ascii_lowercase(),
+                            format!("{:?}", body.freshness).to_ascii_lowercase(),
+                            Some(body.checked_at.clone()),
+                        ),
+                        _ => ("unknown".into(), "unknown".into(), None),
+                    },
+                );
+                controls.push(DashboardControlSummary {
+                    reference,
+                    kind: "standard".into(),
+                    statement: standard.statement.clone(),
+                    rationale: standard.rationale.clone(),
+                    strength: Some(format!("{:?}", standard.strength).to_ascii_lowercase()),
+                    mechanism: standard_mechanism(standard),
+                    scope: record.scope.project.clone(),
+                    lifecycle: dashboard_record_state(record, &draft_records),
+                    execution,
+                    currentness,
+                    last_checked,
+                    owner: record.owner.display_name.clone(),
+                    changed_at: record.provenance.recorded_at.clone(),
+                });
+            }
+            RecordBody::Guidance(guidance) => controls.push(DashboardControlSummary {
+                reference,
+                kind: "guidance".into(),
+                statement: guidance.statement.clone(),
+                rationale: guidance.rationale.clone(),
+                strength: None,
+                mechanism: "Agent guidance and accountable review".into(),
+                scope: record.scope.project.clone(),
+                lifecycle: dashboard_record_state(record, &draft_records),
+                execution: "advisory".into(),
+                currentness: "not_applicable".into(),
+                last_checked: None,
+                owner: record.owner.display_name.clone(),
+                changed_at: record.provenance.recorded_at.clone(),
+            }),
+            _ => {}
+        }
+    }
+    metrics.sort_by(|left, right| left.name.cmp(&right.name));
+    controls.sort_by(|left, right| {
+        (left.kind.as_str(), left.statement.as_str())
+            .cmp(&(right.kind.as_str(), right.statement.as_str()))
+    });
+    let mission_body = mission.as_ref().and_then(|record| match &record.body {
+        RecordBody::Mission(body) => Some(body),
+        _ => None,
+    });
+    let value_body = values.as_ref().and_then(|record| match &record.body {
+        RecordBody::CoreValue(body) => Some(body),
+        _ => None,
+    });
+    let philosophy_body = philosophy.as_ref().and_then(|record| match &record.body {
+        RecordBody::ImplementationPhilosophy(body) => Some(body),
+        _ => None,
+    });
+    let safeguard_body = initial_safeguard
+        .as_ref()
+        .and_then(|record| match &record.body {
+            RecordBody::Guidance(body) => Some(body),
+            _ => None,
+        });
+    let foundations = vec![
+        dashboard_foundation_node(
+            "mission",
+            None,
+            "governs",
+            "Mission",
+            mission.as_ref(),
+            mission_body.map(|body| body.statement.clone()),
+            None,
+            &draft_records,
+        ),
+        dashboard_foundation_node(
+            "core_values",
+            Some("mission"),
+            "guides",
+            "Core values",
+            values.as_ref(),
+            value_body.map(|body| body.description.clone()),
+            None,
+            &draft_records,
+        ),
+        dashboard_foundation_node(
+            "desired_outcome",
+            Some("mission"),
+            "defines success",
+            "Desired outcome",
+            mission.as_ref(),
+            mission_body.and_then(|body| body.desired_outcomes.first().cloned()),
+            None,
+            &draft_records,
+        ),
+        dashboard_foundation_node(
+            "implementation_philosophy",
+            Some("mission"),
+            "guides implementation",
+            "Engineering philosophy",
+            philosophy.as_ref(),
+            philosophy_body.map(|body| body.statement.clone()),
+            philosophy_body.and_then(|body| body.review_triggers.first().cloned()),
+            &draft_records,
+        ),
+        dashboard_foundation_node(
+            "initial_safeguard",
+            Some("implementation_philosophy"),
+            "guides validation",
+            "Initial safeguard",
+            initial_safeguard.as_ref(),
+            safeguard_body.map(|body| body.statement.clone()),
+            safeguard_body.map(|body| body.rationale.clone()),
+            &draft_records,
+        ),
+    ];
+    let attention_items = dashboard_attention_items(
+        needed_decision.as_ref(),
+        &metrics,
+        &controls,
+        progress.repair_proof.is_some(),
+        draft_count,
+        next_action.as_ref(),
+    );
     Ok(DashboardCurrentProjection {
         local_agreement: DashboardAgreementProjection {
             state: if progress.agreement_complete {
@@ -1571,10 +2250,10 @@ fn dashboard_current_projection(
                 "incomplete".into()
             },
             team_activation: "not_configured".into(),
-            mission: canonical("mission.project")?,
-            core_values: canonical("value.core")?,
-            implementation_philosophy: canonical("philosophy.implementation")?,
-            initial_safeguard: canonical("guidance.initial-safeguard")?,
+            mission,
+            core_values: values,
+            implementation_philosophy: philosophy,
+            initial_safeguard,
         },
         workspace: DashboardWorkspaceProjection {
             latest_verification,
@@ -1596,6 +2275,10 @@ fn dashboard_current_projection(
             next_action,
             pending_operations,
         },
+        foundations,
+        metrics,
+        controls,
+        attention_items,
     })
 }
 
@@ -1935,16 +2618,12 @@ fn ensure_local_change_proposal(
     repository.append(&proposal, None)
 }
 
-fn change_body(
-    kind: Option<ChangeKind>,
-    content: Option<&str>,
-    rationale: Option<&str>,
-    examples: &[String],
-    id_text: &str,
-) -> Result<RecordBody, String> {
-    let kind = kind.ok_or_else(|| "Provide kind.".to_string())?;
-    let content = bounded_input(content.map(str::to_string), "content", 16_000)?;
-    let rationale = rationale
+fn change_body(request: &ChangeRequest, id_text: &str) -> Result<RecordBody, String> {
+    let kind = request.kind.ok_or_else(|| "Provide kind.".to_string())?;
+    let content = bounded_input(request.content.clone(), "content", 16_000)?;
+    let rationale = request
+        .rationale
+        .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("Owner-authored local change.")
         .trim()
@@ -1952,7 +2631,13 @@ fn change_body(
     Ok(match kind {
         ChangeKind::Mission => RecordBody::Mission(Mission {
             statement: content,
-            desired_outcomes: Vec::new(),
+            desired_outcomes: request
+                .desired_outcome
+                .as_deref()
+                .map(|value| bounded_input(Some(value.to_string()), "desired outcome", 500))
+                .transpose()?
+                .into_iter()
+                .collect(),
         }),
         ChangeKind::Value => RecordBody::CoreValue(CoreValue {
             name: id_text.into(),
@@ -1961,33 +2646,94 @@ fn change_body(
         ChangeKind::Philosophy => RecordBody::ImplementationPhilosophy(ImplementationPhilosophy {
             statement: content,
             rationale,
-            review_triggers: Vec::new(),
+            review_triggers: request
+                .review_triggers
+                .as_deref()
+                .map(|value| bounded_input(Some(value.to_string()), "review triggers", 1_000))
+                .transpose()?
+                .into_iter()
+                .collect(),
         }),
+        ChangeKind::Metric => {
+            let Some(ChangeDefinition::Metric {
+                source_system,
+                source_locator,
+                cohort,
+                window,
+                direction,
+                threshold,
+                freshness_seconds,
+            }) = request.definition.as_deref()
+            else {
+                return Err("Provide the metric source, cohort, window, direction, threshold, and freshness.".into());
+            };
+            RecordBody::MetricDefinition(MetricDefinition {
+                name: content,
+                rationale,
+                source: EvidenceRef {
+                    system: bounded_input(
+                        Some(source_system.clone()),
+                        "metric source system",
+                        200,
+                    )?,
+                    locator: bounded_input(
+                        Some(source_locator.clone()),
+                        "metric source locator",
+                        2_000,
+                    )?,
+                    digest: None,
+                },
+                cohort: bounded_input(Some(cohort.clone()), "metric cohort", 500)?,
+                window: bounded_input(Some(window.clone()), "metric window", 500)?,
+                direction: *direction,
+                threshold: bounded_input(Some(threshold.clone()), "metric threshold", 500)?,
+                freshness_seconds: *freshness_seconds,
+                expected_release: None,
+            })
+        }
         ChangeKind::Guidance => RecordBody::Guidance(Guidance {
             statement: content,
             rationale,
-            examples: examples.to_vec(),
+            examples: request.examples.clone(),
         }),
-        ChangeKind::Standard => RecordBody::Guidance(Guidance {
-            statement: content,
-            rationale,
-            examples: examples.to_vec(),
-        }),
+        ChangeKind::Standard => {
+            let Some(ChangeDefinition::Standard {
+                strength,
+                enforcement,
+            }) = request.definition.as_deref()
+            else {
+                return Err(
+                    "Provide the standard strength and deterministic enforcement mechanism.".into(),
+                );
+            };
+            RecordBody::Standard(Standard {
+                statement: content,
+                rationale,
+                strength: *strength,
+                enforcement: enforcement.clone(),
+                examples: request.examples.clone(),
+            })
+        }
     })
 }
 
-fn preserve_agreement_companions(body: &mut RecordBody, current: Option<&AgreementRecord>) {
+fn preserve_agreement_companions(
+    body: &mut RecordBody,
+    current: Option<&AgreementRecord>,
+    preserve_desired_outcomes: bool,
+    preserve_review_triggers: bool,
+) {
     let Some(current) = current else {
         return;
     };
     match (body, &current.body) {
-        (RecordBody::Mission(next), RecordBody::Mission(previous)) => {
+        (RecordBody::Mission(next), RecordBody::Mission(previous)) if preserve_desired_outcomes => {
             next.desired_outcomes.clone_from(&previous.desired_outcomes);
         }
         (
             RecordBody::ImplementationPhilosophy(next),
             RecordBody::ImplementationPhilosophy(previous),
-        ) => {
+        ) if preserve_review_triggers => {
             next.review_triggers.clone_from(&previous.review_triggers);
         }
         _ => {}

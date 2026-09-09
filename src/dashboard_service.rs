@@ -8,8 +8,8 @@ use crate::dashboard::{BackendResponse, DashboardBackend};
 use crate::domain::ContentDigest;
 use crate::history::HistoryCursor;
 use crate::service::{
-    ChangeKind, ChangeRequest, CheckRequest, CommandService, DashRequest, InitAction, InitRequest,
-    ServiceRequest, ServiceResponse,
+    ChangeDefinition, ChangeKind, ChangeRequest, CheckRequest, CommandService, DashRequest,
+    InitAction, InitRequest, ServiceRequest, ServiceResponse,
 };
 
 /// Keeps the dashboard's project authority fixed at process startup.
@@ -135,6 +135,14 @@ enum DashboardCommand {
         #[serde(default)]
         content: Option<String>,
         #[serde(default)]
+        definition: Option<Box<ChangeDefinition>>,
+        #[serde(default)]
+        desired_outcome: Option<String>,
+        #[serde(default)]
+        review_triggers: Option<String>,
+        #[serde(default)]
+        new_owner: Option<String>,
+        #[serde(default)]
         rationale: Option<String>,
         #[serde(default)]
         source: Option<String>,
@@ -201,6 +209,10 @@ impl DashboardCommand {
                 kind,
                 record_id,
                 content,
+                definition,
+                desired_outcome,
+                review_triggers,
+                new_owner,
                 rationale,
                 source,
                 expected_effect,
@@ -216,6 +228,10 @@ impl DashboardCommand {
                 kind: kind.map(Into::into),
                 record_id,
                 content,
+                definition,
+                desired_outcome,
+                review_triggers,
+                new_owner,
                 rationale,
                 source,
                 expected_effect,
@@ -266,6 +282,7 @@ enum DashboardChangeKind {
     Mission,
     Value,
     Philosophy,
+    Metric,
     Guidance,
     Standard,
 }
@@ -276,6 +293,7 @@ impl From<DashboardChangeKind> for ChangeKind {
             DashboardChangeKind::Mission => Self::Mission,
             DashboardChangeKind::Value => Self::Value,
             DashboardChangeKind::Philosophy => Self::Philosophy,
+            DashboardChangeKind::Metric => Self::Metric,
             DashboardChangeKind::Guidance => Self::Guidance,
             DashboardChangeKind::Standard => Self::Standard,
         }

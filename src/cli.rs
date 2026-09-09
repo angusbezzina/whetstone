@@ -18,8 +18,8 @@ use crate::repair_host::{
 #[cfg(unix)]
 use crate::repair_transport::HostSocketAuthorityVerifier;
 use crate::service::{
-    BasicRequest, ChangeKind, ChangeRequest, CheckRequest, CommandService, DashRequest, InitAction,
-    InitRequest, ServiceRequest, ServiceResponse, ServiceState,
+    BasicRequest, ChangeDefinition, ChangeKind, ChangeRequest, CheckRequest, CommandService,
+    DashRequest, InitAction, InitRequest, ServiceRequest, ServiceResponse, ServiceState,
 };
 use crate::storage::ProjectLayout;
 use crate::{check, dashboard, dashboard_service, output, rules};
@@ -107,6 +107,18 @@ enum Command {
         record_id: Option<String>,
         #[arg(long)]
         content: Option<String>,
+        /// Typed metric or standard details as a JSON object.
+        #[arg(long, value_parser = parse_change_definition)]
+        definition: Option<Box<ChangeDefinition>>,
+        /// Replace the first mission outcome while revising a mission record.
+        #[arg(long)]
+        desired_outcome: Option<String>,
+        /// Replace the first review trigger while revising an implementation philosophy.
+        #[arg(long)]
+        review_triggers: Option<String>,
+        /// Change the accountable owner on the proposed record revision.
+        #[arg(long)]
+        new_owner: Option<String>,
         #[arg(long)]
         rationale: Option<String>,
         #[arg(long)]
@@ -236,8 +248,15 @@ enum ChangeKindArg {
     Mission,
     Value,
     Philosophy,
+    Metric,
     Guidance,
     Standard,
+}
+
+fn parse_change_definition(value: &str) -> Result<Box<ChangeDefinition>, String> {
+    serde_json::from_str(value)
+        .map(Box::new)
+        .map_err(|error| format!("invalid change definition: {error}"))
 }
 
 fn parse_page_size(value: &str) -> Result<usize, String> {
@@ -257,6 +276,7 @@ impl From<ChangeKindArg> for ChangeKind {
             ChangeKindArg::Mission => Self::Mission,
             ChangeKindArg::Value => Self::Value,
             ChangeKindArg::Philosophy => Self::Philosophy,
+            ChangeKindArg::Metric => Self::Metric,
             ChangeKindArg::Guidance => Self::Guidance,
             ChangeKindArg::Standard => Self::Standard,
         }
@@ -328,6 +348,10 @@ pub fn run() -> i32 {
             kind,
             record_id,
             content,
+            definition,
+            desired_outcome,
+            review_triggers,
+            new_owner,
             rationale,
             source,
             expected_effect,
@@ -343,6 +367,10 @@ pub fn run() -> i32 {
             kind: kind.map(Into::into),
             record_id,
             content,
+            definition,
+            desired_outcome,
+            review_triggers,
+            new_owner,
             rationale,
             source,
             expected_effect,
