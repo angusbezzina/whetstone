@@ -216,11 +216,31 @@ fn scanner_finds_known_bad_and_accepts_known_good() {
 #[test]
 fn retained_gate_commands_do_not_mutate_user_data() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let protected = [
+    let protected: Vec<PathBuf> = [
+        root.join("whetstone/.metrics.jsonl"),
+        root.join("whetstone/.personal/config.yaml"),
+        root.join("whetstone/.personal/rules/python/snake.yaml"),
+        root.join("whetstone/.state/extraction-handoff.json"),
+        root.join("whetstone/.state/inventory.json"),
+        root.join("whetstone/.state/manifests.json"),
+        root.join("whetstone/.state/refresh-log.json"),
+        root.join("whetstone/.state/source-cache.json"),
+        root.join("whetstone/context/AGENTS.md"),
+        root.join("whetstone/evals/rust/test_anyhow.rs"),
+        root.join("whetstone/evals/rust/test_clap.rs"),
+        root.join("whetstone/evals/rust/test_reqwest.rs"),
+        root.join("whetstone/evals/rust/test_serde_yaml.rs"),
+        root.join("whetstone/evals/rust/test_whetstone:recommended/rust.rs"),
         root.join("whetstone/rules/rust/anyhow.yaml"),
         root.join("whetstone/whetstone.yaml"),
-        root.join("whetstone/.state/source-cache.json"),
-    ];
+    ]
+    .into_iter()
+    .filter(|path| path.exists())
+    .collect();
+    assert!(
+        protected.len() >= 3,
+        "clean and local checkouts must expose tracked protected records"
+    );
     let before: Vec<Vec<u8>> = protected
         .iter()
         .map(|path| std::fs::read(path).expect("read protected fixture"))

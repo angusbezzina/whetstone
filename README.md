@@ -56,22 +56,18 @@ are in [the R0 inventory](planning/direction-demo/prune-inventory.md).
 - Every consequential decision remains inspectable from project start, including rationale and supersession.
 - Existing trackers, repository controls, and native linters remain the execution and enforcement authorities.
 
-## Build and install the foundation
+## Build the foundation
 
 ```bash
 cargo build --release
 ./target/release/whetstone
 ```
 
-To exercise the release installer against a published version:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/angusbezzina/whetstone/main/install.sh | sh
-```
-
-The installer places one `whetstone` binary and creates `wh` as a symlink. It
-verifies published SHA-256 checksums and fails closed when verification is not
-available.
+There is no published Direction 05 release yet. The existing v0.12.0 release is
+the recoverable legacy product, not this foundation. The retained release
+installer is tested against the locally built binary; future releases will
+place one `whetstone` binary, expose `wh` as a symlink, verify SHA-256 checksums,
+and fail closed when verification is unavailable.
 
 ## Contributing
 

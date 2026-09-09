@@ -36,20 +36,11 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# Whetstone generated artifacts (in user projects)
-# These are checked in by the user, but test fixtures generate them transiently
-tests/fixtures/whetstone/.last-run
-tests/fixtures/whetstone/.metrics.jsonl
-tests/fixtures/whetstone/context/
-tests/fixtures/whetstone/evals/
-tests/fixtures/whetstone/lint/
-
 # Rust build artifacts
 target/
 
 # Whetstone pipeline state cache (machine-local, not checked in)
 whetstone/.state/
-tests/fixtures/whetstone/.state/
 
 # Whetstone personal layer (do not commit)
 whetstone/.personal/
