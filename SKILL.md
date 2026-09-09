@@ -67,9 +67,22 @@ contract. Track implementation through the `whetstone-k5r` Beads epic.
 
 ## Feedback loop
 
-Before changing code, load the applicable accepted policy and its exact
-revision. After each bounded edit, run the relevant safeguard. On failure,
-return rule ID, rationale, location, expected repair, policy/checker revision,
-and evidence freshness to the same worker. Recheck after repair. Escalate only
-when the conflict requires human judgment; never silently weaken or skip a
-mandatory safeguard.
+Before changing code, record the user's task, non-goals, allowed paths and the
+applicable active policy/checker snapshot. Missing edit authority is a blocker,
+not an invitation to ask another agent to act. A task's edit permission never
+includes policy, check, baseline, publication, merge, release or deployment.
+
+After each bounded edit, run `wh check --json` on the relevant scope. Read its
+stable finding ID, rationale, location, observed and expected result, repair
+direction, snapshot digests and permitted action. Apply the smallest repair
+with the current worker's ordinary editing tools, then recheck the exact changed
+snapshot. A per-edit hook may accelerate this; the explicit checkpoint is the
+portable fallback and final verification is always broader than the edit hook.
+
+Persist the repair session and increment its attempt budget before another edit.
+Do not reset the budget after a restart. Stop on cancellation, missing authority,
+scope growth, unavailable required evidence, repeated no-progress, oscillation,
+or the configured attempt limit. Group repeated findings that require the same
+owner decision into one handoff containing the reviewed snapshot, stable IDs,
+one question, recommendation, alternatives, impact, evidence and the only
+permitted next step. A second agent may advise but cannot approve for the owner.

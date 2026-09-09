@@ -724,17 +724,21 @@ fn execute_verified_checker(
     redact(&mut result.stdout.text, request.environment.values());
     redact(&mut result.stderr.text, request.environment.values());
 
-    let (state, reason, summary) = if result.timed_out {
-        (
-            ExecutionState::Unknown,
-            "execution_timed_out",
-            "The checker exceeded its hard wall-clock limit.",
-        )
-    } else if result.stdout.truncated || result.stderr.truncated {
+    // Prefer the concrete bounded-output cause when both guards fire. A
+    // process may continue emitting until process-group cleanup observes the
+    // timeout, but the first actionable failure is still the exhausted output
+    // budget.
+    let (state, reason, summary) = if result.stdout.truncated || result.stderr.truncated {
         (
             ExecutionState::Unknown,
             "output_limit_exceeded",
             "The checker exceeded a hard captured-output limit.",
+        )
+    } else if result.timed_out {
+        (
+            ExecutionState::Unknown,
+            "execution_timed_out",
+            "The checker exceeded its hard wall-clock limit.",
         )
     } else if result.status.success() {
         (

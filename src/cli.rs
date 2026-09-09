@@ -1,6 +1,10 @@
 //! Six public workflows backed by one typed service boundary.
 
 use std::path::{Path, PathBuf};
+use std::process::{Command as ProcessCommand, Stdio};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::json;
@@ -9,7 +13,7 @@ use crate::service::{
     BasicRequest, ChangeKind, ChangeRequest, CheckRequest, CommandService, InitAction, InitRequest,
     ServiceRequest, ServiceResponse,
 };
-use crate::{check, output, rules};
+use crate::{check, dashboard, dashboard_service, output, rules};
 
 #[derive(Parser)]
 #[command(
@@ -49,12 +53,18 @@ enum Command {
         philosophy: Option<String>,
     },
 
-    /// Open the inspectable local dashboard when its milestone is installed.
+    /// Open the inspectable local dashboard.
     Dash {
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
         #[arg(long)]
         request_id: Option<String>,
+        /// Keep the dashboard read-only, including for the launched session.
+        #[arg(long)]
+        read_only: bool,
+        /// Serve in the foreground without trying to open a browser.
+        #[arg(long)]
+        no_open: bool,
     },
 
     /// Propose or record a bounded local agreement change.
@@ -189,6 +199,7 @@ impl From<ChangeKindArg> for ChangeKind {
 
 pub fn run() -> i32 {
     let cli = Cli::parse();
+    let explicit_json = cli.json;
     let machine = cli.json || output::is_piped();
     let service = CommandService;
     let response = match cli.command {
@@ -215,10 +226,18 @@ pub fn run() -> i32 {
         Some(Command::Dash {
             project_dir,
             request_id,
-        }) => service.execute(ServiceRequest::Dash(BasicRequest {
-            project_dir,
-            request_id,
-        })),
+            read_only,
+            no_open,
+        }) => {
+            if explicit_json {
+                service.execute(ServiceRequest::Dash(BasicRequest {
+                    project_dir,
+                    request_id,
+                }))
+            } else {
+                return run_dashboard(project_dir, request_id, read_only, no_open);
+            }
+        }
         Some(Command::Change {
             project_dir,
             request_id,
@@ -300,6 +319,93 @@ pub fn run() -> i32 {
     };
     emit_response(&response, machine);
     response.state.exit_code()
+}
+
+fn run_dashboard(
+    project_dir: PathBuf,
+    request_id: Option<String>,
+    read_only: bool,
+    no_open: bool,
+) -> i32 {
+    let backend = Arc::new(dashboard_service::CommandDashboardBackend::new(
+        project_dir,
+        request_id,
+    ));
+    let handle = match dashboard::DashboardHandle::start(
+        dashboard::DashboardMode::Local {
+            allow_mutations: !read_only,
+        },
+        backend,
+    ) {
+        Ok(handle) => handle,
+        Err(error) => {
+            eprintln!("Whetstone dashboard could not start: {error}");
+            return 4;
+        }
+    };
+
+    // This is the only URL printed or suitable for logs. It contains no
+    // bootstrap/session capability and remains useful for headless inspection.
+    println!("Whetstone dashboard: {}", handle.public_url());
+    if !no_open {
+        let launch_url = if read_only {
+            handle.public_url().to_string()
+        } else if let Some(bootstrap) = handle.take_bootstrap_fragment() {
+            format!("{}#bootstrap={bootstrap}", handle.public_url())
+        } else {
+            handle.public_url().to_string()
+        };
+        if let Err(error) = launch_browser(&launch_url) {
+            eprintln!(
+                "A browser could not be opened ({error}); use the credential-free URL above for inspection."
+            );
+        }
+    }
+    println!("Serving in the foreground. Press Ctrl-C to stop.");
+
+    // The foreground process owns the listener. Normal return and unwinding
+    // drop the handle; process termination closes only this process's socket.
+    loop {
+        thread::park_timeout(Duration::from_secs(60));
+    }
+}
+
+fn launch_browser(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = ProcessCommand::new("open");
+        command.arg(url);
+        command
+    };
+    #[cfg(target_os = "linux")]
+    let mut command = {
+        let mut command = ProcessCommand::new("xdg-open");
+        command.arg(url);
+        command
+    };
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = ProcessCommand::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    return Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "no platform browser launcher is configured",
+    ));
+
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    thread::Builder::new()
+        .name("whetstone-browser-launch".into())
+        .spawn(move || {
+            let _ = child.wait();
+        })
+        .map(|_| ())
 }
 
 fn emit_response(response: &ServiceResponse, machine: bool) {

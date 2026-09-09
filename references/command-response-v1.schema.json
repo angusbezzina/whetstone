@@ -47,8 +47,12 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "code_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "policy_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
-        "checker_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+        "checker_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "scope_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "environment_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "trust_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
       }
     },
     "evidence": {

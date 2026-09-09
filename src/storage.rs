@@ -147,6 +147,27 @@ pub struct DoltRepository {
 }
 
 impl DoltRepository {
+    /// Opens an already initialized Whetstone repository without creating,
+    /// migrating, or otherwise repairing storage.
+    ///
+    /// This is the read-side constructor used by inspection surfaces. Missing
+    /// storage and an incomplete schema are reported to the caller rather than
+    /// being converted into an empty repository.
+    pub fn open_existing(root: &Path, kind: StoreKind) -> Result<Self, StorageError> {
+        reject_symlink(root)?;
+        if !root.is_dir() || !root.join(".dolt").is_dir() {
+            return Err(StorageError::RepositoryNotInitialized(root.to_path_buf()));
+        }
+        ensure_dolt_version()?;
+        let repository = Self {
+            root: root.canonicalize().map_err(StorageError::Io)?,
+            kind,
+            write_guard: Arc::new(Mutex::new(())),
+        };
+        repository.verify_schema()?;
+        Ok(repository)
+    }
+
     pub fn initialize(root: &Path, kind: StoreKind) -> Result<Self, StorageError> {
         ensure_dolt_version()?;
         reject_symlink(root)?;
@@ -1275,6 +1296,7 @@ pub enum StorageError {
     MigrationChecksumMismatch(u64),
     InvalidProjectScope(String),
     ProjectRootNotFound,
+    RepositoryNotInitialized(PathBuf),
     SymlinkPath(PathBuf),
     LockPoisoned,
     StaleRevision {

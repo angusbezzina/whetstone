@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use whetstone::domain::{AuthorizationAxis, RecordBody, VerificationAxis};
+use whetstone::storage::{DoltRepository, ProjectLayout, StoreKind};
+
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_whetstone"))
 }
@@ -128,9 +131,9 @@ fn retired_commands_cannot_execute() {
 }
 
 #[test]
-fn sync_and_dashboard_are_honestly_unavailable() {
+fn sync_is_honestly_unavailable_and_dashboard_inspects() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for workflow in ["dash", "pull", "push"] {
+    for workflow in ["pull", "push"] {
         let output = run(&[workflow, "--json", "--request-id", "probe-1"], root);
         assert_eq!(output.status.code(), Some(4));
         let value = json(&output);
@@ -138,6 +141,11 @@ fn sync_and_dashboard_are_honestly_unavailable() {
         assert_eq!(value["state"], "unavailable");
         assert_eq!(value["request_id"], "probe-1");
     }
+    let output = run(&["dash", "--json", "--request-id", "probe-1"], root);
+    assert_eq!(output.status.code(), Some(0));
+    let value = json(&output);
+    assert_eq!(value["state"], "success");
+    assert_eq!(value["data"]["read_only"], true);
 }
 
 #[test]
@@ -598,7 +606,32 @@ fn scanner_finds_known_bad_and_accepts_known_good() {
         temp.path(),
     );
     assert_eq!(public_bad.status.code(), Some(1));
-    assert_eq!(json(&public_bad)["state"], "violated");
+    let public_bad_json = json(&public_bad);
+    assert_eq!(public_bad_json["state"], "violated");
+    assert_eq!(public_bad_json["data"]["report"]["state"], "violated");
+    assert_eq!(
+        public_bad_json["data"]["report"]["results"][0]["findings"][0]["file"],
+        "src/app.py"
+    );
+    for field in [
+        "rationale",
+        "observed",
+        "expected",
+        "repair_direction",
+        "permitted_next_action",
+        "verification_command",
+    ] {
+        assert!(
+            public_bad_json["data"]["report"]["results"][0]["findings"][0][field]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+    }
+    assert_eq!(public_bad_json["data"]["receipt_persisted"], false);
+    let bad_code_digest = public_bad_json["required_snapshot"]["code_digest"]
+        .as_str()
+        .expect("bad code digest")
+        .to_string();
 
     std::fs::write(
         temp.path().join("src/app.py"),
@@ -637,9 +670,85 @@ fn scanner_finds_known_bad_and_accepts_known_good() {
     assert!(public_good.status.success());
     let public_good_json = json(&public_good);
     assert_eq!(public_good_json["state"], "success");
-    assert!(public_good_json["required_snapshot"]["policy_digest"]
-        .as_str()
-        .is_some_and(|digest| digest.starts_with("sha256:")));
+    assert_eq!(public_good_json["data"]["report"]["state"], "success");
+    assert!(public_good_json["summary"].as_str().is_some_and(|summary| {
+        summary.contains("whetstone.native-scan") && summary.contains("PASS")
+    }));
+    for field in [
+        "code_digest",
+        "policy_digest",
+        "checker_digest",
+        "scope_digest",
+        "environment_digest",
+        "trust_digest",
+    ] {
+        assert!(public_good_json["required_snapshot"][field]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:")));
+    }
+    assert_ne!(
+        public_good_json["required_snapshot"]["code_digest"],
+        bad_code_digest
+    );
+}
+
+#[test]
+fn check_persists_one_idempotent_private_receipt_when_storage_exists() {
+    let temp = tempfile::tempdir().expect("create receipt fixture");
+    init_git(temp.path());
+    write_rule_project(temp.path(), "def read_config():\n    pass\n");
+    let project = temp.path().to_string_lossy();
+    let initialize = run(
+        &[
+            "init",
+            "--json",
+            "--project-dir",
+            &project,
+            "--request-id",
+            "receipt-store",
+        ],
+        temp.path(),
+    );
+    assert_eq!(initialize.status.code(), Some(6));
+
+    let args = [
+        "check",
+        "--json",
+        "--project-dir",
+        &project,
+        "--request-id",
+        "check-idempotent",
+        "--path",
+        "src",
+        "--lang",
+        "python",
+    ];
+    let first = json(&run(&args, temp.path()));
+    let second = json(&run(&args, temp.path()));
+    assert_eq!(first["state"], "success");
+    assert_eq!(first["data"]["receipt_persisted"], true);
+    assert_eq!(
+        first["data"]["receipt_record"],
+        second["data"]["receipt_record"]
+    );
+
+    let layout = ProjectLayout::resolve(temp.path(), None).expect("resolve receipt fixture");
+    let private =
+        DoltRepository::initialize(&layout.store_path(StoreKind::Private), StoreKind::Private)
+            .expect("open private store");
+    let receipts = private
+        .all_records()
+        .expect("read private records")
+        .into_iter()
+        .filter_map(|record| match record.body {
+            RecordBody::VerificationReceipt(receipt) => Some(receipt),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].verification, VerificationAxis::Pass);
+    assert_eq!(receipts[0].authorization, AuthorizationAxis::Unknown);
+    assert_eq!(receipts[0].evidence.len(), 1);
 }
 
 #[test]

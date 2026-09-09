@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -11,11 +12,20 @@ use walkdir::WalkDir;
 
 use crate::check;
 use crate::domain::{
-    AgreementRecord, CoreValue, EvidenceRef, Guidance, ImplementationPhilosophy, Mission,
+    AgreementRecord, AuthorizationAxis, ContentDigest, CoreValue, EvidenceRef, ExternalRef,
+    ExternalSystem, Freshness, Guidance, ImplementationPhilosophy, Mission, PolicyStateSnapshot,
     PrincipalKind, PrincipalRef, Proposal, ProposalState, Provenance, ProvenanceAuthority,
-    ProvenanceKind, RecordBody, RecordId, Scope, SCHEMA_VERSION_V1,
+    ProvenanceKind, RecordBody, RecordId, Scope, VerificationAxis, VerificationReceipt,
+    SCHEMA_VERSION_V1,
 };
+use crate::history::{AccessBoundary, HistoryInspectionRequest, HistoryInspectionService};
+use crate::onboarding;
 use crate::storage::{DoltRepository, ProjectLayout, StorageError, StoreKind};
+use crate::verification::{
+    self, AttestationState, EvidencePointer, Finding, RequirementKind, SnapshotBinding,
+    TrustedEvidenceSet, VerificationEvidence, VerificationPlan, VerificationReport,
+    VerificationRequirement, VerificationState, LEAN_BASELINE_REVISION,
+};
 
 pub const RESPONSE_SCHEMA: &str = "whetstone.command-response.v1";
 
@@ -154,9 +164,17 @@ pub struct ServiceEvidence {
 #[serde(deny_unknown_fields)]
 pub struct RequiredSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checker_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -216,12 +234,7 @@ impl CommandService {
         match request {
             ServiceRequest::Orientation => self.orientation(),
             ServiceRequest::Init(request) => self.init(request),
-            ServiceRequest::Dash(request) => unavailable(
-                request,
-                "dash",
-                "The dashboard is not installed in this local-alpha slice.",
-                "Complete M1.10 before launching a dashboard.",
-            ),
+            ServiceRequest::Dash(request) => self.dash(request),
             ServiceRequest::Change(request) => self.change(request),
             ServiceRequest::Check(request) => self.check(request),
             ServiceRequest::Pull(request) => unavailable(
@@ -261,6 +274,68 @@ impl CommandService {
             "read_only": true,
             "lean_baseline_revision": "2c3f0a3bb66d2ffa89c7b2f300b864a3ee8fea48",
         });
+        response
+    }
+
+    fn dash(&self, request: BasicRequest) -> ServiceResponse {
+        let layout = match ProjectLayout::resolve(&request.project_dir, None) {
+            Ok(layout) => layout,
+            Err(error) => return project_error("dash", request.request_id, error),
+        };
+        let request_id = match bounded_request_id(
+            request.request_id,
+            format!("dash-{}", &layout.project_id()[..16]),
+        ) {
+            Ok(value) => value,
+            Err(summary) => return unknown_response("dash", "invalid-request-id".into(), summary),
+        };
+        let setup = match onboarding::inspect(layout.project_root()) {
+            Ok(value) => value,
+            Err(error) => {
+                return unknown_response(
+                    "dash",
+                    request_id,
+                    format!("Project inspection failed without changing state: {error:?}"),
+                )
+            }
+        };
+        let principal = PrincipalRef {
+            kind: PrincipalKind::LocalUser,
+            stable_id: format!(
+                "local:{}",
+                &format!("{:x}", Sha256::digest(layout.project_id().as_bytes()))[..20]
+            ),
+            display_name: None,
+        };
+        let history = HistoryInspectionService::open(&layout).and_then(|service| {
+            service.inspect(&HistoryInspectionRequest {
+                project: format!("project-{}", &layout.project_id()[..12]),
+                as_of: utc_now(),
+                access: AccessBoundary::Private { principal },
+                search: None,
+                history_after: None,
+                page_size: 100,
+                expected_snapshot: None,
+                redact_private_before: None,
+            })
+        });
+        let mut response = ServiceResponse::new(
+            request_id,
+            "dash",
+            ServiceState::Success,
+            "Read-only project shape and decision history are ready.",
+        );
+        response.permitted_actions = vec!["wh change".into(), "wh check".into()];
+        response.data = match history {
+            Ok(history) => json!({"setup": setup, "history": history, "read_only": true}),
+            Err(error) => json!({
+                "setup": setup,
+                "history": null,
+                "history_state": "not_initialized",
+                "history_detail": error.to_string(),
+                "read_only": true
+            }),
+        };
         response
     }
 
@@ -739,51 +814,182 @@ impl CommandService {
             rule_filter: filter,
             execute_command_validators: false,
         });
-        let violations = result
-            .get("violations_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let configuration_issues = result
-            .get("config_issues_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let rules_applied = result
-            .get("rules_applied")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
-        let (state, summary) = if configuration_issues > 0 || rules_applied == 0 {
-            (
-                ServiceState::Unknown,
-                "Required policy or checker configuration could not be established.",
-            )
-        } else if violations > 0 {
-            (
-                ServiceState::Violated,
-                "The check found actionable agreement violations.",
-            )
-        } else {
-            (
-                ServiceState::Success,
-                "All applicable deterministic checks passed.",
-            )
+        let relative_paths = scan_paths
+            .iter()
+            .map(|path| {
+                let relative = path.strip_prefix(&project).unwrap_or(path);
+                if relative.as_os_str().is_empty() {
+                    PathBuf::from(".")
+                } else {
+                    relative.to_path_buf()
+                }
+            })
+            .collect::<Vec<_>>();
+        let code_tree = match verification::code_tree_digest(&project, &relative_paths) {
+            Ok(digest) => digest,
+            Err(error) => {
+                return unknown_response(
+                    "check",
+                    request_id,
+                    format!("The code snapshot could not be bound safely: {error}"),
+                )
+            }
         };
-        let policy_digest = digest_rule_inputs(&project).ok();
-        let checker_digest = format!(
-            "sha256:{:x}",
-            Sha256::digest(format!(
-                "whetstone:{}:scanner-v1",
-                env!("CARGO_PKG_VERSION")
-            ))
+        let policy = match digest_rule_inputs(&project)
+            .map_err(|error| error.to_string())
+            .and_then(|digest| ContentDigest::new(digest).map_err(|error| error.to_string()))
+        {
+            Ok(digest) => digest,
+            Err(error) => {
+                return unknown_response(
+                    "check",
+                    request_id,
+                    format!("The policy snapshot could not be bound safely: {error}"),
+                )
+            }
+        };
+        let checker_bundle = match checker_bundle_digest() {
+            Ok(digest) => digest,
+            Err(error) => {
+                return unknown_response(
+                    "check",
+                    request_id,
+                    format!("The compiled checker could not be content-bound: {error}"),
+                )
+            }
+        };
+        let scope = digest_json(&json!({
+            "project": project.to_string_lossy(),
+            "paths": relative_paths,
+            "language": request.language,
+            "rules": request.rules,
+        }));
+        let environment = digest_json(&json!({
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "command_validators": false,
+        }));
+        let trust = digest_bytes(
+            format!(
+                "{LEAN_BASELINE_REVISION}\0compiled-in-deterministic-scanner\0no-external-execution-receipt"
+            )
+            .as_bytes(),
         );
-        let mut response = ServiceResponse::new(request_id, "check", state, summary);
+        let snapshot = SnapshotBinding {
+            code_tree,
+            policy,
+            checker_bundle,
+            scope,
+            environment,
+            trust,
+        };
+        let violations = count(&result, "violations_count");
+        let configuration_issues = count(&result, "config_issues_count");
+        let rules_applied = count(&result, "rules_applied");
+        let files_scanned = count(&result, "files_scanned");
+        let skipped = array_len(&result, "skipped");
+        let warnings = array_len(&result, "warnings");
+        let native_state = if violations > 0 {
+            AttestationState::Violated
+        } else if configuration_issues > 0
+            || rules_applied == 0
+            || files_scanned == 0
+            || skipped > 0
+            || warnings > 0
+        {
+            AttestationState::Unknown
+        } else {
+            AttestationState::Success
+        };
+        let native_summary = match native_state {
+            AttestationState::Success => format!(
+                "The compiled-in scanner applied {rules_applied} rules to {files_scanned} files without violations."
+            ),
+            AttestationState::Violated => format!(
+                "The compiled-in scanner found {violations} violations; incomplete evidence remains visible in the findings."
+            ),
+            AttestationState::Unknown => format!(
+                "The compiled-in scanner could not establish complete evidence ({configuration_issues} configuration issues, {skipped} skipped checks, {warnings} warnings)."
+            ),
+            AttestationState::Unavailable => {
+                "The compiled-in scanner was unavailable.".into()
+            }
+        };
+        let findings = scan_findings(&project, &result);
+        let scan_digest = digest_json(&result);
+        let evaluated_at_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs());
+        let plan = VerificationPlan {
+            subject: format!(
+                "project:{:x}:check",
+                Sha256::digest(project.to_string_lossy().as_bytes())
+            ),
+            snapshot: snapshot.clone(),
+            requirements: vec![VerificationRequirement {
+                id: "whetstone.native-scan".into(),
+                kind: RequirementKind::NativeCheck,
+                required: true,
+                checker_manifest: Some(snapshot.checker_bundle.clone()),
+                governing_records: Vec::new(),
+                rationale: "Applicable accepted rules require deterministic local verification."
+                    .into(),
+                repair_direction: "Repair reported source or checker configuration without changing policy, tests, or baselines to hide the result.".into(),
+                permitted_next_action: "repair within the current task scope, then wh check"
+                    .into(),
+                verification_command: "wh check --json".into(),
+                freshness_seconds: 300,
+            }],
+        };
+        let evidence = TrustedEvidenceSet {
+            items: vec![VerificationEvidence::NativeCheck {
+                requirement_id: "whetstone.native-scan".into(),
+                snapshot,
+                state: native_state,
+                evidence: EvidencePointer {
+                    source: "whetstone-compiled-in-scanner".into(),
+                    locator: "local-project".into(),
+                    digest: scan_digest,
+                },
+                observed_at_unix: evaluated_at_unix,
+                summary: native_summary,
+                findings,
+            }],
+        };
+        let report = match verification::aggregate(&plan, &evidence, evaluated_at_unix, &[]) {
+            Ok(report) => report,
+            Err(error) => {
+                return unknown_response(
+                    "check",
+                    request_id,
+                    format!("Verification evidence could not be aggregated: {error}"),
+                )
+            }
+        };
+        let checked_at = utc_now();
+        let receipt_record = match ProjectLayout::resolve(&project, None) {
+            Ok(layout) => {
+                match persist_verification_receipt(&layout, &request_id, &report, &checked_at) {
+                    Ok(reference) => reference,
+                    Err(error) => return storage_error("check", request_id, error),
+                }
+            }
+            Err(_) => None,
+        };
+        let state = service_state(report.state);
+        let mut response = ServiceResponse::new(request_id, "check", state, report.human_summary());
         response.required_snapshot = Some(RequiredSnapshot {
-            policy_digest: policy_digest.clone(),
-            checker_digest: Some(checker_digest.clone()),
+            code_digest: Some(report.snapshot.code_tree.as_str().into()),
+            policy_digest: Some(report.snapshot.policy.as_str().into()),
+            checker_digest: Some(report.snapshot.checker_bundle.as_str().into()),
+            scope_digest: Some(report.snapshot.scope.as_str().into()),
+            environment_digest: Some(report.snapshot.environment.as_str().into()),
+            trust_digest: Some(report.snapshot.trust.as_str().into()),
         });
         response.evidence = vec![ServiceEvidence {
             kind: "deterministic_scan".into(),
             locator: "local-project".into(),
-            digest: policy_digest,
+            digest: Some(report.receipt_id.as_str().into()),
         }];
         response.permitted_actions = match state {
             ServiceState::Success => vec!["handoff the verified result".into()],
@@ -792,7 +998,12 @@ impl CommandService {
             }
             _ => vec!["restore the required policy/checker, then wh check".into()],
         };
-        response.data = result;
+        response.data = json!({
+            "report": report,
+            "raw_scan": result,
+            "receipt_persisted": receipt_record.is_some(),
+            "receipt_record": receipt_record,
+        });
         response
     }
 }
@@ -1144,6 +1355,289 @@ fn idempotency_conflict(workflow: &str, request_id: String, key: &str) -> Servic
     response
 }
 
+fn count(value: &Value, field: &str) -> u64 {
+    value.get(field).and_then(Value::as_u64).unwrap_or(0)
+}
+
+fn array_len(value: &Value, field: &str) -> u64 {
+    value
+        .get(field)
+        .and_then(Value::as_array)
+        .map_or(0, |items| items.len() as u64)
+}
+
+fn digest_bytes(bytes: &[u8]) -> ContentDigest {
+    match ContentDigest::new(format!("sha256:{:x}", Sha256::digest(bytes))) {
+        Ok(digest) => digest,
+        Err(_) => unreachable!("SHA-256 formatting always satisfies the digest contract"),
+    }
+}
+
+fn digest_json(value: &Value) -> ContentDigest {
+    digest_bytes(&serde_json::to_vec(value).unwrap_or_default())
+}
+
+fn checker_bundle_digest() -> Result<ContentDigest, String> {
+    let mut hasher = Sha256::new();
+    hasher.update(format!(
+        "whetstone:{}:scanner-v1\0",
+        env!("CARGO_PKG_VERSION")
+    ));
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let bytes = fs::read(executable).map_err(|error| error.to_string())?;
+    hasher.update(bytes);
+    match ContentDigest::new(format!("sha256:{:x}", hasher.finalize())) {
+        Ok(digest) => Ok(digest),
+        Err(_) => unreachable!("SHA-256 formatting always satisfies the digest contract"),
+    }
+}
+
+fn scan_findings(project: &Path, result: &Value) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    if let Some(violations) = result.get("violations").and_then(Value::as_array) {
+        for violation in violations {
+            let rule_id = value_text(violation, "rule_id", "whetstone.unknown-rule");
+            let description = value_text(
+                violation,
+                "description",
+                "the accepted deterministic rule must be satisfied",
+            );
+            let source = value_text(violation, "source_url", "accepted project policy");
+            let observed = value_text(violation, "match", "the rule matched this location");
+            findings.push(Finding {
+                file: finding_path(project, violation.get("file")),
+                line: violation
+                    .get("line")
+                    .and_then(Value::as_u64)
+                    .and_then(|line| u32::try_from(line).ok()),
+                column: violation
+                    .get("column")
+                    .and_then(Value::as_u64)
+                    .and_then(|column| u32::try_from(column).ok()),
+                rule_id,
+                observed,
+                expected: description.clone(),
+                rationale: format!("{description} Governing source: {source}."),
+                repair_direction: "Change the reported source within the current task scope so the accepted rule no longer matches.".into(),
+                permitted_next_action: "repair the reported source, then rerun the verification command".into(),
+                verification_command: "wh check --json".into(),
+            });
+        }
+    }
+    if let Some(issues) = result.get("config_issues").and_then(Value::as_array) {
+        for issue in issues {
+            findings.push(Finding {
+                file: finding_path(project, issue.get("path")),
+                line: None,
+                column: None,
+                rule_id: value_text(issue, "rule_id", "whetstone.checker-configuration"),
+                observed: value_text(issue, "issue", "checker configuration is incomplete"),
+                expected: "Required rule and checker configuration must be available and valid."
+                    .into(),
+                rationale: "Unknown or unavailable required evidence cannot be treated as success."
+                    .into(),
+                repair_direction: value_text(
+                    issue,
+                    "fix",
+                    "restore the required checker configuration without weakening the policy",
+                ),
+                permitted_next_action:
+                    "repair checker configuration, then rerun the verification command".into(),
+                verification_command: "wh check --json".into(),
+            });
+        }
+    }
+    if let Some(skipped) = result.get("skipped").and_then(Value::as_array) {
+        for item in skipped {
+            findings.push(Finding {
+                file: None,
+                line: None,
+                column: None,
+                rule_id: value_text(item, "rule_id", "whetstone.skipped-check"),
+                observed: value_text(item, "reason", "a required check was skipped"),
+                expected: "Every applicable required check must produce current evidence.".into(),
+                rationale: "Skipped required evidence cannot be treated as success.".into(),
+                repair_direction: "Restore a supported deterministic binding for the rule.".into(),
+                permitted_next_action:
+                    "restore the checker binding, then rerun the verification command".into(),
+                verification_command: "wh check --json".into(),
+            });
+        }
+    }
+    if let Some(warnings) = result.get("warnings").and_then(Value::as_array) {
+        for warning in warnings.iter().filter_map(Value::as_str) {
+            findings.push(Finding {
+                file: None,
+                line: None,
+                column: None,
+                rule_id: "whetstone.scanner-warning".into(),
+                observed: warning.into(),
+                expected: "The scanner must inspect the complete requested scope without warnings."
+                    .into(),
+                rationale: "Partial scanner evidence cannot establish completion.".into(),
+                repair_direction: "Resolve the warning without narrowing the requested scope."
+                    .into(),
+                permitted_next_action: "resolve the warning, then rerun the verification command"
+                    .into(),
+                verification_command: "wh check --json".into(),
+            });
+        }
+    }
+    findings
+}
+
+fn value_text(value: &Value, field: &str, fallback: &str) -> String {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .unwrap_or(fallback)
+        .to_string()
+}
+
+fn finding_path(project: &Path, value: Option<&Value>) -> Option<String> {
+    let text = value.and_then(Value::as_str)?;
+    let path = Path::new(text);
+    let relative = if path.is_absolute() {
+        path.strip_prefix(project).ok()?
+    } else {
+        path
+    };
+    if relative.as_os_str().is_empty()
+        || relative.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        None
+    } else {
+        Some(relative.to_string_lossy().into_owned())
+    }
+}
+
+fn service_state(state: VerificationState) -> ServiceState {
+    match state {
+        VerificationState::Success => ServiceState::Success,
+        VerificationState::Violated => ServiceState::Violated,
+        VerificationState::Unavailable => ServiceState::Unavailable,
+        VerificationState::Unknown | VerificationState::NeedsExecutionApproval => {
+            ServiceState::Unknown
+        }
+    }
+}
+
+fn persist_verification_receipt(
+    layout: &ProjectLayout,
+    request_id: &str,
+    report: &VerificationReport,
+    checked_at: &str,
+) -> Result<Option<crate::domain::RecordRef>, StorageError> {
+    let store_path = layout.store_path(StoreKind::Private);
+    if !store_path.join(".dolt").is_dir() {
+        return Ok(None);
+    }
+    let repository = DoltRepository::initialize(&store_path, StoreKind::Private)?;
+    let identity = digest_bytes(
+        format!(
+            "{request_id}\0{}\0{}\0{}\0{}\0{}\0{}",
+            report.snapshot.code_tree.as_str(),
+            report.snapshot.policy.as_str(),
+            report.snapshot.checker_bundle.as_str(),
+            report.snapshot.scope.as_str(),
+            report.snapshot.environment.as_str(),
+            report.snapshot.trust.as_str(),
+        )
+        .as_bytes(),
+    );
+    let suffix = &identity.as_str()["sha256:".len().."sha256:".len() + 32];
+    let idempotency_key = format!("check:{suffix}");
+    if let Some(existing) = repository.by_idempotency_key(&idempotency_key)? {
+        return existing.reference().map(Some).map_err(StorageError::Domain);
+    }
+    let principal = PrincipalRef {
+        kind: PrincipalKind::LocalUser,
+        stable_id: "whetstone:compiled-in-checker".into(),
+        display_name: None,
+    };
+    let verification = match report.state {
+        VerificationState::Success => VerificationAxis::Pass,
+        VerificationState::Violated => VerificationAxis::Fail,
+        VerificationState::Unknown
+        | VerificationState::Unavailable
+        | VerificationState::NeedsExecutionApproval => VerificationAxis::Unknown,
+    };
+    let freshness =
+        if report.results.iter().any(|result| {
+            result.required && result.freshness == verification::EvidenceFreshness::Stale
+        }) {
+            Freshness::Stale
+        } else if report.results.iter().any(|result| {
+            result.required && result.freshness == verification::EvidenceFreshness::Missing
+        }) {
+            Freshness::Missing
+        } else {
+            Freshness::Fresh
+        };
+    let record = AgreementRecord {
+        schema_version: SCHEMA_VERSION_V1,
+        id: RecordId::new(format!("verification.check_{suffix}")).map_err(StorageError::Domain)?,
+        revision: 1,
+        scope: Scope {
+            organization: None,
+            project: format!("project-{}", &layout.project_id()[..12]),
+            component: None,
+            environment: None,
+        },
+        owner: principal.clone(),
+        provenance: Provenance {
+            kind: ProvenanceKind::DeterministicCheck,
+            recorded_by: principal,
+            recorded_at: checked_at.into(),
+            sources: vec![EvidenceRef {
+                system: "whetstone_verification_report".into(),
+                locator: report.receipt_id.as_str().into(),
+                digest: Some(report.receipt_id.clone()),
+            }],
+            authority: ProvenanceAuthority::CandidateOnly,
+        },
+        supersedes: None,
+        idempotency_key,
+        body: RecordBody::VerificationReceipt(VerificationReceipt {
+            subject: ExternalRef {
+                system: ExternalSystem::Custom,
+                stable_id: format!("project:{}:check", layout.project_id()),
+                revision: Some(report.receipt_id.as_str().into()),
+            },
+            code_digest: report.snapshot.code_tree.clone(),
+            policy_state: PolicyStateSnapshot {
+                accepted: None,
+                required: None,
+                installed: None,
+                experimental: None,
+            },
+            verification,
+            authorization: AuthorizationAxis::Unknown,
+            freshness,
+            checked_at: checked_at.into(),
+            related_records: report
+                .results
+                .iter()
+                .flat_map(|result| result.governing_records.clone())
+                .collect(),
+            evidence: vec![EvidenceRef {
+                system: "whetstone_verification_report".into(),
+                locator: report.receipt_id.as_str().into(),
+                digest: Some(report.receipt_id.clone()),
+            }],
+        }),
+    };
+    repository.append(&record, None).map(Some)
+}
+
 fn digest_rule_inputs(project: &Path) -> Result<String, std::io::Error> {
     let mut files = WalkDir::new(project.join("whetstone"))
         .follow_links(false)
@@ -1155,11 +1649,29 @@ fn digest_rule_inputs(project: &Path) -> Result<String, std::io::Error> {
                 .path()
                 .extension()
                 .and_then(|value| value.to_str())
-                .is_some_and(|extension| matches!(extension, "yaml" | "yml"))
+                .is_some_and(|extension| {
+                    matches!(extension, "yaml" | "yml" | "toml" | "json" | "jsonc")
+                })
         })
         .map(|entry| entry.into_path())
         .collect::<Vec<_>>();
+    for candidate in [
+        "Cargo.toml",
+        "ruff.toml",
+        ".ruff.toml",
+        "pyproject.toml",
+        "biome.json",
+        "biome.jsonc",
+        "rustfmt.toml",
+        ".rustfmt.toml",
+    ] {
+        let path = project.join(candidate);
+        if path.is_file() {
+            files.push(path);
+        }
+    }
     files.sort();
+    files.dedup();
     let mut hasher = Sha256::new();
     for file in files {
         let relative = file.strip_prefix(project).unwrap_or(&file);
