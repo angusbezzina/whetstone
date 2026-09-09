@@ -75,11 +75,14 @@ pub fn verify_lint_proxies(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<V
                         "issue": format!("linter config could not be parsed: {err}"),
                         "fix": "fix the linter config syntax before relying on lint_proxy verification",
                     })),
-                    Verdict::Unsupported => {
-                        // Silently skip unsupported linters (e.g. clippy until
-                        // we support it); treating them as issues would create
-                        // noise.
-                    }
+                    Verdict::Unsupported => issues.push(json!({
+                        "rule_id": rule.id,
+                        "signal_id": sig.id,
+                        "linter": binding.tool,
+                        "code": binding.code,
+                        "issue": "lint_proxy tool is unsupported by Whetstone",
+                        "fix": "use a supported native tool or a command validator",
+                    })),
                 }
             }
         }
@@ -142,7 +145,14 @@ pub fn verify_formatter_directives(project_dir: &Path, rules: &[&ApprovedRule]) 
                     "issue": format!("formatter config could not be parsed: {err}"),
                     "fix": "fix the formatter config syntax before relying on formatter verification",
                 })),
-                Verdict::Unsupported => {}
+                Verdict::Unsupported => issues.push(json!({
+                    "rule_id": rule.id,
+                    "tool": formatter.tool,
+                    "option": key,
+                    "expected": expected,
+                    "issue": "formatter tool is unsupported by Whetstone",
+                    "fix": "use a supported formatter or a command validator",
+                })),
             }
         }
     }
@@ -155,6 +165,17 @@ pub fn verify_test_bindings(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<
 
     for rule in rules {
         for test in &rule.tests {
+            if !is_safe_repo_relative(&test.path) {
+                issues.push(json!({
+                    "rule_id": rule.id,
+                    "runner": test.runner,
+                    "path": test.path,
+                    "selector": test.selector,
+                    "issue": "linked test path must stay within the repo",
+                    "fix": "use a repo-relative test path without absolute or parent-directory traversal",
+                }));
+                continue;
+            }
             let path = project_dir.join(&test.path);
             if !path.exists() {
                 issues.push(json!({
@@ -164,6 +185,17 @@ pub fn verify_test_bindings(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<
                     "selector": test.selector,
                     "issue": "linked test path does not exist",
                     "fix": "create the referenced test file or update the rule binding",
+                }));
+                continue;
+            }
+            if !path_resolves_within_repo(project_dir, &path) {
+                issues.push(json!({
+                    "rule_id": rule.id,
+                    "runner": test.runner,
+                    "path": test.path,
+                    "selector": test.selector,
+                    "issue": "linked test path resolves outside the repo",
+                    "fix": "remove symlink/path indirection that escapes the repository",
                 }));
                 continue;
             }
@@ -1193,6 +1225,106 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0]["adapter"], "linked_test");
         assert_eq!(issues[0]["path"], "tests/inline-handlers.test.ts");
+    }
+
+    #[test]
+    fn unsupported_lint_proxy_and_formatter_are_configuration_issues() {
+        let tmp = tempfile::tempdir().expect("create unsupported-tool fixture");
+        let mut rule = validator_rule(crate::rules::ApprovedValidatorBinding {
+            adapter: "command".into(),
+            rule: "unused".into(),
+            config: BTreeMap::from([
+                ("command".into(), json!("true")),
+                ("allow_shell".into(), json!(true)),
+            ]),
+        });
+        rule.validators.clear();
+        rule.signals.push(crate::rules::ApprovedSignal {
+            id: "unsupported-lint".into(),
+            strategy: "lint_proxy".into(),
+            description: "unsupported".into(),
+            ast_query: None,
+            lint: Some(crate::rules::ApprovedLintBinding {
+                tool: "mystery-lint".into(),
+                code: "X1".into(),
+            }),
+        });
+        rule.formatter = Some(crate::rules::ApprovedFormatterDirective {
+            tool: "mystery-format".into(),
+            options: BTreeMap::from([("indent".into(), json!(2))]),
+        });
+
+        let lint_issues = verify_lint_proxies(tmp.path(), &[&rule]);
+        let formatter_issues = verify_formatter_directives(tmp.path(), &[&rule]);
+        assert_eq!(lint_issues.len(), 1);
+        assert_eq!(formatter_issues.len(), 1);
+        assert!(lint_issues[0]["issue"]
+            .as_str()
+            .expect("lint issue text")
+            .contains("unsupported"));
+        assert!(formatter_issues[0]["issue"]
+            .as_str()
+            .expect("formatter issue text")
+            .contains("unsupported"));
+    }
+
+    #[test]
+    fn direct_test_binding_rejects_parent_traversal() {
+        let tmp = tempfile::tempdir().expect("create linked-test fixture");
+        let mut rule = validator_rule(crate::rules::ApprovedValidatorBinding {
+            adapter: "command".into(),
+            rule: "unused".into(),
+            config: BTreeMap::from([
+                ("command".into(), json!("true")),
+                ("allow_shell".into(), json!(true)),
+            ]),
+        });
+        rule.validators.clear();
+        rule.tests.push(crate::rules::ApprovedTestBinding {
+            runner: "cargo".into(),
+            path: "../outside.rs".into(),
+            selector: None,
+        });
+
+        let issues = verify_test_bindings(tmp.path(), &[&rule]);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(
+            issues[0]["issue"],
+            "linked test path must stay within the repo"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_test_binding_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().expect("create linked-test fixture");
+        let outside = tempfile::NamedTempFile::new().expect("create outside fixture");
+        std::fs::create_dir(tmp.path().join("tests")).expect("create tests directory");
+        symlink(outside.path(), tmp.path().join("tests/escape.rs")).expect("create escape symlink");
+
+        let mut rule = validator_rule(crate::rules::ApprovedValidatorBinding {
+            adapter: "command".into(),
+            rule: "unused".into(),
+            config: BTreeMap::from([
+                ("command".into(), json!("true")),
+                ("allow_shell".into(), json!(true)),
+            ]),
+        });
+        rule.validators.clear();
+        rule.tests.push(crate::rules::ApprovedTestBinding {
+            runner: "cargo".into(),
+            path: "tests/escape.rs".into(),
+            selector: None,
+        });
+
+        let issues = verify_test_bindings(tmp.path(), &[&rule]);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(
+            issues[0]["issue"],
+            "linked test path resolves outside the repo"
+        );
     }
 
     fn write_cargo(dir: &Path, body: &str) {

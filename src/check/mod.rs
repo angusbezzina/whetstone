@@ -13,7 +13,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-use tree_sitter::{Query, QueryCursor, Tree};
+use tree_sitter::{QueryCursor, Tree};
 
 use crate::ast::{self, AstLang};
 use crate::rules::ApprovedRule;
@@ -43,7 +43,7 @@ pub struct CheckOptions<'a> {
 pub fn run(opts: CheckOptions<'_>) -> Value {
     let project_dir = opts.project_dir;
     let rules_dir = project_dir.join("whetstone").join("rules");
-    let (rules, load_warnings) = crate::rules::load_approved_rules(&rules_dir, opts.lang_filter);
+    let (rules, load_issues) = crate::rules::load_approved_rules(&rules_dir, opts.lang_filter);
 
     let rule_filter: Option<BTreeSet<&str>> = opts
         .rule_filter
@@ -60,15 +60,26 @@ pub fn run(opts: CheckOptions<'_>) -> Value {
         .collect();
 
     if rules.is_empty() {
+        let config_issues: Vec<Value> = load_issues
+            .iter()
+            .map(|issue| {
+                json!({
+                    "rule_id": Value::Null,
+                    "issue": issue,
+                    "fix": "fix or remove the invalid rule file before scanning",
+                })
+            })
+            .collect();
+        let config_issues_count = config_issues.len();
         return json!({
-            "status": "ok",
+            "status": if config_issues_count == 0 { "ok" } else { "config_issues_found" },
             "violations_count": 0,
-            "config_issues_count": 0,
+            "config_issues_count": config_issues_count,
             "files_scanned": 0,
             "rules_applied": 0,
             "violations": [],
             "skipped": [],
-            "config_issues": [],
+            "config_issues": config_issues,
             "warnings": ["No approved rules match the supplied filters."],
         });
     }
@@ -76,7 +87,7 @@ pub fn run(opts: CheckOptions<'_>) -> Value {
     let compiled = compile_rules(&rules);
     let mut violations: Vec<Value> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
-    let mut warnings: Vec<String> = load_warnings;
+    let mut warnings: Vec<String> = Vec::new();
     let mut files_scanned: usize = 0;
 
     for crule in &compiled {
@@ -85,12 +96,31 @@ pub fn run(opts: CheckOptions<'_>) -> Value {
         }
     }
 
-    let mut config_issues = lint_proxy::verify_lint_proxies(project_dir, &rules);
+    let mut config_issues: Vec<Value> = load_issues
+        .iter()
+        .map(|issue| {
+            json!({
+                "rule_id": Value::Null,
+                "issue": issue,
+                "fix": "fix or remove the invalid rule file before scanning",
+            })
+        })
+        .collect();
+    for crule in &compiled {
+        for issue in &crule.issues {
+            config_issues.push(json!({
+                "rule_id": crule.rule.id,
+                "issue": issue,
+                "fix": "fix the rule signal before scanning",
+            }));
+        }
+    }
+    config_issues.extend(lint_proxy::verify_lint_proxies(project_dir, &rules));
     config_issues.extend(lint_proxy::verify_formatter_directives(project_dir, &rules));
     config_issues.extend(lint_proxy::verify_test_bindings(project_dir, &rules));
     config_issues.extend(lint_proxy::verify_validator_bindings(project_dir, &rules));
     let validator_default_timeout = 15;
-    let mut seen_validator_runtime_issues: BTreeSet<String> = BTreeSet::new();
+    let mut seen_runtime_issues: BTreeSet<String> = BTreeSet::new();
 
     let files = discover_source_files(opts.scan_paths);
     for (path, language, ast_lang) in &files {
@@ -124,11 +154,34 @@ pub fn run(opts: CheckOptions<'_>) -> Value {
                 Some(lang) => match ast::parse(*lang, &text) {
                     Some(t) => Some(t),
                     None => {
-                        warnings.push(format!("tree-sitter parse failed for {}", path.display()));
+                        let issue = format!("tree-sitter parse failed for {}", path.display());
+                        if seen_runtime_issues.insert(issue.clone()) {
+                            config_issues.push(json!({
+                                        "rule_id": Value::Null,
+                                        "path": path.display().to_string(),
+                                        "issue": issue,
+                                        "fix": "fix the source syntax or parser configuration before relying on this scan",
+                                    }));
+                        }
                         None
                     }
                 },
-                None => None,
+                None => {
+                    let issue = format!(
+                        "no AST parser is available for {} ({})",
+                        path.display(),
+                        language
+                    );
+                    if seen_runtime_issues.insert(issue.clone()) {
+                        config_issues.push(json!({
+                            "rule_id": Value::Null,
+                            "path": path.display().to_string(),
+                            "issue": issue,
+                            "fix": "use a supported AST language or a different deterministic binding",
+                        }));
+                    }
+                    None
+                }
             }
         } else {
             None
@@ -136,7 +189,22 @@ pub fn run(opts: CheckOptions<'_>) -> Value {
 
         for crule in applicable {
             for sig in &crule.signals {
-                let hits = apply_signal(sig, *ast_lang, &text, tree.as_ref());
+                let hits = match apply_signal(sig, *ast_lang, &text, tree.as_ref()) {
+                    Ok(hits) => hits,
+                    Err(issue) => {
+                        let key = format!("{}:{}:{issue}", crule.rule.id, sig.signal_id);
+                        if seen_runtime_issues.insert(key) {
+                            config_issues.push(json!({
+                                "rule_id": crule.rule.id,
+                                "signal_id": sig.signal_id,
+                                "path": path.display().to_string(),
+                                "issue": issue,
+                                "fix": "fix the AST signal before relying on this scan",
+                            }));
+                        }
+                        continue;
+                    }
+                };
                 for hit in hits {
                     violations.push(json!({
                         "rule_id": crule.rule.id,
@@ -194,7 +262,7 @@ pub fn run(opts: CheckOptions<'_>) -> Value {
                     }
                     Err(issue) => {
                         let key = format!("{}:{}:{}", crule.rule.id, validator.rule, issue);
-                        if seen_validator_runtime_issues.insert(key) {
+                        if seen_runtime_issues.insert(key) {
                             config_issues.push(json!({
                                 "rule_id": crule.rule.id,
                                 "adapter": validator.adapter,
@@ -248,7 +316,7 @@ pub fn run(opts: CheckOptions<'_>) -> Value {
 /// never adjudicated by this deterministic command.
 pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Value {
     let rules_dir = project_dir.join("whetstone").join("rules");
-    let (rules, _) = crate::rules::load_approved_rules(&rules_dir, lang_filter);
+    let (rules, load_issues) = crate::rules::load_approved_rules(&rules_dir, lang_filter);
 
     let quote_map = load_source_quotes(project_dir);
     let content_map = load_cached_contents(project_dir);
@@ -256,10 +324,20 @@ pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Value {
     let mut mismatches: Vec<Value> = Vec::new();
     let mut fidelity_failures: Vec<Value> = Vec::new();
     let mut scorecards: Vec<Value> = Vec::new();
+    let mut scanner_errors: Vec<Value> = load_issues
+        .into_iter()
+        .map(|issue| json!({"rule_id": Value::Null, "issue": issue}))
+        .collect();
 
     for rule in &rules {
         let compiled = compile_rules(&[rule]);
         let crule = &compiled[0];
+        scanner_errors.extend(crule.issues.iter().map(|issue| {
+            json!({
+                "rule_id": rule.id,
+                "issue": issue,
+            })
+        }));
         let scanner_enforced = !crule.signals.is_empty();
 
         let mut golden_total = 0usize;
@@ -280,10 +358,17 @@ pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Value {
             } else {
                 None
             };
-            let fires = crule
-                .signals
-                .iter()
-                .any(|sig| !apply_signal(sig, Some(ast_lang), &g.code, tree.as_ref()).is_empty());
+            let mut fires = false;
+            for sig in &crule.signals {
+                match apply_signal(sig, Some(ast_lang), &g.code, tree.as_ref()) {
+                    Ok(hits) => fires |= !hits.is_empty(),
+                    Err(issue) => scanner_errors.push(json!({
+                        "rule_id": rule.id,
+                        "signal_id": sig.signal_id,
+                        "issue": issue,
+                    })),
+                }
+            }
             let expected_fire = g.verdict.eq_ignore_ascii_case("fail");
             golden_checked += 1;
             if fires == expected_fire {
@@ -359,7 +444,7 @@ pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Value {
         }));
     }
 
-    let ok = mismatches.is_empty() && fidelity_failures.is_empty();
+    let ok = mismatches.is_empty() && fidelity_failures.is_empty() && scanner_errors.is_empty();
     json!({
         "status": if ok { "ok" } else { "eval_failed" },
         "ok": ok,
@@ -368,6 +453,8 @@ pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Value {
         "golden_mismatch_count": mismatches.len(),
         "source_fidelity_failures": fidelity_failures,
         "source_fidelity_failure_count": fidelity_failures.len(),
+        "scanner_errors": scanner_errors,
+        "scanner_error_count": scanner_errors.len(),
         "scorecards": scorecards,
     })
 }
@@ -441,9 +528,13 @@ pub fn format_eval_output(result: &Value) -> String {
         .get("source_fidelity_failure_count")
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
+    let scanner_errors = result
+        .get("scanner_error_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
     let mut out = format!(
-        "Whetstone eval: {} rule(s) — {} golden mismatch(es), {} source-fidelity failure(s)\n",
-        evaluated, mism, fid
+        "Whetstone eval: {} rule(s) — {} golden mismatch(es), {} source-fidelity failure(s), {} scanner error(s)\n",
+        evaluated, mism, fid, scanner_errors
     );
     if let Some(arr) = result.get("golden_mismatches").and_then(|v| v.as_array()) {
         for m in arr {
@@ -467,7 +558,7 @@ pub fn format_eval_output(result: &Value) -> String {
         }
     }
     out.push_str(if ok {
-        "All rules pass their golden examples and structural source-fidelity.\n"
+        "Checked golden examples pass; unavailable source-fidelity evidence remains unknown.\n"
     } else {
         "Eval FAILED — fix the rules above.\n"
     });
@@ -548,6 +639,7 @@ struct CompiledRule<'a> {
     rule: &'a ApprovedRule,
     signals: Vec<CompiledSignal>,
     notes: Vec<String>,
+    issues: Vec<String>,
 }
 
 struct CompiledSignal {
@@ -590,24 +682,34 @@ fn compile_rules<'a>(rules: &[&'a ApprovedRule]) -> Vec<CompiledRule<'a>> {
     for rule in rules {
         let mut signals = Vec::new();
         let mut notes = Vec::new();
+        let mut issues = Vec::new();
         for sig in &rule.signals {
             match sig.strategy.as_str() {
                 "ast" => {
                     if let Some(ast_query) = &sig.ast_query {
-                        signals.push(CompiledSignal {
-                            signal_id: sig.id.clone(),
-                            description: sig.description.clone(),
-                            strategy: sig.strategy.clone(),
-                            ast_query: ast_query.clone(),
-                        });
+                        match AstLang::from_str(&rule.language) {
+                            Some(language) => match ast::compile_query(language, ast_query) {
+                                Ok(_) => signals.push(CompiledSignal {
+                                    signal_id: sig.id.clone(),
+                                    description: sig.description.clone(),
+                                    strategy: sig.strategy.clone(),
+                                    ast_query: ast_query.clone(),
+                                }),
+                                Err(error) => issues.push(format!("signal {}: {error}", sig.id)),
+                            },
+                            None => issues.push(format!(
+                                "signal {}: ast strategy is unsupported for language {}",
+                                sig.id, rule.language
+                            )),
+                        }
                     } else {
-                        notes.push(format!(
+                        issues.push(format!(
                             "signal {}: ast signal has no ast_query; cannot enforce",
                             sig.id
                         ));
                     }
                 }
-                "pattern" => notes.push(format!(
+                "pattern" => issues.push(format!(
                     "signal {}: deprecated pattern strategy is not executable",
                     sig.id
                 )),
@@ -617,13 +719,14 @@ fn compile_rules<'a>(rules: &[&'a ApprovedRule]) -> Vec<CompiledRule<'a>> {
                         sig.id
                     ));
                 }
-                other => notes.push(format!("signal {}: unknown strategy {other}", sig.id)),
+                other => issues.push(format!("signal {}: unknown strategy {other}", sig.id)),
             }
         }
         out.push(CompiledRule {
             rule,
             signals,
             notes,
+            issues,
         });
     }
     out
@@ -634,11 +737,11 @@ fn apply_signal(
     lang: Option<AstLang>,
     text: &str,
     tree: Option<&Tree>,
-) -> Vec<SignalHit> {
+) -> Result<Vec<SignalHit>, String> {
     if let (Some(lang), Some(tree)) = (lang, tree) {
         return run_ast_query(&sig.ast_query, lang, tree, text);
     }
-    Vec::new()
+    Err("AST signal could not run because its parser tree is unavailable".into())
 }
 
 fn run_command_validator(
@@ -757,10 +860,9 @@ fn run_command_validator(
 
 fn parse_command_validator_output(stdout: &[u8]) -> Result<CommandValidatorResult, String> {
     if stdout.is_empty() {
-        return Ok(CommandValidatorResult {
-            violations: Vec::new(),
-            warnings: Vec::new(),
-        });
+        return Err(
+            "command validator returned empty output; expected JSON violations array".into(),
+        );
     }
 
     let parsed: Value = serde_json::from_slice(stdout)
@@ -843,32 +945,23 @@ fn path_resolves_within_repo(project_dir: &Path, full_path: &Path) -> bool {
 }
 
 /// Run a raw tree-sitter query and turn every `@match` capture into a hit.
-fn run_ast_query(query_src: &str, lang: AstLang, tree: &Tree, source: &str) -> Vec<SignalHit> {
-    let language = match lang {
-        AstLang::Python => tree_sitter_python::language(),
-        AstLang::TypeScript => tree_sitter_typescript::language_tsx(),
-        AstLang::Rust => tree_sitter_rust::language(),
-    };
-    let query = match Query::new(&language, query_src) {
-        Ok(q) => q,
-        Err(e) => {
-            eprintln!(
-                "Whetstone: skipping malformed ast_query for {}: {e}",
-                lang.as_str()
-            );
-            return Vec::new();
-        }
-    };
-    let match_index = query.capture_index_for_name("match");
+fn run_ast_query(
+    query_src: &str,
+    lang: AstLang,
+    tree: &Tree,
+    source: &str,
+) -> Result<Vec<SignalHit>, String> {
+    let query = ast::compile_query(lang, query_src)?;
+    let match_index = query
+        .capture_index_for_name("match")
+        .ok_or_else(|| "AST query is missing required @match capture".to_string())?;
     let mut cursor = QueryCursor::new();
     let bytes = source.as_bytes();
     let mut hits = Vec::new();
     for m in cursor.matches(&query, tree.root_node(), bytes) {
         for cap in m.captures {
-            if let Some(ix) = match_index {
-                if cap.index != ix {
-                    continue;
-                }
+            if cap.index != match_index {
+                continue;
             }
             let start = cap.node.start_position();
             let range = cap.node.byte_range();
@@ -880,7 +973,7 @@ fn run_ast_query(query_src: &str, lang: AstLang, tree: &Tree, source: &str) -> V
             });
         }
     }
-    hits
+    Ok(hits)
 }
 
 // ── File discovery ──
@@ -965,7 +1058,8 @@ mod tests {
             Some(AstLang::Python),
             source,
             Some(&tree),
-        );
+        )
+        .expect("valid query should run");
         assert_eq!(hits.len(), 2, "got: {hits:?}");
         assert_eq!(hits[0].line, 1);
         assert_eq!(hits[1].line, 4);
@@ -989,7 +1083,8 @@ mod tests {
             Some(AstLang::TypeScript),
             source,
             Some(&tree),
-        );
+        )
+        .expect("valid query should run");
         assert_eq!(hits.len(), 1, "got: {hits:?}");
         assert_eq!(hits[0].line, 1);
     }
@@ -1138,5 +1233,14 @@ mod tests {
         assert_eq!(card["golden_checked"], 0, "{res}");
         assert_eq!(card["scanner_enforced"], false);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn command_validator_rejects_empty_success_output() {
+        let error = match parse_command_validator_output(b"") {
+            Ok(_) => panic!("empty output must not mean an empty successful result"),
+            Err(error) => error,
+        };
+        assert!(error.contains("expected JSON violations array"));
     }
 }

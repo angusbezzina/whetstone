@@ -24,8 +24,7 @@ const VALID_SEVERITIES: &[&str] = &["must", "should", "may"];
 /// Valid confidence levels.
 const VALID_CONFIDENCES: &[&str] = &["high", "medium"];
 
-/// Valid rule lifecycle statuses.
-/// See `references/handoff-schema.md` and `references/workflow-matrix.md`.
+/// Valid rule lifecycle statuses in the retained rule schema.
 const VALID_STATUSES: &[&str] = &["candidate", "approved"];
 
 /// Supported lint tools for structured lint bindings.
@@ -456,6 +455,11 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
                     file: file_path.to_string(),
                     message: format!("{rule_ctx}: tests[].path is empty"),
                 });
+            } else if !is_safe_repo_relative(&test.path) {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!("{rule_ctx}: tests[].path must stay within the repo"),
+                });
             }
         }
 
@@ -625,13 +629,18 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
                     });
                 }
             }
+        } else if rule.approved {
+            warnings.push(ValidationWarning {
+                file: file_path.to_string(),
+                message: format!("{rule_ctx}: approved=true requires explicit status='approved'"),
+            });
         }
     }
 
     warnings
 }
 
-// --- Schema + fixtures validation (replacement for scripts/validate-rule-schema.py) ---
+// --- Schema + rule-file validation ---
 
 /// Required field names the schema file must document.
 const SCHEMA_REQUIRED_FIELDS: &[&str] = &[
@@ -644,20 +653,14 @@ const SCHEMA_REQUIRED_FIELDS: &[&str] = &[
     "signals",
 ];
 
-/// Fixture paths (relative to the project root) that are deliberately invalid
-/// and should be skipped by the schema validator.
-const INTENTIONALLY_INVALID_FIXTURES: &[&str] =
-    &["tests/fixtures/whetstone/rules/python/malformed.yaml"];
-
 /// The rule-schema YAML embedded at compile time so `wh validate` works for
 /// downstream projects that do not carry the Whetstone source tree.
 const EMBEDDED_SCHEMA: &str = include_str!("../references/rule-schema.yaml");
 
 /// Validate the schema file and all rule fixtures under the given project root.
 ///
-/// Produces a human-readable report (matching the legacy Python contract) and
-/// a boolean indicating overall success. Used by the `validate-rules` CLI
-/// subcommand and the CI schema gate.
+/// Produces a human-readable report and a boolean indicating overall success.
+/// Used by the hidden `validate` command and the CI schema gate.
 pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
     let mut out = String::new();
     let mut ok = true;
@@ -733,11 +736,6 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
             .unwrap_or(fixture)
             .to_string_lossy()
             .replace('\\', "/");
-        if INTENTIONALLY_INVALID_FIXTURES.iter().any(|p| rel == *p) {
-            out.push_str(&format!("  SKIP: {rel} (intentional invalid fixture)\n"));
-            continue;
-        }
-
         let text = match std::fs::read_to_string(fixture) {
             Ok(t) => t,
             Err(e) => {
@@ -753,6 +751,10 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
                 continue;
             }
         };
+
+        for warning in validate_rule_file(&rf, &rel) {
+            errors.push(warning.message);
+        }
 
         if rf.rules.is_empty() {
             continue;
@@ -816,6 +818,27 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
                         "{rel}: rule {rid} `ast` signal is missing ast_query"
                     ));
                 }
+
+                if sig.strategy == "ast" {
+                    let inferred_language = infer_language_from_rule_path(fixture);
+                    let languages = resolved_rule_languages(rule, inferred_language.as_deref());
+                    for language in languages {
+                        match (
+                            crate::ast::AstLang::from_str(&language),
+                            sig.ast_query.as_deref(),
+                        ) {
+                            (Some(ast_lang), Some(query)) => {
+                                if let Err(error) = crate::ast::compile_query(ast_lang, query) {
+                                    errors.push(format!("{rel}: rule {rid}: {error}"));
+                                }
+                            }
+                            (None, Some(_)) => errors.push(format!(
+                                "{rel}: rule {rid}: ast strategy is unsupported for language {language}"
+                            )),
+                            _ => {}
+                        }
+                    }
+                }
             }
 
             out.push_str(&format!("  OK: {rel} / {rid}\n"));
@@ -835,7 +858,7 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
 
 // --- Loading ---
 
-/// Load all rule files from the rules directory, returning parsed files and warnings.
+/// Load valid rule files from the rules directory, returning rejected-file issues.
 pub fn load_rule_files(rules_dir: &Path) -> (Vec<LoadedRuleFile>, Vec<String>) {
     let mut rule_files = Vec::new();
     let mut warnings = Vec::new();
@@ -864,10 +887,10 @@ pub fn load_rule_files(rules_dir: &Path) -> (Vec<LoadedRuleFile>, Vec<String>) {
             Ok(rf) => {
                 let file_path = entry.path().to_string_lossy().to_string();
 
-                // Validate
                 let validation = validate_rule_file(&rf, &file_path);
-                for w in &validation {
-                    warnings.push(w.message.clone());
+                if !validation.is_empty() {
+                    warnings.extend(validation.into_iter().map(|warning| warning.message));
+                    continue;
                 }
 
                 // Infer language from path
@@ -906,6 +929,22 @@ fn infer_language_from_path(file_path: &Path, rules_dir: &Path) -> Option<String
     None
 }
 
+fn infer_language_from_rule_path(file_path: &Path) -> Option<String> {
+    let components: Vec<_> = file_path.components().collect();
+    for pair in components.windows(2) {
+        if pair[0].as_os_str() != "rules" {
+            continue;
+        }
+        let language = pair[1].as_os_str().to_string_lossy().to_string();
+        if crate::types::canonical_language(&language).is_some()
+            || language == crate::types::SHARED_LANGUAGE_DIR
+        {
+            return Some(language);
+        }
+    }
+    None
+}
+
 fn is_safe_repo_relative(path: &str) -> bool {
     let path = Path::new(path);
     !path.is_absolute()
@@ -930,7 +969,7 @@ pub fn load_approved_rules(
 
     for lrf in &loaded {
         for rule in &lrf.rule_file.rules {
-            if !rule.approved {
+            if !rule.approved || rule.status.as_deref() != Some("approved") {
                 continue;
             }
             let target_languages = resolved_rule_languages(rule, lrf.language.as_deref());

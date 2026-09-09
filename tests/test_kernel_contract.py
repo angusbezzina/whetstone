@@ -94,6 +94,13 @@ rules:
         description: Finds uppercase function names.
         weight: required
         ast_query: '((function_definition name: (identifier) @match) (#match? @match "^[A-Z]"))'
+    golden_examples:
+      - code: "def read_config():\n    pass\n"
+        verdict: pass
+        reason: Lowercase names comply with the rule.
+      - code: "def ReadConfig():\n    pass\n"
+        verdict: fail
+        reason: Uppercase names violate the rule.
 """
     )
     (source / "app.py").write_text("def ReadConfig():\n    pass\n")

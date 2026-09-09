@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use tree_sitter::{Language, Parser, Tree};
+use tree_sitter::{Language, Parser, Query, Tree};
 
 /// Languages that Whetstone knows how to parse with tree-sitter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -55,6 +55,21 @@ impl AstLang {
             AstLang::Rust => tree_sitter_rust::language(),
         }
     }
+}
+
+/// Compile a rule query for a supported language and require the capture that
+/// the scanner reports as a violation. Configuration errors must never degrade
+/// into an empty (apparently successful) scan.
+pub fn compile_query(lang: AstLang, source: &str) -> Result<Query, String> {
+    let query = Query::new(&lang.ts_language(), source)
+        .map_err(|error| format!("invalid {} tree-sitter query: {error}", lang.as_str()))?;
+    if query.capture_index_for_name("match").is_none() {
+        return Err(format!(
+            "{} tree-sitter query must define an @match capture",
+            lang.as_str()
+        ));
+    }
+    Ok(query)
 }
 
 thread_local! {
@@ -116,5 +131,12 @@ mod tests {
         assert!(parse(AstLang::Python, "x = 1").is_some());
         assert!(parse(AstLang::Python, "y = 2").is_some());
         assert!(parse(AstLang::Rust, "fn main() {}").is_some());
+    }
+
+    #[test]
+    fn query_compilation_requires_valid_syntax_and_match_capture() {
+        assert!(compile_query(AstLang::Python, "(function_definition) @match").is_ok());
+        assert!(compile_query(AstLang::Python, "(function_definition").is_err());
+        assert!(compile_query(AstLang::Python, "(function_definition) @node").is_err());
     }
 }

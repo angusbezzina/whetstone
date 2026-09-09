@@ -6,6 +6,18 @@ description = "Whetstone sharpens the tools that write your code"
 license = "MIT"
 rust-version = "1.75"
 default-run = "whetstone"
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/SKILL.md",
+    "/src/**",
+    "/references/rule-schema.yaml",
+    "/references/signal-strategies.md",
+    "/planning/skill-cli-boundary.md",
+    "/tests/kernel_cli.rs",
+]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
