@@ -10,11 +10,30 @@ dependency-extraction application has been removed; its last complete revision
 is `1b7fd8c341b8a5aaea742c564092fbcca26b51bb` and its last release is v0.12.0.
 Project data under `whetstone/`, Beads history, and Git history were preserved.
 
-## Current state: R0 foundation
+## Current state: local-alpha foundation
 
-The current binary is not yet the new MVP. Bare `wh` reports that state
-honestly. Three hidden developer gates keep the surviving deterministic kernel
-non-vacuous while the new record model is built:
+The current binary is not yet the complete MVP. It does expose the six stable
+workflow families and a versioned JSON envelope. `init`, `change`, and the
+observational `check` have an initial local implementation; `dash`, `pull`, and
+`push` return `unavailable` until their implementation milestones pass. Bare
+`wh` is a read-only orientation and never starts a TUI.
+
+```bash
+wh init --json
+wh change --json
+wh check --json --path src
+wh dash --json       # unavailable until M1.10
+wh pull --json       # unavailable until M2.1
+wh push --json       # unavailable until M2.1
+```
+
+Machine clients consume `whetstone.command-response.v1`; its strict schema is
+in `references/command-response-v1.schema.json`. Noninteractive requests never
+prompt. They return explicit `needs_input`, `needs_decision`, `stale`,
+`conflict`, `unknown`, or `unavailable` states with permitted next actions.
+
+Three hidden developer gates keep the surviving deterministic kernel
+non-vacuous while the rest of the MVP is built:
 
 ```bash
 cargo run --quiet --release -- validate
@@ -22,14 +41,15 @@ cargo run --quiet --release -- eval
 cargo run --quiet --release -- scan src --lang rust --json --no-fail
 ```
 
-The kernel currently provides typed rule validation, tree-sitter checks, golden
-example evaluation, and verification of native lint, formatter, test, and
-validator bindings. It does not expose legacy product commands or pretend the
-target workflows exist.
+The kernel provides versioned agreement records, separate private/shareable
+local Dolt stores, typed rule validation, tree-sitter checks, golden-example
+evaluation, and verification of native lint, formatter, test, and validator
+bindings. Public `wh check` cannot execute command validators until an exact
+checker is trusted through the later execution-adapter milestone.
 
 ## Target product
 
-The public surface will contain six workflow families:
+The public surface contains six workflow families:
 
 | Workflow | Purpose |
 | --- | --- |

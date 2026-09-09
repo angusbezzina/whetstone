@@ -278,6 +278,19 @@ impl DoltRepository {
         Ok(Some(record))
     }
 
+    /// Resolve a previously accepted request without creating a new revision.
+    ///
+    /// Command adapters use this before optimistic-revision checks so a retry
+    /// after a lost response returns the original result instead of appearing
+    /// stale. A reused key with different input is still rejected by the
+    /// service (and, defensively, by `append`).
+    pub fn by_idempotency_key(&self, key: &str) -> Result<Option<AgreementRecord>, StorageError> {
+        match self.find_idempotency(key)? {
+            Some(reference) => self.get(&reference),
+            None => Ok(None),
+        }
+    }
+
     pub fn latest(&self, id: &RecordId) -> Result<Option<AgreementRecord>, StorageError> {
         let query = format!(
             "SELECT digest, record_json FROM records WHERE record_id={} ORDER BY revision DESC LIMIT 1",

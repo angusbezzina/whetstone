@@ -110,14 +110,20 @@ fn nested_directories_and_worktrees_share_one_project_identity() {
     assert_eq!(primary.state_root(), secondary.state_root());
     assert_ne!(primary.project_root(), secondary.project_root());
     assert!(ProjectLayout::resolve(&nested, Some("../escape")).is_err());
-    assert_eq!(fs::read_to_string(repo.join("README.md")).expect("readme"), "fixture");
+    assert_eq!(
+        fs::read_to_string(repo.join("README.md")).expect("readme"),
+        "fixture"
+    );
     let status = Command::new("git")
         .current_dir(&repo)
         .args(["status", "--porcelain"])
         .output()
         .expect("git status");
     assert!(status.status.success());
-    assert!(status.stdout.is_empty(), "layout resolution must not modify the repo");
+    assert!(
+        status.stdout.is_empty(),
+        "layout resolution must not modify the repo"
+    );
 }
 
 #[test]

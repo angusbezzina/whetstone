@@ -41,9 +41,9 @@ def parsed(result: subprocess.CompletedProcess[str]) -> dict:
 
 def test_orientation_names_only_the_target_workflows() -> None:
     result = parsed(run("--json"))
-    assert result["status"] == "foundation"
-    assert result["available"] == []
-    assert result["target_workflows"] == [
+    assert result["schema"] == "whetstone.command-response.v1"
+    assert result["state"] == "success"
+    assert result["data"]["workflows"] == [
         "init",
         "dash",
         "change",
@@ -51,12 +51,22 @@ def test_orientation_names_only_the_target_workflows() -> None:
         "pull",
         "push",
     ]
+    assert result["data"]["read_only"] is True
 
 
 def test_legacy_command_is_not_dispatchable() -> None:
     result = run("publish")
     assert result.returncode == 2
     assert "unrecognized subcommand" in result.stderr
+
+
+def test_sync_is_explicitly_unavailable() -> None:
+    for workflow in ("pull", "push"):
+        result = run(workflow, "--json", "--request-id", "python-client")
+        assert result.returncode == 4
+        response = json.loads(result.stdout)
+        assert response["state"] == "unavailable"
+        assert response["workflow"] == workflow
 
 
 def test_validation_and_eval_do_real_work() -> None:

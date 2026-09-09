@@ -8,7 +8,7 @@ description: >-
 license: MIT
 metadata:
   author: whetstone
-  version: "0.4.0-foundation"
+  version: "0.5.0-local-alpha"
 ---
 
 # Whetstone
@@ -20,11 +20,19 @@ then use deterministic checks to close the loop.
 
 ## Current implementation boundary
 
-This checkout is at the R0 prune-first foundation. The target workflows below
-are specifications, not yet available commands. Do not simulate them by editing
-legacy YAML, restoring removed commands, or claiming a safeguard is enforced.
-The only live binary commands are hidden developer gates: `validate`, `eval`,
-and `scan`.
+This checkout is a local-alpha foundation, not the complete MVP. All six public
+workflow families exist. `init`, `change`, and observational `check` have an
+initial local implementation. `dash`, `pull`, and `push` deliberately return
+`unavailable`; do not simulate them by editing legacy YAML, copying private
+records, or claiming remote/approval effects. Hidden `validate`, `eval`, and
+`scan` commands are repository-maintenance gates, not extra product workflows.
+
+For automation, always pass `--json` and consume the versioned
+`whetstone.command-response.v1` envelope. Treat nonzero states according to the
+returned `state` and `permitted_actions`; never infer success from process
+completion alone. Resume `needs_input` with the same request ID, expected
+revision, and resume token. A retry with the same request ID must keep the same
+input.
 
 Use [planning/direction-demo/index.html](planning/direction-demo/index.html) for
 target behavior and

@@ -38,6 +38,9 @@ pub struct CheckOptions<'a> {
     pub scan_paths: &'a [PathBuf],
     pub lang_filter: Option<&'a str>,
     pub rule_filter: Option<&'a [String]>,
+    /// Command validators are disabled at untrusted public boundaries until
+    /// an installed checker manifest authorizes an exact executable digest.
+    pub execute_command_validators: bool,
 }
 
 pub fn run(opts: CheckOptions<'_>) -> Value {
@@ -119,6 +122,20 @@ pub fn run(opts: CheckOptions<'_>) -> Value {
     config_issues.extend(lint_proxy::verify_formatter_directives(project_dir, &rules));
     config_issues.extend(lint_proxy::verify_test_bindings(project_dir, &rules));
     config_issues.extend(lint_proxy::verify_validator_bindings(project_dir, &rules));
+    if !opts.execute_command_validators {
+        for rule in &rules {
+            for validator in &rule.validators {
+                if validator.adapter == "command" {
+                    config_issues.push(json!({
+                        "rule_id": rule.id,
+                        "validator_rule": validator.rule,
+                        "issue": "command validator is not backed by an installed trusted checker manifest",
+                        "fix": "install and verify the checker through the trusted execution workflow before checking",
+                    }));
+                }
+            }
+        }
+    }
     let validator_default_timeout = 15;
     let mut seen_runtime_issues: BTreeSet<String> = BTreeSet::new();
 
@@ -227,6 +244,9 @@ pub fn run(opts: CheckOptions<'_>) -> Value {
 
             for validator in &crule.rule.validators {
                 if validator.adapter != "command" {
+                    continue;
+                }
+                if !opts.execute_command_validators {
                     continue;
                 }
                 match run_command_validator(

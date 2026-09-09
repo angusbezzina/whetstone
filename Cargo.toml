@@ -14,6 +14,7 @@ include = [
     "/SKILL.md",
     "/src/**",
     "/references/agreement-record-v1.schema.json",
+    "/references/command-response-v1.schema.json",
     "/references/rule-schema.yaml",
     "/references/signal-strategies.md",
     "/planning/skill-cli-boundary.md",
@@ -21,6 +22,8 @@ include = [
     "/tests/fixtures/direction_cases.json",
     "/tests/kernel_cli.rs",
     "/tests/storage_dolt.rs",
+    "/examples/whetstone-client.sh",
+    "/examples/whetstone_client.py",
 ]
 
 [dependencies]

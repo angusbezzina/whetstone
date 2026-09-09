@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://whetstone.dev/schemas/command-response-v1.schema.json",
+  "title": "Whetstone command response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "request_id",
+    "workflow",
+    "state",
+    "summary",
+    "evidence",
+    "blocking_questions",
+    "permitted_actions",
+    "data"
+  ],
+  "properties": {
+    "schema": { "const": "whetstone.command-response.v1" },
+    "schema_version": { "const": 1 },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "workflow": {
+      "enum": ["orientation", "init", "dash", "change", "check", "pull", "push"]
+    },
+    "state": {
+      "enum": [
+        "success",
+        "violated",
+        "unknown",
+        "unavailable",
+        "needs_decision",
+        "needs_input",
+        "stale",
+        "conflict"
+      ]
+    },
+    "summary": { "type": "string", "minLength": 1 },
+    "expected_revision": { "type": "integer", "minimum": 0 },
+    "resume_token": { "type": "string", "pattern": "^resume-v1:[0-9a-f]{64}$" },
+    "required_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "policy_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "checker_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "locator"],
+        "properties": {
+          "kind": { "type": "string", "minLength": 1 },
+          "locator": { "type": "string", "minLength": 1 },
+          "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "blocking_questions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "permitted_actions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "data": {}
+  }
+}

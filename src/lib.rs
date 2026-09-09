@@ -4,6 +4,7 @@ mod cli;
 pub mod domain;
 mod output;
 mod rules;
+pub mod service;
 pub mod storage;
 mod types;
 
