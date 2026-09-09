@@ -53,6 +53,7 @@ fn real_browser_drives_the_real_dashboard_service_and_persists_results() {
     let output = Command::new("node")
         .arg(script)
         .env("WH_DASHBOARD_URL", url)
+        .env("WH_PROJECT_ROOT", temp.path())
         .output()
         .expect("run live browser harness");
     if output.status.code() == Some(77) {

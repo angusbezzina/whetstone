@@ -231,13 +231,13 @@ fn init_is_resumable_and_duplicate_requests_are_idempotent() {
     let accepted = run(&agreement_args, temp.path());
     assert_eq!(
         accepted.status.code(),
-        Some(5),
+        Some(6),
         "stdout={} stderr={}",
         String::from_utf8_lossy(&accepted.stdout),
         String::from_utf8_lossy(&accepted.stderr)
     );
     let accepted_json = json(&accepted);
-    assert_eq!(accepted_json["state"], "needs_decision");
+    assert_eq!(accepted_json["state"], "needs_input");
     assert_eq!(
         accepted_json["data"]["records"].as_array().map(Vec::len),
         Some(4)
@@ -266,9 +266,9 @@ fn init_is_resumable_and_duplicate_requests_are_idempotent() {
         ],
         temp.path(),
     );
-    assert_eq!(established.status.code(), Some(5));
+    assert_eq!(established.status.code(), Some(6));
     let established_json = json(&established);
-    assert_eq!(established_json["state"], "needs_decision");
+    assert_eq!(established_json["state"], "needs_input");
     assert_eq!(
         established_json["data"]["progress"]["missing_decisions"],
         serde_json::json!([])
@@ -291,7 +291,7 @@ fn init_is_resumable_and_duplicate_requests_are_idempotent() {
     );
 
     let replay = run(&agreement_args, temp.path());
-    assert_eq!(replay.status.code(), Some(5));
+    assert_eq!(replay.status.code(), Some(6));
     assert_eq!(
         json(&replay)["data"]["records"],
         accepted_json["data"]["records"]
@@ -526,7 +526,7 @@ fn init_repairs_only_missing_established_agreement_fields_and_replays_exactly() 
         ],
         temp.path(),
     );
-    assert_eq!(accepted.status.code(), Some(5));
+    assert_eq!(accepted.status.code(), Some(6));
 
     let layout = ProjectLayout::resolve(temp.path(), None).expect("layout");
     let private =
@@ -590,7 +590,7 @@ fn init_repairs_only_missing_established_agreement_fields_and_replays_exactly() 
         "Platform lead",
     ];
     let completed = run(&completion_args, temp.path());
-    assert_eq!(completed.status.code(), Some(5));
+    assert_eq!(completed.status.code(), Some(6));
     let completed_json = json(&completed);
     assert_eq!(
         completed_json["data"]["progress"]["missing_decisions"],
@@ -601,7 +601,7 @@ fn init_repairs_only_missing_established_agreement_fields_and_replays_exactly() 
         Some(1)
     );
     let replay = run(&completion_args, temp.path());
-    assert_eq!(replay.status.code(), Some(5));
+    assert_eq!(replay.status.code(), Some(6));
     assert_eq!(
         json(&replay)["data"]["records"],
         completed_json["data"]["records"]
@@ -727,7 +727,7 @@ fn init_agree_resumes_after_interruption_between_dolt_bootstrap_and_migration() 
         ],
         temp.path(),
     );
-    assert_eq!(resumed.status.code(), Some(5));
+    assert_eq!(resumed.status.code(), Some(6));
     assert_eq!(json(&resumed)["data"]["progress"]["agreement"], "approved");
     assert_eq!(
         DoltRepository::open_existing(&private_root, StoreKind::Private)
@@ -833,13 +833,13 @@ fn init_replay_keeps_the_base_revision_when_new_records_have_no_supersedes() {
         "Mission or architecture changes",
     ];
     let accepted = run(&agreement_args, temp.path());
-    assert_eq!(accepted.status.code(), Some(5));
+    assert_eq!(accepted.status.code(), Some(6));
     assert_eq!(
         json(&accepted)["data"]["records"].as_array().map(Vec::len),
         Some(3)
     );
     let replay = run(&agreement_args, temp.path());
-    assert_eq!(replay.status.code(), Some(5));
+    assert_eq!(replay.status.code(), Some(6));
     assert_eq!(
         json(&replay)["data"]["records"],
         json(&accepted)["data"]["records"]

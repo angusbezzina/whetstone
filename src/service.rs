@@ -818,7 +818,7 @@ impl CommandService {
             if progress.setup_complete {
                 ServiceState::Success
             } else {
-                ServiceState::NeedsDecision
+                ServiceState::NeedsInput
             },
             if progress.setup_complete {
                 "The private project agreement is installed and the current repair loop is verified."
@@ -827,10 +827,7 @@ impl CommandService {
             },
         );
         response.expected_revision = Some(progress.agreement_revision);
-        response.blocking_questions = (!progress.setup_complete)
-            .then(|| "Run one scoped known-bad to authorized-repair to known-good proof, then inspect setup again.".into())
-            .into_iter()
-            .collect();
+        response.blocking_questions = Vec::new();
         response.permitted_actions = vec!["wh check".into(), "wh init".into(), "wh change".into()];
         response.data = json!({
             "records": references,
@@ -1382,6 +1379,7 @@ struct DashboardWorkspaceProjection {
     experimental_local_drafts: usize,
     delivered_context_revision: Option<String>,
     needed_decision: Option<DashboardDecisionPrompt>,
+    next_action: Option<DashboardNextAction>,
     pending_operations: Vec<String>,
 }
 
@@ -1391,6 +1389,53 @@ struct DashboardDecisionPrompt {
     owner: String,
     consequence: String,
     permitted_next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DashboardNextAction {
+    title: String,
+    explanation: String,
+    actor: String,
+    permitted_next_action: String,
+    route: String,
+    agent_instruction: Option<String>,
+}
+
+fn dashboard_next_action(
+    has_needed_decision: bool,
+    has_repair_proof: bool,
+    draft_count: usize,
+    project_root: &Path,
+    safeguard: &str,
+) -> Option<DashboardNextAction> {
+    if has_needed_decision {
+        None
+    } else if !has_repair_proof {
+        Some(DashboardNextAction {
+            title: "Test your first safeguard".into(),
+            explanation: "Your project agreement is saved. An agent still needs to show that the safeguard catches a known issue, repairs it within existing permissions, and passes the same check afterward.".into(),
+            actor: "your coding agent".into(),
+            permitted_next_action: "Give the repair-proof handoff to your agent; return here when it has produced a result for review.".into(),
+            route: "enforcement".into(),
+            agent_instruction: Some(format!(
+                "In {}, use Whetstone to prove this safeguard: {safeguard}. Run one scoped known-bad to authorized-repair to exact-recheck loop within current permissions. Return failures to the same worker and stop for an owner decision when blocked. Reopen wh dash after recording the proof.",
+                project_root.display()
+            )),
+        })
+    } else if draft_count > 0 {
+        Some(DashboardNextAction {
+            title: format!("Inspect your {draft_count} local draft proposal(s)"),
+            explanation: "These drafts remain private and inactive until deliberately reviewed."
+                .into(),
+            actor: "project owner".into(),
+            permitted_next_action: "Open Decisions to inspect the exact drafts and their impact."
+                .into(),
+            route: "decisions".into(),
+            agent_instruction: None,
+        })
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1430,6 +1475,7 @@ fn dashboard_current_projection(
                     consequence: "The private project agreement remains incomplete and no initial safeguard can be treated as accepted.".into(),
                     permitted_next_action: "review and confirm the eight wh init owner decisions".into(),
                 }),
+                next_action: None,
                 pending_operations: vec!["complete the explicit private onboarding agreement".into()],
             },
         });
@@ -1485,34 +1531,38 @@ fn dashboard_current_projection(
     if draft_count > 0 {
         pending_operations.push(format!("review {draft_count} local draft proposal(s)"));
     }
-    let needed_decision = progress
-        .missing_decisions
-        .first()
-        .map(|decision| DashboardDecisionPrompt {
-            question: format!("What should the project's {decision} be?"),
-            owner: canonical("mission.project")
-                .ok()
-                .flatten()
-                .and_then(|record| record.owner.display_name)
-                .unwrap_or_else(|| "project owner (not yet identified)".into()),
-            consequence: format!(
-                "The private agreement remains incomplete until {decision} is explicitly confirmed."
-            ),
-            permitted_next_action: "review the exact onboarding proposal, then confirm or cancel it"
-                .into(),
-        })
-        .or_else(|| {
-            progress.repair_proof.is_none().then(|| DashboardDecisionPrompt {
-                question: "Can the accountable owner authorize and accept one bounded known-bad to repair to exact-recheck proof?".into(),
+    let needed_decision =
+        progress
+            .missing_decisions
+            .first()
+            .map(|decision| DashboardDecisionPrompt {
+                question: format!("What should the project's {decision} be?"),
                 owner: canonical("mission.project")
                     .ok()
                     .flatten()
                     .and_then(|record| record.owner.display_name)
                     .unwrap_or_else(|| "project owner (not yet identified)".into()),
-                consequence: "Until that proof is accepted, the feedback loop remains unproven and setup cannot be represented as complete.".into(),
-                permitted_next_action: "run one scoped wh check repair loop under host authority, then inspect setup again".into(),
-            })
-        });
+                consequence: format!(
+                "The private agreement remains incomplete until {decision} is explicitly confirmed."
+            ),
+                permitted_next_action:
+                    "review the exact onboarding proposal, then confirm or cancel it".into(),
+            });
+    let safeguard = canonical("guidance.initial-safeguard")
+        .ok()
+        .flatten()
+        .and_then(|record| match record.body {
+            RecordBody::Guidance(guidance) => Some(guidance.statement),
+            _ => None,
+        })
+        .unwrap_or_else(|| "the accepted initial safeguard".into());
+    let next_action = dashboard_next_action(
+        needed_decision.is_some(),
+        progress.repair_proof.is_some(),
+        draft_count,
+        layout.project_root(),
+        &safeguard,
+    );
     Ok(DashboardCurrentProjection {
         local_agreement: DashboardAgreementProjection {
             state: if progress.agreement_complete {
@@ -1543,6 +1593,7 @@ fn dashboard_current_projection(
             experimental_local_drafts: draft_count,
             delivered_context_revision: None,
             needed_decision,
+            next_action,
             pending_operations,
         },
     })
@@ -1762,8 +1813,8 @@ fn onboarding_inspection_response(
         )
     } else if progress.missing_decisions.is_empty() {
         (
-            ServiceState::NeedsDecision,
-            "The agreement is installed locally; onboarding remains incomplete until the repair loop has a current proof.",
+            ServiceState::NeedsInput,
+            "The agreement is installed locally. An agent must complete one current repair proof before setup is complete.",
         )
     } else {
         (
@@ -1786,12 +1837,7 @@ fn onboarding_inspection_response(
         })
         .collect();
     response.blocking_questions = if progress.missing_decisions.is_empty() {
-        (!progress.setup_complete)
-            .then(|| {
-                "Can you run and accept one bounded repair proof for the current snapshot?".into()
-            })
-            .into_iter()
-            .collect()
+        Vec::new()
     } else {
         progress
             .missing_decisions
@@ -2615,5 +2661,28 @@ mod tests {
             resume_token("a", "init", "request", 1),
             resume_token("a", "init", "other", 1)
         );
+    }
+
+    #[test]
+    fn dashboard_attention_prioritizes_decisions_repairs_and_private_drafts() {
+        let root = Path::new("/project");
+        assert!(dashboard_next_action(true, false, 2, root, "Keep gates meaningful").is_none());
+
+        let repair = dashboard_next_action(false, false, 2, root, "Keep gates meaningful")
+            .expect("repair action");
+        assert_eq!(repair.route, "enforcement");
+        assert!(repair
+            .agent_instruction
+            .as_deref()
+            .is_some_and(|instruction| instruction.contains("/project")
+                && instruction.contains("Keep gates meaningful")));
+
+        let drafts = dashboard_next_action(false, true, 2, root, "Keep gates meaningful")
+            .expect("draft action");
+        assert_eq!(drafts.route, "decisions");
+        assert!(drafts.title.contains("2 local draft"));
+        assert!(drafts.agent_instruction.is_none());
+
+        assert!(dashboard_next_action(false, true, 0, root, "Keep gates meaningful").is_none());
     }
 }

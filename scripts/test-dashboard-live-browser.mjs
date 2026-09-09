@@ -8,6 +8,8 @@ import { spawn } from "node:child_process";
 
 const dashboardUrl = process.env.WH_DASHBOARD_URL;
 assert.ok(dashboardUrl, "WH_DASHBOARD_URL is required");
+const projectRoot = process.env.WH_PROJECT_ROOT;
+assert.ok(projectRoot, "WH_PROJECT_ROOT is required");
 const chrome = [
   process.env.CHROME_BIN,
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -142,11 +144,12 @@ try {
   const loaded = cdp.event("Page.loadEventFired");
   await cdp.send("Page.navigate", { url: dashboardUrl });
   await loaded;
-  await waitFor('document.querySelector("#state")?.textContent === "success"', "dashboard did not render");
-  assert.equal(await cdp.evaluate('document.querySelectorAll("[role=tab]").length'), 5);
-  assert.equal(await cdp.evaluate('document.querySelectorAll("#workflow-list .workflow").length'), 6);
+  await waitFor('document.querySelector("#dashboard-mission")?.textContent.length > 0', "dashboard did not render");
+  assert.equal(await cdp.evaluate('document.querySelector("#state").hidden'), true);
+  assert.equal(await cdp.evaluate('document.querySelector("#tab-dashboard").getAttribute("aria-selected")'), "true");
+  assert.equal(await cdp.evaluate('document.querySelectorAll("[role=tab]").length'), 4);
 
-  await cdp.evaluate('document.querySelector("#tab-setup").click(); document.querySelector("#edit").click()');
+  await cdp.evaluate('document.querySelector("#tab-foundations").click(); document.querySelector("#edit").click()');
   await waitFor('!document.querySelector("#init-form").hidden && document.querySelector("#command-record").textContent.includes("expected_revision")', "edit mode did not bind onboarding base");
   await cdp.evaluate(`(() => {
     const form = document.querySelector("#init-form");
@@ -169,8 +172,20 @@ try {
   assert.equal(await cdp.evaluate('document.querySelector("#review-record").textContent.includes("team_share")'), true);
   await cdp.evaluate('document.querySelector("#review-confirm").click()');
   await waitFor('document.querySelector("#mission").textContent === "Keep human and agent work aligned"', "persisted mission was not projected");
-  assert.equal(await cdp.evaluate('document.querySelector("#command-state").textContent'), "command needs_decision");
-  assert.equal(await cdp.evaluate('document.querySelector("#decision-consequence").textContent !== "none"'), true);
+  assert.equal(await cdp.evaluate('document.querySelector("#foundation-values").textContent'), "Evidence before assertion; private before shared");
+  assert.equal(await cdp.evaluate('document.querySelector("#foundation-philosophy").textContent.includes("Typed deterministic services")'), true);
+  assert.equal(await cdp.evaluate('document.querySelector("#foundation-safeguard").textContent'), "Never weaken a failing gate to claim success");
+  assert.equal(await cdp.evaluate('document.querySelector("#command-state").textContent'), "command needs_input");
+  assert.equal(await cdp.evaluate('document.querySelector("#attention-kind").textContent'), "Next step");
+  assert.equal(await cdp.evaluate('document.querySelector("#attention-title").textContent'), "Test your first safeguard");
+  assert.equal(await cdp.evaluate('document.querySelector("#attention-meta").textContent'), "For: your coding agent");
+  assert.equal(await cdp.evaluate('document.querySelector("#attention-continue").textContent'), "Show agent handoff");
+  await cdp.evaluate('document.querySelector("#attention-continue").click()');
+  assert.equal(await cdp.evaluate('document.querySelector("#tab-enforcement").getAttribute("aria-selected")'), "true");
+  assert.equal(await cdp.evaluate('document.activeElement.id'), "agent-handoff");
+  assert.equal(await cdp.evaluate(`document.querySelector("#agent-instruction").textContent.includes(${JSON.stringify(projectRoot)})`), true);
+  assert.equal(await cdp.evaluate('document.querySelector("#agent-instruction").textContent.includes("Never weaken a failing gate")'), true);
+  assert.equal(await cdp.evaluate('document.querySelector("#agent-instruction").textContent.includes("same worker")'), true);
 
   const reloaded = cdp.event("Page.loadEventFired");
   await cdp.send("Page.reload");
@@ -245,13 +260,13 @@ try {
   await waitFor('document.querySelector("#command-state").textContent === "command stale"', "stale preview was not surfaced");
   assert.equal(await cdp.evaluate('document.querySelector("#review-dialog").open'), false);
 
-  await cdp.evaluate('document.querySelector("#tab-workflows").click(); document.querySelector("#check-form button[type=submit]").click()');
+  await cdp.evaluate('document.querySelector("#tab-enforcement").click(); document.querySelector("#check-form button[type=submit]").click()');
   await waitFor('document.querySelector("#command-state").textContent === "command unknown"', "unknown check outcome was not preserved");
   assert.equal(await cdp.evaluate('document.querySelector("#command-details").open'), true);
 
   for (const width of [320, 390, 768, 1024]) {
     await cdp.send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 768 });
-    for (const tab of ["onepager", "workspace", "setup", "workflows", "decisions"]) {
+    for (const tab of ["dashboard", "foundations", "enforcement", "decisions"]) {
       const overflow = await cdp.evaluate(`(() => {
         document.querySelector(${JSON.stringify(`#tab-${tab}`)}).click();
         return {
@@ -264,11 +279,6 @@ try {
       assert.equal(overflow.fits, true, `live dashboard overflows: ${JSON.stringify(overflow)}`);
     }
   }
-  await cdp.evaluate('document.querySelector("#tab-onepager").click()');
-  const printed = await cdp.send("Page.printToPDF", { printBackground: true });
-  const pdfText = Buffer.from(printed.data, "base64").toString("latin1");
-  assert.equal((pdfText.match(/\/Type\s*\/Page\b/g) ?? []).length, 1, "print view must be one page");
-
   await cdp.send("Network.clearBrowserCookies");
   const denied = await cdp.evaluate(`(async () => {
     const response = await fetch("/api/command", {
@@ -281,7 +291,7 @@ try {
   assert.equal(denied.status, 401);
   assert.equal(denied.body.reason_code, "authentication_required");
 
-  console.log("PASS live dashboard onboarding/change/check/stale/conflict/permission/persistence/print");
+  console.log("PASS live dashboard action/onboarding/change/check/stale/conflict/permission/persistence");
 } finally {
   cdp?.socket.close();
   browser.kill("SIGTERM");

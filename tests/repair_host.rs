@@ -543,7 +543,7 @@ fn install_owner_agreement(fixture: &Fixture) -> whetstone::domain::RecordRef {
         safeguard_scope: Some("All repository changes".into()),
         revision_triggers: Some("Mission, architecture, or repeated-friction changes".into()),
     }));
-    assert_eq!(accepted.state, ServiceState::NeedsDecision);
+    assert_eq!(accepted.state, ServiceState::NeedsInput);
     assert_eq!(accepted.data["progress"]["agreement"], "approved");
     serde_json::from_value(
         accepted.data["progress"]["agreement_records"]
@@ -643,7 +643,7 @@ fn onboarding_is_verified_only_while_the_exact_repair_snapshot_is_current() {
         safeguard_scope: None,
         revision_triggers: None,
     }));
-    assert_eq!(stale.state, ServiceState::NeedsDecision);
+    assert_eq!(stale.state, ServiceState::NeedsInput);
     assert_eq!(stale.data["progress"]["setup_complete"], false);
     assert!(stale.data["progress"]["proof_status"]
         .as_str()
@@ -687,7 +687,7 @@ fn onboarding_is_verified_only_while_the_exact_repair_snapshot_is_current() {
         safeguard_scope: None,
         revision_triggers: None,
     }));
-    assert_eq!(protected_stale.state, ServiceState::NeedsDecision);
+    assert_eq!(protected_stale.state, ServiceState::NeedsInput);
     assert!(protected_stale.data["progress"]["proof_status"]
         .as_str()
         .expect("proof status")
@@ -735,7 +735,7 @@ fn onboarding_rejects_an_initially_green_session_as_repair_proof() {
         safeguard_scope: None,
         revision_triggers: None,
     }));
-    assert_eq!(inspection.state, ServiceState::NeedsDecision);
+    assert_eq!(inspection.state, ServiceState::NeedsInput);
     assert_eq!(inspection.data["progress"]["setup_complete"], false);
     assert!(inspection.data["progress"]["proof_status"]
         .as_str()

@@ -115,10 +115,7 @@ fn install_private_agreement(root: &Path) {
         safeguard_scope: Some("All repository changes".into()),
         revision_triggers: Some("Mission, architecture, or repeated friction".into()),
     }));
-    assert_eq!(
-        accepted.state,
-        whetstone::service::ServiceState::NeedsDecision
-    );
+    assert_eq!(accepted.state, whetstone::service::ServiceState::NeedsInput);
 }
 
 fn bootstrap(handle: &DashboardHandle) -> (String, String) {
@@ -632,7 +629,7 @@ fn dashboard_history_query_rejects_unknown_fields_and_marks_invalid_time_unknown
 }
 
 #[test]
-fn dashboard_assets_expose_five_accessible_views_exact_review_and_safe_rendering() {
+fn dashboard_assets_expose_minimal_accessible_views_exact_review_and_safe_rendering() {
     let handle = DashboardHandle::start(
         DashboardMode::Local {
             allow_mutations: false,
@@ -647,13 +644,20 @@ fn dashboard_assets_expose_five_accessible_views_exact_review_and_safe_rendering
     );
     let html = html.split_once("\r\n\r\n").expect("HTML body").1;
     assert!(html.contains("role=tabpanel"));
-    for view in ["onepager", "workspace", "setup", "workflows", "decisions"] {
+    for view in ["dashboard", "foundations", "enforcement", "decisions"] {
         assert!(html.contains(&format!("id={view}")), "missing {view}");
     }
-    assert_eq!(html.matches("role=tab ").count(), 5);
+    assert_eq!(html.matches("role=tab ").count(), 4);
+    assert!(html.contains("id=tab-dashboard aria-controls=dashboard aria-selected=true"));
+    assert!(html.contains("Mission"));
+    assert!(html.contains("Core values"));
+    assert!(html.contains("Engineering philosophy"));
+    assert!(html.contains("Active rules and guidance"));
     assert!(html.contains("aria-live=polite"));
     assert!(html.contains("review-dialog"));
-    assert!(html.contains("Print one-pager"));
+    assert!(html.contains("Show agent handoff") || html.contains("attention-continue"));
+    assert!(!html.contains("Print one-pager"));
+    assert!(!html.contains("id=onepager"));
 
     let script = send(
         handle.address(),
@@ -675,7 +679,6 @@ fn dashboard_assets_expose_five_accessible_views_exact_review_and_safe_rendering
     for width in ["1024px", "768px", "390px", "320px"] {
         assert!(css.contains(width), "missing {width} breakpoint");
     }
-    assert!(css.contains("@media print"));
 }
 
 #[test]
