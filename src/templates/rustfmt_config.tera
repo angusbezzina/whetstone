@@ -1,4 +1,0 @@
-# Whetstone rustfmt overlay
-{% for opt in options -%}
-{{ opt.key }} = {{ opt.value }}
-{% endfor -%}

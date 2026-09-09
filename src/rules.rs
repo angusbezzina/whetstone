@@ -4,7 +4,6 @@
 //! and provides validation against the rule schema.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -876,7 +875,6 @@ pub fn load_rule_files(rules_dir: &Path) -> (Vec<LoadedRuleFile>, Vec<String>) {
                 let language = infer_language_from_path(entry.path(), rules_dir);
 
                 rule_files.push(LoadedRuleFile {
-                    file_path,
                     rule_file: rf,
                     language,
                 });
@@ -919,64 +917,8 @@ fn is_safe_repo_relative(path: &str) -> bool {
 
 /// A loaded rule file with metadata.
 pub struct LoadedRuleFile {
-    pub file_path: String,
     pub rule_file: RuleFile,
     pub language: Option<String>,
-}
-
-/// Convert loaded rule files into the JSON format used by status.rs.
-pub fn rule_files_to_json(loaded: &[LoadedRuleFile]) -> Vec<Value> {
-    loaded
-        .iter()
-        .map(|lrf| {
-            let rf = &lrf.rule_file;
-            let rules_json: Vec<Value> = rf
-                .rules
-                .iter()
-                .map(|r| {
-                    let signal_strategies: Vec<String> =
-                        r.signals.iter().map(|s| s.strategy.clone()).collect();
-                    let validator_adapters: Vec<String> =
-                        r.validators.iter().map(|v| v.adapter.clone()).collect();
-                    serde_json::json!({
-                        "id": r.id,
-                        "severity": r.severity,
-                        "confidence": r.confidence,
-                        "category": r.category,
-                        "description": r.description,
-                        "source_url": r.source_url,
-                        "approved": r.approved,
-                        "signals": signal_strategies,
-                        "validators": validator_adapters,
-                        "provenance": r.provenance.as_ref().map(|provenance| serde_json::json!({
-                            "source_page_id": provenance.source_page_id,
-                            "source_page_path": provenance.source_page_path,
-                            "source_authority": provenance.source_authority,
-                            "source_line_start": provenance.source_line_start,
-                            "source_line_end": provenance.source_line_end,
-                            "upstream_urls": provenance.upstream_urls,
-                        })),
-                        "status": r.status,
-                    })
-                })
-                .collect();
-
-            serde_json::json!({
-                "file": lrf.file_path,
-                "source_name": rf.source.name,
-                "source_version": rf.source.version,
-                "content_hash": rf.source.content_hash,
-                "language": lrf.language,
-                "rules": rules_json,
-            })
-        })
-        .collect()
-}
-
-/// Load rules and return the same (Vec<Value>, Vec<String>) format as the old regex-based loader.
-pub fn load_rules_as_json(rules_dir: &Path) -> (Vec<Value>, Vec<String>) {
-    let (loaded, warnings) = load_rule_files(rules_dir);
-    (rule_files_to_json(&loaded), warnings)
 }
 
 /// Load only approved rules, optionally filtered by language.
@@ -1287,18 +1229,6 @@ pub struct ApprovedExample {
     pub language: Option<String>,
 }
 
-pub fn lint_tool_matches_language(tool: &str, language: &str) -> bool {
-    crate::types::language_supports_lint_tool(language, tool)
-}
-
-pub fn formatter_tool_matches_language(tool: &str, language: &str) -> bool {
-    crate::types::language_supports_formatter_tool(language, tool)
-}
-
-pub fn test_runner_matches_language(runner: &str, language: &str) -> bool {
-    crate::types::language_supports_test_runner(language, runner)
-}
-
 pub fn parse_legacy_lint_bindings(description: &str) -> Vec<ApprovedLintBinding> {
     let mut out = Vec::new();
     let parts: Vec<&str> = description.split_whitespace().collect();
@@ -1320,38 +1250,6 @@ pub fn approved_signal_lint_bindings(signal: &ApprovedSignal) -> Vec<ApprovedLin
         .clone()
         .map(|binding| vec![binding])
         .unwrap_or_else(|| parse_legacy_lint_bindings(&signal.description))
-}
-
-/// Collect summary stats from loaded rule files (used by multiple commands).
-#[allow(dead_code)]
-pub fn compute_rule_stats(rule_files: &[Value]) -> BTreeMap<String, Value> {
-    let mut stats = BTreeMap::new();
-
-    let mut total_rules = 0usize;
-    let mut approved_count = 0usize;
-    let mut dep_names: Vec<String> = Vec::new();
-
-    for rf in rule_files {
-        if let Some(name) = rf.get("source_name").and_then(|v| v.as_str()) {
-            dep_names.push(name.to_string());
-        }
-        if let Some(rules) = rf.get("rules").and_then(|v| v.as_array()) {
-            total_rules += rules.len();
-            approved_count += rules
-                .iter()
-                .filter(|r| r.get("approved").and_then(|v| v.as_bool()).unwrap_or(false))
-                .count();
-        }
-    }
-
-    stats.insert("total_rules".to_string(), Value::from(total_rules));
-    stats.insert("approved_count".to_string(), Value::from(approved_count));
-    stats.insert(
-        "dependencies".to_string(),
-        Value::Array(dep_names.iter().map(|n| Value::String(n.clone())).collect()),
-    );
-
-    stats
 }
 
 #[cfg(test)]

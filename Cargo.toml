@@ -7,10 +7,6 @@ license = "MIT"
 rust-version = "1.75"
 default-run = "whetstone"
 
-[[bin]]
-name = "wh"
-path = "src/bin/wh.rs"
-
 [dependencies]
 anyhow = "1"
 indicatif = "0.17"

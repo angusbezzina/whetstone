@@ -1,8 +1,0 @@
-{%- set is_terse = terse | default(value=false) -%}
-{%- if is_terse -%}
-{% include "_context_body_terse.tera" %}
-For full rule details (signals, examples), run `wh rules query --file <path> --full`.
-
-{% else -%}
-{% include "_context_body_full.tera" -%}
-{%- endif -%}

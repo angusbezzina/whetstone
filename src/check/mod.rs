@@ -25,56 +25,35 @@ use std::time::{Duration, Instant};
 use tree_sitter::{Query, QueryCursor, Tree};
 
 use crate::ast::{self, AstLang};
-use crate::detect::walk::SKIP_DIRS;
-use crate::layers;
 use crate::rules::ApprovedRule;
 
 mod lint_proxy;
+
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "venv",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "__pycache__",
+];
 
 pub struct CheckOptions<'a> {
     pub project_dir: &'a Path,
     pub scan_paths: &'a [PathBuf],
     pub lang_filter: Option<&'a str>,
     pub rule_filter: Option<&'a [String]>,
-    /// Candidate packs to preview as if imported (whetstone-653). When non-empty,
-    /// resolution is READ-ONLY (no pack-cache writes) and each violation is tagged
-    /// with `from_candidate`; a `preview` summary is added to the output.
-    pub injected_packs: &'a [crate::config_packs::ResolvedConfigPack],
 }
 
 pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
     let project_dir = opts.project_dir;
-    let project_initialized = layers::project_is_initialized(project_dir);
-    let previewing = !opts.injected_packs.is_empty();
-
-    // Rule ids contributed by the candidate packs (post language filter), used to
-    // label preview hits. Derived from provenance so the label matches the merge.
-    let candidate_ids: BTreeSet<String> = if previewing {
-        crate::config_packs::merge_pack_rules_tagged(opts.injected_packs, opts.lang_filter)
-            .0
-            .into_iter()
-            .filter(|(_, origin)| origin.is_candidate())
-            .map(|(rule, _)| rule.id)
-            .collect()
-    } else {
-        BTreeSet::new()
-    };
-
-    let rules: Vec<ApprovedRule> = if project_initialized || previewing {
-        // Preview injects the candidate through the identical merge seam
-        // (read-only), so shadowing + denies apply exactly as a real import would.
-        let snap_opts = crate::config::SnapshotOptions {
-            read_only: previewing,
-            injected_packs: opts.injected_packs.to_vec(),
-        };
-        let merged =
-            layers::resolve_merged_with(project_dir, opts.lang_filter, true, true, false, &snap_opts);
-        merged.merged.into_iter().map(|lr| lr.rule).collect()
-    } else {
-        let paths = layers::LayerPaths::for_project(project_dir);
-        let (r, _) = crate::rules::load_approved_rules(&paths.project_rules_dir, opts.lang_filter);
-        r
-    };
+    let rules_dir = project_dir.join("whetstone").join("rules");
+    let (rules, load_warnings) =
+        crate::rules::load_approved_rules(&rules_dir, opts.lang_filter);
 
     let rule_filter: Option<BTreeSet<&str>> = opts
         .rule_filter
@@ -94,6 +73,7 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
         return Ok(json!({
             "status": "ok",
             "violations_count": 0,
+            "config_issues_count": 0,
             "files_scanned": 0,
             "rules_applied": 0,
             "violations": [],
@@ -106,7 +86,7 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
     let compiled = compile_rules(&rules);
     let mut violations: Vec<Value> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = load_warnings;
     let mut files_scanned: usize = 0;
 
     for crule in &compiled {
@@ -119,17 +99,7 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
     config_issues.extend(lint_proxy::verify_formatter_directives(project_dir, &rules));
     config_issues.extend(lint_proxy::verify_test_bindings(project_dir, &rules));
     config_issues.extend(lint_proxy::verify_validator_bindings(project_dir, &rules));
-    // In preview mode this must be read-only too, or resolving the effective
-    // config re-writes the pack cache and breaks the zero-state promise
-    // (whetstone-dva). Non-preview keeps the historical writing behavior.
-    let cfg_opts = crate::config::SnapshotOptions {
-        read_only: previewing,
-        injected_packs: Vec::new(),
-    };
-    let validator_default_timeout = crate::config::WhetstoneConfig::load_with(project_dir, &cfg_opts)
-        .resolve
-        .timeout_seconds
-        .unwrap_or(15);
+    let validator_default_timeout = 15;
     let mut seen_validator_runtime_issues: BTreeSet<String> = BTreeSet::new();
 
     let files = discover_source_files(opts.scan_paths);
@@ -259,7 +229,7 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
     } else {
         "config_issues_found"
     };
-    let mut result = json!({
+    let result = json!({
         "status": status,
         "violations_count": violations_count,
         "config_issues_count": config_issue_count,
@@ -270,37 +240,6 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
         "skipped": skipped,
         "warnings": warnings,
     });
-
-    // Preview mode: tag each hit candidate-vs-configured and add a summary
-    // (whetstone-653). Non-preview output is byte-for-byte unchanged.
-    if previewing {
-        let mut candidate_hits = 0i64;
-        if let Some(vs) = result["violations"].as_array_mut() {
-            for v in vs.iter_mut() {
-                let rid = v.get("rule_id").and_then(|r| r.as_str()).unwrap_or("");
-                let from_candidate = candidate_ids.contains(rid);
-                if from_candidate {
-                    candidate_hits += 1;
-                }
-                v["from_candidate"] = json!(from_candidate);
-            }
-        }
-        let candidate_rules_active = rules
-            .iter()
-            .filter(|r| candidate_ids.contains(&r.id))
-            .count();
-        let names: Vec<String> = opts
-            .injected_packs
-            .iter()
-            .map(crate::config_packs::pack_display_name)
-            .collect();
-        result["preview"] = json!({
-            "candidate_packs": names,
-            "candidate_rules": candidate_rules_active,
-            "candidate_hits": candidate_hits,
-            "configured_hits": violations_count - candidate_hits,
-        });
-    }
 
     Ok(result)
 }
@@ -318,15 +257,8 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
 /// severity") is judgment, so it is recorded as a skill-attested scorecard field,
 /// never adjudicated by this deterministic command.
 pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Result<Value> {
-    let project_initialized = layers::project_is_initialized(project_dir);
-    let rules: Vec<ApprovedRule> = if project_initialized {
-        let merged = layers::resolve_merged(project_dir, lang_filter, true, true, false);
-        merged.merged.into_iter().map(|lr| lr.rule).collect()
-    } else {
-        let paths = layers::LayerPaths::for_project(project_dir);
-        let (r, _) = crate::rules::load_approved_rules(&paths.project_rules_dir, lang_filter);
-        r
-    };
+    let rules_dir = project_dir.join("whetstone").join("rules");
+    let (rules, _) = crate::rules::load_approved_rules(&rules_dir, lang_filter);
 
     let quote_map = load_source_quotes(project_dir);
     let content_map = load_cached_contents(project_dir);
@@ -448,9 +380,23 @@ pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Result<Value> {
 }
 
 fn load_cached_contents(project_dir: &Path) -> std::collections::HashMap<(String, String), String> {
-    let mut sm = crate::state::StateManager::new(project_dir);
     let mut map = std::collections::HashMap::new();
-    for entry in sm.cache.all_entries() {
+    let path = project_dir
+        .join("whetstone")
+        .join(".state")
+        .join("source-cache.json");
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return map;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&text) else {
+        return map;
+    };
+    let entries = match value.get("entries") {
+        Some(Value::Object(entries)) => entries.values().cloned().collect(),
+        Some(Value::Array(entries)) => entries.clone(),
+        _ => value.as_array().cloned().unwrap_or_default(),
+    };
+    for entry in entries {
         let name = entry
             .get("name")
             .and_then(|v| v.as_str())
@@ -472,21 +418,16 @@ fn load_cached_contents(project_dir: &Path) -> std::collections::HashMap<(String
 }
 
 fn load_source_quotes(project_dir: &Path) -> std::collections::HashMap<String, String> {
-    let paths = layers::LayerPaths::for_project(project_dir);
     let mut map = std::collections::HashMap::new();
-    for dir in [paths.project_rules_dir, paths.personal_rules_dir] {
-        if !dir.exists() {
-            continue;
-        }
-        let (files, _) = crate::rules::load_rule_files(&dir);
-        for lf in files {
-            for r in &lf.rule_file.rules {
-                if r.id.is_empty() {
-                    continue;
-                }
-                if let Some(q) = &r.source_quote {
-                    map.insert(r.id.clone(), q.clone());
-                }
+    let dir = project_dir.join("whetstone").join("rules");
+    let (files, _) = crate::rules::load_rule_files(&dir);
+    for lf in files {
+        for r in &lf.rule_file.rules {
+            if r.id.is_empty() {
+                continue;
+            }
+            if let Some(q) = &r.source_quote {
+                map.insert(r.id.clone(), q.clone());
             }
         }
     }

@@ -11,11 +11,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use tree_sitter::{Language, Node, Parser, Query, QueryCursor, Tree};
-
-pub mod python;
-pub mod rust_lang;
-pub mod typescript;
+use tree_sitter::{Language, Parser, Tree};
 
 /// Languages that Whetstone knows how to parse with tree-sitter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -84,82 +80,6 @@ pub fn parse(lang: AstLang, source: &str) -> Option<Tree> {
         });
         parser.parse(source, None)
     })
-}
-
-/// A query match suitable for deterministic reporting. `line` and `column`
-/// are 1-based to match tool output conventions (ruff, cargo, etc.).
-#[derive(Debug, Clone)]
-pub struct AstMatch {
-    pub kind: String,
-    pub name: Option<String>,
-    pub line: usize,
-    pub column: usize,
-    pub byte_range: (usize, usize),
-    pub text: String,
-}
-
-/// Compile a query for `lang` and run it against `tree`, returning every
-/// capture tagged `@match` paired with its source text.
-///
-/// Named captures other than `@match` are not returned; if you need them,
-/// call tree-sitter directly. This helper keeps the common case — "find
-/// every `x` in the tree" — cheap to call.
-pub fn run_query(
-    lang: AstLang,
-    tree: &Tree,
-    source: &str,
-    query_src: &str,
-    kind: &str,
-) -> Vec<AstMatch> {
-    let language = lang.ts_language();
-    let query = match Query::new(&language, query_src) {
-        Ok(q) => q,
-        Err(e) => {
-            eprintln!(
-                "Whetstone: invalid tree-sitter query for {}: {}",
-                lang.as_str(),
-                e
-            );
-            return Vec::new();
-        }
-    };
-    let capture_index = query.capture_index_for_name("match");
-
-    let mut cursor = QueryCursor::new();
-    let mut matches = Vec::new();
-    let bytes = source.as_bytes();
-
-    for m in cursor.matches(&query, tree.root_node(), bytes) {
-        for cap in m.captures {
-            if let Some(ix) = capture_index {
-                if cap.index != ix {
-                    continue;
-                }
-            }
-            matches.push(node_to_match(&cap.node, source, kind));
-        }
-    }
-
-    matches
-}
-
-fn node_to_match(node: &Node, source: &str, kind: &str) -> AstMatch {
-    let start = node.start_position();
-    let range = node.byte_range();
-    let text = source.get(range.clone()).unwrap_or("").to_string();
-    AstMatch {
-        kind: kind.to_string(),
-        name: extract_name(node, source),
-        line: start.row + 1,
-        column: start.column + 1,
-        byte_range: (range.start, range.end),
-        text,
-    }
-}
-
-fn extract_name(node: &Node, source: &str) -> Option<String> {
-    node.child_by_field_name("name")
-        .and_then(|n| source.get(n.byte_range()).map(|s| s.to_string()))
 }
 
 #[cfg(test)]
