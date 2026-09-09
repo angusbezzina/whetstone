@@ -1,4 +1,5 @@
 use std::sync::{Arc, Barrier};
+use std::{fs, process::Command};
 
 use tempfile::TempDir;
 use whetstone::domain::{
@@ -21,6 +22,41 @@ fn repository() -> Option<(TempDir, DoltRepository)> {
     let repository = DoltRepository::initialize(&temp.path().join("private"), StoreKind::Private)
         .expect("private repository");
     Some((temp, repository))
+}
+
+#[test]
+fn initialization_resumes_an_empty_dolt_repository_after_bootstrap_interruption() {
+    if !integration_enabled() {
+        eprintln!("skipped: set WH_DOLT_INTEGRATION=1 for pinned Dolt integration");
+        return;
+    }
+    let temp = TempDir::new().expect("temp");
+    let root = temp.path().join("private");
+    fs::create_dir_all(&root).expect("create interrupted store root");
+    let interrupted = Command::new("dolt")
+        .current_dir(&root)
+        .env("DOLT_DISABLE_EVENT_FLUSH", "1")
+        .args([
+            "init",
+            "--name",
+            "Whetstone",
+            "--email",
+            "local@whetstone.invalid",
+            "--initial-branch",
+            "main",
+        ])
+        .output()
+        .expect("model interruption immediately after dolt init");
+    assert!(
+        interrupted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&interrupted.stderr)
+    );
+
+    let repository = DoltRepository::initialize(&root, StoreKind::Private)
+        .expect("resume the owned empty repository migration");
+    assert!(repository.all_records().expect("records").is_empty());
+    assert_eq!(repository.health().expect("health").schema_version, 1);
 }
 
 fn digest(seed: char) -> ContentDigest {

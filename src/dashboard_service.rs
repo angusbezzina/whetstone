@@ -72,9 +72,19 @@ enum DashboardCommand {
         #[serde(default)]
         mission: Option<String>,
         #[serde(default)]
+        desired_outcome: Option<String>,
+        #[serde(default)]
         values: Option<String>,
         #[serde(default)]
         philosophy: Option<String>,
+        #[serde(default)]
+        owner: Option<String>,
+        #[serde(default)]
+        initial_safeguard: Option<String>,
+        #[serde(default)]
+        safeguard_scope: Option<String>,
+        #[serde(default)]
+        revision_triggers: Option<String>,
     },
     Change {
         #[serde(default)]
@@ -123,8 +133,13 @@ impl DashboardCommand {
                 expected_revision,
                 resume_token,
                 mission,
+                desired_outcome,
                 values,
                 philosophy,
+                owner,
+                initial_safeguard,
+                safeguard_scope,
+                revision_triggers,
             } => ServiceRequest::Init(InitRequest {
                 project_dir,
                 request_id,
@@ -132,8 +147,13 @@ impl DashboardCommand {
                 expected_revision,
                 resume_token,
                 mission,
+                desired_outcome,
                 values,
                 philosophy,
+                owner,
+                initial_safeguard,
+                safeguard_scope,
+                revision_triggers,
             }),
             Self::Change {
                 request_id,
@@ -184,6 +204,7 @@ impl DashboardCommand {
 enum DashboardInitAction {
     Inspect,
     Agree,
+    Cancel,
 }
 
 impl From<DashboardInitAction> for InitAction {
@@ -191,6 +212,7 @@ impl From<DashboardInitAction> for InitAction {
         match value {
             DashboardInitAction::Inspect => Self::Inspect,
             DashboardInitAction::Agree => Self::Agree,
+            DashboardInitAction::Cancel => Self::Cancel,
         }
     }
 }

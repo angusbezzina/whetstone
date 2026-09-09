@@ -29,6 +29,32 @@ queries, golden examples, and verification of native lint/formatter/test/
 validator bindings. It exists only to preserve a non-vacuous safety bar while
 the new record model is built.
 
+## Onboarding contract
+
+Onboarding begins with bounded, read-only discovery at the resolved Git
+worktree root. The kernel hashes detected manifests, native checks, automation,
+agent hosts, design-system sources, outcome sources, and imported material; it
+does not execute, install, trust, rewrite, or infer agreement from any of them.
+The response keeps facts, tentative inferences, known unknowns, proposed
+defaults, proposed writes, and executable access separate.
+
+The skill elicits exactly the owner judgment the kernel cannot derive: mission,
+desired outcome, core values, implementation philosophy, accountable owner,
+one initial safeguard, its scope, and revision triggers. Defaults remain
+proposals. Acceptance is one atomic private-store batch and is resumable by
+request identity; it creates no shareable store, native-tool configuration,
+agent-host configuration, remote, or working-tree artifact. Cancellation and
+inspection write nothing.
+
+Discovery, agreement approval, private installation, and feedback-loop proof
+are separate states. The kernel may report onboarding `verified` only when the
+complete agreement exists and a persisted repair session proves the current
+lean-baseline revision, an actual repair attempt under the current safeguard,
+all six final check-snapshot dimensions, and the complete workspace fingerprint
+including protected files and permission bits. Missing, unavailable, or stale
+proof remains explicit and cannot become success. The CLI and dashboard call
+this same typed service and must return equivalent state and evidence.
+
 ## Signal audit
 
 Every proposed safeguard belongs to one bucket:

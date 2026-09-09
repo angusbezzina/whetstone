@@ -14,15 +14,16 @@ Project data under `whetstone/`, Beads history, and Git history were preserved.
 
 The current binary is not yet the complete MVP. It does expose the six stable
 workflow families and a versioned JSON envelope. `init`, `change`, and the
-observational `check` have an initial local implementation; `dash`, `pull`, and
-`push` return `unavailable` until their implementation milestones pass. Bare
-`wh` is a read-only orientation and never starts a TUI.
+observational `check` have an initial local implementation; `dash` exposes the
+same service through a lightweight local UI. `pull` and `push` return
+`unavailable` until their implementation milestones pass. Bare `wh` is a
+read-only orientation and never starts a TUI.
 
 ```bash
 wh init --json
 wh change --json
 wh check --json --path src
-wh dash --json       # unavailable until M1.10
+wh dash --json       # inspect locally; editing requires explicit edit mode
 wh pull --json       # unavailable until M2.1
 wh push --json       # unavailable until M2.1
 ```
@@ -31,6 +32,12 @@ Machine clients consume `whetstone.command-response.v1`; its strict schema is
 in `references/command-response-v1.schema.json`. Noninteractive requests never
 prompt. They return explicit `needs_input`, `needs_decision`, `stale`,
 `conflict`, `unknown`, or `unavailable` states with permitted next actions.
+The first `wh init --json` only inspects and previews its private footprint. An
+explicit, resumable `--action agree` supplies mission, desired outcome, values,
+philosophy, owner, initial safeguard and scope, and revision triggers; it writes
+those records atomically without editing project files or creating shared
+state. Setup remains incomplete until the bounded repair loop has a current
+known-bad to known-good proof for the exact code snapshot.
 
 Three hidden developer gates keep the surviving deterministic kernel
 non-vacuous while the rest of the MVP is built:

@@ -20,7 +20,7 @@ use crate::domain::{
 };
 use crate::history::{AccessBoundary, HistoryInspectionRequest, HistoryInspectionService};
 use crate::onboarding;
-use crate::storage::{DoltRepository, ProjectLayout, StorageError, StoreKind};
+use crate::storage::{AppendRequest, DoltRepository, ProjectLayout, StorageError, StoreKind};
 use crate::verification::{
     self, AttestationState, EvidencePointer, Finding, RequirementKind, SnapshotBinding,
     TrustedEvidenceSet, VerificationEvidence, VerificationPlan, VerificationReport,
@@ -50,6 +50,7 @@ pub struct BasicRequest {
 pub enum InitAction {
     Inspect,
     Agree,
+    Cancel,
 }
 
 #[derive(Debug, Clone)]
@@ -60,8 +61,13 @@ pub struct InitRequest {
     pub expected_revision: Option<u64>,
     pub resume_token: Option<String>,
     pub mission: Option<String>,
+    pub desired_outcome: Option<String>,
     pub values: Option<String>,
     pub philosophy: Option<String>,
+    pub owner: Option<String>,
+    pub initial_safeguard: Option<String>,
+    pub safeguard_scope: Option<String>,
+    pub revision_triggers: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -351,72 +357,84 @@ impl CommandService {
             Ok(request_id) => request_id,
             Err(summary) => return unknown_response("init", "invalid-request-id".into(), summary),
         };
-        let private = match DoltRepository::initialize(
-            &layout.store_path(StoreKind::Private),
-            StoreKind::Private,
-        ) {
-            Ok(repository) => repository,
-            Err(error) => return storage_error("init", request_id, error),
-        };
-        if let Err(error) = DoltRepository::initialize(
-            &layout.store_path(StoreKind::Shareable),
-            StoreKind::Shareable,
-        ) {
-            return storage_error("init", request_id, error);
-        }
-        let mission_id = match RecordId::new("mission.project") {
+        let setup = match onboarding::inspect(layout.project_root()) {
             Ok(value) => value,
-            Err(error) => return domain_response("init", request_id, error),
+            Err(error) => {
+                return unknown_response(
+                    "init",
+                    request_id,
+                    format!("Project inspection failed without changing state: {error:?}"),
+                )
+            }
         };
-        let current_revision = match private.latest(&mission_id) {
-            Ok(record) => record.map_or(0, |record| record.revision),
-            Err(error) => return storage_error("init", request_id, error),
+        // Agreement is the only onboarding action authorized to create or
+        // resume private storage. Doing this before the read-side progress
+        // query makes an exact retry recover a process stop between `dolt
+        // init` and schema migration; inspect and cancel remain write-free.
+        let private = if request.action == InitAction::Agree {
+            match DoltRepository::initialize(
+                &layout.store_path(StoreKind::Private),
+                StoreKind::Private,
+            ) {
+                Ok(repository) => Some(repository),
+                Err(error) => return storage_error("init", request_id, error),
+            }
+        } else {
+            None
         };
-        let resume = resume_token(layout.project_id(), "init", &request_id, current_revision);
-        if request.action == InitAction::Inspect {
-            if current_revision > 0 {
+        let progress = match onboarding_progress(&layout) {
+            Ok(value) => value,
+            Err(error) if request.action == InitAction::Cancel => {
                 let mut response = ServiceResponse::new(
                     request_id,
                     "init",
                     ServiceState::Success,
-                    "A local project agreement already exists; initialization made no changes.",
+                    "Onboarding was cancelled without repairing or changing incomplete private state, project files, integrations, or remotes.",
                 );
-                response.expected_revision = Some(current_revision);
-                response.permitted_actions = vec!["wh change".into(), "wh check".into()];
-                response.data = json!({"initialized": true, "shared": false});
+                response.permitted_actions = vec!["wh init".into()];
+                response.data = json!({
+                    "setup": setup,
+                    "progress": null,
+                    "progress_state": "unavailable",
+                    "progress_detail": error.to_string(),
+                    "cancelled": true,
+                    "writes": [],
+                    "shared": false,
+                });
                 return response;
             }
+            Err(error) => return storage_error("init", request_id, error),
+        };
+        let current_revision = progress.agreement_revision;
+        let resume = resume_token(layout.project_id(), "init", &request_id, current_revision);
+        if request.action == InitAction::Cancel {
             let mut response = ServiceResponse::new(
                 request_id,
                 "init",
-                ServiceState::NeedsInput,
-                "The local stores are ready; the project agreement still needs owner input.",
+                ServiceState::Success,
+                "Onboarding was cancelled without changing project files, agreement state, integrations, or remotes.",
             );
             response.expected_revision = Some(current_revision);
-            response.resume_token = Some(resume);
-            response.blocking_questions = vec![
-                "What is the project mission?".into(),
-                "Which core values govern trade-offs?".into(),
-                "What implementation philosophy should engineers and agents follow?".into(),
-            ];
-            response.permitted_actions = vec![
-                "wh init --action agree --expected-revision <revision> --resume <token> --mission <text> --values <text> --philosophy <text>".into(),
-            ];
+            response.permitted_actions = vec!["wh init".into()];
             response.data = json!({
-                "project_id": layout.project_id(),
-                "project_root": layout.project_root(),
-                "private_store": "ready",
-                "shareable_store": "local-only",
-                "remote": "unavailable",
+                "setup": setup,
+                "progress": progress,
+                "cancelled": true,
+                "writes": [],
+                "shared": false,
             });
             return response;
         }
+        if request.action == InitAction::Inspect {
+            return onboarding_inspection_response(request_id, resume, setup, progress);
+        }
+        let private = private.expect("agreement action initializes private storage");
         let existing_records = match init_idempotent_records(&private, &request_id) {
             Ok(records) => records,
             Err(error) => return storage_error("init", request_id, error),
         };
         let retrying_same_request = !existing_records.is_empty();
-        if current_revision > 0 && !retrying_same_request {
+        if progress.agreement_complete && !retrying_same_request {
             let mut response = ServiceResponse::new(
                 request_id,
                 "init",
@@ -428,7 +446,15 @@ impl CommandService {
             return response;
         }
         let target_revision = if retrying_same_request {
-            0
+            match init_request_base_revision(&existing_records, &request_id) {
+                Ok(Some(revision)) => revision,
+                Ok(None) => existing_records
+                    .iter()
+                    .filter_map(|record| record.supersedes.as_ref().map(|prior| prior.revision))
+                    .max()
+                    .unwrap_or(0),
+                Err(summary) => return unknown_response("init", request_id, summary),
+            }
         } else {
             current_revision
         };
@@ -445,17 +471,119 @@ impl CommandService {
                 "The onboarding answer does not target the current project revision.",
             );
         }
-        let (mission, values, philosophy) = match (
-            bounded_input(request.mission, "mission", 250),
-            bounded_input(request.values, "values", 500),
-            bounded_input(request.philosophy, "philosophy", 1000),
+        let stored_records = match private.all_records() {
+            Ok(records) => records,
+            Err(error) => return storage_error("init", request_id, error),
+        };
+        let current_mission = latest_record(&stored_records, "mission.project");
+        let current_values = latest_record(&stored_records, "value.core");
+        let current_philosophy = latest_record(&stored_records, "philosophy.implementation");
+        let current_safeguard = latest_record(&stored_records, "guidance.initial-safeguard");
+        let mission_input = request.mission.or_else(|| match &current_mission?.body {
+            RecordBody::Mission(body) => Some(body.statement.clone()),
+            _ => None,
+        });
+        let desired_outcome_input =
+            request
+                .desired_outcome
+                .or_else(|| match &current_mission?.body {
+                    RecordBody::Mission(body) => body.desired_outcomes.first().cloned(),
+                    _ => None,
+                });
+        let values_input = request.values.or_else(|| match &current_values?.body {
+            RecordBody::CoreValue(body) => Some(body.description.clone()),
+            _ => None,
+        });
+        let philosophy_input = request
+            .philosophy
+            .or_else(|| match &current_philosophy?.body {
+                RecordBody::ImplementationPhilosophy(body) => Some(body.statement.clone()),
+                _ => None,
+            });
+        let owner_input = request
+            .owner
+            .or_else(|| current_mission?.owner.display_name.clone());
+        let safeguard_input =
+            request
+                .initial_safeguard
+                .or_else(|| match &current_safeguard?.body {
+                    RecordBody::Guidance(body) => Some(body.statement.clone()),
+                    _ => None,
+                });
+        let safeguard_scope_input = request.safeguard_scope.or_else(|| {
+            let RecordBody::Guidance(body) = &current_safeguard?.body else {
+                return None;
+            };
+            body.rationale
+                .strip_prefix("Owner-confirmed initial safeguard scope: ")
+                .map(str::to_owned)
+        });
+        let revision_triggers_input =
+            request
+                .revision_triggers
+                .or_else(|| match &current_philosophy?.body {
+                    RecordBody::ImplementationPhilosophy(body) => {
+                        body.review_triggers.first().cloned()
+                    }
+                    _ => None,
+                });
+        let (
+            mission,
+            desired_outcome,
+            values,
+            philosophy,
+            owner,
+            initial_safeguard,
+            safeguard_scope,
+            revision_triggers,
+        ) = match (
+            bounded_input(mission_input, "mission", 250),
+            bounded_input(desired_outcome_input, "desired outcome", 500),
+            bounded_input(values_input, "values", 500),
+            bounded_input(philosophy_input, "philosophy", 1000),
+            bounded_input(owner_input, "accountable owner", 200),
+            bounded_input(safeguard_input, "initial safeguard", 500),
+            bounded_input(safeguard_scope_input, "initial safeguard scope", 500),
+            bounded_input(revision_triggers_input, "revision triggers", 1000),
         ) {
-            (Ok(mission), Ok(values), Ok(philosophy)) => (mission, values, philosophy),
-            (mission, values, philosophy) => {
+            (
+                Ok(mission),
+                Ok(desired_outcome),
+                Ok(values),
+                Ok(philosophy),
+                Ok(owner),
+                Ok(initial_safeguard),
+                Ok(safeguard_scope),
+                Ok(revision_triggers),
+            ) => (
+                mission,
+                desired_outcome,
+                values,
+                philosophy,
+                owner,
+                initial_safeguard,
+                safeguard_scope,
+                revision_triggers,
+            ),
+            (
+                mission,
+                desired_outcome,
+                values,
+                philosophy,
+                owner,
+                initial_safeguard,
+                safeguard_scope,
+                revision_triggers,
+            ) => {
                 let question = mission
                     .err()
+                    .or_else(|| desired_outcome.err())
                     .or_else(|| values.err())
                     .or_else(|| philosophy.err())
+                    .or_else(|| owner.err())
+                    .or_else(|| initial_safeguard.err())
+                    .or_else(|| safeguard_scope.err())
+                    .or_else(|| revision_triggers.err())
                     .unwrap_or_else(|| "Required agreement input is missing.".into());
                 return needs_input("init", request_id, current_revision, resume, question);
             }
@@ -464,69 +592,163 @@ impl CommandService {
             agreement_record(
                 &layout,
                 "mission.project",
-                format!("{request_id}:mission"),
+                format!("{request_id}:base-{target_revision}:mission"),
                 RecordBody::Mission(Mission {
                     statement: mission,
-                    desired_outcomes: Vec::new(),
+                    desired_outcomes: vec![desired_outcome],
                 }),
+                Some(&owner),
             ),
             agreement_record(
                 &layout,
                 "value.core",
-                format!("{request_id}:values"),
+                format!("{request_id}:base-{target_revision}:values"),
                 RecordBody::CoreValue(CoreValue {
                     name: "Core values".into(),
                     description: values,
                 }),
+                Some(&owner),
             ),
             agreement_record(
                 &layout,
                 "philosophy.implementation",
-                format!("{request_id}:philosophy"),
+                format!("{request_id}:base-{target_revision}:philosophy"),
                 RecordBody::ImplementationPhilosophy(ImplementationPhilosophy {
                     statement: philosophy,
                     rationale: "Confirmed by the project owner during onboarding.".into(),
-                    review_triggers: vec![
-                        "mission change".into(),
-                        "material architecture change".into(),
-                        "repeated rule friction".into(),
-                    ],
+                    review_triggers: vec![revision_triggers],
                 }),
+                Some(&owner),
+            ),
+            agreement_record(
+                &layout,
+                "guidance.initial-safeguard",
+                format!("{request_id}:base-{target_revision}:safeguard"),
+                RecordBody::Guidance(Guidance {
+                    statement: initial_safeguard,
+                    rationale: format!(
+                        "Owner-confirmed initial safeguard scope: {safeguard_scope}"
+                    ),
+                    examples: Vec::new(),
+                }),
+                Some(&owner),
             ),
         ];
-        let mut references = Vec::new();
-        for record in records {
-            let record = match record {
-                Ok(record) => record,
-                Err(error) => return domain_response("init", request_id, error),
-            };
-            if let Some(existing) = match private.by_idempotency_key(&record.idempotency_key) {
-                Ok(existing) => existing,
-                Err(error) => return storage_error("init", request_id, error),
-            } {
-                if existing.id != record.id || existing.body != record.body {
+        let mut records = match records.into_iter().collect::<Result<Vec<_>, _>>() {
+            Ok(records) => records,
+            Err(error) => return domain_response("init", request_id, error),
+        };
+        if retrying_same_request {
+            records.retain(|record| {
+                existing_records
+                    .iter()
+                    .any(|existing| existing.idempotency_key == record.idempotency_key)
+            });
+        } else {
+            records.retain(|record| match record.id.as_str() {
+                "mission.project" => progress.missing_decisions.iter().any(|decision| {
+                    matches!(
+                        decision.as_str(),
+                        "mission" | "desired outcome" | "accountable owner"
+                    )
+                }),
+                "value.core" => progress
+                    .missing_decisions
+                    .iter()
+                    .any(|decision| decision == "core values"),
+                "philosophy.implementation" => progress.missing_decisions.iter().any(|decision| {
+                    matches!(
+                        decision.as_str(),
+                        "implementation philosophy" | "revision triggers"
+                    )
+                }),
+                "guidance.initial-safeguard" => progress.missing_decisions.iter().any(|decision| {
+                    matches!(
+                        decision.as_str(),
+                        "initial safeguard" | "initial safeguard scope"
+                    )
+                }),
+                _ => false,
+            });
+            for record in &mut records {
+                let current = latest_record(&stored_records, record.id.as_str());
+                record.revision = current.map_or(1, |current| current.revision + 1);
+                record.supersedes = match current.map(AgreementRecord::reference) {
+                    Some(Ok(reference)) => Some(reference),
+                    Some(Err(error)) => return domain_response("init", request_id, error),
+                    None => None,
+                };
+            }
+        }
+        let references = if retrying_same_request {
+            if existing_records.len() != records.len() {
+                return unknown_response(
+                    "init",
+                    request_id,
+                    "A pre-atomic onboarding write is incomplete; inspect it and recover explicitly before continuing.".into(),
+                );
+            }
+            let mut references = Vec::new();
+            for record in &records {
+                let Some(existing) = existing_records
+                    .iter()
+                    .find(|existing| existing.id == record.id)
+                else {
+                    return idempotency_conflict("init", request_id, &record.idempotency_key);
+                };
+                if existing.body != record.body || existing.owner != record.owner {
                     return idempotency_conflict("init", request_id, &record.idempotency_key);
                 }
                 match existing.reference() {
                     Ok(reference) => references.push(reference),
                     Err(error) => return domain_response("init", request_id, error),
                 }
-                continue;
             }
-            match private.append(&record, None) {
-                Ok(reference) => references.push(reference),
+            references
+        } else {
+            let requests = records
+                .iter()
+                .map(|record| AppendRequest {
+                    record,
+                    expected_revision: record.supersedes.as_ref().map(|prior| prior.revision),
+                })
+                .collect::<Vec<_>>();
+            match private.append_batch(&requests) {
+                Ok(references) => references,
                 Err(error) => return storage_error("init", request_id, error),
             }
-        }
+        };
+        let progress = match onboarding_progress(&layout) {
+            Ok(value) => value,
+            Err(error) => return storage_error("init", request_id, error),
+        };
         let mut response = ServiceResponse::new(
             request_id,
             "init",
-            ServiceState::Success,
-            "The first local project agreement was recorded; nothing was shared.",
+            if progress.setup_complete {
+                ServiceState::Success
+            } else {
+                ServiceState::NeedsDecision
+            },
+            if progress.setup_complete {
+                "The private project agreement is installed and the current repair loop is verified."
+            } else {
+                "The private project agreement is approved and installed; setup remains incomplete until a current repair proof is verified."
+            },
         );
-        response.expected_revision = Some(1);
-        response.permitted_actions = vec!["wh check".into(), "wh change".into()];
-        response.data = json!({"records": references, "shared": false});
+        response.expected_revision = Some(progress.agreement_revision);
+        response.blocking_questions = (!progress.setup_complete)
+            .then(|| "Run one scoped known-bad to authorized-repair to known-good proof, then inspect setup again.".into())
+            .into_iter()
+            .collect();
+        response.permitted_actions = vec!["wh check".into(), "wh init".into(), "wh change".into()];
+        response.data = json!({
+            "records": references,
+            "setup": setup,
+            "progress": progress,
+            "shared": false,
+            "platform_configuration_writes": [],
+        });
         response
     }
 
@@ -590,7 +812,7 @@ impl CommandService {
                 return needs_input("change", request_id, current_revision, resume, question)
             }
         };
-        let body = match change_body(
+        let mut body = match change_body(
             request.kind,
             request.content.as_deref(),
             request.rationale.as_deref(),
@@ -602,6 +824,7 @@ impl CommandService {
                 return needs_input("change", request_id, current_revision, resume, question)
             }
         };
+        preserve_agreement_companions(&mut body, current.as_ref());
         let existing = match private.by_idempotency_key(&request_id) {
             Ok(existing) => existing,
             Err(error) => return storage_error("change", request_id, error),
@@ -634,10 +857,14 @@ impl CommandService {
             };
             (existing, reference)
         } else {
-            let mut record = match agreement_record(&layout, id_text, request_id.clone(), body) {
-                Ok(record) => record,
-                Err(error) => return domain_response("change", request_id, error),
-            };
+            let owner_display = current
+                .as_ref()
+                .and_then(|record| record.owner.display_name.as_deref());
+            let mut record =
+                match agreement_record(&layout, id_text, request_id.clone(), body, owner_display) {
+                    Ok(record) => record,
+                    Err(error) => return domain_response("change", request_id, error),
+                };
             record.revision = current_revision + 1;
             record.supersedes = match current.as_ref().map(AgreementRecord::reference) {
                 Some(Ok(reference)) => Some(reference),
@@ -777,34 +1004,17 @@ impl CommandService {
         let requested_paths = if request.paths.is_empty() {
             vec![PathBuf::from(".")]
         } else {
-            request.paths
+            request.paths.clone()
         };
-        let mut scan_paths = Vec::new();
-        for path in requested_paths {
-            let joined = if path.is_absolute() {
-                path
-            } else {
-                project.join(path)
-            };
-            let canonical = match joined.canonicalize() {
-                Ok(path) => path,
-                Err(error) => {
-                    return unknown_response(
-                        "check",
-                        request_id,
-                        format!("A requested check path is unavailable: {error}"),
-                    )
-                }
-            };
-            if !canonical.starts_with(&project) {
-                return unknown_response(
-                    "check",
-                    request_id,
-                    "A requested path escapes the project root.".into(),
-                );
-            }
-            scan_paths.push(canonical);
-        }
+        let (scan_paths, _relative_paths, snapshot) = match compute_check_snapshot(
+            &project,
+            &requested_paths,
+            request.language.as_deref(),
+            &request.rules,
+        ) {
+            Ok(snapshot) => snapshot,
+            Err(error) => return unknown_response("check", request_id, error),
+        };
         let filter = (!request.rules.is_empty()).then_some(request.rules.as_slice());
         let result = check::run(check::CheckOptions {
             project_dir: &project,
@@ -814,75 +1024,6 @@ impl CommandService {
             rule_filter: filter,
             execute_command_validators: false,
         });
-        let relative_paths = scan_paths
-            .iter()
-            .map(|path| {
-                let relative = path.strip_prefix(&project).unwrap_or(path);
-                if relative.as_os_str().is_empty() {
-                    PathBuf::from(".")
-                } else {
-                    relative.to_path_buf()
-                }
-            })
-            .collect::<Vec<_>>();
-        let code_tree = match verification::code_tree_digest(&project, &relative_paths) {
-            Ok(digest) => digest,
-            Err(error) => {
-                return unknown_response(
-                    "check",
-                    request_id,
-                    format!("The code snapshot could not be bound safely: {error}"),
-                )
-            }
-        };
-        let policy = match digest_rule_inputs(&project)
-            .map_err(|error| error.to_string())
-            .and_then(|digest| ContentDigest::new(digest).map_err(|error| error.to_string()))
-        {
-            Ok(digest) => digest,
-            Err(error) => {
-                return unknown_response(
-                    "check",
-                    request_id,
-                    format!("The policy snapshot could not be bound safely: {error}"),
-                )
-            }
-        };
-        let checker_bundle = match checker_bundle_digest() {
-            Ok(digest) => digest,
-            Err(error) => {
-                return unknown_response(
-                    "check",
-                    request_id,
-                    format!("The compiled checker could not be content-bound: {error}"),
-                )
-            }
-        };
-        let scope = digest_json(&json!({
-            "project": project.to_string_lossy(),
-            "paths": relative_paths,
-            "language": request.language,
-            "rules": request.rules,
-        }));
-        let environment = digest_json(&json!({
-            "os": std::env::consts::OS,
-            "arch": std::env::consts::ARCH,
-            "command_validators": false,
-        }));
-        let trust = digest_bytes(
-            format!(
-                "{LEAN_BASELINE_REVISION}\0compiled-in-deterministic-scanner\0no-external-execution-receipt"
-            )
-            .as_bytes(),
-        );
-        let snapshot = SnapshotBinding {
-            code_tree,
-            policy,
-            checker_bundle,
-            scope,
-            environment,
-            trust,
-        };
         let violations = count(&result, "violations_count");
         let configuration_issues = count(&result, "config_issues_count");
         let rules_applied = count(&result, "rules_applied");
@@ -1012,13 +1153,325 @@ fn init_idempotent_records(
     repository: &DoltRepository,
     request_id: &str,
 ) -> Result<Vec<AgreementRecord>, StorageError> {
-    let mut records = Vec::new();
-    for suffix in ["mission", "values", "philosophy"] {
-        if let Some(record) = repository.by_idempotency_key(&format!("{request_id}:{suffix}"))? {
-            records.push(record);
+    let prefix = format!("{request_id}:base-");
+    let legacy_keys = ["mission", "values", "philosophy", "safeguard"]
+        .map(|suffix| format!("{request_id}:{suffix}"));
+    let records = repository
+        .all_records()?
+        .into_iter()
+        .filter(|record| {
+            record.idempotency_key.starts_with(&prefix)
+                || legacy_keys.contains(&record.idempotency_key)
+        })
+        .collect();
+    Ok(records)
+}
+
+fn init_request_base_revision(
+    records: &[AgreementRecord],
+    request_id: &str,
+) -> Result<Option<u64>, String> {
+    let prefix = format!("{request_id}:base-");
+    let mut revisions = records
+        .iter()
+        .filter_map(|record| record.idempotency_key.strip_prefix(&prefix))
+        .map(|tail| {
+            tail.split_once(':')
+                .and_then(|(revision, _)| revision.parse::<u64>().ok())
+                .ok_or_else(|| {
+                    "Stored onboarding request has an invalid base revision.".to_string()
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    revisions.sort_unstable();
+    revisions.dedup();
+    if revisions.len() > 1 {
+        return Err("Stored onboarding request spans conflicting base revisions.".into());
+    }
+    Ok(revisions.into_iter().next())
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct OnboardingProgress {
+    discovery: onboarding::SetupState,
+    agreement: onboarding::SetupState,
+    private_store: onboarding::SetupState,
+    feedback_loop: onboarding::SetupState,
+    agreement_revision: u64,
+    missing_decisions: Vec<String>,
+    agreement_records: Vec<crate::domain::RecordRef>,
+    repair_proof: Option<crate::domain::RecordRef>,
+    proof_status: String,
+    agreement_complete: bool,
+    setup_complete: bool,
+    shared: bool,
+    platform_configuration_writes: Vec<String>,
+    lean_baseline_revision: String,
+}
+
+fn onboarding_progress(layout: &ProjectLayout) -> Result<OnboardingProgress, StorageError> {
+    let store_path = layout.store_path(StoreKind::Private);
+    if !store_path.is_dir() {
+        return Ok(OnboardingProgress {
+            discovery: onboarding::SetupState::Detected,
+            agreement: onboarding::SetupState::Proposed,
+            private_store: onboarding::SetupState::Proposed,
+            feedback_loop: onboarding::SetupState::Unavailable,
+            agreement_revision: 0,
+            missing_decisions: onboarding::inspect(layout.project_root())
+                .map_err(|error| StorageError::UnexpectedData(format!("{error:?}")))?
+                .owner_decisions,
+            agreement_records: Vec::new(),
+            repair_proof: None,
+            proof_status: "no private agreement exists, so repair proof is not yet applicable"
+                .into(),
+            agreement_complete: false,
+            setup_complete: false,
+            shared: false,
+            platform_configuration_writes: Vec::new(),
+            lean_baseline_revision: LEAN_BASELINE_REVISION.into(),
+        });
+    }
+    let repository = DoltRepository::open_existing(&store_path, StoreKind::Private)?;
+    let records = repository.all_records()?;
+    let mission = latest_record(&records, "mission.project");
+    let values = latest_record(&records, "value.core");
+    let philosophy = latest_record(&records, "philosophy.implementation");
+    let safeguard = latest_record(&records, "guidance.initial-safeguard");
+    let mut missing = Vec::new();
+    match mission {
+        Some(AgreementRecord {
+            owner,
+            body: RecordBody::Mission(body),
+            ..
+        }) => {
+            if body.desired_outcomes.is_empty() {
+                missing.push("desired outcome".into());
+            }
+            if owner.display_name.as_deref().map_or(true, str::is_empty) {
+                missing.push("accountable owner".into());
+            }
+        }
+        _ => {
+            missing.push("mission".into());
+            missing.push("desired outcome".into());
+            missing.push("accountable owner".into());
         }
     }
-    Ok(records)
+    if !matches!(
+        values.map(|record| &record.body),
+        Some(RecordBody::CoreValue(_))
+    ) {
+        missing.push("core values".into());
+    }
+    match philosophy.map(|record| &record.body) {
+        Some(RecordBody::ImplementationPhilosophy(body)) if !body.review_triggers.is_empty() => {}
+        Some(RecordBody::ImplementationPhilosophy(_)) => missing.push("revision triggers".into()),
+        _ => {
+            missing.push("implementation philosophy".into());
+            missing.push("revision triggers".into());
+        }
+    }
+    match safeguard.map(|record| &record.body) {
+        Some(RecordBody::Guidance(body)) => {
+            if body
+                .rationale
+                .strip_prefix("Owner-confirmed initial safeguard scope: ")
+                .map_or(true, |scope| scope.trim().is_empty())
+            {
+                missing.push("initial safeguard scope".into());
+            }
+        }
+        _ => {
+            missing.push("initial safeguard".into());
+            missing.push("initial safeguard scope".into());
+        }
+    }
+    missing.sort();
+    missing.dedup();
+    let current_safeguard = safeguard
+        .map(AgreementRecord::reference)
+        .transpose()
+        .map_err(StorageError::Domain)?;
+    let agreement_records = [mission, values, philosophy, safeguard]
+        .into_iter()
+        .flatten()
+        .map(AgreementRecord::reference)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(StorageError::Domain)?;
+    let agreement_revision = agreement_records
+        .iter()
+        .map(|reference| reference.revision)
+        .max()
+        .unwrap_or(0);
+    let mut repair_proof = None;
+    let mut stale_proof_seen = false;
+    let mut incomplete_proof_seen = false;
+    for record in records.iter().rev() {
+        let RecordBody::RepairSession(session) = &record.body else {
+            continue;
+        };
+        if session.state != crate::domain::RepairSessionStateRecord::Verified
+            || session.lean_baseline_revision != LEAN_BASELINE_REVISION
+        {
+            continue;
+        }
+        if session.attempts.is_empty()
+            || !current_safeguard.as_ref().is_some_and(|safeguard| {
+                session
+                    .applicable_guidance
+                    .iter()
+                    .any(|reference| reference == safeguard)
+            })
+        {
+            incomplete_proof_seen = true;
+            continue;
+        }
+        if !crate::repair_host::repair_workspace_is_current(layout.project_root(), session)
+            .unwrap_or(false)
+        {
+            stale_proof_seen = true;
+            continue;
+        }
+        let paths = session
+            .final_check_paths
+            .iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        match compute_check_snapshot(
+            layout.project_root(),
+            &paths,
+            session.final_check_language.as_deref(),
+            &session.final_check_rules,
+        ) {
+            Ok((_, _, snapshot))
+                if snapshot_matches_repair(&snapshot, &session.reviewed_snapshot) =>
+            {
+                repair_proof = Some(record.reference().map_err(StorageError::Domain)?);
+                break;
+            }
+            _ => stale_proof_seen = true,
+        }
+    }
+    let agreement_complete = missing.is_empty();
+    let setup_complete = agreement_complete && repair_proof.is_some();
+    Ok(OnboardingProgress {
+        discovery: onboarding::SetupState::Detected,
+        agreement: if agreement_complete {
+            onboarding::SetupState::Approved
+        } else {
+            onboarding::SetupState::Proposed
+        },
+        private_store: onboarding::SetupState::Installed,
+        feedback_loop: if repair_proof.is_some() {
+            onboarding::SetupState::Verified
+        } else if agreement_complete {
+            onboarding::SetupState::Proposed
+        } else {
+            onboarding::SetupState::Unavailable
+        },
+        agreement_revision,
+        missing_decisions: missing,
+        agreement_records,
+        repair_proof,
+        proof_status: if setup_complete {
+            "current exact repair proof verified".into()
+        } else if stale_proof_seen {
+            "a prior repair proof exists but its code, policy, checker, scope, environment, or trust snapshot is stale".into()
+        } else if incomplete_proof_seen {
+            "a verified check exists but it does not prove a known-bad repair under the current initial safeguard".into()
+        } else {
+            "a current known-bad to authorized-repair to known-good proof is still required".into()
+        },
+        agreement_complete,
+        setup_complete,
+        shared: false,
+        platform_configuration_writes: Vec::new(),
+        lean_baseline_revision: LEAN_BASELINE_REVISION.into(),
+    })
+}
+
+fn snapshot_matches_repair(
+    current: &SnapshotBinding,
+    reviewed: &crate::domain::RepairSnapshotRecord,
+) -> bool {
+    current.code_tree == reviewed.code_tree
+        && current.policy == reviewed.policy
+        && current.checker_bundle == reviewed.checker_bundle
+        && current.scope == reviewed.scope
+        && current.environment == reviewed.environment
+        && current.trust == reviewed.trust
+}
+
+fn latest_record<'a>(records: &'a [AgreementRecord], id: &str) -> Option<&'a AgreementRecord> {
+    records
+        .iter()
+        .filter(|record| record.id.as_str() == id)
+        .max_by_key(|record| record.revision)
+}
+
+fn onboarding_inspection_response(
+    request_id: String,
+    resume: String,
+    setup: onboarding::SetupPlan,
+    progress: OnboardingProgress,
+) -> ServiceResponse {
+    let (state, summary) = if progress.setup_complete {
+        (
+            ServiceState::Success,
+            "The private agreement, local installation, and current repair proof are verified.",
+        )
+    } else if progress.missing_decisions.is_empty() {
+        (
+            ServiceState::NeedsDecision,
+            "The agreement is installed locally; onboarding remains incomplete until the repair loop has a current proof.",
+        )
+    } else {
+        (
+            ServiceState::NeedsInput,
+            "Inspection is complete and read-only; only missing owner decisions are requested.",
+        )
+    };
+    let mut response = ServiceResponse::new(request_id, "init", state, summary);
+    response.expected_revision = Some(progress.agreement_revision);
+    if state != ServiceState::Success {
+        response.resume_token = Some(resume);
+    }
+    response.evidence = setup
+        .facts
+        .iter()
+        .map(|fact| ServiceEvidence {
+            kind: format!("detected_{:?}", fact.kind).to_ascii_lowercase(),
+            locator: fact.path.clone(),
+            digest: Some(fact.digest.as_str().into()),
+        })
+        .collect();
+    response.blocking_questions = if progress.missing_decisions.is_empty() {
+        (!progress.setup_complete)
+            .then(|| {
+                "Can you run and accept one bounded repair proof for the current snapshot?".into()
+            })
+            .into_iter()
+            .collect()
+    } else {
+        progress
+            .missing_decisions
+            .iter()
+            .map(|decision| format!("Provide {decision}."))
+            .collect()
+    };
+    response.permitted_actions = if progress.missing_decisions.is_empty() {
+        vec!["wh check".into(), "wh init".into()]
+    } else {
+        vec!["wh init --action agree with the returned revision, token, and explicit owner decisions".into(), "wh init --action cancel".into()]
+    };
+    response.data = json!({
+        "setup": setup,
+        "progress": progress,
+        "inspection_writes": [],
+        "read_only": true,
+    });
+    response
 }
 
 fn change_narrative(request: &ChangeRequest) -> Result<ChangeNarrative, String> {
@@ -1138,6 +1591,24 @@ fn change_body(
     })
 }
 
+fn preserve_agreement_companions(body: &mut RecordBody, current: Option<&AgreementRecord>) {
+    let Some(current) = current else {
+        return;
+    };
+    match (body, &current.body) {
+        (RecordBody::Mission(next), RecordBody::Mission(previous)) => {
+            next.desired_outcomes.clone_from(&previous.desired_outcomes);
+        }
+        (
+            RecordBody::ImplementationPhilosophy(next),
+            RecordBody::ImplementationPhilosophy(previous),
+        ) => {
+            next.review_triggers.clone_from(&previous.review_triggers);
+        }
+        _ => {}
+    }
+}
+
 fn unavailable(
     request: BasicRequest,
     workflow: &str,
@@ -1167,6 +1638,7 @@ fn agreement_record(
     id: &str,
     idempotency_key: String,
     body: RecordBody,
+    owner_display: Option<&str>,
 ) -> Result<AgreementRecord, crate::domain::DomainError> {
     let stable_id = format!(
         "local:{}",
@@ -1175,7 +1647,7 @@ fn agreement_record(
     let principal = PrincipalRef {
         kind: PrincipalKind::LocalUser,
         stable_id,
-        display_name: None,
+        display_name: owner_display.map(str::to_owned),
     };
     let record = AgreementRecord {
         schema_version: SCHEMA_VERSION_V1,
@@ -1353,6 +1825,77 @@ fn idempotency_conflict(workflow: &str, request_id: String, key: &str) -> Servic
     response.permitted_actions =
         vec!["inspect the accepted result or submit a new request ID".into()];
     response
+}
+
+fn compute_check_snapshot(
+    project: &Path,
+    requested_paths: &[PathBuf],
+    language: Option<&str>,
+    rules: &[String],
+) -> Result<(Vec<PathBuf>, Vec<PathBuf>, SnapshotBinding), String> {
+    let mut scan_paths = Vec::new();
+    for path in requested_paths {
+        let joined = if path.is_absolute() {
+            path.clone()
+        } else {
+            project.join(path)
+        };
+        let canonical = joined
+            .canonicalize()
+            .map_err(|error| format!("A requested check path is unavailable: {error}"))?;
+        if !canonical.starts_with(project) {
+            return Err("A requested path escapes the project root.".into());
+        }
+        scan_paths.push(canonical);
+    }
+    let relative_paths = scan_paths
+        .iter()
+        .map(|path| {
+            let relative = path.strip_prefix(project).unwrap_or(path);
+            if relative.as_os_str().is_empty() {
+                PathBuf::from(".")
+            } else {
+                relative.to_path_buf()
+            }
+        })
+        .collect::<Vec<_>>();
+    let code_tree = verification::code_tree_digest(project, &relative_paths)
+        .map_err(|error| format!("The code snapshot could not be bound safely: {error}"))?;
+    let policy = digest_rule_inputs(project)
+        .map_err(|error| error.to_string())
+        .and_then(|digest| ContentDigest::new(digest).map_err(|error| error.to_string()))
+        .map_err(|error| format!("The policy snapshot could not be bound safely: {error}"))?;
+    let checker_bundle = checker_bundle_digest()
+        .map_err(|error| format!("The compiled checker could not be content-bound: {error}"))?;
+    let scope = digest_json(&json!({
+        "project": project.to_string_lossy(),
+        "paths": relative_paths,
+        "language": language,
+        "rules": rules,
+    }));
+    let environment = digest_json(&json!({
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "command_validators": false,
+    }));
+    let trust = digest_bytes(
+        format!(
+            "{LEAN_BASELINE_REVISION}\0compiled-in-deterministic-scanner\0no-external-execution-receipt"
+        )
+        .as_bytes(),
+    );
+    Ok((
+        scan_paths,
+        relative_paths,
+        SnapshotBinding {
+            code_tree,
+            policy,
+            checker_bundle,
+            scope,
+            environment,
+            trust,
+        },
+    ))
 }
 
 fn count(value: &Value, field: &str) -> u64 {

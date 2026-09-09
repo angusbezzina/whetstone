@@ -347,8 +347,13 @@ fn command_backend_preserves_service_stale_rejection_and_fixed_project_scope() {
         expected_revision: None,
         resume_token: None,
         mission: None,
+        desired_outcome: None,
         values: None,
         philosophy: None,
+        owner: None,
+        initial_safeguard: None,
+        safeguard_scope: None,
+        revision_triggers: None,
     }));
     let current_revision = inspection.expected_revision.expect("revision");
     let body = serde_json::json!({
@@ -368,8 +373,13 @@ fn command_backend_preserves_service_stale_rejection_and_fixed_project_scope() {
         expected_revision: Some(current_revision),
         resume_token: Some("stale-token".into()),
         mission: Some("Make project intent inspectable.".into()),
+        desired_outcome: Some("Reduce avoidable rework.".into()),
         values: Some("Trust evidence over assertion.".into()),
         philosophy: Some("Keep deterministic behavior in typed services.".into()),
+        owner: Some("Platform lead".into()),
+        initial_safeguard: Some("Never weaken a failing gate to get green.".into()),
+        safeguard_scope: Some("All repository changes".into()),
+        revision_triggers: Some("Mission or architecture changes".into()),
     }));
 
     let handle = DashboardHandle::start(
@@ -408,4 +418,63 @@ fn command_backend_preserves_service_stale_rejection_and_fixed_project_scope() {
     );
     assert!(denied.starts_with("HTTP/1.1 400"), "{denied}");
     assert_eq!(response_body(&denied)["state"], "unknown");
+}
+
+#[test]
+fn dashboard_init_inspection_is_identical_to_the_cli_service_path() {
+    let temp = tempfile::tempdir().expect("temp project");
+    init_git(temp.path());
+    std::fs::write(
+        temp.path().join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\n",
+    )
+    .expect("manifest fixture");
+    let direct = CommandService.execute(ServiceRequest::Init(InitRequest {
+        project_dir: temp.path().to_path_buf(),
+        request_id: Some("dashboard-inspect".into()),
+        action: InitAction::Inspect,
+        expected_revision: None,
+        resume_token: None,
+        mission: None,
+        desired_outcome: None,
+        values: None,
+        philosophy: None,
+        owner: None,
+        initial_safeguard: None,
+        safeguard_scope: None,
+        revision_triggers: None,
+    }));
+    let handle = DashboardHandle::start(
+        DashboardMode::Local {
+            allow_mutations: true,
+        },
+        Arc::new(CommandDashboardBackend::new(
+            temp.path().to_path_buf(),
+            None,
+        )),
+    )
+    .expect("dashboard");
+    let host = host(&handle);
+    let (cookie, csrf) = bootstrap(&handle);
+    let edit = send(
+        handle.address(),
+        &format!("POST /session/edit HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nSec-Fetch-Site: same-origin\r\nCookie: {cookie}\r\nX-Whetstone-CSRF: {csrf}\r\nContent-Length: 0\r\n\r\n"),
+    );
+    assert!(edit.starts_with("HTTP/1.1 200"), "{edit}");
+    let body = serde_json::json!({
+        "workflow": "init",
+        "request_id": "dashboard-inspect",
+        "action": "inspect"
+    });
+    let serialized = serde_json::to_string(&body).expect("command JSON");
+    let response = send(
+        handle.address(),
+        &format!("POST /api/command HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nSec-Fetch-Site: same-origin\r\nCookie: {cookie}\r\nX-Whetstone-CSRF: {csrf}\r\nContent-Length: {}\r\n\r\n{serialized}", serialized.len()),
+    );
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert_eq!(
+        response_body(&response),
+        serde_json::to_value(direct).expect("service JSON")
+    );
+    assert!(!temp.path().join(".git/whetstone").exists());
 }

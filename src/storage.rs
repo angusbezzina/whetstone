@@ -186,6 +186,7 @@ impl DoltRepository {
         reject_symlink(root)?;
         fs::create_dir_all(root).map_err(StorageError::Io)?;
         let root = root.canonicalize().map_err(StorageError::Io)?;
+        let _initialization_guard = lock_store_initialization(&root)?;
         let repository = Self {
             root,
             kind,
@@ -202,6 +203,15 @@ impl DoltRepository {
                 "main",
             ])?;
             repository.apply_initial_migration()?;
+        } else if let Err(schema_error) = repository.verify_schema() {
+            // A process can stop after `dolt init` but before the first
+            // Whetstone migration. Resume only an empty, Whetstone-owned
+            // repository; any partial or foreign schema remains fail-closed.
+            if repository.sql_rows("SHOW TABLES")?.is_empty() {
+                repository.apply_initial_migration()?;
+            } else {
+                return Err(schema_error);
+            }
         }
         repository.verify_schema()?;
         Ok(repository)
@@ -1052,6 +1062,23 @@ impl DoltRepository {
             .map_err(StorageError::Io)?;
         checked_output("dolt", output)
     }
+}
+
+fn lock_store_initialization(root: &Path) -> Result<File, StorageError> {
+    let parent = root.parent().ok_or(StorageError::InvalidDestination)?;
+    let name = root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or(StorageError::InvalidDestination)?;
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(parent.join(format!(".{name}-initialize.lock")))
+        .map_err(StorageError::Io)?;
+    FileExt::lock_exclusive(&lock).map_err(StorageError::Io)?;
+    Ok(lock)
 }
 
 fn ensure_dolt_version() -> Result<(), StorageError> {

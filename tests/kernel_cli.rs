@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use whetstone::domain::{AuthorizationAxis, RecordBody, VerificationAxis};
+use whetstone::domain::{AuthorizationAxis, RecordBody, RecordId, VerificationAxis};
 use whetstone::storage::{DoltRepository, ProjectLayout, StoreKind};
 
 fn bin() -> PathBuf {
@@ -72,6 +72,16 @@ fn init_git(root: &Path) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn git_status(root: &Path) -> String {
+    let output = Command::new("git")
+        .args(["status", "--porcelain=v1"])
+        .current_dir(root)
+        .output()
+        .expect("inspect fixture status");
+    assert!(output.status.success());
+    String::from_utf8(output.stdout).expect("utf-8 git status")
 }
 
 #[test]
@@ -167,6 +177,10 @@ fn init_is_resumable_and_duplicate_requests_are_idempotent() {
     assert_eq!(inspect.status.code(), Some(6));
     let handoff = json(&inspect);
     assert_eq!(handoff["state"], "needs_input");
+    assert_eq!(handoff["data"]["inspection_writes"], serde_json::json!([]));
+    assert_eq!(handoff["data"]["progress"]["private_store"], "proposed");
+    assert!(!temp.path().join(".git/whetstone").exists());
+    assert!(git_status(temp.path()).is_empty());
     let token = handoff["resume_token"].as_str().expect("resume token");
     let revision = handoff["expected_revision"].as_u64().expect("revision");
 
@@ -199,26 +213,85 @@ fn init_is_resumable_and_duplicate_requests_are_idempotent() {
         token,
         "--mission",
         "Keep project work aligned.",
+        "--desired-outcome",
+        "Reduce avoidable rework.",
         "--values",
         "Safety before speed.",
         "--philosophy",
         "Prefer small deterministic boundaries.",
+        "--owner",
+        "Platform lead",
+        "--initial-safeguard",
+        "Never weaken a failing check.",
+        "--safeguard-scope",
+        "All repository changes",
+        "--revision-triggers",
+        "Mission, architecture, or repeated-friction changes",
     ];
     let accepted = run(&agreement_args, temp.path());
-    assert!(
-        accepted.status.success(),
-        "{}",
+    assert_eq!(
+        accepted.status.code(),
+        Some(5),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&accepted.stdout),
         String::from_utf8_lossy(&accepted.stderr)
     );
     let accepted_json = json(&accepted);
-    assert_eq!(accepted_json["state"], "success");
+    assert_eq!(accepted_json["state"], "needs_decision");
     assert_eq!(
         accepted_json["data"]["records"].as_array().map(Vec::len),
-        Some(3)
+        Some(4)
+    );
+    assert_eq!(accepted_json["data"]["progress"]["agreement"], "approved");
+    assert_eq!(
+        accepted_json["data"]["progress"]["private_store"],
+        "installed"
+    );
+    assert_eq!(
+        accepted_json["data"]["progress"]["feedback_loop"],
+        "proposed"
+    );
+    let layout = ProjectLayout::resolve(temp.path(), None).expect("project layout");
+    assert!(!layout.store_path(StoreKind::Shareable).exists());
+    assert!(git_status(temp.path()).is_empty());
+
+    let established = run(
+        &[
+            "init",
+            "--json",
+            "--project-dir",
+            &project,
+            "--request-id",
+            "inspect-established",
+        ],
+        temp.path(),
+    );
+    assert_eq!(established.status.code(), Some(5));
+    let established_json = json(&established);
+    assert_eq!(established_json["state"], "needs_decision");
+    assert_eq!(
+        established_json["data"]["progress"]["missing_decisions"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        established_json["data"]["progress"]["agreement"],
+        "approved"
+    );
+    assert_eq!(
+        established_json["data"]["progress"]["private_store"],
+        "installed"
+    );
+    assert_eq!(
+        established_json["data"]["progress"]["feedback_loop"],
+        "proposed"
+    );
+    assert_eq!(
+        established_json["data"]["inspection_writes"],
+        serde_json::json!([])
     );
 
     let replay = run(&agreement_args, temp.path());
-    assert!(replay.status.success());
+    assert_eq!(replay.status.code(), Some(5));
     assert_eq!(
         json(&replay)["data"]["records"],
         accepted_json["data"]["records"]
@@ -240,6 +313,149 @@ fn init_is_resumable_and_duplicate_requests_are_idempotent() {
             token,
             "--mission",
             "Different mission.",
+            "--desired-outcome",
+            "Reduce avoidable rework.",
+            "--values",
+            "Safety before speed.",
+            "--philosophy",
+            "Prefer small deterministic boundaries.",
+            "--owner",
+            "Platform lead",
+            "--initial-safeguard",
+            "Never weaken a failing check.",
+            "--safeguard-scope",
+            "All repository changes",
+            "--revision-triggers",
+            "Mission, architecture, or repeated-friction changes",
+        ],
+        temp.path(),
+    );
+    assert_eq!(conflict.status.code(), Some(8));
+    assert_eq!(json(&conflict)["state"], "conflict");
+}
+
+#[test]
+fn init_inspect_and_cancel_from_nested_directory_are_read_only() {
+    let temp = tempfile::tempdir().expect("create nested onboarding fixture");
+    init_git(temp.path());
+    std::fs::create_dir_all(temp.path().join("apps/web/src/components"))
+        .expect("create nested project");
+    std::fs::create_dir_all(temp.path().join(".github/workflows")).expect("create CI fixture");
+    std::fs::write(temp.path().join("ruff.toml"), "line-length = 100\n")
+        .expect("write native config");
+    std::fs::write(temp.path().join(".github/workflows/ci.yml"), "name: ci\n")
+        .expect("write CI config");
+    std::fs::write(temp.path().join("AGENTS.md"), "# Existing instructions\n")
+        .expect("write agent context");
+    let nested = temp.path().join("apps/web");
+    let before = git_status(temp.path());
+    let native_before = [
+        std::fs::read(temp.path().join("ruff.toml")).expect("read ruff config"),
+        std::fs::read(temp.path().join(".github/workflows/ci.yml")).expect("read CI config"),
+        std::fs::read(temp.path().join("AGENTS.md")).expect("read agent context"),
+    ];
+
+    for (request_id, action) in [("nested-inspect", None), ("nested-cancel", Some("cancel"))] {
+        let mut args = vec![
+            "init",
+            "--json",
+            "--project-dir",
+            ".",
+            "--request-id",
+            request_id,
+        ];
+        if let Some(action) = action {
+            args.extend(["--action", action]);
+        }
+        let output = run(&args, &nested);
+        if action.is_some() {
+            assert!(output.status.success());
+            assert_eq!(json(&output)["data"]["cancelled"], true);
+        } else {
+            assert_eq!(output.status.code(), Some(6));
+        }
+        let response = json(&output);
+        assert_eq!(
+            response["data"]["setup"]["project_root"],
+            temp.path()
+                .canonicalize()
+                .expect("root")
+                .to_string_lossy()
+                .as_ref()
+        );
+        assert_eq!(git_status(temp.path()), before);
+        assert!(!temp.path().join(".git/whetstone").exists());
+        assert!(!nested.join(".git").exists());
+    }
+
+    let native_after = [
+        std::fs::read(temp.path().join("ruff.toml")).expect("read ruff config"),
+        std::fs::read(temp.path().join(".github/workflows/ci.yml")).expect("read CI config"),
+        std::fs::read(temp.path().join("AGENTS.md")).expect("read agent context"),
+    ];
+    assert_eq!(native_after, native_before);
+}
+
+#[test]
+fn init_requires_every_owner_decision_and_never_accepts_proposed_defaults() {
+    let temp = tempfile::tempdir().expect("create required-input fixture");
+    init_git(temp.path());
+    std::fs::create_dir_all(temp.path().join("whetstone/packs/team"))
+        .expect("create inert import fixture");
+    std::fs::write(
+        temp.path().join("whetstone/packs/team/install.sh"),
+        "exit 99\n",
+    )
+    .expect("write inert imported content");
+    let project = temp.path().to_string_lossy();
+    let inspect = run(
+        &[
+            "init",
+            "--json",
+            "--project-dir",
+            &project,
+            "--request-id",
+            "explicit-input",
+        ],
+        temp.path(),
+    );
+    let handoff = json(&inspect);
+    assert_eq!(handoff["state"], "needs_input");
+    assert_eq!(
+        handoff["data"]["setup"]["proposed_defaults"]
+            .as_array()
+            .map(Vec::len),
+        Some(5)
+    );
+    assert!(handoff["data"]["setup"]["imported_material_trust"]
+        .as_str()
+        .expect("trust statement")
+        .contains("remains inert"));
+    assert_eq!(
+        handoff["data"]["setup"]["executable_access"][0],
+        "none until a checker manifest is explicitly trusted"
+    );
+    assert!(!temp.path().join(".git/whetstone").exists());
+
+    let revision = handoff["expected_revision"].as_u64().expect("revision");
+    let revision_text = revision.to_string();
+    let token = handoff["resume_token"].as_str().expect("resume token");
+    let incomplete = run(
+        &[
+            "init",
+            "--json",
+            "--project-dir",
+            &project,
+            "--action",
+            "agree",
+            "--request-id",
+            "explicit-input",
+            "--expected-revision",
+            &revision_text,
+            "--resume",
+            token,
+            "--mission",
+            "Keep project work aligned.",
             "--values",
             "Safety before speed.",
             "--philosophy",
@@ -247,8 +463,387 @@ fn init_is_resumable_and_duplicate_requests_are_idempotent() {
         ],
         temp.path(),
     );
-    assert_eq!(conflict.status.code(), Some(8));
-    assert_eq!(json(&conflict)["state"], "conflict");
+    assert_eq!(incomplete.status.code(), Some(6));
+    assert_eq!(json(&incomplete)["state"], "needs_input");
+    let layout = ProjectLayout::resolve(temp.path(), None).expect("project layout");
+    let repository =
+        DoltRepository::open_existing(&layout.store_path(StoreKind::Private), StoreKind::Private)
+            .expect("private store exists only after explicit agreement attempt");
+    assert!(repository.all_records().expect("records").is_empty());
+    assert!(!layout.store_path(StoreKind::Shareable).exists());
+}
+
+#[test]
+fn init_repairs_only_missing_established_agreement_fields_and_replays_exactly() {
+    let temp = tempfile::tempdir().expect("create established agreement fixture");
+    init_git(temp.path());
+    let project = temp.path().to_string_lossy();
+    let inspect = run(
+        &[
+            "init",
+            "--json",
+            "--project-dir",
+            &project,
+            "--request-id",
+            "initial-agreement",
+        ],
+        temp.path(),
+    );
+    let handoff = json(&inspect);
+    let revision = handoff["expected_revision"].as_u64().expect("revision");
+    let revision_text = revision.to_string();
+    let token = handoff["resume_token"].as_str().expect("token");
+    let accepted = run(
+        &[
+            "init",
+            "--json",
+            "--project-dir",
+            &project,
+            "--action",
+            "agree",
+            "--request-id",
+            "initial-agreement",
+            "--expected-revision",
+            &revision_text,
+            "--resume",
+            token,
+            "--mission",
+            "Keep project work aligned.",
+            "--desired-outcome",
+            "Reduce avoidable rework.",
+            "--values",
+            "Safety before speed.",
+            "--philosophy",
+            "Prefer small deterministic boundaries.",
+            "--owner",
+            "Platform lead",
+            "--initial-safeguard",
+            "Never weaken a failing check.",
+            "--safeguard-scope",
+            "All repository changes",
+            "--revision-triggers",
+            "Mission or architecture changes",
+        ],
+        temp.path(),
+    );
+    assert_eq!(accepted.status.code(), Some(5));
+
+    let layout = ProjectLayout::resolve(temp.path(), None).expect("layout");
+    let private =
+        DoltRepository::open_existing(&layout.store_path(StoreKind::Private), StoreKind::Private)
+            .expect("private store");
+    let mission_id = RecordId::new("mission.project").expect("mission ID");
+    let mut incomplete = private
+        .latest(&mission_id)
+        .expect("mission query")
+        .expect("mission");
+    incomplete.supersedes = Some(incomplete.reference().expect("mission ref"));
+    incomplete.revision += 1;
+    incomplete.idempotency_key = "legacy-incomplete-mission".into();
+    incomplete.owner.display_name = None;
+    let RecordBody::Mission(mission) = &mut incomplete.body else {
+        panic!("mission body")
+    };
+    mission.desired_outcomes.clear();
+    private
+        .append(&incomplete, Some(1))
+        .expect("model an established incomplete agreement");
+
+    let resume = run(
+        &[
+            "init",
+            "--json",
+            "--project-dir",
+            &project,
+            "--request-id",
+            "complete-established",
+        ],
+        temp.path(),
+    );
+    assert_eq!(resume.status.code(), Some(6));
+    let resume_json = json(&resume);
+    assert_eq!(
+        resume_json["data"]["progress"]["missing_decisions"],
+        serde_json::json!(["accountable owner", "desired outcome"])
+    );
+    let resume_revision = resume_json["expected_revision"]
+        .as_u64()
+        .expect("resume revision")
+        .to_string();
+    let resume_token = resume_json["resume_token"].as_str().expect("resume token");
+    let completion_args = [
+        "init",
+        "--json",
+        "--project-dir",
+        &project,
+        "--action",
+        "agree",
+        "--request-id",
+        "complete-established",
+        "--expected-revision",
+        &resume_revision,
+        "--resume",
+        resume_token,
+        "--desired-outcome",
+        "Reduce avoidable rework.",
+        "--owner",
+        "Platform lead",
+    ];
+    let completed = run(&completion_args, temp.path());
+    assert_eq!(completed.status.code(), Some(5));
+    let completed_json = json(&completed);
+    assert_eq!(
+        completed_json["data"]["progress"]["missing_decisions"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        completed_json["data"]["records"].as_array().map(Vec::len),
+        Some(1)
+    );
+    let replay = run(&completion_args, temp.path());
+    assert_eq!(replay.status.code(), Some(5));
+    assert_eq!(
+        json(&replay)["data"]["records"],
+        completed_json["data"]["records"]
+    );
+    assert_eq!(
+        private
+            .all_records()
+            .expect("records")
+            .into_iter()
+            .filter(|record| record.id == mission_id)
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn init_agree_resumes_after_interruption_between_dolt_bootstrap_and_migration() {
+    let temp = tempfile::tempdir().expect("create interrupted bootstrap fixture");
+    init_git(temp.path());
+    let project = temp.path().to_string_lossy();
+    let inspect = run(
+        &[
+            "init",
+            "--json",
+            "--project-dir",
+            &project,
+            "--request-id",
+            "resume-bootstrap",
+        ],
+        temp.path(),
+    );
+    let handoff = json(&inspect);
+    let revision = handoff["expected_revision"]
+        .as_u64()
+        .expect("revision")
+        .to_string();
+    let token = handoff["resume_token"].as_str().expect("token");
+    let layout = ProjectLayout::resolve(temp.path(), None).expect("layout");
+    let private_root = layout.store_path(StoreKind::Private);
+    std::fs::create_dir_all(&private_root).expect("create private root");
+    let interrupted = Command::new("dolt")
+        .current_dir(&private_root)
+        .env("DOLT_DISABLE_EVENT_FLUSH", "1")
+        .args([
+            "init",
+            "--name",
+            "Whetstone",
+            "--email",
+            "local@whetstone.invalid",
+            "--initial-branch",
+            "main",
+        ])
+        .output()
+        .expect("model process stop after dolt init");
+    assert!(
+        interrupted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&interrupted.stderr)
+    );
+    let cancelled = run(
+        &[
+            "init",
+            "--json",
+            "--project-dir",
+            &project,
+            "--action",
+            "cancel",
+            "--request-id",
+            "cancel-interrupted-bootstrap",
+        ],
+        temp.path(),
+    );
+    assert!(cancelled.status.success());
+    assert_eq!(json(&cancelled)["data"]["progress_state"], "unavailable");
+    let tables = Command::new("dolt")
+        .current_dir(&private_root)
+        .env("DOLT_DISABLE_EVENT_FLUSH", "1")
+        .args(["sql", "-r", "json", "-q", "SHOW TABLES"])
+        .output()
+        .expect("inspect interrupted schema after cancel");
+    assert!(tables.status.success());
+    let table_json =
+        serde_json::from_slice::<serde_json::Value>(&tables.stdout).expect("table JSON");
+    assert!(
+        table_json
+            .as_object()
+            .is_some_and(serde_json::Map::is_empty)
+            || table_json
+                .get("rows")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(Vec::is_empty)
+    );
+    let resumed = run(
+        &[
+            "init",
+            "--json",
+            "--project-dir",
+            &project,
+            "--action",
+            "agree",
+            "--request-id",
+            "resume-bootstrap",
+            "--expected-revision",
+            &revision,
+            "--resume",
+            token,
+            "--mission",
+            "Keep project work aligned.",
+            "--desired-outcome",
+            "Reduce avoidable rework.",
+            "--values",
+            "Safety before speed.",
+            "--philosophy",
+            "Prefer small deterministic boundaries.",
+            "--owner",
+            "Platform lead",
+            "--initial-safeguard",
+            "Never weaken a failing check.",
+            "--safeguard-scope",
+            "All repository changes",
+            "--revision-triggers",
+            "Mission or architecture changes",
+        ],
+        temp.path(),
+    );
+    assert_eq!(resumed.status.code(), Some(5));
+    assert_eq!(json(&resumed)["data"]["progress"]["agreement"], "approved");
+    assert_eq!(
+        DoltRepository::open_existing(&private_root, StoreKind::Private)
+            .expect("recovered store")
+            .all_records()
+            .expect("records")
+            .len(),
+        4
+    );
+}
+
+#[test]
+fn init_replay_keeps_the_base_revision_when_new_records_have_no_supersedes() {
+    let temp = tempfile::tempdir().expect("create mixed established fixture");
+    init_git(temp.path());
+    let project = temp.path().to_string_lossy();
+    let probe = run(
+        &[
+            "change",
+            "--json",
+            "--project-dir",
+            &project,
+            "--request-id",
+            "existing-value",
+            "--record-id",
+            "value.core",
+        ],
+        temp.path(),
+    );
+    let proposal = json(&probe);
+    let change_token = proposal["resume_token"].as_str().expect("change token");
+    let changed = run(
+        &[
+            "change",
+            "--json",
+            "--project-dir",
+            &project,
+            "--request-id",
+            "existing-value",
+            "--kind",
+            "value",
+            "--record-id",
+            "value.core",
+            "--content",
+            "Safety before speed.",
+            "--rationale",
+            "Existing accepted value.",
+            "--source",
+            "owner:existing-value",
+            "--expected-effect",
+            "Reduce avoidable rework.",
+            "--impact",
+            "Project-wide engineering work.",
+            "--expected-revision",
+            "0",
+            "--resume",
+            change_token,
+        ],
+        temp.path(),
+    );
+    assert!(changed.status.success());
+
+    let inspect = run(
+        &[
+            "init",
+            "--json",
+            "--project-dir",
+            &project,
+            "--request-id",
+            "fill-around-value",
+        ],
+        temp.path(),
+    );
+    let handoff = json(&inspect);
+    assert_eq!(handoff["expected_revision"], 1);
+    let token = handoff["resume_token"].as_str().expect("init token");
+    let agreement_args = [
+        "init",
+        "--json",
+        "--project-dir",
+        &project,
+        "--action",
+        "agree",
+        "--request-id",
+        "fill-around-value",
+        "--expected-revision",
+        "1",
+        "--resume",
+        token,
+        "--mission",
+        "Keep project work aligned.",
+        "--desired-outcome",
+        "Reduce avoidable rework.",
+        "--philosophy",
+        "Prefer small deterministic boundaries.",
+        "--owner",
+        "Platform lead",
+        "--initial-safeguard",
+        "Never weaken a failing check.",
+        "--safeguard-scope",
+        "All repository changes",
+        "--revision-triggers",
+        "Mission or architecture changes",
+    ];
+    let accepted = run(&agreement_args, temp.path());
+    assert_eq!(accepted.status.code(), Some(5));
+    assert_eq!(
+        json(&accepted)["data"]["records"].as_array().map(Vec::len),
+        Some(3)
+    );
+    let replay = run(&agreement_args, temp.path());
+    assert_eq!(replay.status.code(), Some(5));
+    assert_eq!(
+        json(&replay)["data"]["records"],
+        json(&accepted)["data"]["records"]
+    );
 }
 
 #[test]
@@ -698,18 +1293,9 @@ fn check_persists_one_idempotent_private_receipt_when_storage_exists() {
     init_git(temp.path());
     write_rule_project(temp.path(), "def read_config():\n    pass\n");
     let project = temp.path().to_string_lossy();
-    let initialize = run(
-        &[
-            "init",
-            "--json",
-            "--project-dir",
-            &project,
-            "--request-id",
-            "receipt-store",
-        ],
-        temp.path(),
-    );
-    assert_eq!(initialize.status.code(), Some(6));
+    let layout = ProjectLayout::resolve(temp.path(), None).expect("resolve receipt fixture");
+    DoltRepository::initialize(&layout.store_path(StoreKind::Private), StoreKind::Private)
+        .expect("initialize receipt store explicitly");
 
     let args = [
         "check",
@@ -732,7 +1318,6 @@ fn check_persists_one_idempotent_private_receipt_when_storage_exists() {
         second["data"]["receipt_record"]
     );
 
-    let layout = ProjectLayout::resolve(temp.path(), None).expect("resolve receipt fixture");
     let private =
         DoltRepository::initialize(&layout.store_path(StoreKind::Private), StoreKind::Private)
             .expect("open private store");

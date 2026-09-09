@@ -57,9 +57,19 @@ enum Command {
         #[arg(long)]
         mission: Option<String>,
         #[arg(long)]
+        desired_outcome: Option<String>,
+        #[arg(long)]
         values: Option<String>,
         #[arg(long)]
         philosophy: Option<String>,
+        #[arg(long)]
+        owner: Option<String>,
+        #[arg(long)]
+        initial_safeguard: Option<String>,
+        #[arg(long)]
+        safeguard_scope: Option<String>,
+        #[arg(long)]
+        revision_triggers: Option<String>,
     },
 
     /// Open the inspectable local dashboard.
@@ -196,6 +206,7 @@ enum Command {
 enum InitActionArg {
     Inspect,
     Agree,
+    Cancel,
 }
 
 impl From<InitActionArg> for InitAction {
@@ -203,6 +214,7 @@ impl From<InitActionArg> for InitAction {
         match value {
             InitActionArg::Inspect => Self::Inspect,
             InitActionArg::Agree => Self::Agree,
+            InitActionArg::Cancel => Self::Cancel,
         }
     }
 }
@@ -242,8 +254,13 @@ pub fn run() -> i32 {
             expected_revision,
             resume_token,
             mission,
+            desired_outcome,
             values,
             philosophy,
+            owner,
+            initial_safeguard,
+            safeguard_scope,
+            revision_triggers,
         }) => service.execute(ServiceRequest::Init(InitRequest {
             project_dir,
             request_id,
@@ -251,8 +268,13 @@ pub fn run() -> i32 {
             expected_revision,
             resume_token,
             mission,
+            desired_outcome,
             values,
             philosophy,
+            owner,
+            initial_safeguard,
+            safeguard_scope,
+            revision_triggers,
         })),
         Some(Command::Dash {
             project_dir,

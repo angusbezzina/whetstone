@@ -35,6 +35,31 @@ completion alone. Resume `needs_input` with the same request ID, expected
 revision, and resume token. A retry with the same request ID must keep the same
 input.
 
+`wh init --json` is always an inspect-first, read-only operation. It resolves
+the Git worktree root even when called from a nested directory, reports detected
+facts separately from inferences and unknowns, previews the exact private-store
+footprint, and leaves native tools, agent files, imported starter material,
+remotes, and the working tree untouched. Proposed defaults are suggestions, not
+answers. Only continue after an accountable user explicitly supplies all eight
+owner decisions:
+
+```text
+wh init --json --action agree --request-id <id> \
+  --expected-revision <revision> --resume <token> \
+  --mission <mission> --desired-outcome <outcome> --values <values> \
+  --philosophy <philosophy> --owner <owner> \
+  --initial-safeguard <safeguard> --safeguard-scope <scope> \
+  --revision-triggers <triggers>
+```
+
+Agreement acceptance atomically installs only private Git-common-dir records;
+it does not create a shareable store or alter platform configuration. `wh init
+--action cancel` is read-only. Treat `detected`, `proposed`, `approved`,
+`installed`, and `verified` as distinct states: setup is verified only after a
+current known-bad to authorized-repair to known-good proof for the exact checked
+code, policy, checker, scope, environment, trust, and full workspace snapshot.
+Any later change to that proved snapshot makes the proof stale.
+
 Use [planning/direction-demo/index.html](planning/direction-demo/index.html) for
 target behavior and
 [planning/skill-cli-boundary.md](planning/skill-cli-boundary.md) for the binding

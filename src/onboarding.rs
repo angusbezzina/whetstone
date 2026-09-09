@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use walkdir::WalkDir;
 
 use crate::domain::ContentDigest;
 
@@ -27,6 +28,10 @@ pub enum DiscoveryKind {
     TestConfig,
     ContinuousIntegration,
     AgentHost,
+    Automation,
+    DesignSystem,
+    OutcomeSource,
+    ImportedMaterial,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +52,12 @@ pub struct SetupPlan {
     pub proposed_writes: Vec<String>,
     pub executable_access: Vec<String>,
     pub owner_decisions: Vec<String>,
+    pub adoption_scope: Vec<String>,
+    pub known_unknowns: Vec<String>,
+    pub known_debt: String,
+    pub proposed_defaults: Vec<String>,
+    pub platform_footprint: Vec<String>,
+    pub imported_material_trust: String,
     pub remote_required: bool,
 }
 
@@ -74,6 +85,17 @@ pub fn inspect(root: &Path) -> Result<SetupPlan, DiscoveryError> {
         (".github/workflows", DiscoveryKind::ContinuousIntegration),
         (".claude", DiscoveryKind::AgentHost),
         ("AGENTS.md", DiscoveryKind::AgentHost),
+        ("Taskfile.yml", DiscoveryKind::Automation),
+        ("Taskfile.yaml", DiscoveryKind::Automation),
+        ("Makefile", DiscoveryKind::Automation),
+        ("components", DiscoveryKind::DesignSystem),
+        ("src/components", DiscoveryKind::DesignSystem),
+        ("design-system", DiscoveryKind::DesignSystem),
+        ("metrics", DiscoveryKind::OutcomeSource),
+        ("analytics", DiscoveryKind::OutcomeSource),
+        ("whetstone/packs", DiscoveryKind::ImportedMaterial),
+        (".agents/skills", DiscoveryKind::ImportedMaterial),
+        (".claude/skills", DiscoveryKind::ImportedMaterial),
     ];
     let mut facts = Vec::new();
     for (relative, kind) in candidates {
@@ -94,18 +116,70 @@ pub fn inspect(root: &Path) -> Result<SetupPlan, DiscoveryError> {
         inferences
             .push("Python may be in scope; confirm environments and generated sources.".into());
     }
+    let adoption_scope = facts
+        .iter()
+        .filter(|fact| fact.kind == DiscoveryKind::Manifest)
+        .map(|fact| fact.path.clone())
+        .collect::<Vec<_>>();
+    let mut known_unknowns = Vec::new();
+    for (kind, label) in [
+        (DiscoveryKind::LintConfig, "native lint configuration"),
+        (DiscoveryKind::TestConfig, "native test configuration"),
+        (
+            DiscoveryKind::ContinuousIntegration,
+            "continuous integration",
+        ),
+        (DiscoveryKind::DesignSystem, "design-system source"),
+        (DiscoveryKind::OutcomeSource, "outcome or metric source"),
+    ] {
+        if !facts.iter().any(|fact| fact.kind == kind) {
+            known_unknowns.push(format!(
+                "No {label} was detected at a bounded conventional path; confirm it rather than assuming it is absent."
+            ));
+        }
+    }
+    let imported_material_detected = facts
+        .iter()
+        .any(|fact| fact.kind == DiscoveryKind::ImportedMaterial);
     Ok(SetupPlan {
         project_root: root.to_string_lossy().into_owned(),
         facts,
         inferences,
-        proposed_writes: vec!["private Dolt agreement store".into()],
+        proposed_writes: vec![
+            "private Dolt agreement state under the Git common directory; no working-tree files"
+                .into(),
+        ],
         executable_access: vec!["none until a checker manifest is explicitly trusted".into()],
         owner_decisions: vec![
-            "mission and desired outcome".into(),
-            "core values and implementation philosophy".into(),
-            "agreement owner and review triggers".into(),
-            "one initial safeguard and its scope".into(),
+            "mission".into(),
+            "desired outcome".into(),
+            "core values".into(),
+            "implementation philosophy".into(),
+            "accountable owner".into(),
+            "one initial safeguard".into(),
+            "initial safeguard scope".into(),
+            "revision triggers".into(),
         ],
+        adoption_scope,
+        known_unknowns,
+        known_debt: "not assessed during discovery; run an explicit scoped check after selecting and trusting the initial safeguard".into(),
+        proposed_defaults: vec![
+            "bounded delegation budget".into(),
+            "observational checks before mutation".into(),
+            "independent review for shared policy".into(),
+            "bounded context retention".into(),
+            "mandates remain opt-in".into(),
+        ],
+        platform_footprint: vec![
+            "inspection writes nothing".into(),
+            "agreement acceptance creates private Git-common-dir state only".into(),
+        ],
+        imported_material_trust: if imported_material_detected {
+            "detected material remains inert until its exact content digest is separately approved"
+        } else {
+            "no imported starter material detected"
+        }
+        .into(),
         remote_required: false,
     })
 }
@@ -134,14 +208,28 @@ fn fact(root: &Path, path: &Path, kind: DiscoveryKind) -> Result<DetectedFact, D
 
 fn digest_directory(root: &Path, directory: &Path) -> Result<ContentDigest, DiscoveryError> {
     let mut files = Vec::<PathBuf>::new();
-    for entry in fs::read_dir(directory).map_err(DiscoveryError::Io)? {
-        let entry = entry.map_err(DiscoveryError::Io)?;
+    for entry in WalkDir::new(directory).follow_links(false).max_depth(8) {
+        let entry = entry.map_err(|error| {
+            DiscoveryError::Io(
+                error
+                    .io_error()
+                    .map(|value| std::io::Error::new(value.kind(), value.to_string()))
+                    .unwrap_or_else(|| std::io::Error::other(error.to_string())),
+            )
+        })?;
         let path = entry.path();
-        if path.is_symlink() {
+        let metadata = fs::symlink_metadata(path).map_err(DiscoveryError::Io)?;
+        if metadata.file_type().is_symlink() {
             return Err(DiscoveryError::UnsafePath(path.display().to_string()));
         }
-        if path.is_file() {
-            files.push(path);
+        if metadata.is_file() {
+            files.push(path.to_path_buf());
+            if files.len() > 10_000 {
+                return Err(DiscoveryError::UnsafePath(format!(
+                    "inspection exceeds 10000 files under {}",
+                    directory.display()
+                )));
+            }
         }
     }
     files.sort();

@@ -2385,6 +2385,18 @@ fn capture_workspace(
         .collect()
 }
 
+/// Read-only freshness check for an already persisted repair proof.
+///
+/// Onboarding uses the same complete workspace identity as the host lifecycle,
+/// including protected files, directories, symlinks, nested repositories, and
+/// permission bits. Persisted session data remains evidence, not authority.
+pub(crate) fn repair_workspace_is_current(
+    project_root: &Path,
+    session: &RepairSessionRecord,
+) -> Result<bool, RepairHostError> {
+    Ok(capture_workspace(project_root, &session_context(session))? == session.workspace_files)
+}
+
 fn hash_workspace_permissions(hasher: &mut Sha256, metadata: &fs::Metadata) {
     hasher.update(b"permissions\0");
     #[cfg(unix)]

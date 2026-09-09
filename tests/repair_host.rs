@@ -16,7 +16,8 @@ use whetstone::repair_host::{
     RepairHostError, RepairTaskContext, VerifiedRepairAuthority, VerifiedRepairCompletion,
 };
 use whetstone::service::{
-    CheckRequest, CommandService, ServiceRequest, ServiceResponse, ServiceState, RESPONSE_SCHEMA,
+    CheckRequest, CommandService, InitAction, InitRequest, ServiceRequest, ServiceResponse,
+    ServiceState, RESPONSE_SCHEMA,
 };
 use whetstone::storage::{DoltRepository, ProjectLayout, StorageError, StoreKind};
 
@@ -508,6 +509,238 @@ fn session_record(fixture: &Fixture, session: &str) -> whetstone::domain::Agreem
     .latest(&RecordId::new(format!("repair.session.{session}")).expect("session id"))
     .expect("load session")
     .expect("session exists")
+}
+
+fn install_owner_agreement(fixture: &Fixture) -> whetstone::domain::RecordRef {
+    let inspection = CommandService.execute(ServiceRequest::Init(InitRequest {
+        project_dir: fixture.project.clone(),
+        request_id: Some("repair-proof-agreement".into()),
+        action: InitAction::Inspect,
+        expected_revision: None,
+        resume_token: None,
+        mission: None,
+        desired_outcome: None,
+        values: None,
+        philosophy: None,
+        owner: None,
+        initial_safeguard: None,
+        safeguard_scope: None,
+        revision_triggers: None,
+    }));
+    assert_eq!(inspection.state, ServiceState::NeedsInput);
+    let accepted = CommandService.execute(ServiceRequest::Init(InitRequest {
+        project_dir: fixture.project.clone(),
+        request_id: Some("repair-proof-agreement".into()),
+        action: InitAction::Agree,
+        expected_revision: inspection.expected_revision,
+        resume_token: inspection.resume_token,
+        mission: Some("Keep changes aligned with the project agreement.".into()),
+        desired_outcome: Some("Reduce avoidable rework.".into()),
+        values: Some("Evidence before assertion.".into()),
+        philosophy: Some("Use narrow deterministic boundaries.".into()),
+        owner: Some("Platform lead".into()),
+        initial_safeguard: Some("Never weaken a failing check to get green.".into()),
+        safeguard_scope: Some("All repository changes".into()),
+        revision_triggers: Some("Mission, architecture, or repeated-friction changes".into()),
+    }));
+    assert_eq!(accepted.state, ServiceState::NeedsDecision);
+    assert_eq!(accepted.data["progress"]["agreement"], "approved");
+    serde_json::from_value(
+        accepted.data["progress"]["agreement_records"]
+            .as_array()
+            .expect("agreement records")
+            .iter()
+            .find(|record| record["id"] == "guidance.initial-safeguard")
+            .expect("initial safeguard reference")
+            .clone(),
+    )
+    .expect("typed safeguard reference")
+}
+
+#[test]
+fn onboarding_is_verified_only_while_the_exact_repair_snapshot_is_current() {
+    let fixture = project("def ReadConfig():\n    pass\n", true, true);
+    let safeguard = install_owner_agreement(&fixture);
+    fs::create_dir(fixture.project.join("tests")).expect("test directory");
+    fs::write(
+        fixture.project.join("tests/invariant.py"),
+        "def test_invariant():\n    assert True\n",
+    )
+    .expect("protected test fixture");
+    let mut proof_context = context();
+    proof_context.applicable_guidance = vec![safeguard];
+    trusted_host()
+        .begin(
+            &fixture.project,
+            begin_request("setup-proof", "setup-proof-begin", proof_context),
+        )
+        .expect("begin repair proof");
+    fs::write(
+        fixture.project.join("src/app.py"),
+        "def read_config():\n    pass\n",
+    )
+    .expect("authorized repair");
+    let repaired = trusted_host()
+        .checkpoint(
+            &fixture.project,
+            checkpoint(
+                "setup-proof",
+                "setup-proof-checkpoint",
+                1,
+                HostCheckpointKind::PostEditHook,
+            ),
+        )
+        .expect("checkpoint repair proof");
+    trusted_host()
+        .finalize(
+            &fixture.project,
+            finalize(
+                "setup-proof",
+                "setup-proof-finalize",
+                repaired.session.revision,
+            ),
+        )
+        .expect("finalize repair proof");
+
+    let verified = CommandService.execute(ServiceRequest::Init(InitRequest {
+        project_dir: fixture.project.clone(),
+        request_id: Some("inspect-current-proof".into()),
+        action: InitAction::Inspect,
+        expected_revision: None,
+        resume_token: None,
+        mission: None,
+        desired_outcome: None,
+        values: None,
+        philosophy: None,
+        owner: None,
+        initial_safeguard: None,
+        safeguard_scope: None,
+        revision_triggers: None,
+    }));
+    assert_eq!(verified.state, ServiceState::Success);
+    assert_eq!(verified.data["progress"]["feedback_loop"], "verified");
+    assert_eq!(verified.data["progress"]["setup_complete"], true);
+
+    let rule_path = fixture.project.join("whetstone/rules/python/names.yaml");
+    let original_rule = fs::read_to_string(&rule_path).expect("read rule");
+    let changed_rule = original_rule.clone().replace(
+        "Function names must begin with a lowercase character.",
+        "Function identifiers must begin with a lowercase character.",
+    );
+    fs::write(&rule_path, changed_rule).expect("change the policy snapshot without changing code");
+    let stale = CommandService.execute(ServiceRequest::Init(InitRequest {
+        project_dir: fixture.project.clone(),
+        request_id: Some("inspect-stale-proof".into()),
+        action: InitAction::Inspect,
+        expected_revision: None,
+        resume_token: None,
+        mission: None,
+        desired_outcome: None,
+        values: None,
+        philosophy: None,
+        owner: None,
+        initial_safeguard: None,
+        safeguard_scope: None,
+        revision_triggers: None,
+    }));
+    assert_eq!(stale.state, ServiceState::NeedsDecision);
+    assert_eq!(stale.data["progress"]["setup_complete"], false);
+    assert!(stale.data["progress"]["proof_status"]
+        .as_str()
+        .expect("proof status")
+        .contains("stale"));
+
+    fs::write(&rule_path, original_rule).expect("restore proved policy");
+    let restored = CommandService.execute(ServiceRequest::Init(InitRequest {
+        project_dir: fixture.project.clone(),
+        request_id: Some("inspect-restored-proof".into()),
+        action: InitAction::Inspect,
+        expected_revision: None,
+        resume_token: None,
+        mission: None,
+        desired_outcome: None,
+        values: None,
+        philosophy: None,
+        owner: None,
+        initial_safeguard: None,
+        safeguard_scope: None,
+        revision_triggers: None,
+    }));
+    assert_eq!(restored.state, ServiceState::Success);
+    fs::write(
+        fixture.project.join("tests/invariant.py"),
+        "def test_invariant():\n    assert False\n",
+    )
+    .expect("change protected test outside final check scope");
+    let protected_stale = CommandService.execute(ServiceRequest::Init(InitRequest {
+        project_dir: fixture.project.clone(),
+        request_id: Some("inspect-protected-stale".into()),
+        action: InitAction::Inspect,
+        expected_revision: None,
+        resume_token: None,
+        mission: None,
+        desired_outcome: None,
+        values: None,
+        philosophy: None,
+        owner: None,
+        initial_safeguard: None,
+        safeguard_scope: None,
+        revision_triggers: None,
+    }));
+    assert_eq!(protected_stale.state, ServiceState::NeedsDecision);
+    assert!(protected_stale.data["progress"]["proof_status"]
+        .as_str()
+        .expect("proof status")
+        .contains("stale"));
+}
+
+#[test]
+fn onboarding_rejects_an_initially_green_session_as_repair_proof() {
+    let fixture = project("def read_config():\n    pass\n", true, true);
+    let safeguard = install_owner_agreement(&fixture);
+    let mut green_context = context();
+    green_context.applicable_guidance = vec![safeguard];
+    let initial = trusted_host()
+        .begin(
+            &fixture.project,
+            begin_request("green-proof", "green-proof-begin", green_context),
+        )
+        .expect("begin green session");
+    assert_eq!(
+        initial.state,
+        RepairSessionStateRecord::ReadyForFinalVerification
+    );
+    trusted_host()
+        .finalize(
+            &fixture.project,
+            finalize(
+                "green-proof",
+                "green-proof-finalize",
+                initial.session.revision,
+            ),
+        )
+        .expect("finalize green session");
+    let inspection = CommandService.execute(ServiceRequest::Init(InitRequest {
+        project_dir: fixture.project.clone(),
+        request_id: Some("inspect-green-proof".into()),
+        action: InitAction::Inspect,
+        expected_revision: None,
+        resume_token: None,
+        mission: None,
+        desired_outcome: None,
+        values: None,
+        philosophy: None,
+        owner: None,
+        initial_safeguard: None,
+        safeguard_scope: None,
+        revision_triggers: None,
+    }));
+    assert_eq!(inspection.state, ServiceState::NeedsDecision);
+    assert_eq!(inspection.data["progress"]["setup_complete"], false);
+    assert!(inspection.data["progress"]["proof_status"]
+        .as_str()
+        .expect("proof status")
+        .contains("does not prove a known-bad repair"));
 }
 
 #[test]
