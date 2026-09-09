@@ -20,6 +20,7 @@ include = [
     "/tests/domain_fixtures.rs",
     "/tests/fixtures/direction_cases.json",
     "/tests/kernel_cli.rs",
+    "/tests/storage_dolt.rs",
 ]
 
 [dependencies]
