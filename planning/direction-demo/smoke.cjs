@@ -112,6 +112,18 @@ async function main() {
       (await page.locator("#rule-rows tr").count()) === 6,
       "Six sample standards",
     );
+    check(
+      (await page.locator("#loop-scenario").inputValue()) === "proactive",
+      "Workspace leads with approved signal-triggered work",
+    );
+    check(
+      !(await page.locator(".loop-evidence").getAttribute("open")),
+      "Agent receipts are collapsed by default behind a human summary",
+    );
+    check(
+      (await page.locator("#loop-scenario option").count()) === 8,
+      "Eight cases fit the existing workspace without more navigation",
+    );
     await page.screenshot({
       path: path.join(output, "02-workspace.png"),
       fullPage: true,
@@ -125,6 +137,36 @@ async function main() {
       "Task simulation is explicitly separate from the reference PR",
     );
     for (const [scenario, task, states] of [
+      [
+        "proactive",
+        "M-047",
+        [
+          "Signal detected — no task yet",
+          "Reproduced — work authorized",
+          "Repair verified — release pending",
+          "Improvement observed — review due",
+        ],
+      ],
+      [
+        "promotion",
+        "P-048",
+        [
+          "Local experiment — team unchanged",
+          "Shared — independent review pending",
+          "Accepted — activation pending",
+          "Activated — impact pending",
+        ],
+      ],
+      [
+        "cleanup",
+        "C-049",
+        [
+          "Stale context — investigation permitted",
+          "Archive proposed — review pending",
+          "Reviewed — archive pending",
+          "Archived — history retained",
+        ],
+      ],
       [
         "routine",
         "T-042",
@@ -173,6 +215,11 @@ async function main() {
       );
       for (let step = 0; step < 4; step += 1) {
         check(
+          !(await page.locator(".loop-evidence").getAttribute("open")),
+          `${scenario} stage ${step + 1} starts with readable summary, not terminal output`,
+        );
+        await page.locator(".loop-evidence summary").click();
+        check(
           (await page.locator("#loop-status").innerText()) === states[step],
           `${scenario} step ${step + 1} exposes the correct state`,
         );
@@ -198,6 +245,121 @@ async function main() {
               10,
             `${scenario} step ${step + 1} exposes a meaningful ${axis} state`,
           );
+        }
+        const additions = {
+          proactive: [
+            [
+              "approved before this observation",
+              "No task exists yet",
+              "30 runs",
+              "freshness limit",
+              "no payments",
+              "not a new scheduler",
+            ],
+            [
+              "reproduces",
+              "dedup key",
+              "no second task or worker",
+              "one worker",
+              "30-minute cooldown",
+              "2 attempts / 20 minutes",
+              "revocation",
+              "before each side effect",
+            ],
+            [
+              "abc4702",
+              "95 ms",
+              "safeguards unchanged",
+              "not merge or release",
+              "no automatic deployment",
+              "live result unknown",
+            ],
+            [
+              "separately authorized",
+              "1,400",
+              "causality not proven",
+              "Owner:",
+              "No effect",
+              "outcome unresolved",
+              "no automatic policy learning",
+            ],
+          ],
+          promotion: [
+            [
+              "250 ms",
+              "220 ms",
+              "reported separately",
+              "not strengthen it",
+              "Private notes",
+              "not accepted team authority",
+            ],
+            [
+              "principal rowan",
+              "principal priya",
+              "Self-approval: rejected",
+              "Solo mode",
+              "No private record IDs",
+              "base v1.3",
+            ],
+            [
+              "pkg0481",
+              "Accepted v1.4 / required v1.3 / installed v1.3",
+              "Stale response: rejected",
+              "duplicate approval: idempotent",
+              "scripts remain inert",
+            ],
+            [
+              "checks-v4",
+              "Known-bad, known-good",
+              "Runner B: v1.3 stale",
+              "behavior may differ",
+              "next 7 days",
+              "separate PR #184",
+            ],
+          ],
+          cleanup: [
+            [
+              "completion event",
+              "no deletion",
+              "Overlap is a hypothesis",
+              "Age alone",
+            ],
+            [
+              "content hash",
+              "Reference audit",
+              "searchable and recoverable",
+              "invalidates this proposal",
+            ],
+            [
+              "current source hash",
+              "recovery path",
+              "verify archive retrieval",
+              "keep original active source intact",
+            ],
+            [
+              "doc0491 retrievable",
+              "superseded plan excluded",
+              "as-of retrieval retains it",
+              "No broken links",
+              "restore by a new reviewed change",
+              "no files were archived",
+            ],
+          ],
+        };
+        if (additions[scenario]) {
+          for (const token of additions[scenario][step])
+            check(
+              result.toLowerCase().includes(token.toLowerCase()),
+              `${scenario} stage ${step + 1} preserves ${token}`,
+            );
+          if (step === 3) {
+            await page.locator(".loop-evidence summary").click();
+            await page.evaluate(() => window.scrollTo(0, 0));
+            await page.screenshot({
+              path: path.join(output, `15-${scenario}.png`),
+              fullPage: true,
+            });
+          }
         }
         if (scenario === "routine" && step === 1) {
           for (const token of [
@@ -444,7 +606,7 @@ async function main() {
         `${scenario} can be replayed`,
       );
     }
-    for (const scenario of ["redirect", "outcome", "routine"]) {
+    for (const scenario of ["proactive", "promotion", "outcome"]) {
       await page.locator(`[data-case="${scenario}"]`).click();
       check(
         (await page.locator("#loop-scenario").inputValue()) === scenario,
@@ -488,6 +650,27 @@ async function main() {
         (await page.locator("#inspector").innerText()).includes(id),
         `${id} details available`,
       );
+      check(
+        !(await page.locator(".applicability").getAttribute("open")),
+        `${id} applicability is expandable`,
+      );
+      await page.locator(".applicability summary").click();
+      const relevance = await page.locator(".applicability").innerText();
+      for (const token of [
+        "Applies because:",
+        "Derived from:",
+        "Evidence or judgment:",
+        "Mandatory checks cannot be omitted",
+        id,
+        "ctx12 stale",
+        "not guaranteed identical",
+      ])
+        check(relevance.includes(token), `${id} explains ${token}`);
+      if (id === "TEST-03")
+        check(
+          relevance.includes("cannot prove test-first development"),
+          "Test results are not fake process evidence",
+        );
     }
     await page.locator('[data-standard="ARCH-01"]').click();
     await page.locator("#inspector [data-decision]").click();
@@ -684,6 +867,8 @@ async function main() {
     const allowed = 'Checkout edits <only> & existing "trusted" checks';
     await page.locator("#setup-allowed").fill(allowed);
     await page.locator("#setup-observationOwner").fill("Reliability on-call");
+    const trigger = 'Trusted "jank" probe <checkout> & explicit mandate';
+    await page.locator("#setup-trigger").fill(trigger);
     await page
       .locator("#setup-limits")
       .fill("2 attempts / 15 minutes; no new permissions");
@@ -712,6 +897,10 @@ async function main() {
       (await page.locator("#setup-observationOwner").inputValue()) ===
         "Reliability on-call",
       "Follow-through owner survives backward navigation",
+    );
+    check(
+      (await page.locator("#setup-trigger").inputValue()) === trigger,
+      "Signal-triggered mandate preserves literal user input across navigation",
     );
     await page.locator("#setup-next").click();
     await page.locator("#setup-next").click();
@@ -751,8 +940,22 @@ async function main() {
     );
     check(
       proposal.authorityGranted === false &&
-        proposal.outcomeMonitoringActive === false,
+        proposal.outcomeMonitoringActive === false &&
+        proposal.proactiveWorkEnabled === false,
       "Downloading defaults grants no authority and activates no monitoring",
+    );
+    check(
+      proposal.agreement.trigger === trigger &&
+        proposal.agreement.initiation.includes("one worker") &&
+        proposal.agreement.reviewPolicy.includes("other than proposer") &&
+        proposal.agreement.contextPolicy.includes("preserve full history"),
+      "Export includes mandate, deduplication, independent review, and historical retention proposals",
+    );
+    check(
+      (await page.locator("#setup-defaults-summary").innerText()).includes(
+        trigger,
+      ),
+      "Final summary displays the unapproved mandate literally",
     );
     check(
       proposal.agreement.allowed === allowed &&
@@ -771,6 +974,10 @@ async function main() {
       "adverse outcome",
       "valid alternatives",
       "model, skill",
+      "signal-triggered mandate",
+      "independent human review",
+      "Explain applicability",
+      "archival preserves references",
     ])
       check(
         proposal.reviewRequired.some((item) => item.includes(token)),
@@ -840,6 +1047,13 @@ async function main() {
           (await page.locator("#flow-boundary").innerText()).length > 30,
           `${flow} step ${step + 1} has authority boundary`,
         );
+        if (flow === "evolve" && step === 2)
+          check(
+            (await page.locator("#flow-terminal").innerText()).includes(
+              "requires a different authorized human reviewer from its author",
+            ),
+            "A reviewer who authors a counterproposal cannot self-approve it",
+          );
       }
     }
     await page.locator('[data-flow="agent"]').click();
@@ -863,6 +1077,15 @@ async function main() {
       "unnecessary owner interruptions",
       "escaped failures",
       "overdue follow-through",
+      "a mission explains why; a mandate grants permission",
+      "recheck revocation before side effects",
+      "wh check itself never starts a repair",
+      "other than the proposer",
+      "passing tests cannot prove test-first development",
+      "before/after movement alone does not prove causality",
+      "age or similarity alone never authorizes deletion",
+      "historical as-of queries retain it",
+      "beads can track work",
     ]) {
       check(
         contract
@@ -1031,15 +1254,29 @@ async function main() {
       await page.locator("#loop-scenario").selectOption("owner");
       for (let step = 0; step < 3; step += 1)
         await page.locator("#loop-next").click();
+      await page.locator(".loop-evidence summary").click();
       check(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= innerWidth,
         ),
         `Long blocked handoff fits at ${width}px`,
       );
-      for (const scenario of ["redirect", "outcome"]) {
+      for (const scenario of [
+        "redirect",
+        "outcome",
+        "proactive",
+        "promotion",
+        "cleanup",
+      ]) {
         await page.locator("#loop-scenario").selectOption(scenario);
         for (let step = 0; step < 4; step += 1) {
+          check(
+            await page.evaluate(
+              () => document.documentElement.scrollWidth <= innerWidth,
+            ),
+            `${scenario} condensed stage ${step + 1} fits at ${width}px`,
+          );
+          await page.locator(".loop-evidence summary").click();
           check(
             await page.evaluate(
               () => document.documentElement.scrollWidth <= innerWidth,
@@ -1079,7 +1316,8 @@ async function main() {
       "Reload resets simulated sharing rather than implying durable storage",
     );
     check(
-      (await page.locator("#loop-status").textContent()) === "Working",
+      (await page.locator("#loop-status").textContent()) ===
+        "Signal detected — no task yet",
       "Reload resets simulated task completion",
     );
     await page.keyboard.press("Tab");

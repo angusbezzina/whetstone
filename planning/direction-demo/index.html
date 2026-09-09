@@ -2212,6 +2212,22 @@
         font-weight: 600;
         padding: 14px 0;
       }
+      .loop-evidence,
+      .applicability {
+        margin: 16px 0;
+      }
+      .loop-evidence summary,
+      .applicability summary {
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 550;
+        padding: 10px 0;
+      }
+      .applicability p {
+        font-size: 11px;
+        margin: 8px 0;
+        color: var(--muted);
+      }
       .workflow-contract h3 {
         font-size: 14px;
         margin: 16px 0 5px;
@@ -2409,7 +2425,7 @@
       <a class="brand" href="#brief"
         ><svg aria-hidden="true"><use href="#i-mark" /></svg>whetstone</a
       >
-      <div class="edition">DIRECTION STUDY / 04</div>
+      <div class="edition">DIRECTION STUDY / 05</div>
       <div class="nav-caption">THE WORKING AGREEMENT</div>
       <nav class="nav">
         <a href="#brief" data-nav="brief" aria-current="page"
@@ -2465,13 +2481,13 @@
             <div>
               <div class="eyebrow">THE NEW DIRECTION · SEPTEMBER 2026</div>
               <h1 id="brief-title" tabindex="-1">
-                Delegate the work.<br /><em>Own the outcome.</em>
+                Define good.<br /><em>Keep improving.</em>
               </h1>
               <p class="lede">
-                Turn your project’s intent and preferences into enforceable
-                boundaries. Agents correct their own work; people own the
-                consequential decisions. Keep the loop open until the result has
-                been followed through.
+                Define what good means. Let agents handle authorized
+                improvements and clean up after themselves. Keep control of the
+                decisions that change the rules—and measure whether the work
+                helped.
               </p>
               <div class="actions">
                 <a class="btn primary" href="#workspace"
@@ -2482,7 +2498,7 @@
             </div>
             <div
               class="brief-model"
-              aria-label="Delegate within the agreement. Check, repair, and recheck. Make an accountable acceptance decision, observe the result, and feed learning back into the agreement."
+              aria-label="Agree on goals and mandates. Trusted signals can initiate bounded work. Check, repair, recheck, decide, and observe the outcome."
             >
               <div class="model-head">
                 <span class="eyebrow">ONE AGREEMENT. TWO CONNECTED LOOPS.</span
@@ -2490,10 +2506,8 @@
               </div>
               <div class="model-node">
                 <div>
-                  <strong>Delegate within the agreement</strong
-                  ><small
-                    >Intent · preferences · limits · accountable owner</small
-                  >
+                  <strong>Agree → observe → delegate</strong
+                  ><small>Goals explain why · mandates grant permission</small>
                 </div>
                 <span class="model-number">01</span>
               </div>
@@ -2530,32 +2544,32 @@
           <div class="brief-pillars">
             <article class="brief-pillar">
               <div class="eyebrow">01 / DELEGATE</div>
-              <h2>Your team’s way of building.</h2>
+              <h2>Agree once. Act within bounds.</h2>
               <p>
-                Confirm the mission, values, philosophy, and measures. Agree
-                what workers may do, when they must stop, and who can decide.
-                Reuse existing requests and tools; inherit defaults instead of
-                adding a form to every task.
+                Confirm goals, values, philosophy, and measures. Approved
+                mandates let trusted signals start scoped work without a new
+                prompt. Inherit limits, budgets, and owners; reuse existing
+                tools.
               </p>
             </article>
             <article class="brief-pillar">
               <div class="eyebrow">02 / CORRECT</div>
               <h2>Close the loop before handoff.</h2>
               <p>
-                Lint, tests, design checks, and CI feed failures back to the
-                worker. The agent or person repairs; Whetstone rechecks. Missing
-                evidence, no progress, or missing authority means blocked—not
-                done.
+                Native checks and runtime probes feed actionable failures to the
+                worker. Repair, recheck, and explain which standards apply.
+                Missing evidence or authority means blocked; judgment is never
+                disguised as a deterministic pass.
               </p>
             </article>
             <article class="brief-pillar">
               <div class="eyebrow">03 / OWN</div>
               <h2>Passing checks is not the verdict.</h2>
               <p>
-                Accept, redirect, or reject against the actual goal. Name an
-                outcome source, owner, review window, and recovery path. Results
-                feed scoped repairs or proposed rule changes; key decisions
-                remain linked from day one.
+                Follow results against the goal, not task counts. Personal
+                learning becomes team policy only through review and activation.
+                Keep current instructions lean and every key decision traceable
+                from day one.
               </p>
             </article>
           </div>
@@ -2569,8 +2583,8 @@
                 <span class="number">01</span>
                 <h3>Inspect</h3>
                 <p>
-                  Discover existing standards and checks. Label facts,
-                  inferences, and missing decisions.
+                  Discover standards, checks, and outcome sources. Separate
+                  facts, suggestions, and missing decisions.
                 </p>
               </article>
               <article class="strip-step">
@@ -2593,8 +2607,8 @@
                 <span class="number">04</span>
                 <h3>Prove &amp; maintain</h3>
                 <p>
-                  Test repair, valid alternatives, escalation, and outcome
-                  follow-up. Recheck the loop when integrations change.
+                  Prove signal → repair → recheck, review, and follow-through.
+                  Recheck when integrations change.
                 </p>
               </article>
             </div>
@@ -2649,7 +2663,7 @@
           </div>
           <footer class="footnote">
             <span
-              >WHETSTONE / DIRECTION 04 · DELEGATE → CORRECT → DECIDE → FOLLOW
+              >WHETSTONE / DIRECTION 05 · OBSERVE → ACT → VERIFY → FOLLOW
               THROUGH</span
             ><span>Concept only. Proposed workflows; fictional demo data.</span>
           </footer>
@@ -2666,12 +2680,12 @@
                 WORKSPACE / NORTHSTAR · FICTIONAL PROJECT
               </div>
               <h1 id="workspace-title" tabindex="-1">
-                Keep work moving.<br />Keep ownership clear.
+                Know what matters.<br />See what needs you.
               </h1>
               <p>
-                Routine corrections, decisions that need you, and outcomes
-                needing follow-through. Explore five fictional cases—not a live
-                work queue.
+                Goal: dependable checkout with less operational overhead. See
+                what triggered work, what agents may do, and whether it helped.
+                Eight fictional cases—not a live work queue.
               </p>
               <div class="workspace-meta">
                 <span class="tag">main @ a1b2c3d</span
@@ -2689,15 +2703,24 @@
             <div class="section-label">
               <div>
                 <div class="eyebrow" id="loop-task-caption">
-                  TASK T-042 / INTERACTIVE SIMULATION
+                  CASE M-047 / INTERACTIVE SIMULATION
                 </div>
                 <h2 id="repair-title">
-                  The work does not end at a green check.
+                  From a trusted signal to an owned result.
                 </h2>
               </div>
               <div class="field">
                 <label for="loop-scenario">Try a case</label
                 ><select id="loop-scenario">
+                  <option value="proactive" selected>
+                    Signal starts authorized work
+                  </option>
+                  <option value="promotion">
+                    Personal learning → team rule
+                  </option>
+                  <option value="cleanup">
+                    Retire stale context; keep history
+                  </option>
                   <option value="routine">Agent corrects its mistake</option>
                   <option value="owner">A real owner decision</option>
                   <option value="unavailable">Checker unavailable</option>
@@ -2713,11 +2736,11 @@
               role="group"
               aria-label="Sample work, decisions, and follow-through"
             >
-              <button class="btn small" data-case="routine">
-                Within authority <span>→ Routine repair</span>
+              <button class="btn small" data-case="proactive">
+                Within mandate <span>→ Signal starts work</span>
               </button>
-              <button class="btn small" data-case="redirect">
-                Decision needed <span>→ Verified proposal</span>
+              <button class="btn small" data-case="promotion">
+                Decision needed <span>→ Team rule review</span>
               </button>
               <button class="btn small" data-case="outcome">
                 Follow-through <span>→ Outcome signal</span>
@@ -3075,6 +3098,19 @@
               failures, oscillating repairs, or the agreed retry/time budget
               produce a precise blocker. Missing authority stops immediately.
             </p>
+            <h3>Approved mandates can initiate work</h3>
+            <p>
+              A mission explains why; a mandate grants permission. Match a
+              fresh, trusted observation to an active owner-approved mandate
+              with scope, allowed actions, expiry, budgets, and stop conditions.
+              Reproduce heuristic findings before repair. Existing schedulers
+              invoke checks; the existing tracker and agent runtime own task
+              state and execution. Deduplicate events, claim one worker, enforce
+              cooldowns and limits, and recheck revocation before side effects.
+              Never start work from an inferred goal alone. Merge, release, and
+              sharing remain separate permissions; wh check itself never starts
+              a repair or publishes.
+            </p>
             <h3>Standing authority, not standing permission to do anything</h3>
             <p>
               Inherit owner-approved defaults for permitted actions, excluded
@@ -3151,6 +3187,33 @@
               replicated path; a plain database push is not the sharing
               contract.
             </p>
+            <h3>Personal learning is not team authority</h3>
+            <p>
+              Facts, suggestions, preferences, rules, and permissions have
+              different roles. Capture meeting notes and memories only as
+              explicitly selected candidate sources. Compatible local
+              preferences may narrow choices; conflicts cannot override
+              mandatory team rules. Team mode requires an authenticated
+              authorized human reviewer other than the proposer; agents inherit
+              their principal's identity. Solo mode allows explicit
+              self-approval. Preview a deliberately shareable proposal, not
+              private memory or its ancestry. Content or base changes require
+              renewed review; approval never activates wiring.
+            </p>
+            <h3>Explain applicability and deliver one governed context</h3>
+            <p>
+              Match standards to task intent, components, operations, and
+              environment as well as paths. Show the reason, goal, source,
+              relevant evidence, uncertainty, and policy revision. Agent
+              relevance judgment cannot remove mandatory checks. Business goals
+              inform judgment, not arbitrary file-level failures; passing tests
+              cannot prove test-first development without process evidence.
+              Generate scoped projections from one approved source, including
+              rule IDs, policy/checker digests, adapter revision, and delivery
+              freshness. Unsupported host capabilities stay visible. Consistent
+              source material does not guarantee identical behavior across
+              models.
+            </p>
             <h3>Measures guide decisions; safeguards have a stage</h3>
             <p>
               Link a mission outcome to its source, owner, and revisit trigger.
@@ -3160,6 +3223,14 @@
               revision works. A necessary reliability/security fix can use an
               owner-approved scoped exception with expiry and follow-up; its
               missing health evidence remains unknown.
+            </p>
+            <p>
+              Pair near-term signals with longer-term outcomes and
+              countervailing safeguards. Compare compatible cohorts and
+              definitions; before/after movement alone does not prove causality.
+              No effect is a useful result, not a reason to invent success.
+              Owners approve metric revisions with rationale; keep old
+              definitions and observations inspectable.
             </p>
             <h3>Acceptance includes follow-through</h3>
             <p>
@@ -3200,6 +3271,29 @@
               custom telemetry, agent fleet management, broad adapter coverage,
               and organization-wide administration. Keep relationships as stable
               links; a graph editor is not required.
+            </p>
+            <h3>Keep context current without losing history</h3>
+            <p>
+              Completion events can prompt reference audits and archive
+              proposals. Age or similarity alone never authorizes deletion.
+              Preserve original sources, hashes, rationale, alternatives, and
+              supersession links; prove retrieval and reference integrity before
+              excluding reviewed obsolete material from active context. Changed
+              content invalidates approval. Current retrieval omits superseded
+              advice; historical as-of queries retain it. Review unresolved
+              overlap instead of silently merging requirements. Recovery is a
+              new recorded change.
+            </p>
+            <h3>A component, not a replacement workspace</h3>
+            <p>
+              Whetstone governs engineering agreements and enforcement feedback.
+              Beads can track work and Virgil can provide conversation and
+              coordination; neither is required for local use. Dolt remains the
+              proposed record store, not the approval mechanism. Evaluate reuse
+              through an integration boundary before assuming Beads memories
+              supply governance or durable policy storage. Keep the six
+              commands; people see goals, work, decisions, and results before
+              terminal output.
             </p>
             <p>
               Direction informed by
@@ -3740,7 +3834,209 @@
           next: null,
         },
       ];
+      repairCases.proactive = [
+        {
+          title: "A trusted observation—not another prompt",
+          state: "Signal detected — no task yet",
+          tone: "pending",
+          text: "The existing scheduled browser probe detects checkout interaction jank. The project already approved a narrowly scoped maintenance mandate; nobody has requested a new task.",
+          receipt:
+            "Mandate M-047 revision 2 · approved before this observation\nGoal: responsive checkout without increasing purchase failures\nSignal O-047.1: trusted browser probe / checkout-v4 / code abc4701\nMeasured at 10:00; evaluated 10:04 UTC; freshness limit 15 min\nControlled fixture: p95 interaction delay 210 ms / 30 runs; budget 100 ms\nNo task exists yet. A heuristic finding needs reproduction before repair.\nScope: checkout interaction code + tests; no payments, dependencies, secrets, or production writes\nAn existing scheduler invokes the check; Whetstone is not a new scheduler.",
+          boundary:
+            "A mission explains why; only an active, unexpired mandate grants authority. Missing or stale observations remain unknown and go to the source owner, not an automatic repair queue.",
+          verification: "Fresh signal · reproduction pending",
+          authorization: "M-047 · local investigation only",
+          outcome: "Production impact unknown",
+          next: "Simulate mandate match & reproduction",
+        },
+        {
+          title: "One bounded task for a reproducible problem",
+          state: "Reproduced — work authorized",
+          tone: "pending",
+          text: "The agent reproduces the delay using the same runtime fixture, checks the mandate, and creates one task in the existing tracker. Repeated observations attach to that task.",
+          receipt:
+            "Mandate M-047 revision 2 revalidated; scope matches\nReproduction: synchronous list recalculation blocks the checkout interaction\nTask T-047 / dedup key: M-047 + checkout-v4 + interaction-delay\nRepeated event: reuse T-047; no second task or worker\nLease: one worker; 30-minute cooldown; 2 attempts / 20 minutes / no paid resources\nApplicable: UI-02 tokens + TEST-03 journeys + runtime probe\nGlobal mandatory checks remain included; agent relevance cannot remove them\nNext: local repair with existing tools; preserve baselines and safeguards\nStop on expiry, revocation, conflicting work, no progress, or missing authority.",
+          boundary:
+            "The tracker owns task state and the existing runtime owns execution. A claim, goal, or passing check cannot expand permissions; revalidate authority before each side effect.",
+          verification: "Runtime fault reproduced",
+          authorization: "Local repair + trusted checks permitted",
+          outcome: "Expected effect · not observed yet",
+          next: "Simulate scoped repair & recheck",
+        },
+        {
+          title: "The agent fixes the measured regression",
+          state: "Repair verified — release pending",
+          tone: "pending",
+          text: "The agent removes repeated recalculation and adds regression coverage. The controlled probe and required checks pass on the new snapshot. It submits a PR within its standing grant.",
+          receipt:
+            "Task T-047 · candidate C-047.2 / abc4702\nReceipt V-047.2: required v1.3 / checks-v3 + browser-probe-v2\nFixture: 95 ms p95 / 30 runs, same device profile; budget 100 ms\nPurchase / decline / retry: 3 of 3; tokens and full mandatory checks pass\nOld abc4701 evidence cannot cover abc4702; safeguards unchanged\nM-047 explicitly permits opening a PR, not merge or release\nNext: existing release owner reviews exact abc4702; no automatic deployment\nExpected result: fewer slow interactions without more failed purchases.",
+          boundary:
+            "Runtime instrumentation gives the worker actionable evidence that a code review or screenshot may not provide. A passing local benchmark is not a production outcome or release approval.",
+          verification: "Passed · exact abc4702 snapshot",
+          authorization: "PR permitted · release owner needed",
+          outcome: "Controlled improvement · live result unknown",
+          next: "Simulate authorized release & observation",
+        },
+        {
+          title: "Observe the effect, not the task count",
+          state: "Improvement observed — review due",
+          tone: "pending",
+          text: "A separately authorized release is observed by the existing telemetry system. The relevant cohort improves without a detected safeguard breach; the owner still reviews whether the goal was meaningfully advanced.",
+          receipt:
+            "Task T-047 · REL-047.2 / abc4702; exact-candidate owner authorization (fictional)\nO-047.3: first 24h / release cohort / 1,400 checkout journeys\nSource age 8 min; minimum 1,000 journeys; freshness limit 15 min\nComparable cohort: slow interactions 8% → 3%; failed purchases unchanged\nAssociation observed; causality not proven by this before/after comparison\nOwner: Commerce reliability lead; review due within 24h of window close\nNext: owner confirms usefulness or requests bounded follow-up; breach alerts on-call\nNo effect, insufficient samples, or stale data: keep outcome unresolved\nNo automatic policy learning, gate relaxation, wh push, or new optimization task.",
+          boundary:
+            "Near-term signals and longer-term outcomes both matter. Revisit metrics through an owner-reviewed change, not because moving a threshold would make the system look successful.",
+          verification: "Passed · released candidate verified",
+          authorization: "Release separately authorized",
+          outcome: "Observed improvement · owner review due",
+          next: null,
+        },
+      ];
+      repairCases.promotion = [
+        {
+          title: "Useful locally does not mean mandatory for everyone",
+          state: "Local experiment — team unchanged",
+          tone: "pending",
+          text: "Rowan tries a stricter checkout latency preference under an explicitly trusted local experiment. The same work still has to satisfy the unchanged team requirement.",
+          receipt:
+            "Policy case P-048 · private local experiment L-048\nTeam: p95 ≤ 250 ms; local experiment: ≤ 220 ms\nObserved fixture: 215 ms; team PASS / local PASS reported separately\nSame metric definition and scope: 220 ms narrows, not contradicts, 250 ms\nLocal parameter-only experiment explicitly trusted; no new executable\nA red-buttons preference would conflict with a blue-buttons requirement, not strengthen it\nSource: personal learning; not accepted team authority\nPrivate notes, raw memories, and ancestry remain local.",
+          boundary:
+            "Facts, preferences, proposals, rules, and permissions are distinct. Meeting notes or an agent remembering a preference can suggest a candidate; neither can grant authority or silently create team policy.",
+          verification: "Team + local checks separately evaluated",
+          authorization: "Local experiment only",
+          outcome: "Team-wide benefit not established",
+          next: "Simulate selected team proposal",
+        },
+        {
+          title: "Share a deliberate proposal, not private memory",
+          state: "Shared — independent review pending",
+          tone: "pending",
+          text: "Rowan explicitly authors and confirms a shareable proposal with its own rationale, examples, and rollout impact. An authorized reviewer other than Rowan must decide.",
+          receipt:
+            "wh push · selected package P-048 revision 1 / digest pkg0481\nDestination: team policies; base v1.3; explicit confirmation\nPayload: 220 ms proposal + intentionally shareable rationale and fixtures\nNo private record IDs, source text, ancestry, or unavailable references included\nProposer: principal rowan; reviewer: principal priya (Reliability owner)\nPolicy: authorized human reviewer must differ from proposer in team mode\nSelf-approval: rejected; an agent acting for Rowan is still Rowan\nSolo mode: explicit self-approval allowed under the solo policy\nState: proposal only; accepted / required / installed remain v1.3.",
+          boundary:
+            "The authenticated approval service, not display names or Dolt history, enforces reviewer identity. A declined team proposal can remain a compatible local preference.",
+          verification: "Proposal checked · review still required",
+          authorization: "Shared only · independent approval missing",
+          outcome: "Team agreement unchanged",
+          next: "Simulate independent owner review",
+        },
+        {
+          title: "Accept the rule without silently activating it",
+          state: "Accepted — activation pending",
+          tone: "pending",
+          text: "Priya reviews the exact proposal, its rationale, valid and invalid examples, baseline impact, and conflicts. Acceptance creates a new agreement revision; it does not install or run anything.",
+          receipt:
+            "Policy case P-048 revision 1 / pkg0481 / base v1.3\nReviewer priya authenticated and authorized; proposer rowan cannot approve\nD-048: accept 220 ms; examples and expected effects reviewed\nAccepted v1.4 / required v1.3 / installed v1.3\nAny content, base, ownership, or checker change invalidates affected review\nStale response: rejected; duplicate approval: idempotent\nNext: explicit execution trust + verify wiring on exact accepted snapshot\nImported scripts remain inert; no activation merely because a record synced.",
+          boundary:
+            "Approval applies to a specific candidate and its impact. Configuration changes must be reviewed as carefully as rules; self-authored metadata is not proof of a human decision.",
+          verification: "Policy reviewed · rollout proof pending",
+          authorization: "Independently accepted, not activated",
+          outcome: "Team effect not yet observed",
+          next: "Simulate verified activation",
+        },
+        {
+          title: "One accepted source, explicit installed revisions",
+          state: "Activated — impact pending",
+          tone: "pending",
+          text: "An authorized maintainer trusts the reviewed wiring, proves its checks, and activates the exact revision through the protected platform. Agents receive projections of the same records, not independent copies of policy.",
+          receipt:
+            "D-048 + trusted checks-v4 / policy v1.4; rollout proof on abc4801\nProtected activation A-048 selects v1.4 / checks-v4\nKnown-bad, known-good, and full required checks verified before activation\nRunner A: policy v1.4 / checks-v4 installed; context digest ctx048\nRunner B: v1.3 stale; refresh required, cannot claim current compliance\nGenerated context shares canonical rule IDs and rationale; behavior may differ by model\nMeasure false blocks, repeated mistakes, and owner effort over the next 7 days\nOwner: Reliability; adverse effects propose a reviewed rollback, never erase D-048\nThis case does not change the separate PR #184 or its v1.3 history fixture.",
+          boundary:
+            "One governed source avoids divergent rule copies. Context delivery is inspectable, not a guarantee that every model will obey; native protected checks still enforce mandatory requirements.",
+          verification: "Wiring proved · stale runner detected",
+          authorization: "Protected activation authorized",
+          outcome: "Team-wide impact review pending",
+          next: null,
+        },
+      ];
+      repairCases.cleanup = [
+        {
+          title: "Old context is a maintenance finding, not an instruction",
+          state: "Stale context — investigation permitted",
+          tone: "pending",
+          text: "A completion event from the existing tracker highlights an old retry-service plan. The context-maintenance mandate permits investigation and a cleanup proposal, not deletion.",
+          receipt:
+            "Context case C-049 · completion event for existing task T-049\nSource S-049: retry-service-plan.md / digest doc0491\nAccepted decision D-049 chose the existing queue; feature is implemented\nPossible conflict: plan still suggests a new service\nOverlap is a hypothesis, not proof that the document is disposable\nMandate: inspect source references + propose archival; no deletion or policy change\nAge alone cannot establish that a document is obsolete.",
+          boundary:
+            "Current instructions and historical evidence are different views. An agent must not treat an old plan as authority simply because it appears in search results.",
+          verification: "Supersession needs reference review",
+          authorization: "Investigation + proposal only",
+          outcome: "Active context remains unchanged",
+          next: "Simulate reference audit & proposal",
+        },
+        {
+          title:
+            "Preserve the reasoning before removing it from active context",
+          state: "Archive proposed — review pending",
+          tone: "pending",
+          text: "The agent traces retained decisions and outstanding references, then proposes archiving the implemented plan and excluding its superseded advice from default context.",
+          receipt:
+            "Proposal CP-049 revision 1 / doc0491\nPreserve source content hash, author, date, rationale, alternatives, and D-049 link\nReference audit: no unresolved requirement or incoming active dependency\nPreview: source → historical archive; active projection → D-049 and current guidance\nHistory remains searchable and recoverable; no blind removal based on similarity\nOwner: Documentation maintainer; review exact document + projection diff\nA changed source or new dependency invalidates this proposal.",
+          boundary:
+            "If references are incomplete or overlapping documents disagree, stop and ask one concrete question. Do not silently merge requirements or discard the evidence behind a decision.",
+          verification: "References checked · exact diff proposed",
+          authorization: "Owner review required",
+          outcome: "Expected reduction in stale instructions",
+          next: "Simulate owner review",
+        },
+        {
+          title: "Approval covers the source and the context change",
+          state: "Reviewed — archive pending",
+          tone: "pending",
+          text: "The maintainer approves the exact archival proposal. The worker must still prove that preserved history is retrievable and that current instructions remain complete before applying it.",
+          receipt:
+            "D-049.2: authorized owner accepts CP-049 revision 1 / doc0491\nRecheck current source hash, reference graph, archive permissions, and recovery path\nPrepare content-addressed archive + superseded-by link to D-049\nNext: verify archive retrieval, then atomically update the active projection\nIf verification fails: keep original active source intact\nNo unrelated document cleanup, private publication, or rewrite of D-049.",
+          boundary:
+            "Review is not proof that archival succeeded. Preserve an exact recoverable source and validate references before removing anything from active context.",
+          verification: "Reviewed diff · archival proof pending",
+          authorization: "Exact archival change permitted",
+          outcome: "Context improvement not yet verified",
+          next: "Simulate archive & context verification",
+        },
+        {
+          title: "Lean instructions, complete history",
+          state: "Archived — history retained",
+          tone: "pass",
+          text: "The archived source is retrievable, references resolve, and the regenerated active context carries the accepted queue decision. Historical inspection still explains the rejected approach.",
+          receipt:
+            "Context case C-049 · archive source doc0491 retrievable\nActive projection: D-049 + current guidance; superseded plan excluded\nHistorical query: original plan + rationale + D-049 + D-049.2 still available\nRegression: present-day retrieval excludes stale service advice; as-of retrieval retains it\nNo broken links or missing active requirements; unrelated sources unchanged\nDecision history retained from inception; restore by a new reviewed change\nFewer documents is not the success metric; measure stale-context mistakes\nAll records here are isolated fixtures; no files were archived by this HTML.",
+          boundary:
+            "Archive knowledge without rewriting its history. The complete Decisions view remains available; this replay never mutates its separate reference dataset.",
+          verification: "Archive + active-context tests passed",
+          authorization: "Exact reviewed archival change applied",
+          outcome: "Context repaired · recurrence tracked",
+          next: null,
+        },
+      ];
       const loopDetails = {
+        proactive: {
+          id: "M-047",
+          stages: [
+            "Trusted signal",
+            "Mandate + task",
+            "Repair + verify",
+            "Observe effect",
+          ],
+        },
+        promotion: {
+          id: "P-048",
+          stages: [
+            "Local preference",
+            "Selected sharing",
+            "Independent review",
+            "Verified activation",
+          ],
+        },
+        cleanup: {
+          id: "C-049",
+          stages: [
+            "Stale context",
+            "Archive proposal",
+            "Owner review",
+            "Verified history",
+          ],
+        },
         routine: {
           id: "T-042",
           stages: ["Intent", "Feedback", "Response", "Verify or block"],
@@ -3802,7 +4098,7 @@
         const step = repairCases[scenario][loopStep];
         const detail = loopDetails[scenario];
         $("#loop-task-caption").textContent =
-          `TASK ${detail.id} / INTERACTIVE SIMULATION`;
+          `CASE ${detail.id} / INTERACTIVE SIMULATION`;
         $("#loop-steps").innerHTML = detail.stages
           .map(
             (label, index) =>
@@ -3810,8 +4106,8 @@
           )
           .join("");
         $("#loop-result").innerHTML =
-          `<span id="loop-status" class="pill ${step.tone}">${escapeHTML(step.state)}</span><h3>${escapeHTML(step.title)}</h3><p>${escapeHTML(step.text)}</p><div class="terminal"><div class="terminal-head"><span>TASK REPLAY / ${loopStep + 1} OF 4</span><span>NO COMMAND EXECUTED</span></div><div class="terminal-body"><pre>${escapeHTML(step.receipt)}</pre></div></div><div class="notice"><p>${escapeHTML(step.boundary)}</p></div>`;
-        $("#loop-result .terminal").insertAdjacentHTML(
+          `<span id="loop-status" class="pill ${step.tone}">${escapeHTML(step.state)}</span><h3>${escapeHTML(step.title)}</h3><p>${escapeHTML(step.text)}</p><details class="loop-evidence"><summary>Inspect agent feedback &amp; receipts · no execution</summary><div class="terminal"><div class="terminal-head"><span>CASE REPLAY / ${loopStep + 1} OF 4</span><span>NO COMMAND EXECUTED</span></div><div class="terminal-body"><pre>${escapeHTML(step.receipt)}</pre></div></div></details><div class="notice"><p>${escapeHTML(step.boundary)}</p></div>`;
+        $("#loop-result .loop-evidence").insertAdjacentHTML(
           "beforebegin",
           `<dl class="loop-axes" aria-label="Separate verification, authorization, and outcome states">${[
             [
@@ -3969,6 +4265,38 @@
           gate: "Advisory only. Teams may add precise, enforceable constraints separately.",
         },
       ];
+      const applicability = {
+        "ARCH-01": [
+          "The task changes checkout's dependency on payments, not just a matching filename.",
+          "Operational simplicity and explicit module ownership.",
+          "The architecture test checks import structure; the cost of a new service still needs owner judgment.",
+        ],
+        "UI-02": [
+          "The change renders checkout controls and uses the shared design system.",
+          "Consistent, dependable user interactions.",
+          "Token lint is enforceable; visual quality, usability, and novel component fit need review.",
+        ],
+        "TEST-03": [
+          "The task changes purchase, decline, or retry behavior in the checkout journey.",
+          "Dependable purchasing with fewer support failures.",
+          "Journey tests cover specified behaviors. Passing tests cannot prove test-first development without process evidence.",
+        ],
+        "PERF-04": [
+          "This is the production checkout release scope, not a claim about an unshipped local file.",
+          "Responsive purchasing without increased failure rates.",
+          "Validate source, cohort, sample size, window, and freshness; stale evidence stays unknown.",
+        ],
+        "PROC-05": [
+          "The proposed operation changes an ownership boundary or the configuration protecting it.",
+          "Explicit ownership of consequential decisions.",
+          "Authenticated platform review is required; an agent cannot waive it based on relevance judgment.",
+        ],
+        "GUIDE-06": [
+          "The task changes domain transformations; applicability includes task intent beyond paths.",
+          "A functional core with effects at explicit boundaries.",
+          "Taste and trade-offs need judgment; no deterministic verdict is manufactured.",
+        ],
+      };
       let selectedStandard = "ARCH-01";
       let standardFilter = "all";
       function renderStandards() {
@@ -3986,6 +4314,11 @@
         const rule = standards.find((item) => item.id === selectedStandard);
         $("#inspector").innerHTML =
           `<div class="eyebrow">STANDARD / ${rule.id}</div><h2>${rule.name}</h2><div>${badge(rule.state, rule.tone)}</div><p class="description">${rule.description}</p><dl><div class="detail-pair"><dt>Scope</dt><dd><code>${escapeHTML(rule.scope)}</code></dd></div><div class="detail-pair"><dt>Responsible owner</dt><dd>${rule.owner}</dd></div><div class="detail-pair"><dt>Binding</dt><dd><code>${escapeHTML(rule.command)}</code></dd></div><div class="detail-pair"><dt>Enforcement boundary</dt><dd>${rule.gate}</dd></div></dl><div class="evidence-box ${rule.tone === "fail" ? "" : "neutral"}">${rule.evidence}</div><p style="font-size:11px;margin-bottom:16px">${rule.action}</p><button class="btn small" data-decision="${rule.decision}">Why this standard exists ${icon("arrow")}</button>`;
+        const [reason, goal, limit] = applicability[rule.id];
+        $("#inspector .description").insertAdjacentHTML(
+          "afterend",
+          `<details class="applicability"><summary>Why this applies · context revision</summary><p><strong>Applies because:</strong> ${escapeHTML(reason)}</p><p><strong>Derived from:</strong> ${escapeHTML(goal)}</p><p><strong>Evidence or judgment:</strong> ${escapeHTML(limit)}</p><p>Task intent + components + operations + environment; uncertain relevance stays explicit. Mandatory checks cannot be omitted by an agent's judgment.</p><p><strong>Shared source:</strong> ${rule.id} / ${rule.decision} / required v1.3 / checks-v3.</p><p>Hook-capable host: projection ctx13 received. CLI-only host: ctx12 stale; refresh required. Both use the same approved records; behavior is not guaranteed identical. Fictional delivery receipts, not live integration status.</p></details>`,
+        );
       }
       $$("[data-filter]").forEach((button) =>
         button.addEventListener("click", () => {
@@ -4106,7 +4439,7 @@ ADVISORY GUIDE-06 no deterministic verdict
         );
         $("#push-body").innerHTML =
           '<div class="eyebrow">wh push · OUTBOUND PREVIEW · SIMULATION</div>' +
-          "<p>Choose the changes to share. A push creates proposals for review; it does not change accepted team policy.</p>" +
+          "<p>Choose the changes to share. A push creates proposals for review; it does not change accepted team policy. Team mode requires an authorized human reviewer other than the proposer; solo mode permits explicit self-approval. Try the personal-learning case for the full path.</p>" +
           '<fieldset class="share-choices"><legend>SHAREABLE LOCAL CHANGES</legend>' +
           choices
             .map(
@@ -4210,6 +4543,14 @@ ADVISORY GUIDE-06 no deterministic verdict
           "Review within 24h of release; ≥ 1,000 journeys; data ≤ 15 min old; otherwise unknown",
         recovery:
           "Alert on-call for safeguard breach; scoped local repair; operator-authorized rollback or release; observe again",
+        trigger:
+          "Opt-in: trusted checkout runtime probe; reproduce fresh failures before proposing repair",
+        initiation:
+          "One task per finding; one worker; 30-minute cooldown; recheck mandate expiry and revocation",
+        reviewPolicy:
+          "Team: authorized human other than proposer; solo: explicit self-approval; sharing is not activation",
+        contextPolicy:
+          "Only current approved guidance by default; propose archival after reference audit; preserve full history",
       };
       let setupStep = 0;
       const setupCommands = [
@@ -4233,6 +4574,10 @@ ADVISORY GUIDE-06 no deterministic verdict
           ["observationOwner", "Follow-through owner"],
           ["observationWindow", "Review window & sufficient evidence"],
           ["recovery", "Recovery & escalation path"],
+          ["trigger", "Optional signal-triggered mandate"],
+          ["initiation", "Duplicate-work & revocation controls"],
+          ["reviewPolicy", "Personal-to-team review policy"],
+          ["contextPolicy", "Active context & historical retention"],
         ];
         return `<details class="delegation-defaults" id="setup-delegation"><summary>Delegation & follow-through defaults · review once, inherit per task</summary><p class="muted">Draft defaults, not new permissions. Existing requests supply task scope; consequential changes refine the observation plan. Map limits to real host and platform gates; unsupported constraints remain advisory.</p>${fields.map(([key, label]) => `<div class="field"><label for="setup-${key}">${label}</label><input id="setup-${key}" data-setup-field="${key}" type="text" maxlength="300" value="${escapeHTML(setupState[key])}"></div>`).join("")}<p class="muted">No permission grant, runner configuration, monitoring, or sharing is activated by editing these fields.</p></details>`;
       }
@@ -4266,6 +4611,20 @@ ADVISORY GUIDE-06 no deterministic verdict
           $("#setup-panel .proposal-summary").insertAdjacentHTML(
             "afterend",
             `<details class="delegation-defaults" id="setup-defaults-summary"><summary>Proposed delegation & follow-through · no authority granted</summary><dl><dt>Routine work</dt><dd>${escapeHTML(setupState.allowed)}</dd><dt>Excluded</dt><dd>${escapeHTML(setupState.excluded)}</dd><dt>Owner review</dt><dd>${escapeHTML(setupState.review)}</dd><dt>Limits</dt><dd>${escapeHTML(setupState.limits)}</dd><dt>Observation</dt><dd>${escapeHTML(setupState.observationSource)}</dd><dt>Responsible owner</dt><dd>${escapeHTML(setupState.observationOwner)}</dd><dt>Review window</dt><dd>${escapeHTML(setupState.observationWindow)}</dd><dt>Recovery</dt><dd>${escapeHTML(setupState.recovery)}</dd></dl></details><p class="muted">Also prove valid alternatives are allowed, stale approvals are rejected, failed user requirements cannot hide behind narrow tests, and an adverse outcome reaches an owner and a scoped repair. Rerun these loop regressions after model, skill, or integration changes.</p>`,
+          );
+          $("#setup-defaults-summary dl").insertAdjacentHTML(
+            "beforeend",
+            [
+              ["trigger", "Optional trigger"],
+              ["initiation", "Initiation limits"],
+              ["reviewPolicy", "Review policy"],
+              ["contextPolicy", "Context lifecycle"],
+            ]
+              .map(
+                ([key, label]) =>
+                  `<dt>${label}</dt><dd>${escapeHTML(setupState[key])}</dd>`,
+              )
+              .join(""),
           );
         }
         $("#setup-cli").textContent = setupCommands[setupStep];
@@ -4306,6 +4665,7 @@ ADVISORY GUIDE-06 no deterministic verdict
           published: false,
           authorityGranted: false,
           outcomeMonitoringActive: false,
+          proactiveWorkEnabled: false,
           visibility: "local-only",
           storage: {
             proposedBackend: "dolt",
@@ -4336,6 +4696,10 @@ ADVISORY GUIDE-06 no deterministic verdict
             "Prove valid alternatives, stale approval rejection, and user-requirement coverage",
             "Prove an adverse outcome triggers scoped repair without unauthorized production action",
             "Rerun loop regressions when model, skill, or integration versions change",
+            "Explicitly opt into each signal-triggered mandate; verify reproduction, deduplication, budgets, expiry and revocation",
+            "Prove independent human review in team mode and explicit self-approval in solo mode",
+            "Explain applicability; mandatory checks survive uncertain agent relevance and context delivery failures",
+            "Prove archival preserves references and full history while excluding superseded active instructions",
           ],
         };
         const url = URL.createObjectURL(
@@ -4476,11 +4840,11 @@ ADVISORY GUIDE-06 no deterministic verdict
           },
           {
             title: "Review through the designated owner",
-            text: "The owner reviews rationale, evidence, impact, and rollout conditions in the dashboard.",
+            text: "An authorized human other than the proposer reviews rationale, evidence, impact, and rollout conditions in team mode; solo mode allows explicit self-approval.",
             actor: "Authorised owner · protected review",
             command: "wh dash",
             output:
-              "Review P-007\nOwner: Reliability owners\nEvidence: baseline + proposed adapter diff\n\nAccept, request changes, or decline.\nExample: owner proposes 225 ms instead of 220 ms.\nCounterproposal P-007 revision 2 receives a new content-bound review.\nAcceptance records trusted identity and the revised proposal digest.\nAccepted v1.4 does not activate until enforcement is verified.",
+              "Review P-007\nOwner: Reliability owners\nEvidence: baseline + proposed adapter diff\n\nAccept, request changes, or decline.\nExample: owner proposes 225 ms instead of 220 ms.\nCounterproposal P-007 revision 2 requires a different authorized human reviewer from its author.\nAcceptance records trusted identity and the revised proposal digest.\nAccepted v1.4 does not activate until enforcement is verified.",
             explanation:
               "Decision review is a step inside the dashboard and change workflow, not another command family. The shared acceptance record must be published before others can receive it.",
             boundary:

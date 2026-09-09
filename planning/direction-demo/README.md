@@ -3,25 +3,44 @@
 Open [index.html](index.html) directly in a browser. It is a self-contained HTML
 artefact: no build, server, network requests, account, or runtime dependencies.
 
+Direction 05 keeps the same five views and six public workflow families.
+The proposed implementation is tracked in **Beads epic `whetstone-k5r`**; this
+HTML is a behavioral reference, not an implemented enforcement backend.
+
 The five views are:
 
-- **One-pager:** delegated work, bounded correction, accountable acceptance, and
-  outcome follow-through; one setup flow and six proposed
+- **One-pager:** define good, observe trusted signals, authorize bounded work,
+  correct it, and follow the outcome; one setup flow and six proposed
   commands: `wh init`, `wh dash`, `wh change`, `wh check`, `wh push`, and `wh pull`.
   “Print one-pager” prints this brief from any view.
-- **Workspace:** a four-stage task replay: intent, feedback, response, and fresh
-  verification or a precise blocker. Three original cases show an agent repairing its
+- **Workspace:** eight four-stage case replays with human summaries first and
+  expandable agent feedback/receipts. The default case starts with a trusted
+  runtime signal and an already-approved mandate, not a newly prompted task.
+  It reproduces the fault, deduplicates tracked work, repairs within budget,
+  verifies, and follows a separately authorized release to an observed effect
+  with causal uncertainty and owner review still explicit.
+  A personal-to-team case demonstrates compatible local experimentation,
+  deliberately selected sharing, independent authenticated human review,
+  content-bound acceptance, verified activation, and stale client detection.
+  A context-maintenance case proposes archival after a reference audit, obtains
+  review, and proves historical retrieval before removing superseded advice
+  from active context. No source is deleted based on age or similarity alone.
+  Three original cases show an agent repairing its
   mistake without owner interruption, stopping for a real owner decision, and
   stopping after a bounded retry when a required checker is unavailable.
-  Two new cases extend this through the outer loop: checks pass but the owner
+  Two further cases extend this through the outer loop: checks pass but the owner
   redirects a costly approach, and an accepted/released change produces an
   adverse outcome that opens an authorized local repair. Verification,
   authorization, and outcome have separate states. Reverification does not
   approve the revised candidate or resolve a live incident. Sample shortcuts
-  foreground routine work, consequential decisions, and follow-through.
+  foreground signal-triggered work, team-rule decisions, and follow-through.
   Nothing automatically advances: each button simulates the next stage, and
   restart/case selection resets that task. No agent or command actually runs.
-  Below it, six fictional standards belong to a **separate reference PR** with
+  Each standard's expandable inspector explains why it applies, its governing
+  goal, evidence versus judgment, and canonical context delivery revisions.
+  Matching considers intent, components, operations, and environment, not paths
+  alone; an agent's relevance judgment cannot remove mandatory checks.
+  Below the replay, six fictional standards belong to a **separate reference PR** with
   unresolved gates; completing the task replay does not mark that PR healthy.
   “Replay reference checks” replays its sample receipts. “Preview push” lets you
   select shareable drafts, see the outgoing payload, and simulate publication.
@@ -34,8 +53,10 @@ The five views are:
   editable and can be downloaded as an explicitly unapproved concept proposal.
   Expand delegation and follow-through defaults to edit permitted work,
   exclusions, review triggers, budgets, observation source/owner/window, and
-  recovery. These are inherited proposals, not per-task forms or permission
-  grants. The preview distinguishes enforceable host/platform restrictions from
+  recovery, optional signal triggers, duplicate-work controls, independent
+  review, and active-context retention. These are inherited proposals, not per-task forms or permission
+  grants. Signal-triggered work requires a separate explicit opt-in; exporting
+  these fields does not enable it. The preview distinguishes enforceable host/platform restrictions from
   advisory constraints. Downloading does not activate authority or monitoring.
   Draft edits do not change the workspace snapshot. Reload resets the draft.
 - **Workflows:** ordinary engineer and agent correction loops, plus a separate
@@ -47,6 +68,29 @@ The five views are:
   trusted execution, resumability, metrics, and the small first-release boundary.
 - **Decisions:** the complete fictional project history, searchable and sortable,
   with historical cutoff views and preserved superseded decisions.
+
+## Implementation epic
+
+`bd show whetstone-k5r` opens the canonical detailed plan; use
+`bd list --parent whetstone-k5r --limit 0` to inspect its 30 children.
+The epic contains 90 blocking prerequisite links and these delivery gates:
+
+| Stage | Scope                                                                            | Exit / starting issue   |
+| ----- | -------------------------------------------------------------------------------- | ----------------------- |
+| M0    | Contract/cutover, storage feasibility, trust roots                               | Start `whetstone-k5r.1` |
+| M1    | Useful local agreement, native checks, agent loop, dashboard, history            | `whetstone-k5r.16`      |
+| M2    | Private-safe sharing, independent approval, protected activation, two hosts      | `whetstone-k5r.20`      |
+| M3    | Observations, mandates, deduplicated work, proactive repair, context maintenance | `whetstone-k5r.27`      |
+| M4    | Portable integration, migration/distribution, implementation readiness           | `whetstone-k5r.30`      |
+
+Every child has scope, acceptance tests, dependencies and handoff requirements.
+The plan explicitly distinguishes the v0.12 CLI from this direction, audits
+existing modules for reuse, and leaves all implementation children open.
+Dolt feasibility, the first real identity/CI trust root, migration policy, and
+dogfood budgets are early owner-reviewed decisions, not assumptions hidden in
+the prototype. Existing private-mode and distribution work remains separately
+tracked. The Beads epic is authoritative; this is only a navigation index, not a
+second implementation backlog. No release/tag is authorized by creating the plan.
 
 All Northstar data, dates, authors, checks, receipts, and approvals are fictional.
 The proposed CLI, governance records, integrations, and permission model are not
@@ -76,6 +120,12 @@ The following are Whetstone design proposals, not capabilities implemented here.
   is needed for every edit. Explicit path/operation limits can be checked;
   semantic task relevance and taste remain judgment, not deterministic claims.
   Task-scope support is a proposed expansion beyond the current shipped boundary.
+- Approved opt-in mandates can match fresh trusted observations to bounded work
+  without a new prompt. Existing schedulers invoke checks and existing runtimes
+  execute; `wh check` never launches repairs itself. Reproduce heuristic findings,
+  deduplicate tasks, claim one worker, enforce cooldowns and persistent budgets,
+  and revalidate expiry/revocation before side effects. Goals alone grant no
+  permission; PR creation, merge, release, and policy sharing are separate actions.
 - Inherit explicit standing authority for routine work, with exclusions,
   retry/time/resource limits, and suspension conditions. Bind enforceable limits
   to real host permissions and protected gates; unsupported limits are advisory.
@@ -106,6 +156,19 @@ The following are Whetstone design proposals, not capabilities implemented here.
   model, skill, or integration changes. Measure false blocks, unnecessary
   interruptions, escaped failures, decision effort, and overdue follow-through—not
   simply the number of green checks or how rarely humans are involved.
+- Explain why standards apply, the goal/source they derive from, and what can
+  actually be verified. Passing tests cannot prove test-first development without
+  process evidence. Every host receives projections of the same approved records
+  with policy/checker/adapter revisions and visible delivery freshness; shared
+  source material does not promise identical model behavior.
+- Pair near-term signals with long-term outcomes and countervailing safeguards.
+  Before/after movement alone does not establish causality; no effect is a valid
+  result. Metric definition changes need reviewed rationale and preserved history.
+- Completion events can prompt archive proposals, not automatic deletion.
+  Verify source hashes, unresolved requirements, incoming references and
+  recoverability; review the exact source and active-context diff before apply.
+  Current context excludes superseded advice, while as-of history retains it.
+  Failed archival leaves active material intact; restore through a new change.
 - Preserve linked intent, constraints, changes, verification, decisions, and
   outcomes, including accepted/rejected examples with rationale. Supply only
   relevant context to agents. Dolt records and stable portable interfaces suffice;
@@ -129,6 +192,11 @@ The following are Whetstone design proposals, not capabilities implemented here.
   explicitly identified accepted agreement. Local experiments cannot weaken
   protected CI or platform gates. Approval and rollout need real authority and
   verification; database versioning alone does not provide that protection.
+- Personal preferences can narrow compatible choices but cannot contradict team
+  requirements. Team approval defaults to a real authorized human other than the
+  proposer; agents inherit their principal's identity. Solo self-approval is
+  explicit. Facts, meeting notes and personal memories are candidate sources, not
+  implicit authority; never silently ingest or publish raw private memories.
 - Accepted policy, required policy for a code scope/environment, installed local
   wiring, and experiments are distinct. A protected activation record selects
   the required policy/checker digests. Local conflicts do not set team authority;
@@ -142,8 +210,14 @@ The following are Whetstone design proposals, not capabilities implemented here.
 The HTML itself uses only in-memory sample data, not Dolt or an actual remote.
 All simulated sharing, selections, and edits reset on reload. The accepted
 history view deliberately remains the fixed fictional v1.3 snapshot.
-The outer-loop cases have their own isolated task/decision/observation IDs; their
+All case replays have their own isolated task/decision/observation IDs; their
 simulated decisions never append to that separate reference history.
+
+Whetstone remains a governed engineering component: Beads may track work and
+Virgil may provide conversation/coordination, but neither is required for local
+use. Dolt is the proposed record store. Whether any supported Beads interface can
+also serve durable policy storage requires a feasibility decision; the transcript
+does not establish that it supplies the necessary governance or retention.
 
 ## Browser smoke test
 
@@ -164,6 +238,9 @@ fresh re-verification, owner escalation, unavailable-checker blocking, reset and
 scenario isolation, verified-but-redirected work, outcome-triggered repair,
 separate authority/outcome states, inherited defaults without permission grants,
 standard filters and details, blocked reference check replay,
+signal-triggered reproduction/repair/follow-through, independent policy review,
+reviewed archival and active/historical separation, applicability and context
+freshness, collapsed receipts, optional mandate defaults without activation,
 selective publication, private-record exclusion,
 no implicit approval, pull conflicts and preserved local drafts, dialog
 dismissal, setup edits and proposal download, all three workflows, clipboard
