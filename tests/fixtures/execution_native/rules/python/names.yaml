@@ -1,0 +1,28 @@
+source:
+  name: trusted-execution-fixture
+rules:
+  - id: fixture.lowercase-functions
+    severity: must
+    confidence: high
+    category: convention
+    description: Function names must begin with a lowercase character.
+    source_url: https://docs.python.org/3/tutorial/controlflow.html#defining-functions
+    approved: true
+    status: approved
+    signals:
+      - id: uppercase-function
+        strategy: ast
+        description: Finds uppercase Python function names.
+        weight: required
+        ast_query: '((function_definition name: (identifier) @match) (#match? @match "^[A-Z]"))'
+    golden_examples:
+      - code: |
+          def read_config():
+              pass
+        verdict: pass
+        reason: The function name begins with a lowercase character.
+      - code: |
+          def ReadConfig():
+              pass
+        verdict: fail
+        reason: The function name begins with an uppercase character.

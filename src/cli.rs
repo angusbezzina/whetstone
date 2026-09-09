@@ -72,6 +72,16 @@ enum Command {
         #[arg(long)]
         rationale: Option<String>,
         #[arg(long)]
+        source: Option<String>,
+        #[arg(long)]
+        expected_effect: Option<String>,
+        #[arg(long)]
+        impact: Option<String>,
+        #[arg(long = "example")]
+        examples: Vec<String>,
+        #[arg(long = "conflict")]
+        conflicts: Vec<String>,
+        #[arg(long)]
         expected_revision: Option<u64>,
         #[arg(long = "resume")]
         resume_token: Option<String>,
@@ -134,6 +144,8 @@ enum Command {
         lang: Option<String>,
         #[arg(long = "rule")]
         rules: Vec<String>,
+        #[arg(long)]
+        rules_dir: Option<PathBuf>,
         #[arg(long)]
         no_fail: bool,
     },
@@ -214,6 +226,11 @@ pub fn run() -> i32 {
             record_id,
             content,
             rationale,
+            source,
+            expected_effect,
+            impact,
+            examples,
+            conflicts,
             expected_revision,
             resume_token,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
@@ -223,6 +240,11 @@ pub fn run() -> i32 {
             record_id,
             content,
             rationale,
+            source,
+            expected_effect,
+            impact,
+            examples,
+            conflicts,
             expected_revision,
             resume_token,
         })),
@@ -262,6 +284,7 @@ pub fn run() -> i32 {
             project_dir,
             lang,
             rules,
+            rules_dir,
             no_fail,
         }) => {
             return scan(
@@ -269,6 +292,7 @@ pub fn run() -> i32 {
                 &paths,
                 lang.as_deref(),
                 &rules,
+                rules_dir.as_deref(),
                 machine,
                 no_fail,
             )
@@ -343,6 +367,7 @@ fn scan(
     paths: &[PathBuf],
     lang: Option<&str>,
     rule_filter: &[String],
+    rules_dir: Option<&Path>,
     machine: bool,
     no_fail: bool,
 ) -> i32 {
@@ -359,6 +384,7 @@ fn scan(
     let filter = (!rule_filter.is_empty()).then_some(rule_filter);
     let result = check::run(check::CheckOptions {
         project_dir,
+        rules_dir,
         scan_paths: &scan_paths,
         lang_filter: lang,
         rule_filter: filter,

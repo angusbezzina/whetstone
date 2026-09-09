@@ -1,0 +1,2 @@
+def ReadConfig():
+    pass

@@ -12,8 +12,8 @@ use walkdir::WalkDir;
 use crate::check;
 use crate::domain::{
     AgreementRecord, CoreValue, EvidenceRef, Guidance, ImplementationPhilosophy, Mission,
-    PrincipalKind, PrincipalRef, Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody,
-    RecordId, Scope, SCHEMA_VERSION_V1,
+    PrincipalKind, PrincipalRef, Proposal, ProposalState, Provenance, ProvenanceAuthority,
+    ProvenanceKind, RecordBody, RecordId, Scope, SCHEMA_VERSION_V1,
 };
 use crate::storage::{DoltRepository, ProjectLayout, StorageError, StoreKind};
 
@@ -71,8 +71,37 @@ pub struct ChangeRequest {
     pub record_id: Option<String>,
     pub content: Option<String>,
     pub rationale: Option<String>,
+    pub source: Option<String>,
+    pub expected_effect: Option<String>,
+    pub impact: Option<String>,
+    pub examples: Vec<String>,
+    pub conflicts: Vec<String>,
     pub expected_revision: Option<u64>,
     pub resume_token: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ChangeNarrative {
+    rationale: String,
+    source: String,
+    expected_effect: String,
+    impact: String,
+    examples: Vec<String>,
+    conflicts: Vec<String>,
+}
+
+impl ChangeNarrative {
+    fn render(&self, base_revision: u64) -> String {
+        format!(
+            "Base revision: {base_revision}\nRationale: {}\nSource: {}\nExpected effect: {}\nImpact: {}\nExamples: {}\nConflicts: {}",
+            self.rationale,
+            self.source,
+            self.expected_effect,
+            self.impact,
+            self.examples.join("; "),
+            self.conflicts.join("; ")
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -432,7 +461,7 @@ impl CommandService {
             Err(error) => return project_error("change", request.request_id, error),
         };
         let request_id = match bounded_request_id(
-            request.request_id,
+            request.request_id.clone(),
             format!("change-{}", &layout.project_id()[..16]),
         ) {
             Ok(request_id) => request_id,
@@ -466,6 +495,10 @@ impl CommandService {
         if request.kind.is_none()
             || request.record_id.is_none()
             || request.content.is_none()
+            || request.rationale.is_none()
+            || request.source.is_none()
+            || request.expected_effect.is_none()
+            || request.impact.is_none()
             || request.expected_revision.is_none()
         {
             return needs_input(
@@ -473,14 +506,20 @@ impl CommandService {
                 request_id,
                 current_revision,
                 resume,
-                "Provide kind, record ID, content, expected revision, and the returned resume token."
-                    .into(),
+                "Provide kind, record ID, content, rationale, source, expected effect, impact, expected revision, and the returned resume token.".into(),
             );
         }
+        let narrative = match change_narrative(&request) {
+            Ok(narrative) => narrative,
+            Err(question) => {
+                return needs_input("change", request_id, current_revision, resume, question)
+            }
+        };
         let body = match change_body(
             request.kind,
             request.content.as_deref(),
             request.rationale.as_deref(),
+            &request.examples,
             id_text,
         ) {
             Ok(body) => body,
@@ -488,31 +527,18 @@ impl CommandService {
                 return needs_input("change", request_id, current_revision, resume, question)
             }
         };
-        if let Some(existing) = match private.by_idempotency_key(&request_id) {
+        let existing = match private.by_idempotency_key(&request_id) {
             Ok(existing) => existing,
             Err(error) => return storage_error("change", request_id, error),
-        } {
+        };
+        if let Some(existing) = existing.as_ref() {
             if existing.id != record_id || existing.body != body {
                 return idempotency_conflict("change", request_id.clone(), &request_id);
             }
-            let reference = match existing.reference() {
-                Ok(reference) => reference,
-                Err(error) => return domain_response("change", request_id, error),
-            };
-            let mut response = ServiceResponse::new(
-                request_id,
-                "change",
-                ServiceState::Success,
-                "The previously accepted local change was returned; no duplicate was created.",
-            );
-            response.expected_revision = Some(existing.revision);
-            response.permitted_actions = vec!["wh check".into(), "wh push".into()];
-            response.data =
-                json!({"record": reference, "shared": false, "idempotent_replay": true});
-            return response;
         }
-        if request.expected_revision != Some(current_revision)
-            || request.resume_token.as_deref() != Some(resume.as_str())
+        if existing.is_none()
+            && (request.expected_revision != Some(current_revision)
+                || request.resume_token.as_deref() != Some(resume.as_str()))
         {
             return stale_response(
                 "change",
@@ -522,49 +548,103 @@ impl CommandService {
                 "The change targets a stale agreement revision.",
             );
         }
-        if request.kind == Some(ChangeKind::Standard) {
-            let mut response = ServiceResponse::new(
-                request_id,
-                "change",
-                ServiceState::NeedsDecision,
-                "A deterministic team standard needs enforcement design and independent approval.",
-            );
-            response.expected_revision = Some(current_revision);
-            response.resume_token = Some(resume);
+        let idempotent_replay = existing.is_some();
+        let base_revision = existing
+            .as_ref()
+            .map_or(current_revision, |record| record.revision.saturating_sub(1));
+        let (record, reference) = if let Some(existing) = existing {
+            let reference = match existing.reference() {
+                Ok(reference) => reference,
+                Err(error) => return domain_response("change", request_id, error),
+            };
+            (existing, reference)
+        } else {
+            let mut record = match agreement_record(&layout, id_text, request_id.clone(), body) {
+                Ok(record) => record,
+                Err(error) => return domain_response("change", request_id, error),
+            };
+            record.revision = current_revision + 1;
+            record.supersedes = match current.as_ref().map(AgreementRecord::reference) {
+                Some(Ok(reference)) => Some(reference),
+                Some(Err(error)) => return domain_response("change", request_id, error),
+                None => None,
+            };
+            record.provenance.sources = vec![EvidenceRef {
+                system: "owner_selected_source".into(),
+                locator: narrative.source.clone(),
+                digest: None,
+            }];
+            let reference =
+                match private.append(&record, (current_revision > 0).then_some(current_revision)) {
+                    Ok(reference) => reference,
+                    Err(error) => return storage_error("change", request_id, error),
+                };
+            (record, reference)
+        };
+        let proposal = match ensure_local_change_proposal(
+            &private,
+            &record,
+            &reference,
+            &narrative,
+            base_revision,
+            &request_id,
+        ) {
+            Ok(reference) => reference,
+            Err(error) => return storage_error("change", request_id, error),
+        };
+        let before = match record.supersedes.as_ref() {
+            Some(previous) => match private.get(previous) {
+                Ok(previous) => previous.map(|record| record.body),
+                Err(error) => return storage_error("change", request_id, error),
+            },
+            None => None,
+        };
+        let standard = request.kind == Some(ChangeKind::Standard);
+        let mut response = ServiceResponse::new(
+            request_id,
+            "change",
+            if standard {
+                ServiceState::NeedsDecision
+            } else {
+                ServiceState::Success
+            },
+            if standard {
+                "The local standard draft was recorded, but checker design and independent approval are still required."
+            } else if idempotent_replay {
+                "The existing local draft was returned; no duplicate was created."
+            } else {
+                "The local agreement draft was recorded; team policy is unchanged."
+            },
+        );
+        response.expected_revision = Some(record.revision);
+        response.permitted_actions = if standard {
             response.blocking_questions = vec![
                 "Which trusted checker enforces this standard, and who independently approves it?"
                     .into(),
             ];
-            response.permitted_actions =
-                vec!["design the checker and submit an approval proposal".into()];
-            response.data = json!({"proposed_body": body, "recorded": false});
-            return response;
-        }
-        let mut record = match agreement_record(&layout, id_text, request_id.clone(), body) {
-            Ok(record) => record,
-            Err(error) => return domain_response("change", request_id, error),
+            vec!["design the checker and submit the draft for independent approval".into()]
+        } else {
+            vec!["wh check".into(), "wh push".into()]
         };
-        record.revision = current_revision + 1;
-        record.supersedes = match current.as_ref().map(AgreementRecord::reference) {
-            Some(Ok(reference)) => Some(reference),
-            Some(Err(error)) => return domain_response("change", request_id, error),
-            None => None,
-        };
-        match private.append(&record, (current_revision > 0).then_some(current_revision)) {
-            Ok(reference) => {
-                let mut response = ServiceResponse::new(
-                    request_id,
-                    "change",
-                    ServiceState::Success,
-                    "The local agreement draft was recorded; team policy is unchanged.",
-                );
-                response.expected_revision = Some(record.revision);
-                response.permitted_actions = vec!["wh check".into(), "wh push".into()];
-                response.data = json!({"record": reference, "shared": false});
-                response
+        response.data = json!({
+            "record": reference,
+            "proposal": proposal,
+            "shared": false,
+            "recorded": true,
+            "idempotent_replay": idempotent_replay,
+            "base_revision": base_revision,
+            "diff": {"before": before, "after": record.body},
+            "explanation": {
+                "rationale": narrative.rationale,
+                "source": narrative.source,
+                "expected_effect": narrative.expected_effect,
+                "impact": narrative.impact,
+                "examples": narrative.examples,
+                "conflicts": narrative.conflicts,
+                "owner": record.owner,
             }
-            Err(error) => storage_error("change", request_id, error),
-        }
+        });
+        response
     }
 
     fn check(&self, request: CheckRequest) -> ServiceResponse {
@@ -653,6 +733,7 @@ impl CommandService {
         let filter = (!request.rules.is_empty()).then_some(request.rules.as_slice());
         let result = check::run(check::CheckOptions {
             project_dir: &project,
+            rules_dir: None,
             scan_paths: &scan_paths,
             lang_filter: request.language.as_deref(),
             rule_filter: filter,
@@ -729,10 +810,87 @@ fn init_idempotent_records(
     Ok(records)
 }
 
+fn change_narrative(request: &ChangeRequest) -> Result<ChangeNarrative, String> {
+    Ok(ChangeNarrative {
+        rationale: bounded_input(request.rationale.clone(), "rationale", 4_000)?,
+        source: bounded_input(request.source.clone(), "source", 2_048)?,
+        expected_effect: bounded_input(request.expected_effect.clone(), "expected effect", 4_000)?,
+        impact: bounded_input(request.impact.clone(), "impact", 4_000)?,
+        examples: bounded_list(&request.examples, "examples", 16, 2_000)?,
+        conflicts: bounded_list(&request.conflicts, "conflicts", 16, 2_000)?,
+    })
+}
+
+fn bounded_list(
+    values: &[String],
+    name: &str,
+    maximum_items: usize,
+    maximum_bytes: usize,
+) -> Result<Vec<String>, String> {
+    if values.len() > maximum_items {
+        return Err(format!("{name} exceeds the {maximum_items}-item limit."));
+    }
+    values
+        .iter()
+        .map(|value| bounded_input(Some(value.clone()), name, maximum_bytes))
+        .collect()
+}
+
+fn ensure_local_change_proposal(
+    repository: &DoltRepository,
+    candidate: &AgreementRecord,
+    candidate_reference: &crate::domain::RecordRef,
+    narrative: &ChangeNarrative,
+    base_revision: u64,
+    request_id: &str,
+) -> Result<crate::domain::RecordRef, StorageError> {
+    let proposal_key = format!("{request_id}:proposal");
+    let proposal_id = RecordId::new(format!(
+        "proposal.change_{}",
+        &format!("{:x}", Sha256::digest(request_id.as_bytes()))[..24]
+    ))
+    .map_err(StorageError::Domain)?;
+    let proposal = AgreementRecord {
+        schema_version: SCHEMA_VERSION_V1,
+        id: proposal_id,
+        revision: 1,
+        scope: candidate.scope.clone(),
+        owner: candidate.owner.clone(),
+        provenance: Provenance {
+            kind: ProvenanceKind::HumanAuthored,
+            recorded_by: candidate.owner.clone(),
+            recorded_at: utc_now(),
+            sources: vec![EvidenceRef {
+                system: "owner_selected_source".into(),
+                locator: narrative.source.clone(),
+                digest: None,
+            }],
+            authority: ProvenanceAuthority::OwnerAuthored,
+        },
+        supersedes: None,
+        idempotency_key: proposal_key.clone(),
+        body: RecordBody::Proposal(Proposal {
+            state: ProposalState::Draft,
+            title: format!("Change {}", candidate.id.as_str()),
+            rationale: narrative.render(base_revision),
+            proposed_records: vec![candidate_reference.clone()],
+            binding: None,
+        }),
+    };
+    if let Some(existing) = repository.by_idempotency_key(&proposal_key)? {
+        if existing.id != proposal.id || existing.body != proposal.body {
+            return Err(StorageError::IdempotencyConflict(proposal_key));
+        }
+        return existing.reference().map_err(StorageError::Domain);
+    }
+    repository.append(&proposal, None)
+}
+
 fn change_body(
     kind: Option<ChangeKind>,
     content: Option<&str>,
     rationale: Option<&str>,
+    examples: &[String],
     id_text: &str,
 ) -> Result<RecordBody, String> {
     let kind = kind.ok_or_else(|| "Provide kind.".to_string())?;
@@ -759,12 +917,12 @@ fn change_body(
         ChangeKind::Guidance => RecordBody::Guidance(Guidance {
             statement: content,
             rationale,
-            examples: Vec::new(),
+            examples: examples.to_vec(),
         }),
         ChangeKind::Standard => RecordBody::Guidance(Guidance {
             statement: content,
             rationale,
-            examples: vec!["Pending deterministic enforcement design.".into()],
+            examples: examples.to_vec(),
         }),
     })
 }

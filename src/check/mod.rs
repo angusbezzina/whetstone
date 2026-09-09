@@ -35,6 +35,9 @@ const SKIP_DIRS: &[&str] = &[
 
 pub struct CheckOptions<'a> {
     pub project_dir: &'a Path,
+    /// Explicit rules directory supplied by a content-addressed trusted
+    /// checker adapter. Public checks leave this unset and use project policy.
+    pub rules_dir: Option<&'a Path>,
     pub scan_paths: &'a [PathBuf],
     pub lang_filter: Option<&'a str>,
     pub rule_filter: Option<&'a [String]>,
@@ -45,8 +48,9 @@ pub struct CheckOptions<'a> {
 
 pub fn run(opts: CheckOptions<'_>) -> Value {
     let project_dir = opts.project_dir;
-    let rules_dir = project_dir.join("whetstone").join("rules");
-    let (rules, load_issues) = crate::rules::load_approved_rules(&rules_dir, opts.lang_filter);
+    let default_rules_dir = project_dir.join("whetstone").join("rules");
+    let rules_dir = opts.rules_dir.unwrap_or(&default_rules_dir);
+    let (rules, load_issues) = crate::rules::load_approved_rules(rules_dir, opts.lang_filter);
 
     let rule_filter: Option<BTreeSet<&str>> = opts
         .rule_filter

@@ -2,6 +2,8 @@ mod ast;
 mod check;
 mod cli;
 pub mod domain;
+pub mod execution;
+pub mod governance;
 mod output;
 pub mod policy;
 mod rules;

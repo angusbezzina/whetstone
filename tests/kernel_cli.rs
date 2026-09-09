@@ -279,6 +279,16 @@ fn stale_change_is_rejected_and_standard_needs_a_decision() {
             "guidance.local",
             "--content",
             "Use explicit boundaries.",
+            "--rationale",
+            "Keep integration boundaries explicit.",
+            "--source",
+            "owner:change-stale",
+            "--expected-effect",
+            "Fewer accidental cross-boundary dependencies.",
+            "--impact",
+            "Local engineering guidance.",
+            "--example",
+            "Use a typed adapter.",
             "--expected-revision",
             "1",
             "--resume",
@@ -303,6 +313,16 @@ fn stale_change_is_rejected_and_standard_needs_a_decision() {
             "guidance.local",
             "--content",
             "Use explicit boundaries.",
+            "--rationale",
+            "Keep integration boundaries explicit.",
+            "--source",
+            "owner:change-stale",
+            "--expected-effect",
+            "Fewer accidental cross-boundary dependencies.",
+            "--impact",
+            "Local engineering guidance.",
+            "--example",
+            "Use a typed adapter.",
             "--expected-revision",
             "0",
             "--resume",
@@ -312,6 +332,20 @@ fn stale_change_is_rejected_and_standard_needs_a_decision() {
     );
     assert!(accepted.status.success());
     let accepted_json = json(&accepted);
+    assert_eq!(accepted_json["data"]["base_revision"], 0);
+    assert!(accepted_json["data"]["proposal"].is_object());
+    assert_eq!(
+        accepted_json["data"]["explanation"]["expected_effect"],
+        "Fewer accidental cross-boundary dependencies."
+    );
+    assert_eq!(
+        accepted_json["data"]["explanation"]["examples"],
+        serde_json::json!(["Use a typed adapter."])
+    );
+    assert_eq!(
+        accepted_json["data"]["diff"]["before"],
+        serde_json::Value::Null
+    );
     let replay = run(
         &[
             "change",
@@ -326,6 +360,16 @@ fn stale_change_is_rejected_and_standard_needs_a_decision() {
             "guidance.local",
             "--content",
             "Use explicit boundaries.",
+            "--rationale",
+            "Keep integration boundaries explicit.",
+            "--source",
+            "owner:change-stale",
+            "--expected-effect",
+            "Fewer accidental cross-boundary dependencies.",
+            "--impact",
+            "Local engineering guidance.",
+            "--example",
+            "Use a typed adapter.",
             "--expected-revision",
             "0",
             "--resume",
@@ -339,6 +383,10 @@ fn stale_change_is_rejected_and_standard_needs_a_decision() {
     assert_eq!(
         replay_json["data"]["record"],
         accepted_json["data"]["record"]
+    );
+    assert_eq!(
+        replay_json["data"]["proposal"],
+        accepted_json["data"]["proposal"]
     );
 
     let decision_probe = run(
@@ -372,6 +420,16 @@ fn stale_change_is_rejected_and_standard_needs_a_decision() {
             "standard.boundary",
             "--content",
             "Do not import private modules.",
+            "--rationale",
+            "Protect module boundaries.",
+            "--source",
+            "architecture:module-map",
+            "--expected-effect",
+            "Invalid imports are rejected.",
+            "--impact",
+            "Requires a trusted deterministic checker.",
+            "--example",
+            "Public modules may not import internal modules.",
             "--expected-revision",
             "0",
             "--resume",
@@ -381,7 +439,8 @@ fn stale_change_is_rejected_and_standard_needs_a_decision() {
     );
     assert_eq!(decision.status.code(), Some(5));
     assert_eq!(json(&decision)["state"], "needs_decision");
-    assert_eq!(json(&decision)["data"]["recorded"], false);
+    assert_eq!(json(&decision)["data"]["recorded"], true);
+    assert_eq!(json(&decision)["data"]["base_revision"], 0);
 }
 
 #[test]
