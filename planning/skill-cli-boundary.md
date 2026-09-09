@@ -57,6 +57,36 @@ prompt. Failures return to the same worker with stable IDs and repair guidance;
 the repaired candidate is checked again. Evidence must expose exact revisions,
 age, unavailable checks, and unsupported host capabilities.
 
+The provider-neutral host adapter accepts only opaque authority evidence and
+re-verifies the exact task revision, objective, non-goals, guidance, edit scope,
+check scope, expiry, and capability set at every checkpoint. Its private Dolt
+records persist attempts and elapsed/resource budgets across process restarts,
+but those records cannot grant authority. A post-edit hook is one checkpoint
+transport, not a separate policy engine. Hosts without that adapter use the
+visible `wh check --json` fallback and must report that durable hook/session
+support is unavailable. Checking never implies edit, policy, publication,
+merge, release, deployment, or outcome authority.
+
+The first transport keeps this lifecycle inside the `check` family: an
+authenticated host begins with `--repair-session ... --begin-repair`, invokes
+the same family with `--post-edit` for in-session feedback, and supplies
+separate opaque completion evidence through `--finalize-with` for the broader
+gate. Socket credentials are inherited launch capabilities, never project
+configuration or persisted JSON; the exact wire contract is
+`references/repair-host-transport.md`.
+
+The first transition and its deterministic task-authority reservation are one
+claimed-before-work lifecycle, preventing parallel bootstraps or sessions from
+resetting the budget. Each later check/final operation also claims its exact
+session revision before execution; interruption stops for accountable recovery
+rather than rerunning invisibly. Accepted responses are stored for exact replay
+rather than recomputed outside the budget. Final acceptance includes the
+complete host-attestation interval and a post-attestation authority/workspace
+recheck.
+Handoff replies are validated from fresh workspace fingerprints and the stored
+reviewed evidence after authority is reauthenticated; they never rerun a check
+outside the stopped budget.
+
 ## Public product surface
 
 The target has exactly six workflow families: `init`, `dash`, `change`, `check`,

@@ -44,6 +44,16 @@ impl AgreementRecord {
         self.owner.validate()?;
         self.provenance.validate()?;
         self.body.validate()?;
+        if matches!(
+            self.body,
+            RecordBody::RepairSession(_)
+                | RecordBody::RepairHandoff(_)
+                | RecordBody::RepairAuthorityReservation(_)
+                | RecordBody::RepairOperationClaim(_)
+        ) && self.provenance.authority != ProvenanceAuthority::CandidateOnly
+        {
+            return Err(DomainError::OperationalRecordCannotGrantAuthority);
+        }
         if let Some(previous) = &self.supersedes {
             previous.validate()?;
             if previous.id != self.id || previous.revision >= self.revision {
@@ -105,6 +115,14 @@ impl AgreementRecord {
                 links.push(body.target.clone());
                 links.extend(body.replacement.clone());
             }
+            RecordBody::RepairSession(body) => {
+                links.extend(body.last_check_receipt.clone());
+            }
+            RecordBody::RepairHandoff(body) => links.push(body.session.clone()),
+            RecordBody::RepairAuthorityReservation(body) => {
+                links.extend(body.session.clone());
+            }
+            RecordBody::RepairOperationClaim(body) => links.push(body.session.clone()),
             _ => {}
         }
         links
@@ -382,6 +400,10 @@ pub enum RecordBody {
     VerificationReceipt(VerificationReceipt),
     ObservationReceipt(ObservationReceipt),
     Retirement(Retirement),
+    RepairSession(Box<RepairSessionRecord>),
+    RepairHandoff(Box<RepairHandoffRecord>),
+    RepairAuthorityReservation(Box<RepairAuthorityReservationRecord>),
+    RepairOperationClaim(Box<RepairOperationClaimRecord>),
 }
 
 impl RecordBody {
@@ -420,8 +442,390 @@ impl RecordBody {
                 value.target.validate()?;
                 require_text(&value.reason)
             }
+            Self::RepairSession(value) => value.validate(),
+            Self::RepairHandoff(value) => value.validate(),
+            Self::RepairAuthorityReservation(value) => value.validate(),
+            Self::RepairOperationClaim(value) => value.validate(),
         }
     }
+}
+
+/// Exact deterministic snapshot bound to a repair session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepairSnapshotRecord {
+    pub code_tree: ContentDigest,
+    pub policy: ContentDigest,
+    pub checker_bundle: ContentDigest,
+    pub scope: ContentDigest,
+    pub environment: ContentDigest,
+    pub trust: ContentDigest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepairWorkspaceFileRecord {
+    pub path: String,
+    pub digest: ContentDigest,
+    /// True when changing this file could weaken a check, test, policy, or
+    /// baseline. Repair authority never permits such a change.
+    pub protected: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepairSessionStateRecord {
+    Ready,
+    ReadyForFinalVerification,
+    Verified,
+    NeedsDecision,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepairCheckPhaseRecord {
+    Fast,
+    Final,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepairAttemptRecord {
+    pub number: u16,
+    pub candidate: RepairSnapshotRecord,
+    pub finding_ids: Vec<String>,
+    pub changed_paths: Vec<String>,
+    pub elapsed_seconds: u64,
+    pub resource_units: u64,
+    pub observed_at_unix: u64,
+}
+
+/// Operational state only. Serialized fields never grant authority; every
+/// mutation requires the trusted host authority adapter to authenticate this
+/// exact binding again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepairSessionRecord {
+    pub session_id: String,
+    pub lean_baseline_revision: String,
+    pub authority_principal: PrincipalRef,
+    pub task: ExternalRef,
+    pub objective: String,
+    #[serde(default)]
+    pub non_goals: Vec<String>,
+    #[serde(default)]
+    pub applicable_guidance: Vec<RecordRef>,
+    pub authority_revision: u64,
+    pub authority_expires_at: String,
+    pub authority_expires_at_unix: u64,
+    pub allowed_paths: Vec<String>,
+    #[serde(default)]
+    pub excluded_paths: Vec<String>,
+    pub check_paths: Vec<String>,
+    pub check_language: Option<String>,
+    pub check_rules: Vec<String>,
+    pub final_check_paths: Vec<String>,
+    pub final_check_language: Option<String>,
+    pub final_check_rules: Vec<String>,
+    /// Immutable inputs for the broader final-check plan as observed before
+    /// any repair edit. Its code digest may change; policy/checker/scope,
+    /// environment, and trust may not.
+    pub final_baseline_snapshot: RepairSnapshotRecord,
+    pub reviewed_snapshot: RepairSnapshotRecord,
+    pub reviewed_phase: RepairCheckPhaseRecord,
+    pub workspace_files: Vec<RepairWorkspaceFileRecord>,
+    pub started_at_unix: u64,
+    pub last_checkpoint_at_unix: u64,
+    pub max_attempts: u16,
+    pub max_repeated_finding: u16,
+    pub max_elapsed_seconds: u64,
+    pub max_resource_units: u64,
+    pub attempts: Vec<RepairAttemptRecord>,
+    pub attempts_reserved: u16,
+    pub total_elapsed_seconds: u64,
+    pub total_resource_units: u64,
+    pub final_verification_elapsed_seconds: u64,
+    pub final_verification_resource_units: u64,
+    pub current_finding_ids: Vec<String>,
+    pub state: RepairSessionStateRecord,
+    pub updated_at: String,
+    /// Canonical response returned for an idempotent retry. Replays never run
+    /// another checker outside the persisted operation budget.
+    pub last_check_response: serde_json::Value,
+    /// `post_edit_hook` or `explicit_checkpoint`; binds response presentation
+    /// to the original request rather than the retrying caller.
+    pub last_checkpoint_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_check_receipt: Option<RecordRef>,
+}
+
+impl RepairSessionRecord {
+    fn validate(&self) -> Result<(), DomainError> {
+        require_text(&self.session_id)?;
+        require_text(&self.lean_baseline_revision)?;
+        self.authority_principal.validate()?;
+        self.task.validate()?;
+        require_text(&self.objective)?;
+        if self.authority_revision == 0
+            || !looks_like_utc_timestamp(&self.authority_expires_at)
+            || self.authority_expires_at_unix <= self.started_at_unix
+            || !looks_like_utc_timestamp(&self.updated_at)
+            || self.allowed_paths.is_empty()
+            || self.max_attempts == 0
+            || self.max_repeated_finding == 0
+            || self.max_repeated_finding > self.max_attempts
+            || self.max_elapsed_seconds == 0
+            || self.max_resource_units == 0
+            || self.attempts.len() > usize::from(self.max_attempts)
+            || self.attempts_reserved > self.max_attempts
+            || usize::from(self.attempts_reserved) < self.attempts.len()
+            || self.started_at_unix == 0
+            || self.last_checkpoint_at_unix < self.started_at_unix
+            || self.workspace_files.len() > 20_000
+            || !self.last_check_response.is_object()
+            || !matches!(
+                self.last_checkpoint_kind.as_str(),
+                "post_edit_hook" | "explicit_checkpoint"
+            )
+        {
+            return Err(DomainError::InvalidRepairRecord);
+        }
+        let elapsed = self
+            .attempts
+            .iter()
+            .fold(self.final_verification_elapsed_seconds, |total, attempt| {
+                total.saturating_add(attempt.elapsed_seconds)
+            });
+        let resources = self
+            .attempts
+            .iter()
+            .fold(self.final_verification_resource_units, |total, attempt| {
+                total.saturating_add(attempt.resource_units)
+            });
+        if self
+            .allowed_paths
+            .iter()
+            .any(|path| !safe_relative_path(path))
+            || self
+                .excluded_paths
+                .iter()
+                .any(|path| !safe_relative_path(path))
+            || self
+                .check_paths
+                .iter()
+                .any(|path| !safe_relative_path(path))
+            || self
+                .final_check_paths
+                .iter()
+                .any(|path| !safe_relative_path(path))
+            || self
+                .workspace_files
+                .windows(2)
+                .any(|pair| pair[0].path >= pair[1].path)
+            || self
+                .workspace_files
+                .iter()
+                .any(|file| !safe_relative_path(&file.path))
+            || self.non_goals.iter().any(|value| value.trim().is_empty())
+            || self
+                .applicable_guidance
+                .iter()
+                .any(|reference| reference.validate().is_err())
+            || self
+                .current_finding_ids
+                .iter()
+                .any(|id| id.trim().is_empty())
+            || elapsed != self.total_elapsed_seconds
+            || resources != self.total_resource_units
+            || self.attempts.iter().enumerate().any(|(index, attempt)| {
+                attempt.number != index as u16 + 1
+                    || attempt
+                        .changed_paths
+                        .iter()
+                        .any(|path| !safe_relative_path(path))
+                    || attempt.finding_ids.iter().any(|id| id.trim().is_empty())
+                    || attempt.changed_paths.iter().any(|path| {
+                        !self
+                            .allowed_paths
+                            .iter()
+                            .any(|allowed| relative_path_contains(allowed, path))
+                            || self
+                                .excluded_paths
+                                .iter()
+                                .any(|excluded| relative_path_contains(excluded, path))
+                    })
+            })
+            || match self.reviewed_phase {
+                RepairCheckPhaseRecord::Fast => {
+                    self.final_verification_elapsed_seconds != 0
+                        || self.final_verification_resource_units != 0
+                }
+                RepairCheckPhaseRecord::Final => {
+                    self.final_verification_elapsed_seconds == 0
+                        || self.final_verification_resource_units == 0
+                        || matches!(
+                            self.state,
+                            RepairSessionStateRecord::Ready
+                                | RepairSessionStateRecord::ReadyForFinalVerification
+                                | RepairSessionStateRecord::Cancelled
+                        )
+                }
+            }
+            || match self.state {
+                RepairSessionStateRecord::Ready => {
+                    self.current_finding_ids.is_empty()
+                        || usize::from(self.attempts_reserved) != self.attempts.len() + 1
+                }
+                RepairSessionStateRecord::ReadyForFinalVerification
+                | RepairSessionStateRecord::Verified => {
+                    !self.current_finding_ids.is_empty()
+                        || usize::from(self.attempts_reserved) != self.attempts.len()
+                }
+                RepairSessionStateRecord::NeedsDecision | RepairSessionStateRecord::Cancelled => {
+                    usize::from(self.attempts_reserved) != self.attempts.len()
+                }
+            }
+        {
+            return Err(DomainError::InvalidRepairRecord);
+        }
+        Ok(())
+    }
+}
+
+/// Permanent private reservation for one task-authority budget. Its
+/// deterministic record ID is the database-level uniqueness key used to make
+/// concurrent session starts contend inside one transaction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepairAuthorityReservationRecord {
+    pub project: String,
+    pub task: ExternalRef,
+    pub authority_revision: u64,
+    pub requested_session_id: String,
+    pub begin_request_id: String,
+    pub started_at_unix: u64,
+    pub bootstrap_resource_units: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<RecordRef>,
+}
+
+impl RepairAuthorityReservationRecord {
+    fn validate(&self) -> Result<(), DomainError> {
+        require_text(&self.project)?;
+        self.task.validate()?;
+        require_text(&self.requested_session_id)?;
+        require_text(&self.begin_request_id)?;
+        if let Some(session) = &self.session {
+            session.validate()?;
+        }
+        if self.authority_revision == 0
+            || self.started_at_unix == 0
+            || self.bootstrap_resource_units == 0
+        {
+            return Err(DomainError::InvalidRepairRecord);
+        }
+        Ok(())
+    }
+}
+
+/// Durable claim written before a checkpoint or finalization executes. A
+/// process interruption therefore leaves an explicit, budgeted operation
+/// rather than allowing silent unbounded reruns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepairOperationClaimRecord {
+    pub session: RecordRef,
+    pub request_id: String,
+    pub expected_session_revision: u64,
+    pub phase: RepairCheckPhaseRecord,
+    pub checkpoint_kind: String,
+    pub started_at_unix: u64,
+    pub resource_units: u64,
+}
+
+impl RepairOperationClaimRecord {
+    fn validate(&self) -> Result<(), DomainError> {
+        self.session.validate()?;
+        require_text(&self.request_id)?;
+        if self.expected_session_revision != self.session.revision
+            || self.started_at_unix == 0
+            || self.resource_units == 0
+            || !matches!(
+                self.checkpoint_kind.as_str(),
+                "post_edit_hook" | "explicit_checkpoint"
+            )
+        {
+            return Err(DomainError::InvalidRepairRecord);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepairHandoffRecord {
+    pub session: RecordRef,
+    pub expected_session_revision: u64,
+    pub reviewed_snapshot: RepairSnapshotRecord,
+    pub stable_finding_ids: Vec<String>,
+    pub question: String,
+    pub recommendation: String,
+    pub alternatives: Vec<String>,
+    pub impact: String,
+    pub evidence: Vec<EvidenceRef>,
+    pub permitted_next_step: String,
+}
+
+impl RepairHandoffRecord {
+    fn validate(&self) -> Result<(), DomainError> {
+        self.session.validate()?;
+        if self.expected_session_revision != self.session.revision
+            || self.stable_finding_ids.is_empty()
+            || self
+                .stable_finding_ids
+                .iter()
+                .any(|id| id.trim().is_empty())
+            || self.alternatives.is_empty()
+            || self
+                .alternatives
+                .iter()
+                .any(|value| value.trim().is_empty())
+            || self.evidence.is_empty()
+            || self
+                .evidence
+                .iter()
+                .any(|value| value.system.trim().is_empty() || value.locator.trim().is_empty())
+        {
+            return Err(DomainError::InvalidRepairRecord);
+        }
+        require_text(&self.question)?;
+        require_text(&self.recommendation)?;
+        require_text(&self.impact)?;
+        require_text(&self.permitted_next_step)
+    }
+}
+
+fn safe_relative_path(value: &str) -> bool {
+    let path = std::path::Path::new(value);
+    !value.is_empty()
+        && !path.is_absolute()
+        && !path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+}
+
+fn relative_path_contains(parent: &str, child: &str) -> bool {
+    parent == "."
+        || child == parent
+        || child
+            .strip_prefix(parent)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1111,6 +1515,8 @@ pub enum DomainError {
     ActivationPolicyNotProposed,
     IllegalProposalTransition,
     ObservationWrongRelease,
+    InvalidRepairRecord,
+    OperationalRecordCannotGrantAuthority,
     Serialization(String),
 }
 

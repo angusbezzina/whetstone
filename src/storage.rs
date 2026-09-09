@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -146,6 +147,18 @@ pub struct DoltRepository {
     write_guard: Arc<Mutex<()>>,
 }
 
+/// One record in an atomic append operation.
+///
+/// `expected_revision` is the latest revision the caller observed for this
+/// record ID before this item is applied. For two consecutive revisions of the
+/// same ID in one batch, the second item therefore expects the first item's
+/// revision.
+#[derive(Debug, Clone, Copy)]
+pub struct AppendRequest<'a> {
+    pub record: &'a AgreementRecord,
+    pub expected_revision: Option<u64>,
+}
+
 impl DoltRepository {
     /// Opens an already initialized Whetstone repository without creating,
     /// migrating, or otherwise repairing storage.
@@ -210,6 +223,122 @@ impl DoltRepository {
         self.append_with_crash(record, expected_revision, CrashPoint::None)
     }
 
+    /// Insert a record exactly once, returning an error for an exact replay.
+    ///
+    /// This is intentionally narrower than [`Self::append`]: it exists for
+    /// durable operation claims where an idempotent replay must never be
+    /// mistaken for exclusive ownership of work.
+    pub fn append_exclusive(
+        &self,
+        record: &AgreementRecord,
+        expected_revision: Option<u64>,
+    ) -> Result<RecordRef, StorageError> {
+        self.append_exclusive_inner(record, expected_revision, None)
+    }
+
+    /// Insert an exclusive record only while another record is still exactly
+    /// the revision and digest the caller observed.
+    ///
+    /// The guard is checked while holding the repository-wide write lock, so a
+    /// cancellation or other session transition is ordered before or after an
+    /// operation claim rather than racing between observation and claim.
+    pub fn append_exclusive_guarded(
+        &self,
+        record: &AgreementRecord,
+        expected_revision: Option<u64>,
+        guard: &RecordRef,
+    ) -> Result<RecordRef, StorageError> {
+        self.append_exclusive_inner(record, expected_revision, Some(guard))
+    }
+
+    fn append_exclusive_inner(
+        &self,
+        record: &AgreementRecord,
+        expected_revision: Option<u64>,
+        guard: Option<&RecordRef>,
+    ) -> Result<RecordRef, StorageError> {
+        record.validate().map_err(StorageError::Domain)?;
+        let reference = record.reference().map_err(StorageError::Domain)?;
+        let _guard = self
+            .write_guard
+            .lock()
+            .map_err(|_| StorageError::LockPoisoned)?;
+        let _repository_guard = self.lock_repository_write()?;
+
+        if let Some(existing) = self.find_idempotency(&record.idempotency_key)? {
+            return Err(StorageError::ExclusiveRecordExists(existing));
+        }
+        if let Some(existing) = self.latest(&record.id)? {
+            return Err(StorageError::ExclusiveRecordExists(
+                existing.reference().map_err(StorageError::Domain)?,
+            ));
+        }
+        if let Some(guard) = guard {
+            let latest = self.latest(&guard.id)?;
+            let actual = latest.as_ref().map(|record| record.revision);
+            if latest
+                .as_ref()
+                .map(|record| record.reference().map_err(StorageError::Domain))
+                .transpose()?
+                != Some(guard.clone())
+            {
+                return Err(StorageError::StaleRevision {
+                    expected: Some(guard.revision),
+                    actual,
+                });
+            }
+        }
+        let actual = self.latest_revision(&record.id)?;
+        if actual != expected_revision {
+            return Err(StorageError::StaleRevision {
+                expected: expected_revision,
+                actual,
+            });
+        }
+        let required = actual.map_or(1, |revision| revision + 1);
+        if record.revision != required {
+            return Err(StorageError::IllegalRevision {
+                expected: required,
+                actual: record.revision,
+            });
+        }
+
+        let json = String::from_utf8(record.canonical_json().map_err(StorageError::Domain)?)
+            .map_err(|error| StorageError::Serialization(error.to_string()))?;
+        let query = format!(
+            "SET @@dolt_transaction_commit=1; START TRANSACTION; \
+             INSERT INTO records (record_id, revision, digest, visibility, idempotency_key, record_json) \
+             VALUES ({}, {}, {}, {}, {}, {}); COMMIT;",
+            sql_text(record.id.as_str()),
+            record.revision,
+            sql_text(reference.digest.as_str()),
+            sql_text(self.kind.as_str()),
+            sql_text(&record.idempotency_key),
+            sql_text(&json),
+        );
+        if let Err(error) = self.sql(&query) {
+            // A separate repository/process can win between the observations
+            // above and INSERT. Translate that durable winner into the same
+            // fail-closed outcome instead of letting both callers run work.
+            if let Some(existing) = self.find_idempotency(&record.idempotency_key)? {
+                return Err(StorageError::ExclusiveRecordExists(existing));
+            }
+            if let Some(existing) = self.latest(&record.id)? {
+                return Err(StorageError::ExclusiveRecordExists(
+                    existing.reference().map_err(StorageError::Domain)?,
+                ));
+            }
+            return Err(error);
+        }
+        let persisted = self
+            .get(&reference)?
+            .ok_or_else(|| StorageError::AcceptedRecordMissing(reference.clone()))?;
+        if persisted.reference().map_err(StorageError::Domain)? != reference {
+            return Err(StorageError::DigestMismatch(record.id.clone()));
+        }
+        Ok(reference)
+    }
+
     pub fn append_with_crash(
         &self,
         record: &AgreementRecord,
@@ -222,6 +351,7 @@ impl DoltRepository {
             .write_guard
             .lock()
             .map_err(|_| StorageError::LockPoisoned)?;
+        let _repository_guard = self.lock_repository_write()?;
 
         if let Some(existing) = self.find_idempotency(&record.idempotency_key)? {
             return if existing == reference {
@@ -274,6 +404,122 @@ impl DoltRepository {
             return Err(StorageError::DigestMismatch(record.id.clone()));
         }
         Ok(reference)
+    }
+
+    /// Append several records as one logical and durable operation.
+    ///
+    /// A batch is accepted only when every item is new, or when every item is
+    /// an exact idempotent replay of a previously accepted batch. A mixed
+    /// replay is rejected so a caller can never mistake a partial prior write
+    /// for a successful atomic operation. All new records are validated,
+    /// checked against their optimistic revisions in batch order, and inserted
+    /// in one Dolt SQL transaction. Success is returned only after every
+    /// persisted record has been read back and its canonical digest verified.
+    pub fn append_batch(
+        &self,
+        requests: &[AppendRequest<'_>],
+    ) -> Result<Vec<RecordRef>, StorageError> {
+        self.append_batch_with_crash(requests, CrashPoint::None)
+    }
+
+    /// Testable crash boundary for [`Self::append_batch`].
+    pub fn append_batch_with_crash(
+        &self,
+        requests: &[AppendRequest<'_>],
+        crash: CrashPoint,
+    ) -> Result<Vec<RecordRef>, StorageError> {
+        if requests.is_empty() {
+            return Err(StorageError::EmptyBatch);
+        }
+
+        let prepared = requests
+            .iter()
+            .map(|request| {
+                request.record.validate().map_err(StorageError::Domain)?;
+                let reference = request.record.reference().map_err(StorageError::Domain)?;
+                let json = String::from_utf8(
+                    request
+                        .record
+                        .canonical_json()
+                        .map_err(StorageError::Domain)?,
+                )
+                .map_err(|error| StorageError::Serialization(error.to_string()))?;
+                Ok(PreparedAppend {
+                    request: *request,
+                    reference,
+                    json,
+                })
+            })
+            .collect::<Result<Vec<_>, StorageError>>()?;
+        reject_duplicate_batch_keys(&prepared)?;
+
+        let _guard = self
+            .write_guard
+            .lock()
+            .map_err(|_| StorageError::LockPoisoned)?;
+        let _repository_guard = self.lock_repository_write()?;
+
+        let existing = prepared
+            .iter()
+            .map(|item| {
+                self.find_idempotency(&item.request.record.idempotency_key)
+                    .and_then(|found| match found {
+                        Some(reference) if reference == item.reference => Ok(Some(reference)),
+                        Some(_) => Err(StorageError::IdempotencyConflict(
+                            item.request.record.idempotency_key.clone(),
+                        )),
+                        None => Ok(None),
+                    })
+            })
+            .collect::<Result<Vec<_>, StorageError>>()?;
+        let persisted = existing.iter().filter(|item| item.is_some()).count();
+        if persisted == prepared.len() {
+            return prepared
+                .iter()
+                .map(|item| self.verify_persisted(&item.reference))
+                .collect();
+        }
+        if persisted != 0 {
+            return Err(StorageError::PartialBatchReplay {
+                persisted,
+                total: prepared.len(),
+            });
+        }
+
+        self.validate_batch_history(&prepared)?;
+        if crash == CrashPoint::BeforeCommit {
+            return Err(StorageError::InjectedCrash(crash));
+        }
+
+        let mut query = String::from("SET @@dolt_transaction_commit=1; START TRANSACTION;");
+        for (index, item) in prepared.iter().enumerate() {
+            let record = item.request.record;
+            query.push_str(&format!(
+                "INSERT INTO records (record_id, revision, digest, visibility, idempotency_key, record_json) VALUES ({}, {}, {}, {}, {}, {});",
+                sql_text(record.id.as_str()),
+                record.revision,
+                sql_text(item.reference.digest.as_str()),
+                sql_text(self.kind.as_str()),
+                sql_text(&record.idempotency_key),
+                sql_text(&item.json),
+            ));
+            if crash == CrashPoint::DuringBatchAfterFirstInsert && index == 0 {
+                // This statement is intentionally invalid. It exercises the
+                // database transaction boundary after one valid insert has
+                // executed but before COMMIT can be reached.
+                query.push_str("INSERT INTO whetstone_injected_batch_failure VALUES (1);");
+            }
+        }
+        query.push_str("COMMIT;");
+        self.sql(&query)?;
+        if crash == CrashPoint::AfterCommitBeforeReceipt {
+            return Err(StorageError::InjectedCrash(crash));
+        }
+
+        prepared
+            .iter()
+            .map(|item| self.verify_persisted(&item.reference))
+            .collect()
     }
 
     pub fn get(&self, reference: &RecordRef) -> Result<Option<AgreementRecord>, StorageError> {
@@ -384,6 +630,15 @@ impl DoltRepository {
             let record = self
                 .get(reference)?
                 .ok_or_else(|| StorageError::UnknownReference(reference.clone()))?;
+            if matches!(
+                &record.body,
+                RecordBody::RepairSession(_)
+                    | RecordBody::RepairHandoff(_)
+                    | RecordBody::RepairAuthorityReservation(_)
+                    | RecordBody::RepairOperationClaim(_)
+            ) {
+                return Err(StorageError::InvalidProjectionBoundary);
+            }
             let canonical = record.canonical_json().map_err(StorageError::Domain)?;
             for canary in private_canaries {
                 if !canary.is_empty() && contains_bytes(&canonical, canary.as_bytes()) {
@@ -725,8 +980,53 @@ impl DoltRepository {
         rows.first().map(row_reference).transpose()
     }
 
+    fn verify_persisted(&self, reference: &RecordRef) -> Result<RecordRef, StorageError> {
+        let persisted = self
+            .get(reference)?
+            .ok_or_else(|| StorageError::AcceptedRecordMissing(reference.clone()))?;
+        if persisted.reference().map_err(StorageError::Domain)? != *reference {
+            return Err(StorageError::DigestMismatch(reference.id.clone()));
+        }
+        Ok(reference.clone())
+    }
+
+    fn validate_batch_history(&self, prepared: &[PreparedAppend<'_>]) -> Result<(), StorageError> {
+        let mut records = self.all_records()?;
+        records.sort_by(|left, right| {
+            logical_stage(left)
+                .cmp(&logical_stage(right))
+                .then_with(|| left.id.cmp(&right.id))
+                .then_with(|| left.revision.cmp(&right.revision))
+        });
+        let mut history = AgreementHistory::default();
+        for record in records {
+            let expected = history.latest(&record.id).map(|current| current.revision);
+            history
+                .append(record, expected)
+                .map_err(StorageError::Domain)?;
+        }
+        for item in prepared {
+            history
+                .append(item.request.record.clone(), item.request.expected_revision)
+                .map_err(map_append_domain_error)?;
+        }
+        Ok(())
+    }
+
     fn sql(&self, query: &str) -> Result<String, StorageError> {
         self.run(&["sql", "-q", query])
+    }
+
+    fn lock_repository_write(&self) -> Result<File, StorageError> {
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.root.join(".dolt/whetstone-write.lock"))
+            .map_err(StorageError::Io)?;
+        FileExt::lock_exclusive(&lock).map_err(StorageError::Io)?;
+        Ok(lock)
     }
 
     fn sql_rows(&self, query: &str) -> Result<Vec<Value>, StorageError> {
@@ -943,6 +1243,10 @@ fn record_type_name(record: &AgreementRecord) -> &'static str {
         RecordBody::VerificationReceipt(_) => "verification_receipt",
         RecordBody::ObservationReceipt(_) => "observation_receipt",
         RecordBody::Retirement(_) => "retirement",
+        RecordBody::RepairSession(_) => "repair_session",
+        RecordBody::RepairHandoff(_) => "repair_handoff",
+        RecordBody::RepairAuthorityReservation(_) => "repair_authority_reservation",
+        RecordBody::RepairOperationClaim(_) => "repair_operation_claim",
     }
 }
 
@@ -1011,7 +1315,12 @@ fn validate_logical_records(records: &[AgreementRecord]) -> Result<(), StorageEr
 fn logical_stage(record: &AgreementRecord) -> u8 {
     match &record.body {
         RecordBody::Decision(_) => 1,
-        RecordBody::Activation(_) | RecordBody::ObservationReceipt(_) => 2,
+        RecordBody::Activation(_)
+        | RecordBody::ObservationReceipt(_)
+        | RecordBody::RepairSession(_)
+        | RecordBody::RepairHandoff(_)
+        | RecordBody::RepairAuthorityReservation(_)
+        | RecordBody::RepairOperationClaim(_) => 2,
         _ => 0,
     }
 }
@@ -1020,8 +1329,40 @@ fn logical_stage(record: &AgreementRecord) -> u8 {
 pub enum CrashPoint {
     None,
     BeforeCommit,
+    DuringBatchAfterFirstInsert,
     AfterCommitBeforeReceipt,
     AfterProjectionGeneration,
+}
+
+struct PreparedAppend<'a> {
+    request: AppendRequest<'a>,
+    reference: RecordRef,
+    json: String,
+}
+
+fn reject_duplicate_batch_keys(prepared: &[PreparedAppend<'_>]) -> Result<(), StorageError> {
+    let mut keys = std::collections::BTreeSet::new();
+    for item in prepared {
+        if !keys.insert(&item.request.record.idempotency_key) {
+            return Err(StorageError::IdempotencyConflict(
+                item.request.record.idempotency_key.clone(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn map_append_domain_error(error: DomainError) -> StorageError {
+    match error {
+        DomainError::StaleRevision { expected, actual } => {
+            StorageError::StaleRevision { expected, actual }
+        }
+        DomainError::IllegalRevision { expected, actual } => {
+            StorageError::IllegalRevision { expected, actual }
+        }
+        DomainError::IdempotencyConflict(key) => StorageError::IdempotencyConflict(key),
+        other => StorageError::Domain(other),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1308,6 +1649,12 @@ pub enum StorageError {
         actual: u64,
     },
     IdempotencyConflict(String),
+    ExclusiveRecordExists(RecordRef),
+    EmptyBatch,
+    PartialBatchReplay {
+        persisted: usize,
+        total: usize,
+    },
     UnknownReference(RecordRef),
     AcceptedRecordMissing(RecordRef),
     DigestMismatch(RecordId),

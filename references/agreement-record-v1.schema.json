@@ -39,7 +39,11 @@
         "activation",
         "verification_receipt",
         "observation_receipt",
-        "retirement"
+        "retirement",
+        "repair_session",
+        "repair_handoff",
+        "repair_authority_reservation",
+        "repair_operation_claim"
       ]
     },
     "record": {
@@ -57,7 +61,11 @@
         { "$ref": "#/$defs/activation" },
         { "$ref": "#/$defs/verification_receipt" },
         { "$ref": "#/$defs/observation_receipt" },
-        { "$ref": "#/$defs/retirement" }
+        { "$ref": "#/$defs/retirement" },
+        { "$ref": "#/$defs/repair_session" },
+        { "$ref": "#/$defs/repair_handoff" },
+        { "$ref": "#/$defs/repair_authority_reservation" },
+        { "$ref": "#/$defs/repair_operation_claim" }
       ]
     }
   },
@@ -75,7 +83,11 @@
     { "if": { "properties": { "record_type": { "const": "activation" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/activation" } } } },
     { "if": { "properties": { "record_type": { "const": "verification_receipt" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/verification_receipt" } } } },
     { "if": { "properties": { "record_type": { "const": "observation_receipt" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/observation_receipt" } } } },
-    { "if": { "properties": { "record_type": { "const": "retirement" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/retirement" } } } }
+    { "if": { "properties": { "record_type": { "const": "retirement" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/retirement" } } } },
+    { "if": { "properties": { "record_type": { "const": "repair_session" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/repair_session" } } } },
+    { "if": { "properties": { "record_type": { "const": "repair_handoff" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/repair_handoff" } } } },
+    { "if": { "properties": { "record_type": { "const": "repair_authority_reservation" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/repair_authority_reservation" } } } },
+    { "if": { "properties": { "record_type": { "const": "repair_operation_claim" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/repair_operation_claim" } } } }
   ],
   "$defs": {
     "record_id": {
@@ -420,6 +432,147 @@
         "target": { "$ref": "#/$defs/record_ref" },
         "reason": { "$ref": "#/$defs/nonempty" },
         "replacement": { "$ref": "#/$defs/record_ref" }
+      }
+    },
+    "repair_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code_tree", "policy", "checker_bundle", "scope", "environment", "trust"],
+      "properties": {
+        "code_tree": { "$ref": "#/$defs/digest" },
+        "policy": { "$ref": "#/$defs/digest" },
+        "checker_bundle": { "$ref": "#/$defs/digest" },
+        "scope": { "$ref": "#/$defs/digest" },
+        "environment": { "$ref": "#/$defs/digest" },
+        "trust": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "repair_workspace_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "digest", "protected"],
+      "properties": {
+        "path": { "$ref": "#/$defs/nonempty" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "protected": { "type": "boolean" }
+      }
+    },
+    "repair_attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "candidate", "finding_ids", "changed_paths", "elapsed_seconds", "resource_units", "observed_at_unix"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "candidate": { "$ref": "#/$defs/repair_snapshot" },
+        "finding_ids": { "type": "array", "items": { "$ref": "#/$defs/nonempty" } },
+        "changed_paths": { "type": "array", "items": { "$ref": "#/$defs/nonempty" } },
+        "elapsed_seconds": { "type": "integer", "minimum": 1 },
+        "resource_units": { "type": "integer", "minimum": 1 },
+        "observed_at_unix": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "repair_session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id", "lean_baseline_revision", "authority_principal", "task", "objective",
+        "non_goals", "applicable_guidance", "authority_revision", "authority_expires_at",
+        "authority_expires_at_unix", "allowed_paths", "excluded_paths", "check_paths",
+        "check_language", "check_rules", "final_check_paths", "final_check_language",
+        "final_check_rules", "final_baseline_snapshot", "reviewed_snapshot", "reviewed_phase",
+        "workspace_files", "started_at_unix", "last_checkpoint_at_unix", "max_attempts",
+        "max_repeated_finding", "max_elapsed_seconds", "max_resource_units", "attempts",
+        "attempts_reserved", "total_elapsed_seconds", "total_resource_units",
+        "final_verification_elapsed_seconds", "final_verification_resource_units",
+        "current_finding_ids", "state", "updated_at", "last_check_response", "last_checkpoint_kind"
+      ],
+      "properties": {
+        "session_id": { "$ref": "#/$defs/nonempty" },
+        "lean_baseline_revision": { "$ref": "#/$defs/nonempty" },
+        "authority_principal": { "$ref": "#/$defs/principal" },
+        "task": { "$ref": "#/$defs/external_ref" },
+        "objective": { "$ref": "#/$defs/nonempty" },
+        "non_goals": { "type": "array", "items": { "$ref": "#/$defs/nonempty" } },
+        "applicable_guidance": { "type": "array", "items": { "$ref": "#/$defs/record_ref" } },
+        "authority_revision": { "type": "integer", "minimum": 1 },
+        "authority_expires_at": { "$ref": "#/$defs/timestamp" },
+        "authority_expires_at_unix": { "type": "integer", "minimum": 1 },
+        "allowed_paths": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/nonempty" } },
+        "excluded_paths": { "type": "array", "items": { "$ref": "#/$defs/nonempty" } },
+        "check_paths": { "type": "array", "items": { "$ref": "#/$defs/nonempty" } },
+        "check_language": { "type": ["string", "null"] },
+        "check_rules": { "type": "array", "items": { "$ref": "#/$defs/nonempty" } },
+        "final_check_paths": { "type": "array", "items": { "$ref": "#/$defs/nonempty" } },
+        "final_check_language": { "type": ["string", "null"] },
+        "final_check_rules": { "type": "array", "items": { "$ref": "#/$defs/nonempty" } },
+        "final_baseline_snapshot": { "$ref": "#/$defs/repair_snapshot" },
+        "reviewed_snapshot": { "$ref": "#/$defs/repair_snapshot" },
+        "reviewed_phase": { "enum": ["fast", "final"] },
+        "workspace_files": { "type": "array", "maxItems": 20000, "items": { "$ref": "#/$defs/repair_workspace_file" } },
+        "started_at_unix": { "type": "integer", "minimum": 1 },
+        "last_checkpoint_at_unix": { "type": "integer", "minimum": 1 },
+        "max_attempts": { "type": "integer", "minimum": 1 },
+        "max_repeated_finding": { "type": "integer", "minimum": 1 },
+        "max_elapsed_seconds": { "type": "integer", "minimum": 1 },
+        "max_resource_units": { "type": "integer", "minimum": 1 },
+        "attempts": { "type": "array", "items": { "$ref": "#/$defs/repair_attempt" } },
+        "attempts_reserved": { "type": "integer", "minimum": 0 },
+        "total_elapsed_seconds": { "type": "integer", "minimum": 0 },
+        "total_resource_units": { "type": "integer", "minimum": 0 },
+        "final_verification_elapsed_seconds": { "type": "integer", "minimum": 0 },
+        "final_verification_resource_units": { "type": "integer", "minimum": 0 },
+        "current_finding_ids": { "type": "array", "items": { "$ref": "#/$defs/nonempty" } },
+        "state": { "enum": ["ready", "ready_for_final_verification", "verified", "needs_decision", "cancelled"] },
+        "updated_at": { "$ref": "#/$defs/timestamp" },
+        "last_check_response": { "type": "object" },
+        "last_checkpoint_kind": { "enum": ["post_edit_hook", "explicit_checkpoint"] },
+        "last_check_receipt": { "$ref": "#/$defs/record_ref" }
+      }
+    },
+    "repair_handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session", "expected_session_revision", "reviewed_snapshot", "stable_finding_ids", "question", "recommendation", "alternatives", "impact", "evidence", "permitted_next_step"],
+      "properties": {
+        "session": { "$ref": "#/$defs/record_ref" },
+        "expected_session_revision": { "type": "integer", "minimum": 1 },
+        "reviewed_snapshot": { "$ref": "#/$defs/repair_snapshot" },
+        "stable_finding_ids": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/nonempty" } },
+        "question": { "$ref": "#/$defs/nonempty" },
+        "recommendation": { "$ref": "#/$defs/nonempty" },
+        "alternatives": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/nonempty" } },
+        "impact": { "$ref": "#/$defs/nonempty" },
+        "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidence_ref" } },
+        "permitted_next_step": { "$ref": "#/$defs/nonempty" }
+      }
+    },
+    "repair_authority_reservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project", "task", "authority_revision", "requested_session_id", "begin_request_id", "started_at_unix", "bootstrap_resource_units"],
+      "properties": {
+        "project": { "$ref": "#/$defs/nonempty" },
+        "task": { "$ref": "#/$defs/external_ref" },
+        "authority_revision": { "type": "integer", "minimum": 1 },
+        "requested_session_id": { "$ref": "#/$defs/nonempty" },
+        "begin_request_id": { "$ref": "#/$defs/nonempty" },
+        "started_at_unix": { "type": "integer", "minimum": 1 },
+        "bootstrap_resource_units": { "type": "integer", "minimum": 1 },
+        "session": { "$ref": "#/$defs/record_ref" }
+      }
+    },
+    "repair_operation_claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session", "request_id", "expected_session_revision", "phase", "checkpoint_kind", "started_at_unix", "resource_units"],
+      "properties": {
+        "session": { "$ref": "#/$defs/record_ref" },
+        "request_id": { "$ref": "#/$defs/nonempty" },
+        "expected_session_revision": { "type": "integer", "minimum": 1 },
+        "phase": { "enum": ["fast", "final"] },
+        "checkpoint_kind": { "enum": ["post_edit_hook", "explicit_checkpoint"] },
+        "started_at_unix": { "type": "integer", "minimum": 1 },
+        "resource_units": { "type": "integer", "minimum": 1 }
       }
     }
   }

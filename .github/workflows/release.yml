@@ -64,14 +64,23 @@ jobs:
         with:
           name: whetstone-x86_64-unknown-linux-gnu
 
-      - name: Prove honest, non-vacuous foundation
+      - name: Prove current command surface and non-vacuous gates
         shell: bash
         run: |
           set -euo pipefail
           bin=./whetstone-x86_64-unknown-linux-gnu
           chmod +x "$bin"
           "$bin" --version | grep -q '^whetstone '
-          "$bin" --json | jq -e '.status == "foundation" and .available == []' >/dev/null
+          orientation=$("$bin" --json)
+          echo "$orientation" | jq -e '
+            .schema == "whetstone.command-response.v1" and
+            .schema_version == 1 and
+            .state == "success" and
+            .workflow == "orientation" and
+            .data.read_only == true and
+            .data.workflows == ["init", "dash", "change", "check", "pull", "push"] and
+            .permitted_actions == ["wh init", "wh dash", "wh change", "wh check", "wh pull", "wh push"]
+          ' >/dev/null
           "$bin" validate
           eval_result=$("$bin" eval --json)
           echo "$eval_result" | jq -e \

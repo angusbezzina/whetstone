@@ -808,6 +808,10 @@ fn record_links(record: &AgreementRecord) -> Vec<RecordRef> {
             links.push(body.target.clone());
             links.extend(body.replacement.clone());
         }
+        RecordBody::RepairSession(body) => links.extend(body.last_check_receipt.clone()),
+        RecordBody::RepairHandoff(body) => links.push(body.session.clone()),
+        RecordBody::RepairAuthorityReservation(body) => links.extend(body.session.clone()),
+        RecordBody::RepairOperationClaim(body) => links.push(body.session.clone()),
         _ => {}
     }
     links.sort();

@@ -8,7 +8,7 @@ description: >-
 license: MIT
 metadata:
   author: whetstone
-  version: "0.5.0-local-alpha"
+  version: "0.6.0-local-alpha"
 ---
 
 # Whetstone
@@ -20,12 +20,13 @@ then use deterministic checks to close the loop.
 
 ## Current implementation boundary
 
-This checkout is a local-alpha foundation, not the complete MVP. All six public
-workflow families exist. `init`, `change`, and observational `check` have an
-initial local implementation. `dash`, `pull`, and `push` deliberately return
-`unavailable`; do not simulate them by editing legacy YAML, copying private
-records, or claiming remote/approval effects. Hidden `validate`, `eval`, and
-`scan` commands are repository-maintenance gates, not extra product workflows.
+This checkout is an evolving local alpha, not the complete MVP. All six public
+workflow families exist. `init`, `change`, observational `check`, and the local
+inspect-first `dash` have initial implementations. `pull` and `push`
+deliberately return `unavailable`; do not simulate them by editing legacy YAML,
+copying private records, or claiming remote/approval effects. Hidden `validate`,
+`eval`, and `scan` commands are repository-maintenance gates, not extra product
+workflows.
 
 For automation, always pass `--json` and consume the versioned
 `whetstone.command-response.v1` envelope. Treat nonzero states according to the
@@ -86,3 +87,39 @@ or the configured attempt limit. Group repeated findings that require the same
 owner decision into one handoff containing the reviewed snapshot, stable IDs,
 one question, recommendation, alternatives, impact, evidence and the only
 permitted next step. A second agent may advise but cannot approve for the owner.
+
+### Host capability boundary
+
+The provider-neutral repair host API authenticates an opaque task grant, binds
+the objective, non-goals, applicable guidance, allowed and excluded paths,
+required checks, authority revision and expiry, and stores its counters in the
+private Dolt history. Persisted records are observations, never authority. A
+supported host calls the post-edit checkpoint and returns its `RepairFeedback`
+to the same worker in-session. That feedback can authorize another source edit;
+it never authorizes policy/check/baseline changes, publication, merge, release,
+deployment, or a business outcome claim.
+
+The initial provider-neutral adapter uses an owner-only Unix socket outside the
+project plus a per-launch secret inherited from the host; neither credential is
+stored. The host injects inert task context and begins through `wh check
+--repair-session <id> --authority-evidence <locator> --begin-repair`. Whetstone
+persists nothing until the socket authenticates that exact context. The begin
+response returns structured callback fields; a hook-capable host invokes the
+same `wh check` family with the returned revision and `--post-edit`, then sends
+the JSON response back to the active worker. A green scoped checkpoint still
+requires `--finalize-with <opaque-acceptance-locator>` for broader verification.
+See `references/repair-host-transport.md` for the bounded wire contract.
+
+Session creation atomically reserves one durable budget for the authenticated
+project/task/authority revision. Exact lost-response retries return the stored
+check response without rerunning work. Broader completion rechecks authority,
+budget, and the candidate workspace after host attestation returns; a change,
+expiry, or revocation becomes an owner handoff rather than verified success.
+
+If the current host has not integrated that API, say so and use
+`wh check --json --path <scope>` as the explicit visible checkpoint after each
+edit. This fallback provides the same deterministic finding details to humans
+and agents, but it does not provide durable host-managed repair budgets. Do not
+claim that a hook or durable session is installed. Onboarding may offer and
+prove an adapter later; until then, final task-scope verification remains
+mandatory and edit permission must be granted separately from checking.

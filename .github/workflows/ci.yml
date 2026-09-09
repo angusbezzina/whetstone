@@ -26,10 +26,31 @@ jobs:
       - name: Install Python quality tools
         run: python3 -m pip install pytest ruff
 
+      - name: Install supported Dolt 2.2.3
+        shell: bash
+        env:
+          DOLT_VERSION: "2.2.3"
+          # Digest published with the official GitHub v2.2.3 release asset.
+          DOLT_ARCHIVE_SHA256: ffafa7cc172cada5f77ca3fb96306545ddac44a111625f75f870306c7f197301
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/dolt-linux-amd64.tar.gz"
+          curl -fsSL \
+            -o "$archive" \
+            "https://github.com/dolthub/dolt/releases/download/v${DOLT_VERSION}/dolt-linux-amd64.tar.gz"
+          echo "$DOLT_ARCHIVE_SHA256  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          dolt_bin="$RUNNER_TEMP/dolt-linux-amd64/bin"
+          test "$("$dolt_bin/dolt" version | head -n 1)" = "dolt version ${DOLT_VERSION}"
+          echo "$dolt_bin" >> "$GITHUB_PATH"
+
       - name: 1 - Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: 2 - Rust tests
+        env:
+          DOLT_DISABLE_EVENT_FLUSH: "1"
+          WH_DOLT_INTEGRATION: "1"
         run: cargo test
 
       - name: 3 - Ruff lint
@@ -91,10 +112,15 @@ jobs:
           test -L "$root/bin/wh"
           test "$(readlink "$root/bin/wh")" = "$root/bin/whetstone"
           "$root/bin/wh" --version | grep -q '^whetstone '
-          "$root/bin/wh" --json | jq -e '
-            .status == "foundation" and
-            .available == [] and
-            .target_workflows == ["init", "dash", "change", "check", "pull", "push"]
+          orientation=$("$root/bin/wh" --json)
+          echo "$orientation" | jq -e '
+            .schema == "whetstone.command-response.v1" and
+            .schema_version == 1 and
+            .state == "success" and
+            .workflow == "orientation" and
+            .data.read_only == true and
+            .data.workflows == ["init", "dash", "change", "check", "pull", "push"] and
+            .permitted_actions == ["wh init", "wh dash", "wh change", "wh check", "wh pull", "wh push"]
           ' >/dev/null
           if "$root/bin/wh" status >/dev/null 2>&1; then
             echo 'retired command unexpectedly executed' >&2

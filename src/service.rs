@@ -177,7 +177,7 @@ pub struct RequiredSnapshot {
     pub trust_digest: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceResponse {
     pub schema: String,

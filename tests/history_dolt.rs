@@ -116,8 +116,8 @@ fn existing_dolt_repositories_load_without_writes_and_preserve_visibility() {
     drop(private);
     drop(shareable);
 
-    let private_status_before = command(&private_root, "dolt", &["status", "--porcelain"]);
-    let shareable_status_before = command(&shareable_root, "dolt", &["status", "--porcelain"]);
+    let private_status_before = command(&private_root, "dolt", &["status"]);
+    let shareable_status_before = command(&shareable_root, "dolt", &["status"]);
     let service = HistoryInspectionService::open(&layout).expect("open existing history");
 
     let team_view = service
@@ -162,11 +162,11 @@ fn existing_dolt_repositories_load_without_writes_and_preserve_visibility() {
     assert_eq!(private_view.decision_history.items.len(), 1);
 
     assert_eq!(
-        command(&private_root, "dolt", &["status", "--porcelain"]),
+        command(&private_root, "dolt", &["status"]),
         private_status_before
     );
     assert_eq!(
-        command(&shareable_root, "dolt", &["status", "--porcelain"]),
+        command(&shareable_root, "dolt", &["status"]),
         shareable_status_before
     );
 }
