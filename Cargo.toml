@@ -12,6 +12,7 @@ include = [
     "/README.md",
     "/CHANGELOG.md",
     "/SKILL.md",
+    "/assets/dashboard/**",
     "/src/**",
     "/references/agreement-record-v1.schema.json",
     "/references/command-response-v1.schema.json",

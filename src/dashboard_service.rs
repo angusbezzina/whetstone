@@ -5,8 +5,10 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use crate::dashboard::{BackendResponse, DashboardBackend};
+use crate::domain::ContentDigest;
+use crate::history::HistoryCursor;
 use crate::service::{
-    BasicRequest, ChangeKind, ChangeRequest, CheckRequest, CommandService, InitAction, InitRequest,
+    ChangeKind, ChangeRequest, CheckRequest, CommandService, DashRequest, InitAction, InitRequest,
     ServiceRequest, ServiceResponse,
 };
 
@@ -42,10 +44,25 @@ impl CommandDashboardBackend {
 }
 
 impl DashboardBackend for CommandDashboardBackend {
-    fn inspect(&self) -> BackendResponse {
-        Self::response(self.service.execute(ServiceRequest::Dash(BasicRequest {
+    fn inspect(&self, request_body: &[u8]) -> BackendResponse {
+        let query = if request_body.is_empty() {
+            DashboardInspectRequest::default()
+        } else {
+            match serde_json::from_slice(request_body) {
+                Ok(query) => query,
+                Err(error) => {
+                    return invalid_request(format!("invalid dashboard inspection: {error}"));
+                }
+            }
+        };
+        Self::response(self.service.execute(ServiceRequest::Dash(DashRequest {
             project_dir: self.project_dir.clone(),
             request_id: self.inspect_request_id.clone(),
+            search: query.search,
+            as_of: query.as_of,
+            history_after: query.history_after,
+            page_size: query.page_size,
+            expected_snapshot: query.expected_snapshot,
         })))
     }
 
@@ -55,6 +72,28 @@ impl DashboardBackend for CommandDashboardBackend {
             Err(error) => return invalid_request(format!("invalid dashboard command: {error}")),
         };
         Self::response(self.service.execute(request))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct DashboardInspectRequest {
+    search: Option<String>,
+    as_of: Option<String>,
+    history_after: Option<HistoryCursor>,
+    page_size: usize,
+    expected_snapshot: Option<ContentDigest>,
+}
+
+impl Default for DashboardInspectRequest {
+    fn default() -> Self {
+        Self {
+            search: None,
+            as_of: None,
+            history_after: None,
+            page_size: 100,
+            expected_snapshot: None,
+        }
     }
 }
 
@@ -111,6 +150,8 @@ enum DashboardCommand {
         expected_revision: Option<u64>,
         #[serde(default)]
         resume_token: Option<String>,
+        #[serde(default)]
+        preview: bool,
     },
     Check {
         #[serde(default)]
@@ -168,6 +209,7 @@ impl DashboardCommand {
                 conflicts,
                 expected_revision,
                 resume_token,
+                preview,
             } => ServiceRequest::Change(ChangeRequest {
                 project_dir,
                 request_id,
@@ -182,6 +224,7 @@ impl DashboardCommand {
                 conflicts,
                 expected_revision,
                 resume_token,
+                preview,
             }),
             Self::Check {
                 request_id,

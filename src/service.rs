@@ -18,7 +18,9 @@ use crate::domain::{
     ProvenanceKind, RecordBody, RecordId, Scope, VerificationAxis, VerificationReceipt,
     SCHEMA_VERSION_V1,
 };
-use crate::history::{AccessBoundary, HistoryInspectionRequest, HistoryInspectionService};
+use crate::history::{
+    AccessBoundary, HistoryCursor, HistoryError, HistoryInspectionRequest, HistoryInspectionService,
+};
 use crate::onboarding;
 use crate::storage::{AppendRequest, DoltRepository, ProjectLayout, StorageError, StoreKind};
 use crate::verification::{
@@ -33,7 +35,7 @@ pub const RESPONSE_SCHEMA: &str = "whetstone.command-response.v1";
 pub enum ServiceRequest {
     Orientation,
     Init(InitRequest),
-    Dash(BasicRequest),
+    Dash(DashRequest),
     Change(ChangeRequest),
     Check(CheckRequest),
     Pull(BasicRequest),
@@ -44,6 +46,31 @@ pub enum ServiceRequest {
 pub struct BasicRequest {
     pub project_dir: PathBuf,
     pub request_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DashRequest {
+    pub project_dir: PathBuf,
+    pub request_id: Option<String>,
+    pub search: Option<String>,
+    pub as_of: Option<String>,
+    pub history_after: Option<HistoryCursor>,
+    pub page_size: usize,
+    pub expected_snapshot: Option<ContentDigest>,
+}
+
+impl DashRequest {
+    pub fn basic(project_dir: PathBuf, request_id: Option<String>) -> Self {
+        Self {
+            project_dir,
+            request_id,
+            search: None,
+            as_of: None,
+            history_after: None,
+            page_size: 100,
+            expected_snapshot: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +121,7 @@ pub struct ChangeRequest {
     pub conflicts: Vec<String>,
     pub expected_revision: Option<u64>,
     pub resume_token: Option<String>,
+    pub preview: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -275,15 +303,15 @@ impl CommandService {
         ];
         response.data = json!({
             "workflows": ["init", "dash", "change", "check", "pull", "push"],
-            "available_now": ["init", "change", "check"],
-            "unavailable_until_milestone": {"dash": "M1.10", "pull": "M2.1", "push": "M2.1"},
+            "available_now": ["init", "dash", "change", "check"],
+            "unavailable_until_milestone": {"pull": "M2.1", "push": "M2.1"},
             "read_only": true,
             "lean_baseline_revision": "2c3f0a3bb66d2ffa89c7b2f300b864a3ee8fea48",
         });
         response
     }
 
-    fn dash(&self, request: BasicRequest) -> ServiceResponse {
+    fn dash(&self, request: DashRequest) -> ServiceResponse {
         let layout = match ProjectLayout::resolve(&request.project_dir, None) {
             Ok(layout) => layout,
             Err(error) => return project_error("dash", request.request_id, error),
@@ -305,26 +333,22 @@ impl CommandService {
                 )
             }
         };
-        let principal = PrincipalRef {
-            kind: PrincipalKind::LocalUser,
-            stable_id: format!(
-                "local:{}",
-                &format!("{:x}", Sha256::digest(layout.project_id().as_bytes()))[..20]
-            ),
-            display_name: None,
-        };
+        let as_of = request.as_of.unwrap_or_else(utc_now);
+        let page_size = request.page_size.clamp(1, 200);
+        let private_store_exists = layout.store_path(StoreKind::Private).exists();
         let history = HistoryInspectionService::open(&layout).and_then(|service| {
             service.inspect(&HistoryInspectionRequest {
                 project: format!("project-{}", &layout.project_id()[..12]),
-                as_of: utc_now(),
-                access: AccessBoundary::Private { principal },
-                search: None,
-                history_after: None,
-                page_size: 100,
-                expected_snapshot: None,
+                as_of,
+                access: AccessBoundary::PrivateStore,
+                search: request.search,
+                history_after: request.history_after,
+                page_size,
+                expected_snapshot: request.expected_snapshot,
                 redact_private_before: None,
             })
         });
+        let progress = onboarding_progress(&layout);
         let mut response = ServiceResponse::new(
             request_id,
             "dash",
@@ -332,16 +356,82 @@ impl CommandService {
             "Read-only project shape and decision history are ready.",
         );
         response.permitted_actions = vec!["wh change".into(), "wh check".into()];
-        response.data = match history {
-            Ok(history) => json!({"setup": setup, "history": history, "read_only": true}),
-            Err(error) => json!({
-                "setup": setup,
-                "history": null,
-                "history_state": "not_initialized",
-                "history_detail": error.to_string(),
-                "read_only": true
-            }),
+        let (history, history_state, history_detail) = match history {
+            Ok(history) => (Some(history), "available", None),
+            Err(error) if !private_store_exists => {
+                (None, "not_initialized", Some(error.to_string()))
+            }
+            Err(error @ HistoryError::StaleSnapshot { .. }) => {
+                response.state = ServiceState::Stale;
+                response.summary =
+                    "Decision history changed; refresh before continuing this exact view.".into();
+                (None, "stale", Some(error.to_string()))
+            }
+            Err(error) => {
+                response.state = ServiceState::Unknown;
+                response.summary =
+                    "Decision history is unavailable; no current-state claim was inferred.".into();
+                (None, "unavailable", Some(error.to_string()))
+            }
         };
+        let (progress, progress_state, progress_detail) = match progress {
+            Ok(progress) => (Some(progress), "available", None),
+            Err(error) => (None, "unavailable", Some(error.to_string())),
+        };
+        let current_projection = match progress
+            .as_ref()
+            .map(|progress| dashboard_current_projection(&layout, progress))
+            .transpose()
+        {
+            Ok(projection) => projection,
+            Err(_error) => {
+                response.state = ServiceState::Unknown;
+                response.summary =
+                    "The current local agreement projection is unavailable; no state was inferred."
+                        .into();
+                response.evidence.push(ServiceEvidence {
+                    kind: "current_projection_unavailable".into(),
+                    locator: layout.store_path(StoreKind::Private).display().to_string(),
+                    digest: None,
+                });
+                None
+            }
+        };
+        if let Some(progress) = &progress {
+            response.blocking_questions = progress
+                .missing_decisions
+                .iter()
+                .map(|decision| format!("What should the project's {decision} be?"))
+                .collect();
+        }
+        if response.blocking_questions.is_empty() {
+            if let Some(prompt) = current_projection
+                .as_ref()
+                .and_then(|projection| projection.workspace.needed_decision.as_ref())
+            {
+                response.blocking_questions.push(prompt.question.clone());
+            }
+        }
+        response.data = json!({
+            "setup": setup,
+            "progress": progress,
+            "progress_state": progress_state,
+            "progress_detail": progress_detail,
+            "history": history,
+            "history_state": history_state,
+            "history_detail": history_detail,
+            "current": current_projection,
+            "workflows": [
+                {"name": "init", "state": "available", "effect": "inspect or establish private agreement"},
+                {"name": "dash", "state": "available", "effect": "inspect local system and history"},
+                {"name": "change", "state": "available", "effect": "propose a bounded local change"},
+                {"name": "check", "state": "available", "effect": "verify and return repair feedback"},
+                {"name": "pull", "state": "unavailable", "effect": "no remote changes are received"},
+                {"name": "push", "state": "unavailable", "effect": "nothing is published"}
+            ],
+            "lean_baseline_revision": LEAN_BASELINE_REVISION,
+            "read_only": true
+        });
         response
     }
 
@@ -798,13 +888,26 @@ impl CommandService {
             || request.impact.is_none()
             || request.expected_revision.is_none()
         {
-            return needs_input(
+            let mut response = needs_input(
                 "change",
                 request_id,
                 current_revision,
                 resume,
                 "Provide kind, record ID, content, rationale, source, expected effect, impact, expected revision, and the returned resume token.".into(),
             );
+            response.data = json!({
+                "current_record": current,
+                "base_revision": current_revision,
+                "effects": {
+                    "private_record_write": true,
+                    "private_proposal_write": true,
+                    "team_share": false,
+                    "team_activation": false,
+                    "platform_configuration_write": false,
+                    "requires_later_review_to_share": true
+                }
+            });
+            return response;
         }
         let narrative = match change_narrative(&request) {
             Ok(narrative) => narrative,
@@ -845,6 +948,54 @@ impl CommandService {
                 resume,
                 "The change targets a stale agreement revision.",
             );
+        }
+        if request.preview {
+            if existing.is_some() {
+                return idempotency_conflict("change", request_id.clone(), &request_id);
+            }
+            let mut response = ServiceResponse::new(
+                request_id,
+                "change",
+                ServiceState::NeedsDecision,
+                "Review the exact local proposal and its bound base revision before recording it.",
+            );
+            response.expected_revision = Some(current_revision);
+            response.resume_token = Some(resume);
+            response.blocking_questions = vec![
+                "Does this exact before-and-after change express the intended decision and consequences?"
+                    .into(),
+            ];
+            response.permitted_actions = vec![
+                "repeat this exact request with preview=false to record it".into(),
+                "cancel without changing project state".into(),
+            ];
+            response.data = json!({
+                "preview_only": true,
+                "record_id": record_id,
+                "base_revision": current_revision,
+                "diff": {
+                    "before": current.as_ref().map(|record| &record.body),
+                    "after": &body,
+                },
+                "explanation": {
+                    "rationale": narrative.rationale,
+                    "source": narrative.source,
+                    "expected_effect": narrative.expected_effect,
+                    "impact": narrative.impact,
+                    "examples": narrative.examples,
+                    "conflicts": narrative.conflicts,
+                    "owner": current.as_ref().map(|record| &record.owner),
+                },
+                "effects": {
+                    "private_record_write_on_confirm": true,
+                    "private_proposal_write_on_confirm": true,
+                    "team_share": false,
+                    "team_activation": false,
+                    "platform_configuration_write": false,
+                    "requires_later_review_to_share": true
+                }
+            });
+            return response;
         }
         let idempotent_replay = existing.is_some();
         let base_revision = existing
@@ -1207,6 +1358,194 @@ struct OnboardingProgress {
     shared: bool,
     platform_configuration_writes: Vec<String>,
     lean_baseline_revision: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DashboardAgreementProjection {
+    state: String,
+    team_activation: String,
+    mission: Option<AgreementRecord>,
+    core_values: Option<AgreementRecord>,
+    implementation_philosophy: Option<AgreementRecord>,
+    initial_safeguard: Option<AgreementRecord>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DashboardWorkspaceProjection {
+    latest_verification: Option<AgreementRecord>,
+    verification_currentness: String,
+    latest_repair: Option<AgreementRecord>,
+    repair_currentness: String,
+    latest_observation: Option<AgreementRecord>,
+    required_policy: String,
+    installed_state: String,
+    experimental_local_drafts: usize,
+    delivered_context_revision: Option<String>,
+    needed_decision: Option<DashboardDecisionPrompt>,
+    pending_operations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DashboardDecisionPrompt {
+    question: String,
+    owner: String,
+    consequence: String,
+    permitted_next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DashboardCurrentProjection {
+    local_agreement: DashboardAgreementProjection,
+    workspace: DashboardWorkspaceProjection,
+}
+
+fn dashboard_current_projection(
+    layout: &ProjectLayout,
+    progress: &OnboardingProgress,
+) -> Result<DashboardCurrentProjection, StorageError> {
+    let store_path = layout.store_path(StoreKind::Private);
+    if !store_path.join(".dolt").is_dir() {
+        return Ok(DashboardCurrentProjection {
+            local_agreement: DashboardAgreementProjection {
+                state: "not_initialized".into(),
+                team_activation: "not_configured".into(),
+                mission: None,
+                core_values: None,
+                implementation_philosophy: None,
+                initial_safeguard: None,
+            },
+            workspace: DashboardWorkspaceProjection {
+                latest_verification: None,
+                verification_currentness: "unknown_without_check".into(),
+                latest_repair: None,
+                repair_currentness: "unproven".into(),
+                latest_observation: None,
+                required_policy: "not_configured".into(),
+                installed_state: "not_installed".into(),
+                experimental_local_drafts: 0,
+                delivered_context_revision: None,
+                needed_decision: Some(DashboardDecisionPrompt {
+                    question: "What mission, values, philosophy, owner, safeguard, scope, and revision triggers should govern this project?".into(),
+                    owner: "project owner (not yet identified)".into(),
+                    consequence: "The private project agreement remains incomplete and no initial safeguard can be treated as accepted.".into(),
+                    permitted_next_action: "review and confirm the eight wh init owner decisions".into(),
+                }),
+                pending_operations: vec!["complete the explicit private onboarding agreement".into()],
+            },
+        });
+    }
+    let repository = DoltRepository::open_existing(&store_path, StoreKind::Private)?;
+    let records = repository.all_records()?;
+    let canonical = |id: &str| -> Result<Option<AgreementRecord>, StorageError> {
+        let id = RecordId::new(id).map_err(StorageError::Domain)?;
+        repository.latest(&id)
+    };
+    let latest_matching = |predicate: fn(&RecordBody) -> bool| {
+        records
+            .iter()
+            .filter(|record| predicate(&record.body))
+            .max_by(|left, right| {
+                (
+                    left.provenance.recorded_at.as_str(),
+                    left.id.as_str(),
+                    left.revision,
+                )
+                    .cmp(&(
+                        right.provenance.recorded_at.as_str(),
+                        right.id.as_str(),
+                        right.revision,
+                    ))
+            })
+            .cloned()
+    };
+    let latest_verification =
+        latest_matching(|body| matches!(body, RecordBody::VerificationReceipt(_)));
+    let latest_repair = latest_matching(|body| matches!(body, RecordBody::RepairSession(_)));
+    let latest_observation =
+        latest_matching(|body| matches!(body, RecordBody::ObservationReceipt(_)));
+    let repair_current = match (&latest_repair, &progress.repair_proof) {
+        (Some(record), Some(proof)) => record
+            .reference()
+            .is_ok_and(|reference| &reference == proof),
+        _ => false,
+    };
+    let draft_count = records
+        .iter()
+        .filter(|record| {
+            matches!(
+                &record.body,
+                RecordBody::Proposal(proposal) if proposal.state == ProposalState::Draft
+            )
+        })
+        .count();
+    let mut pending_operations = progress.missing_decisions.clone();
+    if progress.repair_proof.is_none() {
+        pending_operations.push("prove one current known-bad repair and exact recheck".into());
+    }
+    if draft_count > 0 {
+        pending_operations.push(format!("review {draft_count} local draft proposal(s)"));
+    }
+    let needed_decision = progress
+        .missing_decisions
+        .first()
+        .map(|decision| DashboardDecisionPrompt {
+            question: format!("What should the project's {decision} be?"),
+            owner: canonical("mission.project")
+                .ok()
+                .flatten()
+                .and_then(|record| record.owner.display_name)
+                .unwrap_or_else(|| "project owner (not yet identified)".into()),
+            consequence: format!(
+                "The private agreement remains incomplete until {decision} is explicitly confirmed."
+            ),
+            permitted_next_action: "review the exact onboarding proposal, then confirm or cancel it"
+                .into(),
+        })
+        .or_else(|| {
+            progress.repair_proof.is_none().then(|| DashboardDecisionPrompt {
+                question: "Can the accountable owner authorize and accept one bounded known-bad to repair to exact-recheck proof?".into(),
+                owner: canonical("mission.project")
+                    .ok()
+                    .flatten()
+                    .and_then(|record| record.owner.display_name)
+                    .unwrap_or_else(|| "project owner (not yet identified)".into()),
+                consequence: "Until that proof is accepted, the feedback loop remains unproven and setup cannot be represented as complete.".into(),
+                permitted_next_action: "run one scoped wh check repair loop under host authority, then inspect setup again".into(),
+            })
+        });
+    Ok(DashboardCurrentProjection {
+        local_agreement: DashboardAgreementProjection {
+            state: if progress.agreement_complete {
+                "owner_approved_private".into()
+            } else {
+                "incomplete".into()
+            },
+            team_activation: "not_configured".into(),
+            mission: canonical("mission.project")?,
+            core_values: canonical("value.core")?,
+            implementation_philosophy: canonical("philosophy.implementation")?,
+            initial_safeguard: canonical("guidance.initial-safeguard")?,
+        },
+        workspace: DashboardWorkspaceProjection {
+            latest_verification,
+            verification_currentness: "unknown_without_exact_recheck".into(),
+            latest_repair,
+            repair_currentness: if repair_current {
+                "current_exact_proof".into()
+            } else if progress.repair_proof.is_some() {
+                "stale".into()
+            } else {
+                "unproven".into()
+            },
+            latest_observation,
+            required_policy: "not_configured".into(),
+            installed_state: "private_local_store".into(),
+            experimental_local_drafts: draft_count,
+            delivered_context_revision: None,
+            needed_decision,
+            pending_operations,
+        },
+    })
 }
 
 fn onboarding_progress(layout: &ProjectLayout) -> Result<OnboardingProgress, StorageError> {

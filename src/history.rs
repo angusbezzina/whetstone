@@ -36,7 +36,14 @@ pub struct HistoryRecord {
 #[serde(tag = "visibility", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AccessBoundary {
     Team,
-    Private { principal: PrincipalRef },
+    /// The authenticated local-store owner may inspect all records in that
+    /// private repository regardless of which accountable principal authored
+    /// an individual record. Transport authentication must establish this
+    /// boundary; serialized records can never grant it.
+    PrivateStore,
+    Private {
+        principal: PrincipalRef,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +98,7 @@ pub enum LinkState {
 pub struct HistoryItem {
     pub reference: RecordRef,
     pub recorded_at: String,
+    pub visibility: HistoryVisibility,
     pub record: Option<AgreementRecord>,
     pub redaction_reason: Option<String>,
     pub links: Vec<LinkState>,
@@ -198,12 +206,31 @@ impl HistoryInspectionService {
             StoreKind::Private,
         )
         .map_err(|error| HistoryError::Storage(error.to_string()))?;
-        let shareable = DoltRepository::open_existing(
-            &layout.store_path(StoreKind::Shareable),
-            StoreKind::Shareable,
-        )
-        .map_err(|error| HistoryError::Storage(error.to_string()))?;
+        let shareable_path = layout.store_path(StoreKind::Shareable);
+        if !shareable_path.exists() {
+            return Self::from_private_repository(&private);
+        }
+        let shareable = DoltRepository::open_existing(&shareable_path, StoreKind::Shareable)
+            .map_err(|error| HistoryError::Storage(error.to_string()))?;
         Self::from_repositories(&private, &shareable)
+    }
+
+    fn from_private_repository(private: &DoltRepository) -> Result<Self, HistoryError> {
+        if private.kind() != StoreKind::Private {
+            return Err(HistoryError::InvalidStoreBoundary);
+        }
+        let records = private
+            .all_records()
+            .map_err(|error| HistoryError::Storage(error.to_string()))?
+            .into_iter()
+            .map(|record| HistoryRecord {
+                visibility: HistoryVisibility::Private,
+                record,
+            })
+            .collect();
+        Ok(Self {
+            index: HistoryIndex::build(records)?,
+        })
     }
 
     pub fn from_repositories(
@@ -696,6 +723,7 @@ impl HistoryIndex {
         Ok(HistoryItem {
             reference,
             recorded_at: stored.record.provenance.recorded_at.clone(),
+            visibility: stored.visibility,
             record: (!redacted).then(|| stored.record.clone()),
             redaction_reason: redacted.then(|| "retention display boundary".into()),
             links,
@@ -740,8 +768,10 @@ fn is_visible(stored: &HistoryRecord, access: &AccessBoundary) -> bool {
     match (stored.visibility, access) {
         (HistoryVisibility::Team, _) => true,
         (HistoryVisibility::Private, AccessBoundary::Team) => false,
+        (HistoryVisibility::Private, AccessBoundary::PrivateStore) => true,
         (HistoryVisibility::Private, AccessBoundary::Private { principal }) => {
-            &stored.record.owner == principal
+            stored.record.owner.kind == principal.kind
+                && stored.record.owner.stable_id == principal.stable_id
         }
     }
 }

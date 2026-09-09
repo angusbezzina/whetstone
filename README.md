@@ -22,8 +22,10 @@ read-only orientation and never starts a TUI.
 ```bash
 wh init --json
 wh change --json
+wh change --json --record-id guidance.example   # bind an exact base
 wh check --json --path src
 wh dash --json       # inspect locally; editing requires explicit edit mode
+wh dash --json --search "architecture" --as-of 2026-09-09T12:00:00Z
 wh pull --json       # unavailable until M2.1
 wh push --json       # unavailable until M2.1
 ```
@@ -38,6 +40,18 @@ philosophy, owner, initial safeguard and scope, and revision triggers; it writes
 those records atomically without editing project files or creating shared
 state. Setup remains incomplete until the bounded repair loop has a current
 known-bad to known-good proof for the exact code snapshot.
+
+Interactive `wh dash` serves three dependency-free local assets and presents
+five focused views: a printable One-pager, goal-first Workspace, resumable
+Setup, the six Workflows, and separate current-context/complete Decisions
+views. Inspection is credential-free on the loopback listener; mutation
+requires the one-time browser handoff and a second explicit edit-mode step.
+Search and as-of queries execute through the same typed history service as
+`wh dash --json`; they never replace the unfiltered current-state projection.
+Setup resumes from persisted owner decisions, and change forms bind a base
+before authoring, request a typed server-side before/after preview, then freeze
+the exact request and capabilities before confirmation. Pull and push are
+visible but disabled, never simulated.
 
 Three hidden developer gates keep the surviving deterministic kernel
 non-vacuous while the rest of the MVP is built:

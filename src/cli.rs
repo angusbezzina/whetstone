@@ -18,8 +18,8 @@ use crate::repair_host::{
 #[cfg(unix)]
 use crate::repair_transport::HostSocketAuthorityVerifier;
 use crate::service::{
-    BasicRequest, ChangeKind, ChangeRequest, CheckRequest, CommandService, InitAction, InitRequest,
-    ServiceRequest, ServiceResponse, ServiceState,
+    BasicRequest, ChangeKind, ChangeRequest, CheckRequest, CommandService, DashRequest, InitAction,
+    InitRequest, ServiceRequest, ServiceResponse, ServiceState,
 };
 use crate::storage::ProjectLayout;
 use crate::{check, dashboard, dashboard_service, output, rules};
@@ -78,6 +78,15 @@ enum Command {
         project_dir: PathBuf,
         #[arg(long)]
         request_id: Option<String>,
+        /// Filter the durable decision history without changing active context.
+        #[arg(long)]
+        search: Option<String>,
+        /// Inspect current context and history at an RFC 3339 UTC instant.
+        #[arg(long)]
+        as_of: Option<String>,
+        /// Bound the decision-history page returned by the shared service.
+        #[arg(long, default_value_t = 100, value_parser = parse_page_size)]
+        page_size: usize,
         /// Keep the dashboard read-only, including for the launched session.
         #[arg(long)]
         read_only: bool,
@@ -114,6 +123,9 @@ enum Command {
         expected_revision: Option<u64>,
         #[arg(long = "resume")]
         resume_token: Option<String>,
+        /// Inspect the exact before/after proposal without recording it.
+        #[arg(long)]
+        preview: bool,
     },
 
     /// Evaluate applicable deterministic rules without repairing or publishing.
@@ -228,6 +240,17 @@ enum ChangeKindArg {
     Standard,
 }
 
+fn parse_page_size(value: &str) -> Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| "page size must be an integer from 1 through 200".to_string())?;
+    if (1..=200).contains(&parsed) {
+        Ok(parsed)
+    } else {
+        Err("page size must be an integer from 1 through 200".into())
+    }
+}
+
 impl From<ChangeKindArg> for ChangeKind {
     fn from(value: ChangeKindArg) -> Self {
         match value {
@@ -279,13 +302,21 @@ pub fn run() -> i32 {
         Some(Command::Dash {
             project_dir,
             request_id,
+            search,
+            as_of,
+            page_size,
             read_only,
             no_open,
         }) => {
             if explicit_json {
-                service.execute(ServiceRequest::Dash(BasicRequest {
+                service.execute(ServiceRequest::Dash(DashRequest {
                     project_dir,
                     request_id,
+                    search,
+                    as_of,
+                    history_after: None,
+                    page_size,
+                    expected_snapshot: None,
                 }))
             } else {
                 return run_dashboard(project_dir, request_id, read_only, no_open);
@@ -305,6 +336,7 @@ pub fn run() -> i32 {
             conflicts,
             expected_revision,
             resume_token,
+            preview,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
             project_dir,
             request_id,
@@ -319,6 +351,7 @@ pub fn run() -> i32 {
             conflicts,
             expected_revision,
             resume_token,
+            preview,
         })),
         Some(Command::Check {
             project_dir,

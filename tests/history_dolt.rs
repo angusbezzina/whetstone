@@ -170,3 +170,49 @@ fn existing_dolt_repositories_load_without_writes_and_preserve_visibility() {
         shareable_status_before
     );
 }
+
+#[test]
+fn private_only_history_is_inspectable_without_creating_shareable_state() {
+    if !integration_enabled() {
+        eprintln!("skipped: set WH_DOLT_INTEGRATION=1 for pinned Dolt integration");
+        return;
+    }
+    let (_temp, layout) = layout_fixture();
+    let private =
+        DoltRepository::initialize(&layout.store_path(StoreKind::Private), StoreKind::Private)
+            .expect("private repository");
+    private
+        .append(
+            &record("value.private", "solo-value", "Private agreement"),
+            None,
+        )
+        .expect("private record");
+    let shareable_path = layout.store_path(StoreKind::Shareable);
+    assert!(!shareable_path.exists());
+
+    let service = HistoryInspectionService::open(&layout).expect("private-only history service");
+    let inspection = service
+        .inspect(&HistoryInspectionRequest {
+            project: "fixture".into(),
+            as_of: "2026-09-09T13:00:00Z".into(),
+            access: AccessBoundary::Private {
+                principal: PrincipalRef {
+                    kind: PrincipalKind::LocalUser,
+                    stable_id: "local-owner".into(),
+                    display_name: None,
+                },
+            },
+            search: None,
+            history_after: None,
+            page_size: 10,
+            expected_snapshot: None,
+            redact_private_before: None,
+        })
+        .expect("inspect private-only history");
+    assert_eq!(inspection.decision_history.items.len(), 1);
+    assert_eq!(
+        inspection.decision_history.items[0].reference.id.as_str(),
+        "value.private"
+    );
+    assert!(!shareable_path.exists());
+}

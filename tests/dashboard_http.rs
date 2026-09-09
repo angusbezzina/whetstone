@@ -8,7 +8,11 @@ use std::time::Duration;
 
 use whetstone::dashboard::{BackendResponse, DashboardBackend, DashboardHandle, DashboardMode};
 use whetstone::dashboard_service::CommandDashboardBackend;
-use whetstone::service::{BasicRequest, CommandService, InitAction, InitRequest, ServiceRequest};
+use whetstone::service::{
+    ChangeKind, ChangeRequest, CheckRequest, CommandService, DashRequest, InitAction, InitRequest,
+    ServiceRequest,
+};
+use whetstone::storage::{ProjectLayout, StoreKind};
 
 #[derive(Default)]
 struct Backend {
@@ -17,7 +21,7 @@ struct Backend {
 }
 
 impl DashboardBackend for Backend {
-    fn inspect(&self) -> BackendResponse {
+    fn inspect(&self, _request_body: &[u8]) -> BackendResponse {
         self.inspections.fetch_add(1, Ordering::Relaxed);
         BackendResponse::json(
             200,
@@ -77,6 +81,43 @@ fn init_git(root: &Path) {
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn install_private_agreement(root: &Path) {
+    let inspection = CommandService.execute(ServiceRequest::Init(InitRequest {
+        project_dir: root.to_path_buf(),
+        request_id: Some("dashboard-agreement".into()),
+        action: InitAction::Inspect,
+        expected_revision: None,
+        resume_token: None,
+        mission: None,
+        desired_outcome: None,
+        values: None,
+        philosophy: None,
+        owner: None,
+        initial_safeguard: None,
+        safeguard_scope: None,
+        revision_triggers: None,
+    }));
+    let accepted = CommandService.execute(ServiceRequest::Init(InitRequest {
+        project_dir: root.to_path_buf(),
+        request_id: Some("dashboard-agreement".into()),
+        action: InitAction::Agree,
+        expected_revision: inspection.expected_revision,
+        resume_token: inspection.resume_token,
+        mission: Some("Make project intent inspectable.".into()),
+        desired_outcome: Some("Reduce avoidable rework.".into()),
+        values: Some("Evidence before assertion.".into()),
+        philosophy: Some("Use narrow deterministic boundaries.".into()),
+        owner: Some("Platform lead".into()),
+        initial_safeguard: Some("Never weaken a failing check to get green.".into()),
+        safeguard_scope: Some("All repository changes".into()),
+        revision_triggers: Some("Mission, architecture, or repeated friction".into()),
+    }));
+    assert_eq!(
+        accepted.state,
+        whetstone::service::ServiceState::NeedsDecision
     );
 }
 
@@ -219,6 +260,11 @@ fn traversal_oversize_and_security_header_fixtures_fail_closed() {
         .contains("access-control-allow-origin"));
     assert!(!page.contains("https://"));
 
+    let mut asset_bytes = page
+        .split_once("\r\n\r\n")
+        .expect("dashboard HTML body")
+        .1
+        .len();
     for path in ["/app.css", "/app.js"] {
         let asset = send(
             handle.address(),
@@ -226,7 +272,8 @@ fn traversal_oversize_and_security_header_fixtures_fail_closed() {
         );
         assert!(asset.starts_with("HTTP/1.1 200"), "{asset}");
         let body = asset.split_once("\r\n\r\n").expect("asset body").1;
-        assert!(body.len() < 16 * 1024, "{path} exceeds the startup budget");
+        assert!(body.len() < 24 * 1024, "{path} exceeds the startup budget");
+        asset_bytes += body.len();
         assert!(
             !body.contains("http://"),
             "{path} has a third-party request"
@@ -236,6 +283,10 @@ fn traversal_oversize_and_security_header_fixtures_fail_closed() {
             "{path} has a third-party request"
         );
     }
+    assert!(
+        asset_bytes < 24 * 1024,
+        "complete dashboard HTML, CSS, and JavaScript exceed 24 KiB"
+    );
 }
 
 #[test]
@@ -268,7 +319,7 @@ fn hosted_mode_refuses_unsafe_configuration_and_remains_read_only() {
         handle.address(),
         "GET / HTTP/1.1\r\nHost: dash.example.test\r\nX-Forwarded-Proto: https\r\nX-Whetstone-Authenticated: true\r\n\r\n",
     );
-    assert!(response.starts_with("HTTP/1.1 200"));
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     let inspection = send(
         handle.address(),
         "GET /api/inspect HTTP/1.1\r\nHost: dash.example.test\r\nX-Forwarded-Proto: https\r\nX-Whetstone-Authenticated: true\r\n\r\n",
@@ -308,10 +359,10 @@ fn command_backend_inspection_matches_the_cli_service_exactly() {
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
     let request_id = Some("dashboard-parity".to_string());
-    let expected = CommandService.execute(ServiceRequest::Dash(BasicRequest {
-        project_dir: temp.path().to_path_buf(),
-        request_id: request_id.clone(),
-    }));
+    let expected = CommandService.execute(ServiceRequest::Dash(DashRequest::basic(
+        temp.path().to_path_buf(),
+        request_id.clone(),
+    )));
     let handle = DashboardHandle::start(
         DashboardMode::Local {
             allow_mutations: false,
@@ -477,4 +528,356 @@ fn dashboard_init_inspection_is_identical_to_the_cli_service_path() {
         serde_json::to_value(direct).expect("service JSON")
     );
     assert!(!temp.path().join(".git/whetstone").exists());
+}
+
+#[test]
+fn private_only_dashboard_queries_are_typed_filtered_and_do_not_create_shareable_state() {
+    let temp = tempfile::tempdir().expect("temp project");
+    init_git(temp.path());
+    install_private_agreement(temp.path());
+    let layout = ProjectLayout::resolve(temp.path(), None).expect("project layout");
+    assert!(!layout.store_path(StoreKind::Shareable).exists());
+
+    let direct = CommandService.execute(ServiceRequest::Dash(DashRequest {
+        project_dir: temp.path().to_path_buf(),
+        request_id: Some("dashboard-filter".into()),
+        search: Some("Evidence before assertion".into()),
+        as_of: Some("2099-01-01T00:00:00Z".into()),
+        history_after: None,
+        page_size: 7,
+        expected_snapshot: None,
+    }));
+    let handle = DashboardHandle::start(
+        DashboardMode::Local {
+            allow_mutations: false,
+        },
+        Arc::new(CommandDashboardBackend::new(
+            temp.path().to_path_buf(),
+            Some("dashboard-filter".into()),
+        )),
+    )
+    .expect("dashboard");
+    let host = host(&handle);
+    let body = serde_json::json!({
+        "search": "Evidence before assertion",
+        "as_of": "2099-01-01T00:00:00Z",
+        "page_size": 7
+    });
+    let serialized = serde_json::to_string(&body).expect("query JSON");
+    let response = send(
+        handle.address(),
+        &format!(
+            "POST /api/inspect HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nSec-Fetch-Site: same-origin\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{serialized}",
+            serialized.len()
+        ),
+    );
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert_eq!(
+        response_body(&response),
+        serde_json::to_value(direct).expect("service JSON")
+    );
+    let body = response_body(&response);
+    let page = &body["data"]["history"]["decision_history"]["items"];
+    assert_eq!(page.as_array().map(Vec::len), Some(1));
+    assert_eq!(page[0]["record"]["record_type"], "core_value", "{page}");
+    assert_eq!(
+        body["data"]["current"]["local_agreement"]["mission"]["record"]["statement"],
+        "Make project intent inspectable.",
+        "filtered history must never replace the independent current-state projection"
+    );
+    assert_eq!(
+        body["data"]["current"]["workspace"]["verification_currentness"],
+        "unknown_without_exact_recheck"
+    );
+    assert!(!layout.store_path(StoreKind::Shareable).exists());
+}
+
+#[test]
+fn dashboard_history_query_rejects_unknown_fields_and_marks_invalid_time_unknown() {
+    let temp = tempfile::tempdir().expect("temp project");
+    init_git(temp.path());
+    install_private_agreement(temp.path());
+    let handle = DashboardHandle::start(
+        DashboardMode::Local {
+            allow_mutations: false,
+        },
+        Arc::new(CommandDashboardBackend::new(
+            temp.path().to_path_buf(),
+            None,
+        )),
+    )
+    .expect("dashboard");
+    let host = host(&handle);
+    for (body, expected_status) in [
+        (serde_json::json!({"project_dir": "/"}), "HTTP/1.1 400"),
+        (serde_json::json!({"as_of": "not-a-time"}), "HTTP/1.1 200"),
+    ] {
+        let serialized = serde_json::to_string(&body).expect("query JSON");
+        let response = send(
+            handle.address(),
+            &format!(
+                "POST /api/inspect HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nSec-Fetch-Site: same-origin\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{serialized}",
+                serialized.len()
+            ),
+        );
+        assert!(response.starts_with(expected_status), "{response}");
+        if body.get("as_of").is_some() {
+            assert_eq!(response_body(&response)["state"], "unknown");
+            assert_eq!(
+                response_body(&response)["data"]["history_state"],
+                "unavailable"
+            );
+        }
+    }
+}
+
+#[test]
+fn dashboard_assets_expose_five_accessible_views_exact_review_and_safe_rendering() {
+    let handle = DashboardHandle::start(
+        DashboardMode::Local {
+            allow_mutations: false,
+        },
+        Arc::new(Backend::default()),
+    )
+    .expect("dashboard");
+    let host = host(&handle);
+    let html = send(
+        handle.address(),
+        &format!("GET / HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+    );
+    let html = html.split_once("\r\n\r\n").expect("HTML body").1;
+    assert!(html.contains("role=tabpanel"));
+    for view in ["onepager", "workspace", "setup", "workflows", "decisions"] {
+        assert!(html.contains(&format!("id={view}")), "missing {view}");
+    }
+    assert_eq!(html.matches("role=tab ").count(), 5);
+    assert!(html.contains("aria-live=polite"));
+    assert!(html.contains("review-dialog"));
+    assert!(html.contains("Print one-pager"));
+
+    let script = send(
+        handle.address(),
+        &format!("GET /app.js HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+    );
+    let script = script.split_once("\r\n\r\n").expect("script body").1;
+    assert!(script.contains("Object.freeze"));
+    assert!(script.contains("ArrowLeft"));
+    assert!(script.contains("returnFocus"));
+    assert!(script.contains("textContent"));
+    assert!(!script.contains("innerHTML"));
+    assert!(script.contains("sessionStorage.getItem(\"whetstone_csrf\")"));
+
+    let css = send(
+        handle.address(),
+        &format!("GET /app.css HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+    );
+    let css = css.split_once("\r\n\r\n").expect("CSS body").1;
+    for width in ["1024px", "768px", "390px", "320px"] {
+        assert!(css.contains(width), "missing {width} breakpoint");
+    }
+    assert!(css.contains("@media print"));
+}
+
+#[test]
+fn dashboard_change_check_conflict_and_permission_paths_preserve_service_semantics() {
+    let temp = tempfile::tempdir().expect("temp project");
+    init_git(temp.path());
+    install_private_agreement(temp.path());
+    let project = temp.path().to_path_buf();
+    let handle = DashboardHandle::start(
+        DashboardMode::Local {
+            allow_mutations: true,
+        },
+        Arc::new(CommandDashboardBackend::new(project.clone(), None)),
+    )
+    .expect("dashboard");
+    let host = host(&handle);
+
+    let unauthenticated = serde_json::json!({
+        "workflow": "change",
+        "request_id": "dashboard-change-probe",
+        "record_id": "guidance.local"
+    });
+    let serialized = serde_json::to_string(&unauthenticated).expect("command JSON");
+    let denied = send(
+        handle.address(),
+        &format!(
+            "POST /api/command HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nSec-Fetch-Site: same-origin\r\nContent-Length: {}\r\n\r\n{serialized}",
+            serialized.len()
+        ),
+    );
+    assert!(denied.starts_with("HTTP/1.1 401"), "{denied}");
+
+    let (cookie, csrf) = bootstrap(&handle);
+    let edit = send(
+        handle.address(),
+        &format!("POST /session/edit HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nSec-Fetch-Site: same-origin\r\nCookie: {cookie}\r\nX-Whetstone-CSRF: {csrf}\r\nContent-Length: 0\r\n\r\n"),
+    );
+    assert!(edit.starts_with("HTTP/1.1 200"), "{edit}");
+
+    let direct_probe = CommandService.execute(ServiceRequest::Change(ChangeRequest {
+        project_dir: project.clone(),
+        request_id: Some("dashboard-change-probe".into()),
+        kind: None,
+        record_id: Some("guidance.local".into()),
+        content: None,
+        rationale: None,
+        source: None,
+        expected_effect: None,
+        impact: None,
+        examples: vec![],
+        conflicts: vec![],
+        expected_revision: None,
+        resume_token: None,
+        preview: false,
+    }));
+    let probe = send(
+        handle.address(),
+        &format!("POST /api/command HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nSec-Fetch-Site: same-origin\r\nCookie: {cookie}\r\nX-Whetstone-CSRF: {csrf}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{serialized}", serialized.len()),
+    );
+    assert_eq!(
+        response_body(&probe),
+        serde_json::to_value(&direct_probe).expect("service JSON")
+    );
+
+    let accepted_request = ChangeRequest {
+        project_dir: project.clone(),
+        request_id: Some("dashboard-change-exact".into()),
+        kind: Some(ChangeKind::Guidance),
+        record_id: Some("guidance.local".into()),
+        content: Some("Use typed boundaries.".into()),
+        rationale: Some("Keep responsibilities explicit.".into()),
+        source: Some("owner:dashboard".into()),
+        expected_effect: Some("Fewer accidental dependencies.".into()),
+        impact: Some("Local engineering guidance.".into()),
+        examples: vec!["Use the shared service.".into()],
+        conflicts: vec![],
+        expected_revision: Some(0),
+        resume_token: Some(
+            CommandService
+                .execute(ServiceRequest::Change(ChangeRequest {
+                    project_dir: project.clone(),
+                    request_id: Some("dashboard-change-exact".into()),
+                    kind: None,
+                    record_id: Some("guidance.local".into()),
+                    content: None,
+                    rationale: None,
+                    source: None,
+                    expected_effect: None,
+                    impact: None,
+                    examples: vec![],
+                    conflicts: vec![],
+                    expected_revision: None,
+                    resume_token: None,
+                    preview: false,
+                }))
+                .resume_token
+                .expect("change token"),
+        ),
+        preview: false,
+    };
+    let preview_request = ChangeRequest {
+        preview: true,
+        ..accepted_request.clone()
+    };
+    let preview = CommandService.execute(ServiceRequest::Change(preview_request));
+    assert_eq!(
+        preview.state,
+        whetstone::service::ServiceState::NeedsDecision
+    );
+    assert_eq!(preview.data["preview_only"], true);
+    assert_eq!(preview.data["base_revision"], 0);
+    assert_eq!(preview.data["diff"]["before"], serde_json::Value::Null);
+    assert_eq!(preview.data["diff"]["after"]["record_type"], "guidance");
+    let layout = ProjectLayout::resolve(&project, None).expect("layout");
+    let private = whetstone::storage::DoltRepository::open_existing(
+        &layout.store_path(StoreKind::Private),
+        StoreKind::Private,
+    )
+    .expect("private store");
+    assert!(!private
+        .all_records()
+        .expect("records after preview")
+        .iter()
+        .any(|record| {
+            matches!(
+                record.id.as_str(),
+                "guidance.local" | "proposal.change.dashboard-change-exact"
+            )
+        }));
+    let accepted = CommandService.execute(ServiceRequest::Change(accepted_request.clone()));
+    assert_eq!(accepted.state, whetstone::service::ServiceState::Success);
+    let conflicting = ChangeRequest {
+        content: Some("Use implicit global boundaries.".into()),
+        ..accepted_request
+    };
+    let direct_conflict = CommandService.execute(ServiceRequest::Change(conflicting.clone()));
+    assert_eq!(
+        direct_conflict.state,
+        whetstone::service::ServiceState::Conflict
+    );
+    let body = serde_json::json!({
+        "workflow": "change",
+        "request_id": conflicting.request_id,
+        "kind": "guidance",
+        "record_id": conflicting.record_id,
+        "content": conflicting.content,
+        "rationale": conflicting.rationale,
+        "source": conflicting.source,
+        "expected_effect": conflicting.expected_effect,
+        "impact": conflicting.impact,
+        "examples": conflicting.examples,
+        "conflicts": conflicting.conflicts,
+        "expected_revision": conflicting.expected_revision,
+        "resume_token": conflicting.resume_token,
+    });
+    let serialized = serde_json::to_string(&body).expect("conflict JSON");
+    let conflict = send(
+        handle.address(),
+        &format!("POST /api/command HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nSec-Fetch-Site: same-origin\r\nCookie: {cookie}\r\nX-Whetstone-CSRF: {csrf}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{serialized}", serialized.len()),
+    );
+    assert_eq!(
+        response_body(&conflict),
+        serde_json::to_value(direct_conflict).expect("service conflict JSON")
+    );
+
+    let direct_check = CommandService.execute(ServiceRequest::Check(CheckRequest {
+        project_dir: project,
+        request_id: Some("dashboard-check-parity".into()),
+        paths: vec![Path::new(".").to_path_buf()],
+        language: None,
+        rules: vec![],
+    }));
+    let body = serde_json::json!({
+        "workflow": "check",
+        "request_id": "dashboard-check-parity",
+        "paths": ["."],
+        "language": null,
+        "rules": []
+    });
+    let serialized = serde_json::to_string(&body).expect("check JSON");
+    let check = send(
+        handle.address(),
+        &format!("POST /api/command HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nSec-Fetch-Site: same-origin\r\nCookie: {cookie}\r\nX-Whetstone-CSRF: {csrf}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{serialized}", serialized.len()),
+    );
+    let check = response_body(&check);
+    assert_eq!(check["state"], serde_json::json!(direct_check.state));
+    assert_eq!(
+        check["required_snapshot"],
+        serde_json::to_value(direct_check.required_snapshot).expect("snapshot JSON")
+    );
+    assert!(check["data"]["report"].is_object());
+    assert!(check["data"]["raw_scan"].is_object());
+    assert_eq!(check["data"]["raw_scan"], direct_check.data["raw_scan"]);
+    assert_eq!(
+        check["data"]["report"]["state"],
+        direct_check.data["report"]["state"]
+    );
+    assert_eq!(check["data"]["receipt_persisted"], true);
+    assert!(
+        check["data"]["receipt_record"]["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("verification.check_") && id.len() == 51),
+        "the persisted receipt must use the content-derived verification identity"
+    );
 }

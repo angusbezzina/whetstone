@@ -17,27 +17,19 @@ const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 64 * 1024;
 const SESSION_COOKIE: &str = "whetstone_session";
 
-const INDEX_HTML: &str = r#"<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Whetstone dashboard</title><link rel="stylesheet" href="/app.css"></head>
-<body><main><header><div><p class="eyebrow">Local project</p><h1>Whetstone</h1></div><span id="state">Connecting</span></header>
-<section class="hero"><p id="summary">Reading the current agreement…</p><button id="edit" hidden>Enter edit mode</button></section>
-<div class="grid"><section><h2>Needs attention</h2><ul id="questions"><li>Loading…</li></ul></section>
-<section><h2>Available next</h2><ul id="actions"><li>Loading…</li></ul></section></div>
-<section><h2>Evidence</h2><div id="evidence" class="records">Loading…</div></section>
-<details><summary>Service record</summary><pre id="record"></pre></details></main>
-<script src="/app.js"></script></body></html>"#;
+const INDEX_HTML: &str = include_str!("../assets/dashboard/index.html");
 
-const APP_CSS: &str = r#":root{font:16px/1.5 ui-sans-serif,system-ui,-apple-system,sans-serif;color:#20231f;background:#f3f1e9}*{box-sizing:border-box}body{margin:0}main{width:min(72rem,calc(100% - 2rem));margin:0 auto;padding:3rem 0 5rem}header{display:flex;align-items:end;justify-content:space-between;gap:2rem;border-bottom:1px solid #c9c5b7;padding-bottom:1.25rem}h1{font:700 clamp(2.25rem,7vw,5rem)/.9 ui-serif,Georgia,serif;margin:.15rem 0;color:#182d22}h2{font-size:.78rem;letter-spacing:.12em;text-transform:uppercase;margin:0 0 1rem;color:#657166}.eyebrow{margin:0;color:#657166;text-transform:uppercase;letter-spacing:.12em;font-size:.75rem}#state{border:1px solid #a9b5a8;border-radius:99rem;padding:.35rem .75rem;font-size:.8rem;text-transform:capitalize}.hero{display:flex;align-items:start;justify-content:space-between;gap:2rem;padding:2rem 0}.hero p{font:400 clamp(1.35rem,3vw,2.25rem)/1.25 ui-serif,Georgia,serif;max-width:48rem;margin:0}button{border:0;border-radius:.35rem;padding:.7rem 1rem;background:#204d37;color:white;font:inherit;white-space:nowrap;cursor:pointer}.grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:1rem 0}.grid section,main>section:not(.hero),details{background:#fbfaf5;border:1px solid #d8d4c7;border-radius:.5rem;padding:1.25rem}ul{padding-left:1.2rem;margin:0}li+li{margin-top:.6rem}.records{display:grid;gap:.65rem}.record{border-left:3px solid #78927f;padding:.2rem 0 .2rem .8rem}.record strong,.record span{display:block}.record span{font-size:.85rem;color:#657166;overflow-wrap:anywhere}details{margin-top:1rem}details summary{cursor:pointer;font-weight:650}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:1rem 0 0;font:12px/1.55 ui-monospace,SFMono-Regular,monospace;color:#475048}@media(max-width:42rem){main{padding-top:1.5rem}.grid{grid-template-columns:1fr}.hero{display:block}.hero button{margin-top:1rem}}"#;
+const APP_CSS: &str = include_str!("../assets/dashboard/app.css");
 
-const APP_JS: &str = r#"(()=>{const byId=id=>document.getElementById(id);const fill=(id,items,empty)=>{const root=byId(id);root.textContent='';for(const text of items||[]){const item=document.createElement('li');item.textContent=text;root.append(item)}if(!root.childElementCount){const item=document.createElement('li');item.textContent=empty;root.append(item)}};const render=value=>{byId('state').textContent=value.state||'unknown';byId('summary').textContent=value.summary||'No summary is available.';fill('questions',value.blocking_questions,'Nothing currently requires input.');fill('actions',value.permitted_actions,'No next action is advertised.');const evidence=byId('evidence');evidence.textContent='';for(const item of value.evidence||[]){const row=document.createElement('div');row.className='record';const kind=document.createElement('strong');kind.textContent=item.kind||'Evidence';const locator=document.createElement('span');locator.textContent=[item.locator,item.digest].filter(Boolean).join(' · ');row.append(kind,locator);evidence.append(row)}if(!evidence.childElementCount)evidence.textContent='No evidence has been recorded for this view.';byId('record').textContent=JSON.stringify(value,null,2)};const fail=error=>{byId('state').textContent='unavailable';byId('summary').textContent=String(error);fill('questions',[],'The dashboard could not read local state.');fill('actions',[],'Check the terminal and retry.');byId('evidence').textContent='No evidence available.'};(async()=>{const hash=new URLSearchParams(location.hash.slice(1));const bootstrap=hash.get('bootstrap');history.replaceState(null,'',location.pathname);try{if(bootstrap){const response=await fetch('/session/bootstrap',{method:'POST',headers:{'X-Whetstone-Bootstrap':bootstrap}});if(!response.ok)throw new Error('Session bootstrap was denied.');const session=await response.json();sessionStorage.setItem('whetstone_csrf',session.csrf_token);byId('edit').hidden=false}const response=await fetch('/api/inspect');const value=await response.json();render(value);if(!response.ok)throw new Error(value.summary||'Inspection failed.')}catch(error){fail(error)}})();byId('edit').addEventListener('click',async()=>{const csrf=sessionStorage.getItem('whetstone_csrf');if(!csrf)return;const response=await fetch('/session/edit',{method:'POST',headers:{'X-Whetstone-CSRF':csrf}});if(response.ok){byId('edit').textContent='Edit mode enabled';byId('edit').disabled=true}else{fail('Edit mode was denied.')}})})();"#;
+const APP_JS: &str = include_str!("../assets/dashboard/app.js");
 
 /// Adapter implemented by a thin wrapper over `CommandService`.
 ///
 /// Transport code never edits files, evaluates authority, or executes tools.
 /// Mutations must preserve the service's expected-revision/resume-token checks.
 pub trait DashboardBackend: Send + Sync + 'static {
-    fn inspect(&self) -> BackendResponse;
+    /// Read-only query body. An empty body requests the default project view.
+    fn inspect(&self, request_body: &[u8]) -> BackendResponse;
     fn mutate(&self, request_body: &[u8]) -> BackendResponse;
 }
 
@@ -178,15 +170,22 @@ impl DashboardHandle {
             .spawn(move || {
                 while !worker_shutdown.load(Ordering::Acquire) {
                     match listener.accept() {
-                        Ok((stream, _)) => handle_connection(
-                            stream,
-                            &expected_host,
-                            &worker_origin,
-                            hosted,
-                            allow_mutations,
-                            &state,
-                            backend.as_ref(),
-                        ),
+                        Ok((stream, _)) => {
+                            // Some platforms inherit the listener's nonblocking
+                            // mode onto accepted sockets. A browser can connect
+                            // before it has written the request, so make the
+                            // bounded per-connection read explicitly blocking.
+                            let _ = stream.set_nonblocking(false);
+                            handle_connection(
+                                stream,
+                                &expected_host,
+                                &worker_origin,
+                                hosted,
+                                allow_mutations,
+                                &state,
+                                backend.as_ref(),
+                            )
+                        }
                         Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                             thread::sleep(Duration::from_millis(10));
                         }
@@ -355,7 +354,16 @@ fn handle_connection(
         // Local inspection is intentionally credential-free. It is
         // loopback-only, exact-host checked, and cannot mutate state. Hosted
         // inspection passed the authenticated proxy checks above.
-        ("GET", "/api/inspect") => backend.inspect(),
+        ("GET", "/api/inspect") => backend.inspect(&[]),
+        ("POST", "/api/inspect") => {
+            if !same_origin(&request, expected_origin)
+                || request.header("sec-fetch-site") != Some("same-origin")
+            {
+                denied("invalid_origin")
+            } else {
+                backend.inspect(&request.body)
+            }
+        }
         ("POST", "/session/edit") => match authorized_mutation(&request, expected_origin, state) {
             Ok(session_id) if mutations_enabled && !hosted => {
                 if let Ok(mut locked) = state.lock() {
