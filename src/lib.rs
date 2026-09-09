@@ -3,6 +3,7 @@ mod check;
 mod cli;
 pub mod domain;
 mod output;
+pub mod policy;
 mod rules;
 pub mod service;
 pub mod storage;
