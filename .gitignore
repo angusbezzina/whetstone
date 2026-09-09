@@ -46,7 +46,6 @@ tests/fixtures/whetstone/lint/
 
 # Rust build artifacts
 target/
-Cargo.lock
 
 # Whetstone pipeline state cache (machine-local, not checked in)
 whetstone/.state/
