@@ -20,11 +20,12 @@ echo "[5/8] cargo run --quiet --release -- validate"
 cargo run --quiet --release -- validate
 
 echo "[6/8] cargo run --quiet --release -- eval"
-cargo run --quiet --release -- eval
+cargo run --quiet --release -- eval --json \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); checked=sum(x['golden_checked'] for x in d['scorecards']); ok=d['ok'] and d['rules_evaluated']>0 and checked>0; print(f\"  eval rules: {d['rules_evaluated']}; scanner-backed goldens: {checked}\"); sys.exit(0 if ok else 1)"
 
 echo "[7/8] cargo run --quiet --release -- scan src --lang rust (dogfood: 0 self-violations)"
 cargo run --quiet --release -- scan src --lang rust --json --no-fail \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); n=d['violations_count']; print(f'  self-scan rule violations: {n}'); sys.exit(0 if n==0 else 1)"
+  | python3 -c "import sys,json; d=json.load(sys.stdin); ok=d['violations_count']==0 and d['config_issues_count']==0 and d['files_scanned']>0 and d['rules_applied']>0; print(f\"  self-scan: {d['files_scanned']} files, {d['rules_applied']} rules, {d['violations_count']} violations, {d['config_issues_count']} config issues\"); sys.exit(0 if ok else 1)"
 
 echo "[8/8] python3 -m pytest -q"
 python3 -m pytest -q

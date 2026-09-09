@@ -8,28 +8,16 @@ rust-version = "1.75"
 default-run = "whetstone"
 
 [dependencies]
-anyhow = "1"
-indicatif = "0.17"
-chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
-glob = "0.3"
-rayon = "1"
-regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-scraper = "0.22"
-sha2 = "0.10"
-tera = { version = "1", default-features = false }
 toml = "0.8"
 tree-sitter = "0.22"
 tree-sitter-python = "0.21"
 tree-sitter-rust = "0.21"
 tree-sitter-typescript = "0.21"
 walkdir = "2"
-ratatui = "0.29"
-crossterm = "0.28"
 
 [dev-dependencies]
 tempfile = "3"
@@ -38,3 +26,6 @@ tempfile = "3"
 lto = true
 strip = true
 codegen-units = 1
+
+[lints.clippy]
+unwrap_used = "deny"

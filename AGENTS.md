@@ -1,190 +1,96 @@
-# Agent Instructions for Whetstone
+# Agent instructions for Whetstone
 
-> Whetstone is the **rule-intelligence layer** for your codebase. It derives coding rules from the documentation of your actual dependencies, decomposes them into deterministic checks, and generates native tests, lint configs, and agent context files — all from the same approved ruleset.
+Whetstone is being rebuilt as a lightweight, local-first system that turns a
+project's mission, values, engineering philosophy, and decisions into relevant
+agent guidance, deterministic safeguards, repair feedback, and durable history.
 
-## Project Overview
+## Current boundary
 
-Whetstone is **skill-first with a thin deterministic CLI**. The skill (`SKILL.md`) is the front door: it owns judgment — reading documentation, proposing rules, carrying taste/type-aware guidance that isn't deterministically enforceable, and orchestrating the workflow. The Rust CLI binary keeps all of its deterministic commands (dependency detection, URL resolution + content-hashing, schema validation, file generation, the AST/lint scanner, health/drift monitoring), which the skill **calls**. No separate API key required — the agent running Whetstone *is* the LLM. The authoritative judgment-vs-deterministic contract is `planning/skill-cli-boundary.md`.
+The repository is at the R0 prune-first foundation of Beads epic
+`whetstone-k5r`. The legacy dependency-extraction product was removed. Its last
+complete revision is `1b7fd8c341b8a5aaea742c564092fbcca26b51bb`; use that
+revision only for read-only archaeology or recovery.
 
-### Canonical Workflow
+Do not restore old modules, commands, TUI, packs, generators, hooks, MCP server,
+compatibility aliases, Python runtime, fixtures, or packaging as shortcuts. Do
+not alter existing project data under `whetstone/`, `.beads/`, or
+`.git/info/exclude` during R0.
 
-| Step | Responsibility | Command |
-|------|---------------|---------|
-| 1. Bootstrap | Binary | `wh init` — detect deps, resolve docs, write extraction handoff |
-| 2. Extract | Agent | `wh extract` → read docs → `wh extract submit <bundle.yaml>` |
-| 3. Approve | Agent + User | `wh rules approve <rule-id>` or `wh rules approve --all [--dep] [--confidence]` |
-| 4. Generate | Binary | `wh actions all` (chains context + tests + lint) or `wh actions context|lint|test` |
-| 5. Verify | Binary | `wh scan <path>` — deterministic scan, agent's "am I done?" gate |
-| 6. Maintain | Binary | `wh reinit` when deps change; `wh status` for health |
+The target public workflow families are exactly `wh init`, `wh dash`,
+`wh change`, `wh check`, `wh pull`, and `wh push`. They are unavailable until
+their Beads acceptance criteria pass. Bare `wh` is honest read-only orientation.
+The current hidden developer gates are `validate`, `eval`, and `scan`.
 
-Prefer the canonical names above. A small compatibility surface still exists for migration (`wh approve`, `wh check`, `wh rule`, `wh source`, `wh source fetch`), but docs, handoffs, and new automation should use the canonical forms. Older names like `wh doctor`, `wh refresh`, `wh gen`, `wh propose`, `wh apply`, `wh promote`, `wh bench`, and `wh patterns` are gone from the shipped workflow. (`wh eval` exists and is current — it is the golden↔scanner rule-quality bar, unrelated to the removed ai-signal eval; `wh mcp` runs the local MCP server exposing `rules_query` + `scan` to agents.) Rules have exactly two statuses: `candidate` and `approved`. Denial = delete the rule from YAML.
+Authoritative references:
 
-### Agent integration (the two loops)
+- `planning/direction-demo/index.html`: Direction 05 behavior and UI.
+- `planning/skill-cli-boundary.md`: judgment versus deterministic work.
+- `planning/direction-demo/prune-inventory.md`: R0 allowlist and recovery record.
+- `references/rule-schema.yaml`: temporary retained rule schema.
+- `references/signal-strategies.md`: deterministic signal constraints.
 
-- **One-command onboarding:** `wh init --claude` imports matching starter packs, generates context, registers the MCP server (`.mcp.json`), and installs the hooks. Add `--private` to adopt solo on a shared repo with zero git footprint (a managed `.git/info/exclude` block hides everything); `wh publish` later flips the artifacts to trackable. `--ci` is refused while private.
-- **In-session enforcement:** the installed `wh hook posttooluse` scans each edited file and feeds violations back to the agent in the same turn. When it surfaces a violation, fix it before continuing.
-- **Taste capture:** codify a standing preference as a rule (verified with `wh eval`) or, when it needs judgment, a guidance entry in `whetstone/guidance/` (schema: `references/guidance-schema.yaml`) — surfaced in generated context and `wh rules query`, never scanned. Personal standards live in a taste pack imported across repos.
-- **Onboarding wizard (humans, not agents):** bare `wh` on a TTY opens the first-run setup wizard — the human front door. Agents should NOT drive the TUI; use `wh init --claude` / the MCP server instead. Both doors produce identical artifacts. The wizard is a skin over oracles you can also call directly: `wh status --setup` (derived checklist), `wh scan --with-pack` (preview), `wh config conflicts`, `wh pack import`.
+## Product invariants
 
-Agents MAY hand-author rule YAML only through `wh extract submit <bundle>`, which refuses id collisions. Do NOT edit `whetstone/rules/**/*.yaml` directly.
+- The skill owns judgment; typed services own deterministic, replayable work.
+- Stable JSON and human views describe the same source records.
+- Guidance, checks, evidence, and accountable verdicts remain distinct.
+- Failures return to the same worker for repair and recheck.
+- Unknown, stale, skipped, or unavailable required evidence is never success.
+- Local and private records stay private until explicitly selected for sharing.
+- Proposal, acceptance, activation, installation, check receipt, and verdict are separate events.
+- Team policy needs independent review and protected activation.
+- Consequential decisions are append-only and inspectable from project start.
+- Existing trackers and native repository controls remain authoritative.
 
-### Key Files
+## High confidence or silence
 
-| File | Purpose |
-|------|---------|
-| `SKILL.md` | Core agent skill (workflow + extraction prompt) |
-| `src/` | Rust source for the `whetstone` binary |
-| `scripts/legacy/` | Archived Python reference implementations, parity-tested by `tests/test_script_contracts.py` |
-| `references/rule-schema.yaml` | Rule YAML format specification |
-| `references/handoff-schema.md` | Durable handoff artifacts under `whetstone/.state/` |
-| `planning/skill-cli-boundary.md` | Authoritative skill (judgment) ↔ CLI (deterministic) contract |
-| `tests/` | Integration tests and fixtures |
+- Prefer five trusted safeguards to fifty noisy rules.
+- Use native linters/formatters when they express the concern.
+- Use AST checks only for type-independent structure that native tools miss.
+- Raw regex is not an enforcement strategy.
+- Put taste, semantics, and type-aware advice in guidance or accountable review.
+- Cite current primary documentation and state when a capability is unknown.
+- Never claim prompt delivery, a green check, or a demo proves enforcement.
 
----
+## Issue tracking with Beads
 
-## Issue Tracking with Beads
-
-This project uses **bd** (beads) for ALL planning and issue tracking unless the user explicitly requests otherwise.
+Use `bd` for all planning and issue tracking unless the user explicitly says
+otherwise. Do not substitute TODO comments or ad-hoc planning files.
 
 ```bash
-bd onboard            # Get started with beads
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd dolt push          # Push Beads data to the remote Dolt ref
-bd dolt pull          # Pull Beads data from the remote Dolt ref
+bd ready
+bd show <id>
+bd update <id> --status in_progress
+bd close <id>
+bd dolt pull
+bd dolt push
 ```
 
-**Rules:**
-- ALWAYS use `bd` to create, track, and close issues
-- NEVER rely on legacy `bd sync` / `beads-sync` branch workflows; this repo should follow Beads' current Dolt-native collaboration model
-- When your local Beads setup supports Dolt remotes, push/pull issue state with `bd dolt push` / `bd dolt pull`
-- If local `.beads` state is broken or another device cannot see current issues, use `./scripts/beads-repair.sh` to rehydrate the local Dolt database from the repo remote before continuing
-- If the user asks to plan work, create beads for it -- do not use ad-hoc notes or TODO comments as a substitute for proper issue tracking
-- Only skip beads if the user explicitly says to
+Use current Dolt-native collaboration, never legacy `bd sync` or a
+`beads-sync` branch. If local state is broken or another machine cannot see
+issues, use `./scripts/beads-repair.sh`.
 
----
+## Research
 
-## Researching Best Practices and Documentation
+Before technical research, get the current date. Prefer current-year and prior-
+year primary sources, official docs, `llms.txt`, changelogs, and migration
+guides. Verify that an API or configuration exists in the dependency version in
+use, and explicitly flag stale material.
 
-When searching for best practices, dependency documentation, API patterns, or any technical guidance:
+## Rules and source changes
 
-1. **Get the current date first** -- run `date` or check the system clock before searching
-2. **Search for the latest results** -- always scope searches to the current year and recent prior year. Documentation from 2+ years ago may reference deprecated APIs or outdated patterns
-3. **Prefer primary sources** -- official documentation, `llms.txt` files, changelogs, and migration guides over blog posts or tutorials
-4. **Verify currency** -- check that any referenced API, pattern, or configuration still exists in the current version of the dependency
-5. **Flag stale sources** -- if you find documentation that appears outdated relative to the current dependency version, note this explicitly
+During R0, do not hand-edit `whetstone/rules/**`; those files are preserved user
+data. The retained verifier must fail closed for malformed project rules,
+missing AST queries, unsafe validator paths, unavailable required tooling, and
+non-vacuous gate failures.
 
-This is critical because Whetstone's entire value proposition is keeping rules current. An agent that references stale documentation undermines the product.
+Use `apply_patch` for source and documentation edits. Preserve unrelated work.
+Do not hide failures by weakening tests, deleting a required gate, or bypassing
+hooks.
 
----
+## Required gates before every push
 
-## Core Philosophy: High Confidence or Silence
-
-Whetstone is not a linter. It catches the things that matter most and that nothing else catches. Every decision should be guided by these principles:
-
-- **5 rules you trust completely beats 50 you have to review**
-- Every CLI rule MUST have a deterministic backing: a `strategy: ast` signal (with a real `ast_query`) or a `strategy: lint_proxy` signal, or a `formatter` / `tests` / `validators` binding. `strategy: pattern` (raw regex) is deprecated
-- Maximum 5 rules per dependency -- if you can't rank them, you haven't filtered hard enough
-- Every rule must cite a specific URL in the dependency's documentation
-- If you're not 90%+ confident a rule prevents a real mistake, don't propose it
-
-### The three-bucket signal audit
-
-Every candidate falls into exactly one bucket (see `references/signal-strategies.md` and `planning/skill-cli-boundary.md`):
-
-1. **Duplicates an existing linter** → don't drop it, express it as `strategy: lint_proxy` so `wh actions lint` emits the native ruff/biome/clippy config. For tools `lint_proxy` doesn't support (cargo-audit/RUSTSEC, pip-audit, type-checkers), either document "use that tool" or bind via `validators: command`.
-2. **Needs taste OR type resolution** → lives in the **skill** as agent guidance, with no deterministic signal and no CLI rule. tree-sitter has no type resolution, so anything that must know a value's type (e.g. "is this receiver a `reqwest::Client`?") cannot be a CLI rule.
-3. **No linter expresses it AND it's expressible without type resolution** → `strategy: ast` with a real `ast_query`. This is the CLI's narrow moat (decorator shape, async-vs-sync form, import structure).
-
-### What gets rejected
-- Generic advice ("write clean code", "use meaningful names")
-- Subjective preferences without source backing
-- Architecture principles that can't be decomposed into checks or expressed as skill guidance
-
-### What gets accepted
-- Migration footguns (deprecated APIs that still work)
-- Non-obvious defaults (insecure/slow unless configured)
-- Convention divergence (docs say X, most tutorials/LLMs default to Y)
-- Breaking change preparation (will fail in next major version)
-- Semantic practices decomposable into mostly-deterministic signals
-- Taste / type-aware guidance — carried in the skill, not as a signal-less rule
-
----
-
-## Languages and Ecosystems
-
-| Language   | Manifest                          | Registry   | Tests    | Linter | Support |
-|------------|-----------------------------------|------------|----------|--------|---------|
-| Python     | `pyproject.toml`, `requirements.txt` | PyPI       | pytest   | ruff   | Full |
-| TypeScript | `package.json`                    | npm        | vitest   | biome  | Baseline |
-| Rust       | `Cargo.toml`                      | crates.io  | cargo test | clippy | Baseline |
-
-**Full**: AST-based checks, pattern matching, lint overlays — all generated tests are complete and runnable.
-**Baseline**: Pattern/string matching for common signals (deprecated APIs, imports). Complex AST patterns generate TODO scaffolds.
-
----
-
-## Rule YAML Format
-
-Rules follow a strict schema. See `references/rule-schema.yaml` for the full specification. Key fields:
-
-```yaml
-source:
-  name: fastapi
-  docs_url: https://fastapi.tiangolo.com
-  version: "0.115.0"
-  content_hash: sha256:abc123...
-  resolved_at: "2026-03-28T10:00:00Z"
-  registry: pypi
-
-rules:
-  - id: fastapi.async-routes
-    severity: must              # must | should | may
-    confidence: high            # high | medium
-    category: convention        # migration | default | convention | breaking-change | semantic
-    description: >
-      Route handlers MUST use async def.
-    source_url: https://fastapi.tiangolo.com/async/
-    status: approved            # candidate | approved
-    approved: true
-    approved_at: "2026-03-28T12:00:00Z"
-    proposed_at: "2026-03-28T11:30:00Z"
-    proposed_by: whetstone-extraction
-    signals:
-      - id: is-sync-function
-        strategy: ast           # ast | lint_proxy | pattern (deprecated)
-        ast_query: ...          # required for `ast` signals (tree-sitter S-expression)
-        description: Function decorated with route decorator uses def instead of async def
-        weight: required
-    golden_examples:
-      - code: |
-          @app.get("/users")
-          async def get_users(): ...
-        verdict: pass
-        reason: Uses async def as recommended by FastAPI docs
-      - code: |
-          @app.get("/users")
-          def get_users(): ...
-        verdict: fail
-        reason: Sync function blocks the event loop under concurrent load
-```
-
-### Rule Lifecycle
-
-| State | Meaning | Used for generation? |
-|-------|---------|---------------------|
-| `candidate` | Proposed, awaiting review | No |
-| `approved` | Reviewed and accepted | Yes |
-
-There are only two states. To retire a rule, **delete it** from the YAML — there is no `denied` or `deprecated` state to maintain.
-
----
-
-## Gates Must Pass Locally Before Every Push
-
-**Non-negotiable.** CI mirrors these eight gates exactly. If any fails locally, CI will fail too — fix before pushing, do not push hoping to fix on CI. This has happened before; it wastes team time.
+CI and the pre-push hook must run these exact eight gates meaningfully:
 
 ```bash
 cargo clippy --all-targets --all-features -- -D warnings
@@ -193,60 +99,40 @@ python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
 python3 -m ruff format --check scripts/ tests/
 cargo run --quiet --release -- validate
 cargo run --quiet --release -- eval
-cargo run --quiet --release -- scan src --lang rust --json --no-fail  # violations_count must be 0 (dogfood)
+cargo run --quiet --release -- scan src --lang rust --json --no-fail
 python3 -m pytest -q
 ```
 
-The repo ships a pre-push hook at `.githooks/pre-push` that runs all eight and aborts the push on any failure. **At the start of any session that may push**, verify the hook is active:
+The scan gate additionally requires `files_scanned > 0`, `rules_applied > 0`,
+`config_issues_count == 0`, and `violations_count == 0`. Eval must exercise at
+least one rule and one scanner-backed golden example. Zero work is not green.
+
+At the start of a session that may push, ensure the hook is active:
 
 ```bash
 test "$(git config core.hooksPath)" = ".githooks" || git config core.hooksPath .githooks
 test -x .githooks/pre-push || chmod +x .githooks/pre-push
 ```
 
-Never use `--no-verify` to bypass the hook. If a gate fails, fix the underlying issue — do not comment out checks, delete tests, or skip the hook.
+Never use `--no-verify`.
 
-## Session Completion Protocol
+## Session completion
 
-When ending a work session, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+Before ending a work session:
 
-1. **File issues for remaining work** -- create beads for anything that needs follow-up
-2. **Run quality gates** (if code changed) — the same eight listed above. Never push if any fails.
-3. **Update issue status** -- close finished beads, update in-progress items
-4. **PUSH TO REMOTE**:
-   ```bash
-   # run the full 8-gate suite from the section above, then:
-   git pull --rebase
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-   If your Beads installation supports Dolt-native sync for this repo, run `bd dolt push` after updating Beads state and before ending the session.
-5. **Clean up** -- clear stashes, prune remote branches
-6. **Verify** -- all changes committed AND pushed
-7. **Hand off** -- provide context for next session
+1. File Beads issues for remaining work and update current statuses.
+2. Run the eight gates for code changes and any task-specific proofs.
+3. Commit only intended changes.
+4. Run `git pull --rebase`, `git push`, and `bd dolt push`.
+5. Verify `git status` is clean and up to date with origin.
+6. Report implementation, automated evidence, human smoke evidence, tracker state, and publication separately.
 
-**CRITICAL:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing -- that leaves work stranded locally
-- NEVER say "ready to push when you are" -- YOU must push
-- If push fails, resolve and retry until it succeeds
-- Treat Ruff import/order failures as push blockers; fix them locally before pushing
+Work is not complete until push succeeds. Do not say it is merely ready to push.
 
----
+## Release protocol
 
-## Release Protocol
-
-When cutting a release, agents MUST:
-1. Pass all quality gates (clippy, cargo test, ruff check + format, validate, eval, rust self-scan, pytest)
-2. Update `CHANGELOG.md` with a new version section listing every user-visible change
-3. Bump the `version` field in `Cargo.toml` to match the tag
-4. Commit as `chore: release vX.Y.Z`, then `git tag vX.Y.Z && git push && git push origin vX.Y.Z`
-5. Wait for `release.yml` to build and publish, then verify the release page and test `install.sh --version vX.Y.Z`
-
-Agents MUST NEVER:
-- Tag without updating CHANGELOG.md and Cargo.toml
-- Push a tag that doesn't match Cargo.toml version
-- Skip quality gates before tagging
-- Delete or force-push a published tag
-
-See `CLAUDE.md` for the full release checklist including Homebrew formula updates.
+Before a release, pass all gates, update `CHANGELOG.md`, set the matching version
+in `Cargo.toml`, commit `chore: release vX.Y.Z`, tag the same version, push commit
+and tag, wait for `release.yml`, inspect the release, and test the installer.
+Never force-push or delete a published tag, and never tag a version that differs
+from `Cargo.toml`.

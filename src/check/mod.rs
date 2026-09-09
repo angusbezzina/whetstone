@@ -3,19 +3,10 @@
 //! Signal handling:
 //! - `ast` with `ast_query:` → tree-sitter S-expression query evaluated
 //!   against the parsed file; every `@match` capture is a violation.
-//! - `ast` with `match:` only → regex fallback; documented as weaker than
-//!   a real AST check so extractors can upgrade incrementally.
-//! - `pattern` with `match:` → regex scan. When `ast_scope:` is set, the
-//!   regex is restricted to the source span of AST nodes whose kind
-//!   matches (e.g. `function_definition`); this removes comment/no-op
-//!   false positives for scope-sensitive rules.
 //! - `lint_proxy` → verified against the project's linter config (ruff,
 //!   biome). Missing rules surface as `config_issues` so the user gets
 //!   actionable guidance rather than a silent pass.
-//! - `ai` → skipped with a note; evaluated only via `wh eval run`.
 
-use anyhow::Result;
-use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -49,11 +40,10 @@ pub struct CheckOptions<'a> {
     pub rule_filter: Option<&'a [String]>,
 }
 
-pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
+pub fn run(opts: CheckOptions<'_>) -> Value {
     let project_dir = opts.project_dir;
     let rules_dir = project_dir.join("whetstone").join("rules");
-    let (rules, load_warnings) =
-        crate::rules::load_approved_rules(&rules_dir, opts.lang_filter);
+    let (rules, load_warnings) = crate::rules::load_approved_rules(&rules_dir, opts.lang_filter);
 
     let rule_filter: Option<BTreeSet<&str>> = opts
         .rule_filter
@@ -70,7 +60,7 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
         .collect();
 
     if rules.is_empty() {
-        return Ok(json!({
+        return json!({
             "status": "ok",
             "violations_count": 0,
             "config_issues_count": 0,
@@ -80,7 +70,7 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
             "skipped": [],
             "config_issues": [],
             "warnings": ["No approved rules match the supplied filters."],
-        }));
+        });
     }
 
     let compiled = compile_rules(&rules);
@@ -241,7 +231,7 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
         "warnings": warnings,
     });
 
-    Ok(result)
+    result
 }
 
 // ── Golden eval (the rule-quality bar) ──
@@ -256,7 +246,7 @@ pub fn run(opts: CheckOptions<'_>) -> Result<Value> {
 /// gated here; SEMANTIC fidelity ("the doc actually supports the rule + merits its
 /// severity") is judgment, so it is recorded as a skill-attested scorecard field,
 /// never adjudicated by this deterministic command.
-pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Result<Value> {
+pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Value {
     let rules_dir = project_dir.join("whetstone").join("rules");
     let (rules, _) = crate::rules::load_approved_rules(&rules_dir, lang_filter);
 
@@ -321,7 +311,10 @@ pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Result<Value> {
             let quote = quote.trim();
             if !quote.is_empty() {
                 source_quote_present = true;
-                let key = (rule.language.to_lowercase(), rule.source_name.to_lowercase());
+                let key = (
+                    rule.language.to_lowercase(),
+                    rule.source_name.to_lowercase(),
+                );
                 let content = content_map.get(&key).or_else(|| {
                     content_map
                         .iter()
@@ -335,7 +328,7 @@ pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Result<Value> {
                         fidelity_failures.push(json!({
                             "rule_id": rule.id,
                             "issue": "source_quote not found verbatim in the cached source documentation",
-                            "fix": "fix the quote to match the source, or re-resolve docs (wh reinit)",
+                            "fix": "fix the quote to match the source or refresh the cached source through the governing change workflow",
                         }));
                     }
                 }
@@ -367,7 +360,7 @@ pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Result<Value> {
     }
 
     let ok = mismatches.is_empty() && fidelity_failures.is_empty();
-    Ok(json!({
+    json!({
         "status": if ok { "ok" } else { "eval_failed" },
         "ok": ok,
         "rules_evaluated": rules.len(),
@@ -376,7 +369,7 @@ pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Result<Value> {
         "source_fidelity_failures": fidelity_failures,
         "source_fidelity_failure_count": fidelity_failures.len(),
         "scorecards": scorecards,
-    }))
+    })
 }
 
 fn load_cached_contents(project_dir: &Path) -> std::collections::HashMap<(String, String), String> {
@@ -461,7 +454,10 @@ pub fn format_eval_output(result: &Value) -> String {
             ));
         }
     }
-    if let Some(arr) = result.get("source_fidelity_failures").and_then(|v| v.as_array()) {
+    if let Some(arr) = result
+        .get("source_fidelity_failures")
+        .and_then(|v| v.as_array())
+    {
         for f in arr {
             out.push_str(&format!(
                 "  SOURCE  {}: {}\n",
@@ -558,35 +554,15 @@ struct CompiledSignal {
     signal_id: String,
     description: String,
     strategy: String,
-    regex: Option<Regex>,
-    ast_query: Option<String>,
-    ast_scope: Option<String>,
+    ast_query: String,
 }
 
 impl CompiledSignal {
     fn needs_tree(&self) -> bool {
-        self.ast_query.is_some() || self.ast_scope.is_some()
+        true
     }
     fn check_kind(&self) -> &'static str {
-        if self.ast_query.is_some() {
-            "ast_query"
-        } else if self.ast_scope.is_some() {
-            "ast_scoped_regex"
-        } else {
-            "regex"
-        }
-    }
-
-    #[cfg(test)]
-    fn new_regex(strategy: &str, pattern: &str) -> Self {
-        CompiledSignal {
-            signal_id: "s1".into(),
-            description: "test".into(),
-            strategy: strategy.into(),
-            regex: Some(regex::Regex::new(pattern).unwrap()),
-            ast_query: None,
-            ast_scope: None,
-        }
+        "ast_query"
     }
 }
 
@@ -616,43 +592,25 @@ fn compile_rules<'a>(rules: &[&'a ApprovedRule]) -> Vec<CompiledRule<'a>> {
         let mut notes = Vec::new();
         for sig in &rule.signals {
             match sig.strategy.as_str() {
-                "pattern" | "ast" => {
-                    let regex = match sig.match_pattern.as_deref() {
-                        Some(pat) => match Regex::new(pat) {
-                            Ok(re) => Some(re),
-                            Err(e) => {
-                                notes.push(format!(
-                                    "signal {}: invalid regex `{}` — {e}",
-                                    sig.id, pat
-                                ));
-                                None
-                            }
-                        },
-                        None => None,
-                    };
-                    if sig.strategy == "ast" && sig.ast_query.is_none() && regex.is_none() {
+                "ast" => {
+                    if let Some(ast_query) = &sig.ast_query {
+                        signals.push(CompiledSignal {
+                            signal_id: sig.id.clone(),
+                            description: sig.description.clone(),
+                            strategy: sig.strategy.clone(),
+                            ast_query: ast_query.clone(),
+                        });
+                    } else {
                         notes.push(format!(
-                            "signal {}: ast signal has neither `ast_query:` nor `match:`; cannot enforce",
+                            "signal {}: ast signal has no ast_query; cannot enforce",
                             sig.id
                         ));
-                        continue;
                     }
-                    if sig.strategy == "pattern" && regex.is_none() {
-                        notes.push(format!(
-                            "signal {}: pattern signal has no `match:` regex; cannot enforce",
-                            sig.id
-                        ));
-                        continue;
-                    }
-                    signals.push(CompiledSignal {
-                        signal_id: sig.id.clone(),
-                        description: sig.description.clone(),
-                        strategy: sig.strategy.clone(),
-                        regex,
-                        ast_query: sig.ast_query.clone(),
-                        ast_scope: sig.ast_scope.clone(),
-                    });
                 }
+                "pattern" => notes.push(format!(
+                    "signal {}: deprecated pattern strategy is not executable",
+                    sig.id
+                )),
                 "lint_proxy" => {
                     notes.push(format!(
                         "signal {}: lint_proxy checked via linter config; see config_issues",
@@ -677,41 +635,10 @@ fn apply_signal(
     text: &str,
     tree: Option<&Tree>,
 ) -> Vec<SignalHit> {
-    // Preferred path: tree-sitter query. If the tree is available, we trust
-    // its result and return. If parsing failed (tree is None), fall through
-    // so a `match:` regex can still enforce the rule rather than silently
-    // letting violations slip past.
-    if let Some(query_src) = &sig.ast_query {
-        if let (Some(lang), Some(tree)) = (lang, tree) {
-            return run_ast_query(query_src, lang, tree, text);
-        }
+    if let (Some(lang), Some(tree)) = (lang, tree) {
+        return run_ast_query(&sig.ast_query, lang, tree, text);
     }
-    let re = match &sig.regex {
-        Some(r) => r,
-        None => return Vec::new(),
-    };
-    if let Some(scope_kind) = &sig.ast_scope {
-        if let Some(tree) = tree {
-            return scan_with_ast_scope(re, scope_kind, tree, text);
-        }
-        // Tree parse failed; treat the signal as if `ast_scope` were absent
-        // rather than dropping the check entirely.
-    }
-    scan_lines(re, text)
-}
-
-fn scan_lines(re: &Regex, text: &str) -> Vec<SignalHit> {
-    let mut hits = Vec::new();
-    for (i, line) in text.lines().enumerate() {
-        for m in re.find_iter(line) {
-            hits.push(SignalHit {
-                line: i + 1,
-                column: m.start() + 1,
-                text: m.as_str().to_string(),
-            });
-        }
-    }
-    hits
+    Vec::new()
 }
 
 fn run_command_validator(
@@ -956,69 +883,6 @@ fn run_ast_query(query_src: &str, lang: AstLang, tree: &Tree, source: &str) -> V
     hits
 }
 
-/// For `ast_scope:` pattern signals, walk the tree and apply the regex only
-/// to the source span of nodes whose kind matches `scope_kind`.
-fn scan_with_ast_scope(re: &Regex, scope_kind: &str, tree: &Tree, source: &str) -> Vec<SignalHit> {
-    let mut hits = Vec::new();
-    let root = tree.root_node();
-    let mut cursor = root.walk();
-    walk_nodes(&mut cursor, scope_kind, source, re, &mut hits);
-    hits
-}
-
-fn walk_nodes(
-    cursor: &mut tree_sitter::TreeCursor<'_>,
-    scope_kind: &str,
-    source: &str,
-    re: &Regex,
-    hits: &mut Vec<SignalHit>,
-) {
-    let node = cursor.node();
-    if node.kind() == scope_kind {
-        let start_byte = node.start_byte();
-        let start_line = node.start_position().row;
-        let span = source.get(node.byte_range()).unwrap_or("");
-        for m in re.find_iter(span) {
-            let offset = m.start();
-            let (line_offset, col) = line_col_within(span, offset);
-            let absolute_line = start_line + line_offset;
-            let absolute_col = if line_offset == 0 {
-                node.start_position().column + col
-            } else {
-                col
-            };
-            hits.push(SignalHit {
-                line: absolute_line + 1,
-                column: absolute_col + 1,
-                text: m.as_str().to_string(),
-            });
-        }
-        let _ = start_byte;
-    }
-    if cursor.goto_first_child() {
-        loop {
-            walk_nodes(cursor, scope_kind, source, re, hits);
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-        cursor.goto_parent();
-    }
-}
-
-/// Given a substring `span` and a byte offset inside it, return the 0-based
-/// (line_offset_within_span, column) pair. Used to turn an intra-span regex
-/// hit into absolute source coordinates.
-fn line_col_within(span: &str, offset: usize) -> (usize, usize) {
-    let prefix = &span[..offset.min(span.len())];
-    let line_offset = prefix.bytes().filter(|b| *b == b'\n').count();
-    let col = match prefix.rfind('\n') {
-        Some(nl) => prefix.len() - nl - 1,
-        None => prefix.len(),
-    };
-    (line_offset, col)
-}
-
 // ── File discovery ──
 
 fn discover_source_files(roots: &[PathBuf]) -> Vec<(PathBuf, String, Option<AstLang>)> {
@@ -1068,61 +932,23 @@ mod tests {
         ApprovedRule {
             id: id.into(),
             severity: "must".into(),
-            confidence: "high".into(),
             category: "default".into(),
             description: "test rule".into(),
             source_url: "https://example".into(),
             source_name: "demo".into(),
             language: lang.into(),
-            languages: vec![lang.into()],
             signals: vec![crate::rules::ApprovedSignal {
                 id: "s1".into(),
                 strategy: strategy.into(),
                 description: "signal".into(),
-                weight: "required".into(),
-                match_pattern: None,
                 ast_query: None,
-                ast_scope: None,
                 lint: None,
             }],
             formatter: None,
             tests: Vec::new(),
             validators: Vec::new(),
-            provenance: None,
             golden_examples: Vec::new(),
-            deterministic_pass_threshold: None,
-            deterministic_fail_threshold: None,
         }
-    }
-
-    #[test]
-    fn pattern_signal_fires_on_match() {
-        let mut rule = rule_with("demo.unwrap", "rust", "pattern");
-        rule.signals[0].match_pattern = Some(r"\.unwrap\(\)".into());
-        let rules = vec![&rule];
-        let compiled = compile_rules(&rules);
-        let hits = apply_signal(
-            &compiled[0].signals[0],
-            Some(AstLang::Rust),
-            "let v = x.unwrap();\n",
-            None,
-        );
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].line, 1);
-        assert_eq!(hits[0].text, ".unwrap()");
-    }
-
-    #[test]
-    fn invalid_regex_skipped_with_note() {
-        let mut rule = rule_with("demo.bad", "python", "pattern");
-        rule.signals[0].match_pattern = Some("[invalid".into());
-        let rules = vec![&rule];
-        let compiled = compile_rules(&rules);
-        assert!(compiled[0].signals.is_empty());
-        assert!(compiled[0]
-            .notes
-            .iter()
-            .any(|n| n.contains("invalid regex")));
     }
 
     #[test]
@@ -1133,7 +959,7 @@ mod tests {
         let rules = vec![&rule];
         let compiled = compile_rules(&rules);
         let source = "def a():\n    pass\n\ndef b():\n    pass\n\nx = 1\n";
-        let tree = ast::parse(AstLang::Python, source).unwrap();
+        let tree = ast::parse(AstLang::Python, source).expect("valid Python fixture should parse");
         let hits = apply_signal(
             &compiled[0].signals[0],
             Some(AstLang::Python),
@@ -1156,7 +982,8 @@ mod tests {
         let rules = vec![&rule];
         let compiled = compile_rules(&rules);
         let source = "const x = window.location;\nconst y = local.value;\n";
-        let tree = ast::parse(AstLang::TypeScript, source).unwrap();
+        let tree =
+            ast::parse(AstLang::TypeScript, source).expect("valid TypeScript fixture should parse");
         let hits = apply_signal(
             &compiled[0].signals[0],
             Some(AstLang::TypeScript),
@@ -1168,59 +995,10 @@ mod tests {
     }
 
     #[test]
-    fn ast_scope_restricts_regex_to_nodes_of_kind() {
-        // Pattern rule that should only flag TODO inside function bodies,
-        // not inside module-level comments.
-        let mut rule = rule_with("demo.todo", "python", "pattern");
-        rule.signals[0].match_pattern = Some("TODO".into());
-        rule.signals[0].ast_scope = Some("function_definition".into());
-        let rules = vec![&rule];
-        let compiled = compile_rules(&rules);
-        let source = "# module-level TODO should be ignored\n\ndef foo():\n    # TODO inside body should fire\n    pass\n";
-        let tree = ast::parse(AstLang::Python, source).unwrap();
-        let hits = apply_signal(
-            &compiled[0].signals[0],
-            Some(AstLang::Python),
-            source,
-            Some(&tree),
-        );
-        assert_eq!(hits.len(), 1, "got: {hits:?}");
-        assert_eq!(hits[0].line, 4);
-    }
-
-    #[test]
-    fn ast_query_falls_back_to_regex_when_tree_is_none() {
-        // Simulate a parse failure (tree = None). With both ast_query and a
-        // `match:` regex configured, the runner must fall back to the regex
-        // so a grammar hiccup does not silently disable enforcement.
-        let sig = CompiledSignal {
-            signal_id: "s1".into(),
-            description: "unwrap".into(),
-            strategy: "ast".into(),
-            regex: Some(regex::Regex::new(r"\.unwrap\(\)").unwrap()),
-            ast_query: Some("(call_expression) @match".into()),
-            ast_scope: None,
-        };
-        let hits = apply_signal(&sig, Some(AstLang::Rust), "let x = y.unwrap();\n", None);
-        assert_eq!(
-            hits.len(),
-            1,
-            "regex fallback should fire when tree is None"
-        );
-    }
-
-    #[test]
-    fn compiled_signal_new_regex_builds_a_usable_regex_signal() {
-        let sig = CompiledSignal::new_regex("pattern", r"\.unwrap\(\)");
-        assert!(sig.regex.is_some());
-        assert!(sig.ast_query.is_none());
-    }
-
-    #[test]
     fn discover_filters_by_extension_and_skip_dirs() {
         let tmp = tempdir();
-        std::fs::create_dir_all(tmp.join("src")).unwrap();
-        std::fs::create_dir_all(tmp.join("node_modules")).unwrap();
+        std::fs::create_dir_all(tmp.join("src")).expect("create source fixture");
+        std::fs::create_dir_all(tmp.join("node_modules")).expect("create skipped fixture");
         write_file(&tmp.join("src/a.py"), "x = 1\n");
         write_file(&tmp.join("src/b.rs"), "fn main() {}\n");
         write_file(&tmp.join("node_modules/c.ts"), "const x = 1;\n");
@@ -1231,7 +1009,12 @@ mod tests {
         let files = discover_source_files(std::slice::from_ref(&tmp));
         let names: Vec<_> = files
             .iter()
-            .map(|(p, _, _)| p.file_name().unwrap().to_string_lossy().to_string())
+            .map(|(p, _, _)| {
+                p.file_name()
+                    .expect("fixture paths have file names")
+                    .to_string_lossy()
+                    .to_string()
+            })
             .collect();
         assert!(names.contains(&"a.py".to_string()));
         assert!(names.contains(&"b.rs".to_string()));
@@ -1253,7 +1036,7 @@ mod tests {
         ));
         // A clock tick may be shared by parallel tests. Never reuse a fixture
         // directory: the atomic suffix isolates calls and create_dir fails closed.
-        std::fs::create_dir(&base).unwrap();
+        std::fs::create_dir(&base).expect("create concurrency fixture");
         base
     }
 
@@ -1275,17 +1058,18 @@ mod tests {
                 .collect();
             handles
                 .into_iter()
-                .map(|handle| handle.join().unwrap())
+                .map(|handle| handle.join().expect("fixture thread should finish"))
                 .collect::<Vec<_>>()
         });
         let unique: std::collections::HashSet<_> = paths.iter().collect();
         assert_eq!(unique.len(), 32);
         for (index, path) in paths.iter().enumerate() {
             assert_eq!(
-                std::fs::read_to_string(path.join("marker.txt")).unwrap(),
+                std::fs::read_to_string(path.join("marker.txt"))
+                    .expect("fixture marker should be readable"),
                 index.to_string()
             );
-            std::fs::remove_dir_all(path).unwrap();
+            std::fs::remove_dir_all(path).expect("remove concurrency fixture");
         }
     }
 
@@ -1298,8 +1082,8 @@ mod tests {
     }
 
     fn write_file(path: &Path, body: &str) {
-        let mut f = std::fs::File::create(path).unwrap();
-        f.write_all(body.as_bytes()).unwrap();
+        let mut f = std::fs::File::create(path).expect("create fixture file");
+        f.write_all(body.as_bytes()).expect("write fixture file");
     }
 
     const GOOD_RULE: &str = "source:\n  name: good\nrules:\n  - id: good.snake\n    severity: should\n    confidence: high\n    category: convention\n    description: snake_case function names\n    source_url: https://example.com\n    approved: true\n    status: approved\n    signals:\n      - id: s\n        strategy: ast\n        weight: required\n        ast_query: '((function_definition name: (identifier) @match) (#match? @match \"[A-Z]\"))'\n    golden_examples:\n      - code: \"def read_config():\\n    pass\\n\"\n        verdict: pass\n        reason: snake ok\n      - code: \"def ReadConfig():\\n    pass\\n\"\n        verdict: fail\n        reason: pascal bad\n";
@@ -1308,9 +1092,9 @@ mod tests {
     fn eval_passes_correct_goldens() {
         let tmp = tempdir();
         let dir = tmp.join("whetstone").join("rules").join("python");
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).expect("create rule fixture");
         write_file(&dir.join("good.yaml"), GOOD_RULE);
-        let res = eval(&tmp, None).unwrap();
+        let res = eval(&tmp, None);
         assert_eq!(res["ok"], true, "{res}");
         assert_eq!(res["golden_mismatch_count"], 0);
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1320,16 +1104,22 @@ mod tests {
     fn eval_fails_on_mislabeled_golden() {
         let tmp = tempdir();
         let dir = tmp.join("whetstone").join("rules").join("python");
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).expect("create rule fixture");
         // Same signal, but the PASS example is PascalCase -> it actually fires.
         let bad = GOOD_RULE.replace(
             "      - code: \"def read_config():\\n    pass\\n\"\n        verdict: pass\n        reason: snake ok\n",
             "      - code: \"def ReadConfig():\\n    pass\\n\"\n        verdict: pass\n        reason: MISLABELED\n",
         );
         write_file(&dir.join("bad.yaml"), &bad);
-        let res = eval(&tmp, None).unwrap();
+        let res = eval(&tmp, None);
         assert_eq!(res["ok"], false, "{res}");
-        assert!(res["golden_mismatch_count"].as_i64().unwrap() >= 1, "{res}");
+        assert!(
+            res["golden_mismatch_count"]
+                .as_i64()
+                .expect("mismatch count should be an integer")
+                >= 1,
+            "{res}"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -1339,10 +1129,10 @@ mod tests {
         // run through the scanner (golden_checked == 0) and it must not fail eval.
         let tmp = tempdir();
         let dir = tmp.join("whetstone").join("rules").join("rust");
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).expect("create rule fixture");
         let rule = "source:\n  name: anyhow\nrules:\n  - id: anyhow.unwrap\n    severity: should\n    confidence: high\n    category: convention\n    description: prefer expect\n    source_url: https://example.com\n    approved: true\n    status: approved\n    signals:\n      - id: s\n        strategy: lint_proxy\n        weight: required\n        lint:\n          tool: clippy\n          code: unwrap_used\n    golden_examples:\n      - code: \"let x = y.unwrap();\"\n        verdict: fail\n        reason: bare unwrap\n";
         write_file(&dir.join("anyhow.yaml"), rule);
-        let res = eval(&tmp, None).unwrap();
+        let res = eval(&tmp, None);
         assert_eq!(res["ok"], true, "{res}");
         let card = &res["scorecards"][0];
         assert_eq!(card["golden_checked"], 0, "{res}");

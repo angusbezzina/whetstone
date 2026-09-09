@@ -53,12 +53,8 @@ const LANGUAGES: &[LanguageSpec] = &[
 pub fn canonical_language(input: &str) -> Option<&'static str> {
     let normalized = input.trim().to_ascii_lowercase();
     LANGUAGES.iter().find_map(|language| {
-        (language.id == normalized
-            || language
-                .aliases
-                .iter()
-                .any(|alias| *alias == normalized))
-        .then_some(language.id)
+        (language.id == normalized || language.aliases.iter().any(|alias| *alias == normalized))
+            .then_some(language.id)
     })
 }
 

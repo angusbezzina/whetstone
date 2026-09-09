@@ -69,9 +69,7 @@ pub fn run() -> i32 {
     match cli.command {
         None => orientation(machine),
         Some(Command::Validate { project_dir }) => validate(&project_dir, machine),
-        Some(Command::Eval { project_dir, lang }) => {
-            eval(&project_dir, lang.as_deref(), machine)
-        }
+        Some(Command::Eval { project_dir, lang }) => eval(&project_dir, lang.as_deref(), machine),
         Some(Command::Scan {
             paths,
             project_dir,
@@ -104,7 +102,9 @@ fn orientation(machine: bool) -> i32 {
         println!("Whetstone · lean foundation");
         println!("The legacy product has been removed.");
         println!("Target workflows: init, dash, change, check, pull, push.");
-        println!("Product workflows remain unavailable until their implementation milestones pass.");
+        println!(
+            "Product workflows remain unavailable until their implementation milestones pass."
+        );
     }
     0
 }
@@ -120,24 +120,25 @@ fn validate(project_dir: &std::path::Path, machine: bool) -> i32 {
     } else {
         print!("{report}");
     }
-    if ok { 0 } else { 1 }
+    if ok {
+        0
+    } else {
+        1
+    }
 }
 
 fn eval(project_dir: &std::path::Path, lang: Option<&str>, machine: bool) -> i32 {
-    match check::eval(project_dir, lang) {
-        Ok(result) => {
-            let ok = result.get("ok").and_then(|value| value.as_bool()) == Some(true);
-            if machine {
-                output::print_json(&result);
-            } else {
-                print!("{}", check::format_eval_output(&result));
-            }
-            if ok { 0 } else { 1 }
-        }
-        Err(error) => {
-            print_error(machine, &error.to_string());
-            1
-        }
+    let result = check::eval(project_dir, lang);
+    let ok = result.get("ok").and_then(|value| value.as_bool()) == Some(true);
+    if machine {
+        output::print_json(&result);
+    } else {
+        print!("{}", check::format_eval_output(&result));
+    }
+    if ok {
+        0
+    } else {
+        1
     }
 }
 
@@ -161,47 +162,29 @@ fn scan(
         .collect();
     let filter = (!rule_filter.is_empty()).then_some(rule_filter);
 
-    match check::run(check::CheckOptions {
+    let result = check::run(check::CheckOptions {
         project_dir,
         scan_paths: &scan_paths,
         lang_filter: lang,
         rule_filter: filter,
-    }) {
-        Ok(result) => {
-            let violations = result
-                .get("violations_count")
-                .and_then(|value| value.as_u64())
-                .unwrap_or(0);
-            let config_issues = result
-                .get("config_issues_count")
-                .and_then(|value| value.as_u64())
-                .unwrap_or(0);
-            if machine {
-                output::print_json(&result);
-            } else {
-                print!("{}", check::format_human_output(&result));
-            }
-            if !no_fail && (violations > 0 || config_issues > 0) {
-                1
-            } else {
-                0
-            }
-        }
-        Err(error) => {
-            print_error(machine, &error.to_string());
-            1
-        }
-    }
-}
-
-fn print_error(machine: bool, message: &str) {
+    });
+    let violations = result
+        .get("violations_count")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let config_issues = result
+        .get("config_issues_count")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
     if machine {
-        output::print_json(&json!({
-            "status": "error",
-            "error": message,
-        }));
+        output::print_json(&result);
     } else {
-        eprintln!("Whetstone: {message}");
+        print!("{}", check::format_human_output(&result));
+    }
+    if !no_fail && (violations > 0 || config_issues > 0) {
+        1
+    } else {
+        0
     }
 }
 

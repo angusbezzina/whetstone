@@ -1,12 +1,10 @@
-#![allow(dead_code)]
-
 //! Tree-sitter substrate for Whetstone's deterministic checks.
 //!
 //! The goal is a small, opinionated surface: parse a file into a [`Tree`],
 //! then ask a handful of well-defined questions (imports, function defs,
 //! classes, decorators) without having to hand-roll tree-sitter queries in
 //! every caller. `wh check` uses this for its AST signals, and the eval
-//! runner will use the same primitives to move off regex fallbacks.
+//! scanner and golden evaluator share these exact parsing primitives.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -105,7 +103,8 @@ mod tests {
 
     #[test]
     fn parse_python_produces_usable_tree() {
-        let tree = parse(AstLang::Python, "def foo():\n    return 1\n").unwrap();
+        let tree = parse(AstLang::Python, "def foo():\n    return 1\n")
+            .expect("valid Python fixture should parse");
         assert_eq!(tree.root_node().kind(), "module");
     }
 

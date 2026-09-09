@@ -1,7 +1,6 @@
 //! Structured YAML rule loading and validation.
 //!
-//! Replaces the regex-based rule parsing with serde_yaml deserialization
-//! and provides validation against the rule schema.
+//! Provides typed rule loading and validation for the deterministic kernel.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -182,23 +181,11 @@ pub struct Signal {
     pub description: Option<String>,
     #[serde(default)]
     pub weight: Option<String>,
-    /// Concrete regex pattern for `pattern` strategy signals.
-    /// When present, test generation produces real regex checks instead of TODO stubs.
-    #[serde(default, alias = "match")]
-    pub match_pattern: Option<String>,
     /// Raw tree-sitter query (S-expression) for `ast` signals. Every node
     /// captured by `@match` is reported as a violation. When present, the
-    /// `wh scan` runner uses the project's tree-sitter grammar for the
-    /// rule's language; when absent, an `ast` signal falls back to regex
-    /// scanning of the file text.
+    /// scanner uses the project's tree-sitter grammar for the rule language.
     #[serde(default)]
     pub ast_query: Option<String>,
-    /// AST node kind that scopes a `pattern` signal's regex. When set, the
-    /// regex is only applied inside nodes of that kind (e.g.
-    /// `function_definition`), removing false positives from the
-    /// surrounding file text like comments and module-level code.
-    #[serde(default)]
-    pub ast_scope: Option<String>,
     /// Structured lint binding for `lint_proxy` signals. Prefer this over
     /// encoding the tool/code pair in free-text descriptions.
     #[serde(default)]
@@ -341,23 +328,30 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
                 });
             }
 
-            if sig.strategy == "pattern" && sig.ast_scope.is_none() {
+            if sig.strategy == "pattern" {
                 warnings.push(ValidationWarning {
                     file: file_path.to_string(),
                     message: format!(
-                        "{rule_ctx}: signal `{}` uses deprecated bare `strategy: pattern`; prefer `ast` with ast_query or `lint_proxy`, or bound the regex with `ast_scope`",
+                        "{rule_ctx}: signal `{}` uses non-executable legacy `strategy: pattern`; migrate to `ast` with ast_query or `lint_proxy`",
                         sig.id.clone().unwrap_or_default()
                     ),
                 });
             }
 
-            if sig.strategy == "ast" && sig.ast_query.is_none() && sig.match_pattern.is_none() {
+            if sig.strategy == "ast" && sig.ast_query.is_none() {
                 warnings.push(ValidationWarning {
                     file: file_path.to_string(),
                     message: format!(
-                        "{rule_ctx}: signal `{}` is `ast` but has neither ast_query nor a regex fallback",
+                        "{rule_ctx}: signal `{}` is `ast` but has no ast_query",
                         sig.id.clone().unwrap_or_default()
                     ),
+                });
+            }
+
+            if sig.weight.as_deref().map_or(true, str::is_empty) {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!("{rule_ctx}: signal is missing weight"),
                 });
             }
 
@@ -406,6 +400,15 @@ pub fn validate_rule_file(rf: &RuleFile, file_path: &str) -> Vec<ValidationWarni
                         "{rule_ctx}: signal `{}` uses legacy lint_proxy description parsing; add lint.tool and lint.code",
                         sig.id.clone().unwrap_or_default()
                     ),
+                });
+            }
+        }
+
+        for example in &rule.golden_examples {
+            if example.reason.as_deref().map_or(true, str::is_empty) {
+                warnings.push(ValidationWarning {
+                    file: file_path.to_string(),
+                    message: format!("{rule_ctx}: golden example is missing reason"),
                 });
             }
         }
@@ -794,15 +797,11 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
                     ));
                 }
 
-                // Deprecated bare `strategy: pattern` (raw regex). The only
-                // sanctioned use is regex bounded by `ast_scope`. Shipped rules
-                // under whetstone/rules/ must not carry bare patterns — that is
-                // the credibility bar from planning/skill-cli-boundary.md §3.
-                // Fixtures and the personal layer get an advisory, not a hard
-                // failure, so the gate stays green while still flagging drift.
-                if sig.strategy == "pattern" && sig.ast_scope.is_none() {
+                // Pattern records remain parseable only for migration. They are
+                // never executable in the lean kernel.
+                if sig.strategy == "pattern" {
                     let msg = format!(
-                        "{rel}: rule {rid} uses deprecated bare `strategy: pattern` (no ast_scope); migrate to `strategy: ast` with ast_query, `strategy: lint_proxy`, or bound the regex with ast_scope"
+                        "{rel}: rule {rid} uses non-executable legacy `strategy: pattern`; migrate to `strategy: ast` with ast_query or `strategy: lint_proxy`"
                     );
                     if rel.starts_with("whetstone/rules/") {
                         errors.push(msg);
@@ -811,10 +810,10 @@ pub fn validate_schema_and_fixtures(project_root: &Path) -> (String, bool) {
                     }
                 }
 
-                // An `ast` signal with no `ast_query` silently degrades to regex.
+                // The lean kernel never weakens an AST rule to text matching.
                 if sig.strategy == "ast" && sig.ast_query.is_none() {
-                    out.push_str(&format!(
-                        "  WARN: {rel}: rule {rid} `ast` signal has no ast_query (falls back to weaker regex scanning)\n"
+                    errors.push(format!(
+                        "{rel}: rule {rid} `ast` signal is missing ast_query"
                     ));
                 }
             }
@@ -942,13 +941,11 @@ pub fn load_approved_rules(
                 approved.push(ApprovedRule {
                     id: rule.id.clone(),
                     severity: rule.severity.clone().unwrap_or_default(),
-                    confidence: rule.confidence.clone().unwrap_or_default(),
                     category: rule.category.clone().unwrap_or_default(),
                     description: rule.description.clone().unwrap_or_default(),
                     source_url: rule.source_url.clone().unwrap_or_default(),
                     source_name: lrf.rule_file.source.name.clone(),
                     language,
-                    languages: target_languages.clone(),
                     signals: rule
                         .signals
                         .iter()
@@ -956,10 +953,7 @@ pub fn load_approved_rules(
                             id: s.id.clone().unwrap_or_default(),
                             strategy: s.strategy.clone(),
                             description: s.description.clone().unwrap_or_default(),
-                            weight: s.weight.clone().unwrap_or_default(),
-                            match_pattern: s.match_pattern.clone(),
                             ast_query: s.ast_query.clone(),
-                            ast_scope: s.ast_scope.clone(),
                             lint: s.lint.as_ref().map(|lint| ApprovedLintBinding {
                                 tool: lint.tool.clone(),
                                 code: lint.code.clone(),
@@ -985,139 +979,24 @@ pub fn load_approved_rules(
                         .map(|validator| ApprovedValidatorBinding {
                             adapter: validator.adapter.clone(),
                             rule: validator.rule.clone(),
-                            mode: validator.mode.clone(),
                             config: validator.config.clone(),
                         })
                         .collect(),
-                    provenance: rule
-                        .provenance
-                        .as_ref()
-                        .map(|provenance| ApprovedRuleProvenance {
-                            source_page_id: provenance.source_page_id.clone(),
-                            source_page_path: provenance.source_page_path.clone(),
-                            source_authority: provenance.source_authority.clone(),
-                            source_line_start: provenance.source_line_start,
-                            source_line_end: provenance.source_line_end,
-                            upstream_urls: provenance.upstream_urls.clone(),
-                        }),
                     golden_examples: rule
                         .golden_examples
                         .iter()
                         .map(|e| ApprovedExample {
                             code: e.code.clone(),
                             verdict: e.verdict.clone(),
-                            reason: e.reason.clone().unwrap_or_default(),
                             language: e.language.clone(),
                         })
                         .collect(),
-                    deterministic_pass_threshold: rule.deterministic_pass_threshold,
-                    deterministic_fail_threshold: rule.deterministic_fail_threshold,
                 });
             }
         }
     }
 
     (approved, warnings)
-}
-
-/// Convert already-loaded rule files to approved rules (retained for
-/// potential reuse; originally used by the built-in layer which was removed).
-#[allow(dead_code)]
-pub fn approved_from_loaded(
-    loaded: &[LoadedRuleFile],
-    lang_filter: Option<&str>,
-) -> (Vec<ApprovedRule>, Vec<String>) {
-    let mut approved = Vec::new();
-
-    for lrf in loaded {
-        for rule in &lrf.rule_file.rules {
-            if !rule.approved {
-                continue;
-            }
-            let target_languages = resolved_rule_languages(rule, lrf.language.as_deref());
-            if target_languages.is_empty() {
-                continue;
-            }
-            for language in target_languages_for_filter(&target_languages, lang_filter) {
-                approved.push(ApprovedRule {
-                    id: rule.id.clone(),
-                    severity: rule.severity.clone().unwrap_or_default(),
-                    confidence: rule.confidence.clone().unwrap_or_default(),
-                    category: rule.category.clone().unwrap_or_default(),
-                    description: rule.description.clone().unwrap_or_default(),
-                    source_url: rule.source_url.clone().unwrap_or_default(),
-                    source_name: lrf.rule_file.source.name.clone(),
-                    language,
-                    languages: target_languages.clone(),
-                    signals: rule
-                        .signals
-                        .iter()
-                        .map(|s| ApprovedSignal {
-                            id: s.id.clone().unwrap_or_default(),
-                            strategy: s.strategy.clone(),
-                            description: s.description.clone().unwrap_or_default(),
-                            weight: s.weight.clone().unwrap_or_default(),
-                            match_pattern: s.match_pattern.clone(),
-                            ast_query: s.ast_query.clone(),
-                            ast_scope: s.ast_scope.clone(),
-                            lint: s.lint.as_ref().map(|lint| ApprovedLintBinding {
-                                tool: lint.tool.clone(),
-                                code: lint.code.clone(),
-                            }),
-                        })
-                        .collect(),
-                    formatter: rule.formatter.as_ref().map(|f| ApprovedFormatterDirective {
-                        tool: f.tool.clone(),
-                        options: f.options.clone(),
-                    }),
-                    tests: rule
-                        .tests
-                        .iter()
-                        .map(|t| ApprovedTestBinding {
-                            runner: t.runner.clone(),
-                            path: t.path.clone(),
-                            selector: t.selector.clone(),
-                        })
-                        .collect(),
-                    validators: rule
-                        .validators
-                        .iter()
-                        .map(|validator| ApprovedValidatorBinding {
-                            adapter: validator.adapter.clone(),
-                            rule: validator.rule.clone(),
-                            mode: validator.mode.clone(),
-                            config: validator.config.clone(),
-                        })
-                        .collect(),
-                    provenance: rule
-                        .provenance
-                        .as_ref()
-                        .map(|provenance| ApprovedRuleProvenance {
-                            source_page_id: provenance.source_page_id.clone(),
-                            source_page_path: provenance.source_page_path.clone(),
-                            source_authority: provenance.source_authority.clone(),
-                            source_line_start: provenance.source_line_start,
-                            source_line_end: provenance.source_line_end,
-                            upstream_urls: provenance.upstream_urls.clone(),
-                        }),
-                    golden_examples: rule
-                        .golden_examples
-                        .iter()
-                        .map(|e| ApprovedExample {
-                            code: e.code.clone(),
-                            verdict: e.verdict.clone(),
-                            reason: e.reason.clone().unwrap_or_default(),
-                            language: e.language.clone(),
-                        })
-                        .collect(),
-                    deterministic_pass_threshold: rule.deterministic_pass_threshold,
-                    deterministic_fail_threshold: rule.deterministic_fail_threshold,
-                });
-            }
-        }
-    }
-
-    (approved, Vec::new())
 }
 
 fn resolved_rule_languages(rule: &Rule, inferred_language: Option<&str>) -> Vec<String> {
@@ -1144,43 +1023,34 @@ fn target_languages_for_filter(languages: &[String], lang_filter: Option<&str>) 
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct ApprovedRule {
     pub id: String,
     pub severity: String,
-    pub confidence: String,
     pub category: String,
     pub description: String,
     pub source_url: String,
     pub source_name: String,
     pub language: String,
-    pub languages: Vec<String>,
     pub signals: Vec<ApprovedSignal>,
     pub formatter: Option<ApprovedFormatterDirective>,
     pub tests: Vec<ApprovedTestBinding>,
     pub validators: Vec<ApprovedValidatorBinding>,
-    pub provenance: Option<ApprovedRuleProvenance>,
     pub golden_examples: Vec<ApprovedExample>,
-    pub deterministic_pass_threshold: Option<u32>,
-    pub deterministic_fail_threshold: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ApprovedFormatterDirective {
     pub tool: String,
     pub options: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ApprovedLintBinding {
     pub tool: String,
     pub code: String,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ApprovedTestBinding {
     pub runner: String,
     pub path: String,
@@ -1188,44 +1058,25 @@ pub struct ApprovedTestBinding {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ApprovedValidatorBinding {
     pub adapter: String,
     pub rule: String,
-    pub mode: Option<String>,
     pub config: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct ApprovedRuleProvenance {
-    pub source_page_id: Option<String>,
-    pub source_page_path: Option<String>,
-    pub source_authority: Option<String>,
-    pub source_line_start: Option<u32>,
-    pub source_line_end: Option<u32>,
-    pub upstream_urls: Vec<String>,
-}
-
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct ApprovedSignal {
     pub id: String,
     pub strategy: String,
     pub description: String,
-    pub weight: String,
-    pub match_pattern: Option<String>,
     pub ast_query: Option<String>,
-    pub ast_scope: Option<String>,
     pub lint: Option<ApprovedLintBinding>,
 }
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct ApprovedExample {
     pub code: String,
     pub verdict: String,
-    pub reason: String,
     pub language: Option<String>,
 }
 
@@ -1267,36 +1118,34 @@ mod tests {
     }
 
     #[test]
-    fn bare_pattern_signal_is_flagged_deprecated() {
+    fn pattern_signal_is_flagged_non_executable() {
         let rf = rule_file(
             "      - id: s\n        strategy: pattern\n        weight: required\n        match: 'foo'\n",
         );
         let warnings = validate_rule_file(&rf, "demo.yaml");
-        assert!(warnings
-            .iter()
-            .any(|w| w.message.contains("deprecated bare `strategy: pattern`")));
+        assert!(warnings.iter().any(|w| w
+            .message
+            .contains("non-executable legacy `strategy: pattern`")));
     }
 
     #[test]
-    fn ast_scope_bounded_pattern_is_allowed() {
+    fn ast_scope_does_not_make_legacy_pattern_executable() {
         let rf = rule_file(
             "      - id: s\n        strategy: pattern\n        weight: required\n        match: 'foo'\n        ast_scope: function_definition\n",
         );
         let warnings = validate_rule_file(&rf, "demo.yaml");
-        assert!(!warnings
-            .iter()
-            .any(|w| w.message.contains("deprecated bare `strategy: pattern`")));
+        assert!(warnings.iter().any(|w| w
+            .message
+            .contains("non-executable legacy `strategy: pattern`")));
     }
 
     #[test]
     fn ast_signal_without_query_is_flagged() {
-        let rf = rule_file(
-            "      - id: s\n        strategy: ast\n        weight: required\n",
-        );
+        let rf = rule_file("      - id: s\n        strategy: ast\n        weight: required\n");
         let warnings = validate_rule_file(&rf, "demo.yaml");
         assert!(warnings
             .iter()
-            .any(|w| w.message.contains("neither ast_query nor a regex fallback")));
+            .any(|w| w.message.contains("has no ast_query")));
     }
 
     #[test]
@@ -1305,7 +1154,9 @@ mod tests {
             "      - id: s\n        strategy: ast\n        weight: required\n        ast_query: '(function_definition) @match'\n",
         );
         let warnings = validate_rule_file(&rf, "demo.yaml");
-        assert!(!warnings.iter().any(|w| w.message.contains("strategy: pattern")));
+        assert!(!warnings
+            .iter()
+            .any(|w| w.message.contains("strategy: pattern")));
         assert!(!warnings.iter().any(|w| w.message.contains("ast_query")));
     }
 }

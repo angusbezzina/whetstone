@@ -67,11 +67,11 @@ No other `src/` path is unclassified: the table names every top-level module and
 
 | Disposition | Direct dependency |
 | --- | --- |
-| KEEP pending post-cut `cargo tree` proof | `anyhow`, `clap`, `serde`, `serde_json`, `serde_yaml`, `toml`, `tree-sitter`, `tree-sitter-python`, `tree-sitter-rust`, `tree-sitter-typescript`, `walkdir` |
-| REMOVE | `indicatif`, `chrono`, `glob`, `rayon`, `regex`, `reqwest`, `scraper`, `sha2`, `tera`, `ratatui`, `crossterm` |
+| KEEP after post-cut compile proof | `clap`, `serde`, `serde_json`, `serde_yaml`, `toml`, `tree-sitter`, `tree-sitter-python`, `tree-sitter-rust`, `tree-sitter-typescript`, `walkdir` |
+| REMOVE | `anyhow`, `indicatif`, `chrono`, `glob`, `rayon`, `regex`, `reqwest`, `scraper`, `sha2`, `tera`, `ratatui`, `crossterm` |
 | KEEP dev-only | `tempfile` |
 
-Every retained dependency has a direct kernel consumer: errors, parser, signal matching, record/receipt serialization, old rule input, native Cargo lint inspection, AST grammars, source traversal, or isolated tests. `cargo tree` and unused-dependency inspection at `.32` may remove more; no dependency is retained for later convenience.
+Every retained dependency has a direct kernel consumer: parser, stable output, old rule input, native Cargo lint inspection, AST grammars, source traversal, or isolated tests. `cargo tree` and warning-denied compilation at `.32` prove the cut; no dependency is retained for later convenience.
 
 ## Tests, fixtures, scripts, packaging and instructions
 

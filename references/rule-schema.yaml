@@ -1,153 +1,67 @@
-# Whetstone Rule YAML Schema
-# This defines the structure of rule files in whetstone/rules/{language}/{dep}.yaml
+# Temporary R0 rule input schema.
 #
-# Every rule file has two top-level keys:
-#   source: metadata about the dependency and its documentation
-#   rules:  list of extracted rules
+# Existing data is preserved while Direction 05's typed record model is built.
+# New code must not treat this file as authenticated acceptance or activation.
 
-# --- Source metadata ---
 source:
-  name: string            # Required. Dependency/source name (e.g., "fastapi")
-  docs_url: string        # Required for extracted/source-backed rules; loader tolerates omission in some authored fixtures
-  llms_txt: string        # Optional. URL to llms.txt or llms-full.txt if available
-  version: string         # Required for extracted/source-backed rules; loader tolerates omission in some authored fixtures
-  content_hash: string    # Required for extracted/source-backed rules; loader tolerates omission in some authored fixtures
-  resolved_at: string     # Required for extracted/source-backed rules; loader tolerates omission in some authored fixtures
-  registry: enum          # Required for extracted/source-backed rules. One of: pypi | npm | crates_io | manual
-                           #   pypi     — Python Package Index
-                           #   npm      — Node Package Manager
-                           #   crates_io — Rust crate registry
-                           #   manual   — manually provided source
-  content_origin: enum    # Optional. How the binary fetched the content.
-                           # One of: llms_txt | readme | html_converted | changelog | custom_url
-                           # Auto-populated by the resolve pipeline.
+  name: string
+  docs_url: string
+  version: string
+  content_hash: string
+  resolved_at: string
+  registry: enum # pypi | npm | crates_io | manual
+  content_origin: string
 
-# --- Rules list ---
 rules:
-  - id: string            # Required. Format: "{dependency}.{rule-name}" (e.g., "fastapi.async-routes")
-                           # Must be unique across the entire ruleset.
+  - id: string
+    severity: enum # must | should | may
+    confidence: enum # high | medium
+    category: enum # migration | default | convention | breaking-change | semantic
+    description: string
+    source_url: string
+    source_quote: string
+    approved: boolean
+    status: enum # candidate | approved
+    languages: [string]
 
-    severity: enum         # Required. One of: must | should | may
-                           # Uses RFC 2119 keywords:
-                           #   must    — violation is always wrong
-                           #   should  — violation is wrong in most cases
-                           #   may     — recommendation, not a hard requirement
+    signals:
+      - id: string
+        strategy: enum # ast | lint_proxy; pattern is legacy and not executable
+        description: string
+        weight: enum # required | strong | moderate
+        ast_query: string # required for ast; every @match capture is a violation
+        lint:
+          tool: enum # ruff | biome | clippy
+          code: string
 
-    confidence: enum       # Required. One of: high | medium
-                           # high   — directly stated in documentation
-                           # medium — inferred from documentation patterns
+    formatter:
+      tool: enum # ruff | biome | rustfmt
+      options: map
 
-    category: enum         # Required. One of: migration | default | convention | breaking-change | semantic
-                           # migration       — deprecated APIs that still work but shouldn't be used
-                           # default         — insecure/slow unless explicitly configured
-                           # convention      — docs recommend X, most tutorials/LLMs default to Y
-                           # breaking-change — will fail in the next major version
-                           # semantic        — judgment-based, decomposable into mostly-deterministic signals
+    tests:
+      - runner: enum # pytest | vitest | cargo
+        path: string # repository-relative
+        selector: string
 
-    description: string    # Required. Rule description using RFC 2119 keywords.
-                           # Should be concise (1-3 sentences) and specific.
+    validators:
+      - adapter: enum # command | lint_rule | linked_test
+        rule: string
+        mode: enum # enforce | monitor
+        config: map
 
-    source_url: string     # Required. Specific URL in the dependency's documentation
-                           # that backs this rule. Must be a real, navigable link.
+    provenance:
+      source_page_id: string
+      source_page_path: string
+      source_authority: string
+      source_line_start: integer
+      source_line_end: integer
+      upstream_urls: [string]
 
-    source_quote: string   # Optional. Verbatim excerpt from documentation supporting
-                           # this rule. Shown during approval to build confidence.
-
-    approved: boolean      # Required for new writes; loader defaults omitted values to false for backward compatibility.
-                            # Only approved rules are used for generation.
-
-    # --- Lifecycle state ---
-
-    status: enum           # Required for new writes; loader tolerates omission for backward compatibility.
-                           # One of: candidate | approved
-                           #   candidate  — proposed by `wh extract submit` but not yet approved
-                           #   approved   — reviewed and accepted for enforcement
-
-    # --- Quality markers ---
-
-    last_validated: string # Optional. ISO 8601 timestamp of last validation against current docs.
-    validation_status: enum # Optional. One of: current | stale | unknown
-                           #   current — source_url still contains the backing content
-                           #   stale   — source content has changed since rule was approved
-                           #   unknown — not yet validated
-
-    signals:               # Optional. Prefer ast/lint_proxy checks. Rules backed
-                           # only by formatter/tests/validators may leave this empty.
-      - id: string         # Required. Unique within this rule (e.g., "is-sync-function").
-        strategy: enum     # Required. One of: ast | lint_proxy | pattern
-                           #   ast        — verifiable via syntax tree analysis (preferred for
-                           #                checks no linter expresses; see signal-strategies.md)
-                           #   lint_proxy — maps to an existing linter rule (ruff/biome/clippy);
-                           #                `wh actions lint` emits the native enablement config
-                           #   pattern    — DEPRECATED raw text/regex. Brittle and false-positive
-                           #                prone. The ONLY allowed form is regex bounded by
-                           #                `ast_scope` (scoped to a parsed node). Bare `pattern`
-                           #                (no `ast_scope`) is rejected by `wh validate` for
-                           #                shipped rules under whetstone/rules/. See
-                           #                planning/skill-cli-boundary.md §3.
-        description: string # Required. What this signal checks.
-        weight: enum       # Required. One of: required | strong | moderate
-                           #   required — rule fails if this signal fires
-                           #   strong   — significant indicator
-                           #   moderate — supporting evidence
-        match: string      # Optional. Regex for an `ast_scope`-bounded `pattern` signal (the
-                           # only sanctioned use of `pattern`). Bare regex is deprecated; prefer
-                           # an `ast` signal with `ast_query`. Example: '\.unwrap\s*\(\)'
-        ast_query: string  # Optional. Raw tree-sitter S-expression query for `ast` signals.
-                           # Every node captured by `@match` becomes a violation when `wh scan`
-                           # parses a file of the rule's language. Example for Python:
-                           #   '(function_definition "async") @match'
-                           # If absent, an `ast` signal falls back to regex (weaker).
-        ast_scope: string  # Optional. AST node kind that scopes a `pattern` signal's regex.
-                             # When set, the regex is only applied inside nodes whose kind equals
-                             # this value (e.g. 'function_definition'), eliminating hits in
-                             # comments or module-level code. Requires tree-sitter parse success.
-        lint:              # Optional. Structured lint binding for `lint_proxy` signals.
-          tool: string     # Required when present. Supported: ruff | biome | clippy
-          code: string     # Required when present. Example: B006 | suspicious/noExplicitAny
-
-    formatter:            # Optional. Narrow formatter-backed enforcement surface.
-      tool: string        # Required when present. Supported today: ruff | biome | rustfmt
-                           # Use only when the rule maps cleanly to a safe mechanical rewrite.
-      options: map        # Required when present. Key/value pairs written into the
-                           # generated formatter overlay. Values must be strings, numbers,
-                           # or booleans. Unsupported keys are ignored with validation warnings.
-
-    tests:                # Optional. Explicit binding to an existing language-native test.
-      - runner: string    # Required. Supported: pytest | vitest | cargo
-        path: string      # Required. Relative path to the test file inside the repo.
-        selector: string  # Optional. Specific test name / selector inside the file.
-
-    validators:           # Optional. Explicit validator-adapter bindings beyond signals/formatter/tests.
-      - adapter: string   # Required. Supported today: lint_rule | linked_test | command
-        rule: string      # Required. Adapter-specific rule or policy identifier.
-        mode: string      # Optional. One of: enforce | monitor
-        config: map       # Optional. Adapter-specific configuration map.
-                         # Common examples:
-                         # - lint_rule: { tool: biome, code: suspicious/noExplicitAny }
-                         # - linked_test: { runner: vitest, path: tests/rules/js.test.ts, selector: no_inline_handlers }
-                         # - command: { path: scripts/check-inline-handlers.py }
-
-    provenance:           # Optional. Explicit provenance for graph-/knowledge-derived rules.
-      source_page_id: string   # Optional. Stable page/node id in a second-brain graph.
-      source_page_path: string # Optional. Repo-relative page path.
-      source_authority: string # Optional. Example: draft | synthesized | reviewed | canonical
-      source_line_start: integer # Optional. Start line in the source page supporting this rule.
-      source_line_end: integer   # Optional. End line in the source page supporting this rule.
-      upstream_urls: [string]    # Optional. Upstream docs linked from the internal page and preferred for external citation.
-
-    golden_examples:       # Required before approval. Candidate/legacy fixtures may omit temporarily.
-                           # Target 3-5 examples (mix of pass and fail).
-      - code: string       # Required. Code snippet (use | for multiline YAML).
-        verdict: enum      # Required. One of: pass | fail
-        reason: string     # Required. Brief explanation of why this is pass/fail.
-        language: string   # Optional. Override language for polyglot examples
-                           #   (defaults to the source language of the rule file).
-
-    # --- Optional fields for deterministic eval thresholds ---
+    golden_examples:
+      - code: string
+        verdict: enum # pass | fail
+        reason: string
+        language: string
 
     deterministic_pass_threshold: integer
-                           # Optional. Number of deterministic signals that auto-pass.
-
     deterministic_fail_threshold: integer
-                           # Optional. Number of deterministic signals below which auto-fail.

@@ -2,124 +2,108 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
 
 permissions:
   contents: write
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   build:
-    name: Build ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            use_cross: false
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            use_cross: true
-          - target: x86_64-apple-darwin
-            os: macos-14
-            use_cross: false
-          - target: aarch64-apple-darwin
-            os: macos-14
-            use_cross: false
-
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            cross: false
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            cross: true
+          - os: macos-14
+            target: x86_64-apple-darwin
+            cross: false
+          - os: macos-14
+            target: aarch64-apple-darwin
+            cross: false
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross (aarch64-linux)
-        if: matrix.use_cross
-        # Pin to the last stable release. Installing from git HEAD (unpinned)
-        # broke the v0.9.0 release when a cross main regression failed the
-        # `cargo metadata` preflight ("unable to get metadata for package").
+      - name: Install pinned cross
+        if: matrix.cross
         run: cargo install cross --locked --version 0.2.5
 
-      - name: Build binary
+      - name: Build
+        shell: bash
         run: |
-          if [ "${{ matrix.use_cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }}
+          set -euo pipefail
+          if [ "${{ matrix.cross }}" = true ]; then
+            cross build --release --target "${{ matrix.target }}"
           else
-            cargo build --release --target ${{ matrix.target }}
+            cargo build --release --target "${{ matrix.target }}"
           fi
+          cp "target/${{ matrix.target }}/release/whetstone" \
+            "whetstone-${{ matrix.target }}"
 
-      - name: Rename binary
-        run: |
-          cp target/${{ matrix.target }}/release/whetstone whetstone-${{ matrix.target }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: whetstone-${{ matrix.target }}
           path: whetstone-${{ matrix.target }}
 
-  validate-binary:
-    name: Validate binary
+  validate-linux-binary:
     needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download x86_64-linux artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: whetstone-x86_64-unknown-linux-gnu
 
-      - name: Make executable
-        run: chmod +x whetstone-x86_64-unknown-linux-gnu
-
-      - name: Validate --version
-        run: ./whetstone-x86_64-unknown-linux-gnu --version
-
-      - name: Validate init
+      - name: Prove honest, non-vacuous foundation
+        shell: bash
         run: |
-          ./whetstone-x86_64-unknown-linux-gnu init --project-dir tests/fixtures | jq .
+          set -euo pipefail
+          bin=./whetstone-x86_64-unknown-linux-gnu
+          chmod +x "$bin"
+          "$bin" --version | grep -q '^whetstone '
+          "$bin" --json | jq -e '.status == "foundation" and .available == []' >/dev/null
+          "$bin" validate
+          eval_result=$("$bin" eval --json)
+          echo "$eval_result" | jq -e \
+            '.ok and .rules_evaluated > 0 and ([.scorecards[].golden_checked] | add) > 0' \
+            >/dev/null
+          scan_result=$("$bin" scan src --lang rust --json --no-fail)
+          echo "$scan_result" | jq -e \
+            '.violations_count == 0 and .config_issues_count == 0 and .files_scanned > 0 and .rules_applied > 0' \
+            >/dev/null
+          if "$bin" status >/dev/null 2>&1; then
+            echo 'retired command unexpectedly executed' >&2
+            exit 1
+          fi
 
-      - name: Validate status
-        run: |
-          ./whetstone-x86_64-unknown-linux-gnu status --json --no-snapshot --project-dir tests/fixtures | jq .
-
-      - name: Validate ci
-        run: |
-          ./whetstone-x86_64-unknown-linux-gnu ci --json --project-dir tests/fixtures | jq .
-
-  release:
-    name: Create Release
-    needs: [build, validate-binary]
+  publish:
+    needs: [build, validate-linux-binary]
     runs-on: ubuntu-latest
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Prepare release assets
+      - name: Assemble release assets
+        shell: bash
         run: |
-          mkdir -p release
-          for dir in artifacts/whetstone-*/; do
-            cp "${dir}"whetstone-* release/
-          done
-
-      - name: Generate checksums
-        working-directory: release
-        run: |
+          set -euo pipefail
+          mkdir release
+          find artifacts -type f -name 'whetstone-*' -exec cp {} release/ \;
+          cd release
           sha256sum whetstone-* > checksums-sha256.txt
-          cat checksums-sha256.txt
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |

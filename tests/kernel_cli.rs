@@ -24,8 +24,8 @@ fn json(output: &Output) -> serde_json::Value {
 }
 
 fn write_rule_project(root: &Path, source: &str) {
-    std::fs::create_dir_all(root.join("whetstone/rules/python")).unwrap();
-    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::create_dir_all(root.join("whetstone/rules/python")).expect("create rule fixture");
+    std::fs::create_dir_all(root.join("src")).expect("create source fixture");
     std::fs::write(
         root.join("whetstone/rules/python/names.yaml"),
         r#"source:
@@ -52,8 +52,8 @@ rules:
         verdict: fail
 "#,
     )
-    .unwrap();
-    std::fs::write(root.join("src/app.py"), source).unwrap();
+    .expect("write rule fixture");
+    std::fs::write(root.join("src/app.py"), source).expect("write source fixture");
 }
 
 #[test]
@@ -82,7 +82,10 @@ fn public_help_exposes_no_legacy_or_premature_workflow() {
     ] {
         assert!(!help.contains(retired), "help leaked {retired}:\n{help}");
     }
-    assert!(!help.contains("Commands:"), "hidden maintenance surface leaked");
+    assert!(
+        !help.contains("Commands:"),
+        "hidden maintenance surface leaked"
+    );
 }
 
 #[test]
@@ -107,7 +110,9 @@ fn validate_eval_and_self_scan_are_non_vacuous() {
     assert!(validate.status.success());
     let validate_json = json(&validate);
     assert_eq!(validate_json["ok"], true);
-    let report = validate_json["report"].as_str().unwrap();
+    let report = validate_json["report"]
+        .as_str()
+        .expect("validation report should be text");
     assert!(report.contains("Checking "), "{validate_json}");
     assert!(!report.contains("Checking 0 rule files"), "{validate_json}");
 
@@ -115,14 +120,22 @@ fn validate_eval_and_self_scan_are_non_vacuous() {
     assert!(eval.status.success());
     let eval_json = json(&eval);
     assert_eq!(eval_json["ok"], true);
-    assert!(eval_json["rules_evaluated"].as_u64().unwrap() > 0);
+    assert!(
+        eval_json["rules_evaluated"]
+            .as_u64()
+            .expect("rules_evaluated should be numeric")
+            > 0
+    );
     let checked: u64 = eval_json["scorecards"]
         .as_array()
-        .unwrap()
+        .expect("scorecards should be an array")
         .iter()
         .filter_map(|card| card["golden_checked"].as_u64())
         .sum();
-    assert!(checked > 0, "eval performed no scanner-backed golden checks");
+    assert!(
+        checked > 0,
+        "eval performed no scanner-backed golden checks"
+    );
 
     let scan = run(
         &[
@@ -140,13 +153,23 @@ fn validate_eval_and_self_scan_are_non_vacuous() {
     assert!(scan.status.success());
     let scan_json = json(&scan);
     assert_eq!(scan_json["violations_count"], 0);
-    assert!(scan_json["files_scanned"].as_u64().unwrap() > 0);
-    assert!(scan_json["rules_applied"].as_u64().unwrap() > 0);
+    assert!(
+        scan_json["files_scanned"]
+            .as_u64()
+            .expect("files_scanned should be numeric")
+            > 0
+    );
+    assert!(
+        scan_json["rules_applied"]
+            .as_u64()
+            .expect("rules_applied should be numeric")
+            > 0
+    );
 }
 
 #[test]
 fn scanner_finds_known_bad_and_accepts_known_good() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = tempfile::tempdir().expect("create scanner fixture");
     write_rule_project(temp.path(), "def ReadConfig():\n    pass\n");
     let project = temp.path().to_string_lossy();
     let bad = run(
@@ -172,7 +195,7 @@ fn scanner_finds_known_bad_and_accepts_known_good() {
         temp.path().join("src/app.py"),
         "def read_config():\n    pass\n",
     )
-    .unwrap();
+    .expect("update source fixture");
     let good = run(
         &[
             "scan",
@@ -200,7 +223,7 @@ fn retained_gate_commands_do_not_mutate_user_data() {
     ];
     let before: Vec<Vec<u8>> = protected
         .iter()
-        .map(|path| std::fs::read(path).unwrap())
+        .map(|path| std::fs::read(path).expect("read protected fixture"))
         .collect();
     let root_arg = root.to_string_lossy();
 
@@ -226,6 +249,11 @@ fn retained_gate_commands_do_not_mutate_user_data() {
     .success());
 
     for (path, expected) in protected.iter().zip(before) {
-        assert_eq!(std::fs::read(path).unwrap(), expected, "mutated {}", path.display());
+        assert_eq!(
+            std::fs::read(path).expect("reread protected fixture"),
+            expected,
+            "mutated {}",
+            path.display()
+        );
     }
 }

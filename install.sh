@@ -145,8 +145,8 @@ download_and_verify() {
     elif command -v shasum >/dev/null 2>&1; then
         ACTUAL="$(shasum -a 256 "${TMPDIR}/${BINARY_NAME}" | awk '{print $1}')"
     else
-        echo "Warning: neither sha256sum nor shasum found, skipping verification" >&2
-        return
+        echo "Error: neither sha256sum nor shasum is available; refusing an unverified install" >&2
+        exit 1
     fi
 
     if [ "$EXPECTED" != "$ACTUAL" ]; then

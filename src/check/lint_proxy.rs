@@ -1,7 +1,7 @@
 //! Verify `lint_proxy` signals against the project's linter config.
 //!
 //! A `lint_proxy` signal declares that an existing linter rule covers the
-//! check (ruff E501, biome `suspicious/noExplicitAny`, etc.). `wh tests`
+//! check (ruff E501, biome `suspicious/noExplicitAny`, etc.). Native tools
 //! produces overlay configs that turn those rules on; this module walks
 //! the project's primary linter config and reports any mapped rule that
 //! is NOT enabled so the user knows enforcement is missing.
@@ -44,9 +44,9 @@ pub fn verify_lint_proxies(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<V
                     _ => Verdict::Unsupported,
                 };
                 let fix = if binding.tool == "clippy" {
-                    "add the lint to Cargo.toml `[lints.clippy]` (run `wh actions lint` to generate the fragment, then merge it — a bare clippy.toml cannot enable lints)"
+                    "add the lint to Cargo.toml `[lints.clippy]`; a bare clippy.toml cannot enable lints"
                 } else {
-                    "run `wh actions lint` to generate the overlay config, or enable manually"
+                    "enable the rule in the native linter configuration"
                 };
                 match verdict {
                     Verdict::Verified => continue,
@@ -65,7 +65,7 @@ pub fn verify_lint_proxies(project_dir: &Path, rules: &[&ApprovedRule]) -> Vec<V
                         "linter": binding.tool,
                         "code": binding.code,
                         "issue": "no linter config found to verify against",
-                        "fix": "add ruff.toml / biome.json, or run `wh tests` for overlays",
+                        "fix": "add and review the native linter configuration",
                     })),
                     Verdict::InvalidConfig(err) => issues.push(json!({
                         "rule_id": rule.id,
@@ -123,7 +123,7 @@ pub fn verify_formatter_directives(project_dir: &Path, rules: &[&ApprovedRule]) 
                     "option": key,
                     "expected": expected,
                     "issue": "formatter option is not configured",
-                    "fix": "run `wh actions lint` to generate the overlay config, or configure manually",
+                    "fix": "enable the rule in the native linter configuration",
                     "config_files_checked": paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
                 })),
                 Verdict::NoConfig => issues.push(json!({
@@ -132,7 +132,7 @@ pub fn verify_formatter_directives(project_dir: &Path, rules: &[&ApprovedRule]) 
                     "option": key,
                     "expected": expected,
                     "issue": "no formatter config found to verify against",
-                    "fix": "run `wh actions lint` to generate the overlay config, or configure manually",
+                    "fix": "enable the rule in the native linter configuration",
                 })),
                 Verdict::InvalidConfig(err) => issues.push(json!({
                     "rule_id": rule.id,
@@ -1104,21 +1104,16 @@ mod tests {
         crate::rules::ApprovedRule {
             id: "demo.validator".into(),
             severity: "should".into(),
-            confidence: "high".into(),
             category: "convention".into(),
             description: "desc".into(),
             source_url: "https://example.com".into(),
             source_name: "demo".into(),
             language: "javascript".into(),
-            languages: vec!["javascript".into()],
             signals: Vec::new(),
             formatter: None,
             tests: Vec::new(),
             validators: vec![binding],
-            provenance: None,
             golden_examples: Vec::new(),
-            deterministic_pass_threshold: None,
-            deterministic_fail_threshold: None,
         }
     }
 
@@ -1170,11 +1165,10 @@ mod tests {
 
     #[test]
     fn validator_command_requires_path_or_command() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create validator fixture");
         let rule = validator_rule(crate::rules::ApprovedValidatorBinding {
             adapter: "command".into(),
             rule: "custom.inline-handlers".into(),
-            mode: None,
             config: Default::default(),
         });
 
@@ -1185,11 +1179,10 @@ mod tests {
 
     #[test]
     fn validator_linked_test_checks_path_presence() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create validator fixture");
         let rule = validator_rule(crate::rules::ApprovedValidatorBinding {
             adapter: "linked_test".into(),
             rule: "custom.inline-handlers".into(),
-            mode: None,
             config: BTreeMap::from([
                 ("runner".into(), json!("vitest")),
                 ("path".into(), json!("tests/inline-handlers.test.ts")),
@@ -1203,18 +1196,21 @@ mod tests {
     }
 
     fn write_cargo(dir: &Path, body: &str) {
-        fs::write(dir.join("Cargo.toml"), body).unwrap();
+        fs::write(dir.join("Cargo.toml"), body).expect("write Cargo fixture");
     }
 
     #[test]
     fn clippy_verified_when_cargo_lints_enable_the_code() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create Cargo fixture");
         write_cargo(
             tmp.path(),
             "[package]\nname=\"x\"\nversion=\"0.1.0\"\n\n[lints.clippy]\nunwrap_used = \"warn\"\n",
         );
         let cfg = load_clippy_lints(tmp.path());
-        assert!(matches!(verify_clippy(&cfg, "unwrap_used"), Verdict::Verified));
+        assert!(matches!(
+            verify_clippy(&cfg, "unwrap_used"),
+            Verdict::Verified
+        ));
         // The `clippy::`-prefixed form must verify too.
         assert!(matches!(
             verify_clippy(&cfg, "clippy::unwrap_used"),
@@ -1224,50 +1220,65 @@ mod tests {
 
     #[test]
     fn clippy_missing_when_lint_absent_or_allowed() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create Cargo fixture");
         write_cargo(
             tmp.path(),
             "[package]\nname=\"x\"\nversion=\"0.1.0\"\n\n[lints.clippy]\nunwrap_used = \"allow\"\n",
         );
         let cfg = load_clippy_lints(tmp.path());
         // Present but allowed => not enforced => Missing.
-        assert!(matches!(verify_clippy(&cfg, "unwrap_used"), Verdict::Missing));
+        assert!(matches!(
+            verify_clippy(&cfg, "unwrap_used"),
+            Verdict::Missing
+        ));
         // Absent entirely => Missing.
-        assert!(matches!(verify_clippy(&cfg, "expect_used"), Verdict::Missing));
+        assert!(matches!(
+            verify_clippy(&cfg, "expect_used"),
+            Verdict::Missing
+        ));
     }
 
     #[test]
     fn clippy_table_level_form_and_workspace_lints() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create Cargo fixture");
         write_cargo(
             tmp.path(),
             "[workspace.lints.clippy]\nunwrap_used = { level = \"deny\", priority = -1 }\n",
         );
         let cfg = load_clippy_lints(tmp.path());
-        assert!(matches!(verify_clippy(&cfg, "unwrap_used"), Verdict::Verified));
+        assert!(matches!(
+            verify_clippy(&cfg, "unwrap_used"),
+            Verdict::Verified
+        ));
     }
 
     #[test]
     fn clippy_no_config_when_no_cargo_toml() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create Cargo fixture");
         let cfg = load_clippy_lints(tmp.path());
-        assert!(matches!(verify_clippy(&cfg, "unwrap_used"), Verdict::NoConfig));
+        assert!(matches!(
+            verify_clippy(&cfg, "unwrap_used"),
+            Verdict::NoConfig
+        ));
     }
 
     #[test]
     fn clippy_overlay_file_is_not_treated_as_enforcement() {
         // The generated overlay carries a `[lints.clippy]` table, but Cargo does
         // not apply it — only Cargo.toml does. verify_clippy must ignore it.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().expect("create Cargo fixture");
         write_cargo(tmp.path(), "[package]\nname=\"x\"\nversion=\"0.1.0\"\n");
         let overlay = tmp.path().join("whetstone").join("lint");
-        fs::create_dir_all(&overlay).unwrap();
+        fs::create_dir_all(&overlay).expect("create overlay fixture");
         fs::write(
             overlay.join("clippy.whetstone.toml"),
             "[lints.clippy]\nunwrap_used = \"warn\"\n",
         )
-        .unwrap();
+        .expect("write overlay fixture");
         let cfg = load_clippy_lints(tmp.path());
-        assert!(matches!(verify_clippy(&cfg, "unwrap_used"), Verdict::Missing));
+        assert!(matches!(
+            verify_clippy(&cfg, "unwrap_used"),
+            Verdict::Missing
+        ));
     }
 }
