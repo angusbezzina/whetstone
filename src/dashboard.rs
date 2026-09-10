@@ -25,6 +25,7 @@ const APP_JS: &str = include_str!("../assets/dashboard/app.js");
 
 const EDIT_JS: &str = include_str!("../assets/dashboard/edit.js");
 const VIEWS_JS: &str = include_str!("../assets/dashboard/views.js");
+const VIEWS_CSS: &str = include_str!("../assets/dashboard/views.css");
 
 /// Adapter implemented by a thin wrapper over `CommandService`.
 ///
@@ -318,6 +319,11 @@ fn handle_connection(
             status: 200,
             content_type: "text/javascript; charset=utf-8",
             body: VIEWS_JS.as_bytes().to_vec(),
+        },
+        ("GET", "/views.css") => BackendResponse {
+            status: 200,
+            content_type: "text/css; charset=utf-8",
+            body: VIEWS_CSS.as_bytes().to_vec(),
         },
         ("POST", "/session/bootstrap") => {
             if !same_origin(&request, expected_origin)

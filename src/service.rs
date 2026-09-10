@@ -432,7 +432,26 @@ impl CommandService {
         let as_of = request.as_of.unwrap_or_else(utc_now);
         let page_size = request.page_size.clamp(1, 200);
         let private_store_exists = layout.store_path(StoreKind::Private).exists();
-        let history = HistoryInspectionService::open(&layout).and_then(|service| {
+        // One read of the private store serves progress, projection and history.
+        let private_records = (private_store_exists
+            && layout.store_path(StoreKind::Private).join(".dolt").is_dir())
+        .then(|| {
+            DoltRepository::open_existing(
+                &layout.store_path(StoreKind::Private),
+                StoreKind::Private,
+            )
+            .and_then(|repository| repository.all_records())
+        });
+        let history_service = match (
+            &private_records,
+            layout.store_path(StoreKind::Shareable).exists(),
+        ) {
+            (Some(Ok(records)), false) => {
+                HistoryInspectionService::from_private_records(records.clone())
+            }
+            _ => HistoryInspectionService::open(&layout),
+        };
+        let history = history_service.and_then(|service| {
             service.inspect(&HistoryInspectionRequest {
                 project: format!("project-{}", &layout.project_id()[..12]),
                 as_of,
@@ -444,7 +463,10 @@ impl CommandService {
                 redact_private_before: None,
             })
         });
-        let progress = onboarding_progress(&layout);
+        let progress = match &private_records {
+            Some(Ok(records)) => onboarding_progress_from_records(&layout, Some(records)),
+            Some(Err(_)) | None => onboarding_progress(&layout),
+        };
         let mut response = ServiceResponse::new(
             request_id,
             "dash",
@@ -474,15 +496,10 @@ impl CommandService {
             Ok(progress) => (Some(progress), "available", None),
             Err(error) => (None, "unavailable", Some(error.to_string())),
         };
-        let agreement_state = if private_store_exists {
-            DoltRepository::open_existing(
-                &layout.store_path(StoreKind::Private),
-                StoreKind::Private,
-            )
-            .and_then(|repository| repository.all_records())
-            .map(|records| Some(AgreementState::from_records(records)))
-        } else {
-            Ok(Some(AgreementState::default()))
+        let agreement_state = match private_records {
+            Some(Ok(records)) => Ok(Some(AgreementState::from_records(records))),
+            Some(Err(error)) => Err(error),
+            None => Ok(Some(AgreementState::default())),
         };
         let current_projection = match (progress.as_ref(), agreement_state) {
             (Some(progress), Ok(Some(state))) => {
@@ -1257,11 +1274,18 @@ impl CommandService {
                     return needs_input("change", request_id, current_revision, resume, question)
                 }
             };
-            let owner_display = new_owner.as_deref().or_else(|| {
-                current
-                    .as_ref()
-                    .and_then(|record| record.owner.display_name.as_deref())
-            });
+            let mission_owner = RecordId::new(projection::MISSION_ID)
+                .ok()
+                .and_then(|id| private.latest(&id).ok().flatten())
+                .and_then(|record| record.owner.display_name);
+            let owner_display = new_owner
+                .as_deref()
+                .or_else(|| {
+                    current
+                        .as_ref()
+                        .and_then(|record| record.owner.display_name.as_deref())
+                })
+                .or(mission_owner.as_deref());
             let mut record =
                 match agreement_record(&layout, id_text, request_id.clone(), body, owner_display) {
                     Ok(record) => record,
@@ -2023,6 +2047,18 @@ struct OnboardingProgress {
 fn onboarding_progress(layout: &ProjectLayout) -> Result<OnboardingProgress, StorageError> {
     let store_path = layout.store_path(StoreKind::Private);
     if !store_path.is_dir() {
+        return onboarding_progress_from_records(layout, None);
+    }
+    let repository = DoltRepository::open_existing(&store_path, StoreKind::Private)?;
+    let records = repository.all_records()?;
+    onboarding_progress_from_records(layout, Some(&records))
+}
+
+fn onboarding_progress_from_records(
+    layout: &ProjectLayout,
+    records: Option<&[AgreementRecord]>,
+) -> Result<OnboardingProgress, StorageError> {
+    let Some(records) = records else {
         return Ok(OnboardingProgress {
             discovery: onboarding::SetupState::Detected,
             agreement: onboarding::SetupState::Proposed,
@@ -2042,13 +2078,11 @@ fn onboarding_progress(layout: &ProjectLayout) -> Result<OnboardingProgress, Sto
             platform_configuration_writes: Vec::new(),
             lean_baseline_revision: LEAN_BASELINE_REVISION.into(),
         });
-    }
-    let repository = DoltRepository::open_existing(&store_path, StoreKind::Private)?;
-    let records = repository.all_records()?;
-    let mission = latest_record(&records, "mission.project");
-    let values = latest_record(&records, "value.core");
-    let philosophy = latest_record(&records, "philosophy.implementation");
-    let safeguard = latest_record(&records, "guidance.initial-safeguard");
+    };
+    let mission = latest_record(records, "mission.project");
+    let values = latest_record(records, "value.core");
+    let philosophy = latest_record(records, "philosophy.implementation");
+    let safeguard = latest_record(records, "guidance.initial-safeguard");
     let mut missing = Vec::new();
     match mission {
         Some(AgreementRecord {

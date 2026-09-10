@@ -1093,7 +1093,9 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
                     key,
                     label,
                     hint,
-                    done: !input.missing_decisions.iter().any(|missing| missing == key),
+                    done: !input.missing_decisions.iter().any(|missing| {
+                        missing == key || missing.trim_start_matches("one ") == *key
+                    }),
                 })
                 .collect(),
             missing: input.missing_decisions.to_vec(),
@@ -1165,7 +1167,7 @@ fn attention(
             tone: "fail",
             kind: "agent_repair",
             kind_label: "agent repair",
-            title: format!("{} is failing", gate.name),
+            title: format!("Failing gate: {}", gate.name.trim_end_matches('.')),
             text: format!(
                 "{} in the latest check. The worker that made the change repairs it within task scope, then runs the exact check again.",
                 if count == 1 {
@@ -1252,9 +1254,9 @@ fn attention(
             kind: "stale_result",
             kind_label: "not current",
             title: if gate.last_run.is_some() {
-                format!("{} is {} on the current code", gate.name, gate.result.label)
+                format!("Not current: {}", gate.name.trim_end_matches('.'))
             } else {
-                format!("{} has never run", gate.name)
+                format!("Never run: {}", gate.name.trim_end_matches('.'))
             },
             text: "A result that predates the current code, or no result at all, is not a pass."
                 .into(),
@@ -1513,17 +1515,25 @@ fn journal_entry(
         RecordBody::LocalReview(review) => Some(review),
         _ => None,
     }) {
-        let proposal = state.get(&review.proposal);
-        let title = proposal.map_or_else(|| "a draft".into(), record_title);
+        let candidate = state
+            .get(&review.proposal)
+            .and_then(|proposal| match &proposal.body {
+                RecordBody::Proposal(body) => body
+                    .proposed_records
+                    .first()
+                    .and_then(|reference| state.get(reference)),
+                _ => None,
+            });
+        let (kind, title) = candidate.map_or(("Draft", "a draft".to_string()), |record| {
+            (kind_label(kind_of(record)), record_title(record))
+        });
         let (verb, status) = match review.verdict {
-            LocalReviewVerdict::Accept => ("Draft accepted", StateLabel::new("pass", "accepted")),
-            LocalReviewVerdict::Withdraw => {
-                ("Draft withdrawn", StateLabel::new("muted", "withdrawn"))
-            }
+            LocalReviewVerdict::Accept => ("accepted", StateLabel::new("pass", "accepted")),
+            LocalReviewVerdict::Withdraw => ("withdrawn", StateLabel::new("muted", "withdrawn")),
         };
         return base(
             "decision",
-            format!("{verb}: {}", snippet(&title, 90)),
+            format!("{kind} {verb}: {}", snippet(&title, 90)),
             status,
             "governance",
             review.rationale.clone(),

@@ -215,6 +215,22 @@ impl HistoryInspectionService {
         Self::from_repositories(&private, &shareable)
     }
 
+    /// Build from records already read from the private store, avoiding a
+    /// second read when the caller holds them.
+    pub fn from_private_records(records: Vec<AgreementRecord>) -> Result<Self, HistoryError> {
+        Ok(Self {
+            index: HistoryIndex::build(
+                records
+                    .into_iter()
+                    .map(|record| HistoryRecord {
+                        visibility: HistoryVisibility::Private,
+                        record,
+                    })
+                    .collect(),
+            )?,
+        })
+    }
+
     fn from_private_repository(private: &DoltRepository) -> Result<Self, HistoryError> {
         if private.kind() != StoreKind::Private {
             return Err(HistoryError::InvalidStoreBoundary);

@@ -1081,7 +1081,19 @@ fn lock_store_initialization(root: &Path) -> Result<File, StorageError> {
     Ok(lock)
 }
 
+/// The supported Dolt version is probed once per process; a successful probe
+/// is cached, a failure is retried on the next call.
 fn ensure_dolt_version() -> Result<(), StorageError> {
+    static VERIFIED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    if VERIFIED.get().is_some() {
+        return Ok(());
+    }
+    probe_dolt_version()?;
+    let _ = VERIFIED.set(());
+    Ok(())
+}
+
+fn probe_dolt_version() -> Result<(), StorageError> {
     let output = Command::new("dolt")
         .env("DOLT_DISABLE_EVENT_FLUSH", "1")
         .arg("version")

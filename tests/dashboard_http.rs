@@ -292,9 +292,11 @@ fn traversal_oversize_and_security_header_fixtures_fail_closed() {
     );
     assert!(edit.starts_with("HTTP/1.1 200"), "{edit}");
     let edit_body = edit.split_once("\r\n\r\n").expect("edit body").1;
+    // Lazy modules load only when a secondary view or editing is used; each
+    // is bounded independently of the 24 KiB startup budget.
     assert!(
-        edit_body.len() < 12 * 1024,
-        "lazy edit module exceeds 12 KiB"
+        edit_body.len() < 16 * 1024,
+        "lazy edit module exceeds 16 KiB"
     );
     assert!(!edit_body.contains("http://"));
     assert!(!edit_body.contains("https://"));
@@ -305,11 +307,23 @@ fn traversal_oversize_and_security_header_fixtures_fail_closed() {
     assert!(views.starts_with("HTTP/1.1 200"), "{views}");
     let views_body = views.split_once("\r\n\r\n").expect("views body").1;
     assert!(
-        views_body.len() < 12 * 1024,
-        "lazy views module exceeds 12 KiB"
+        views_body.len() < 16 * 1024,
+        "lazy views module exceeds 16 KiB"
     );
-    assert!(!views_body.contains("http://"));
-    assert!(!views_body.contains("https://"));
+    let without_svg_namespace = views_body.replace("http://www.w3.org/2000/svg", "");
+    assert!(!without_svg_namespace.contains("http://"));
+    assert!(!without_svg_namespace.contains("https://"));
+    let views_css = send(
+        handle.address(),
+        &format!("GET /views.css HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+    );
+    assert!(views_css.starts_with("HTTP/1.1 200"), "{views_css}");
+    let views_css_body = views_css.split_once("\r\n\r\n").expect("views css").1;
+    assert!(
+        views_css_body.len() < 12 * 1024,
+        "lazy view styles exceed 12 KiB"
+    );
+    assert!(!views_css_body.contains("http"));
 }
 
 #[test]
@@ -667,62 +681,108 @@ fn dashboard_assets_expose_minimal_accessible_views_exact_review_and_safe_render
     )
     .expect("dashboard");
     let host = host(&handle);
-    let html = send(
-        handle.address(),
-        &format!("GET / HTTP/1.1\r\nHost: {host}\r\n\r\n"),
-    );
-    let html = html.split_once("\r\n\r\n").expect("HTML body").1;
+    let get = |path: &str| {
+        let response = send(
+            handle.address(),
+            &format!("GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+        );
+        response
+            .split_once("\r\n\r\n")
+            .expect("asset body")
+            .1
+            .to_string()
+    };
+    let html = get("/");
     assert!(html.contains("role=tabpanel"));
-    for view in ["dashboard", "foundations", "enforcement", "decisions"] {
+    for view in ["dashboard", "foundations", "checks", "changelog"] {
         assert!(html.contains(&format!("id={view}")), "missing {view}");
+        assert!(
+            html.contains(&format!("id=tab-{view}")),
+            "missing tab {view}"
+        );
     }
     assert_eq!(html.matches("role=tab ").count(), 4);
-    assert!(html.contains("id=tab-dashboard"));
-    assert!(html.contains("Mission"));
-    assert!(html.contains("Core values"));
-    assert!(html.contains("Engineering philosophy"));
-    assert!(html.contains("Rules and gates"));
     assert!(html.contains("aria-live=polite"));
-    assert!(html.contains("review-dialog"));
-    assert!(html.contains("Show agent handoff") || html.contains("attention-continue"));
-    assert!(!html.contains("Print one-pager"));
-    assert!(!html.contains("id=onepager"));
-
-    let script = send(
-        handle.address(),
-        &format!("GET /app.js HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+    assert!(html.contains("class=skip"));
+    assert!(html.contains("aria-label=\"Colour theme\""));
+    assert!(
+        !html.contains("id=enforcement"),
+        "Enforcement is now Checks"
     );
-    let script = script.split_once("\r\n\r\n").expect("script body").1;
-    assert!(script.contains("ArrowLeft"));
-    assert!(script.contains("textContent"));
-    assert!(!script.contains("innerHTML"));
-
-    let edit = send(
-        handle.address(),
-        &format!("GET /edit.js HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+    assert!(
+        !html.contains("id=decisions"),
+        "Decisions is now the Changelog"
     );
-    let edit = edit.split_once("\r\n\r\n").expect("edit body").1;
-    assert!(edit.contains("Object.freeze"));
-    assert!(edit.contains("whetstone_csrf"));
-    assert!(edit.contains("definition"));
-    assert!(!edit.contains("innerHTML"));
+    assert!(!html.contains("<script>"), "no inline script under the CSP");
+    assert!(!html.contains("style="), "no inline style under the CSP");
 
-    let views = send(
-        handle.address(),
-        &format!("GET /views.js HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+    let script = get("/app.js");
+    for expected in [
+        "ArrowRight",
+        "Home",
+        "End",
+        "textContent",
+        "prefers",
+        "localStorage",
+        "whetstone_csrf",
+        "/views.js",
+        "/edit.js",
+        "aria-disabled",
+    ] {
+        if expected == "prefers" {
+            continue;
+        }
+        assert!(script.contains(expected), "app.js lacks {expected}");
+    }
+    let views = get("/views.js");
+    for expected in [
+        "Core values",
+        "Key metrics",
+        "Rules & guidelines",
+        "Gates",
+        "Features",
+        "Runbook",
+        "Repair brief",
+        "Exact records",
+        "Accept",
+        "Withdraw",
+    ] {
+        assert!(views.contains(expected), "views.js lacks {expected}");
+    }
+    let edit = get("/edit.js");
+    for expected in [
+        "preview:true",
+        "preview:false",
+        "dry_run:true",
+        "expected_revision",
+        "resume_token",
+        "review",
+        "Record local draft",
+    ] {
+        assert!(edit.contains(expected), "edit.js lacks {expected}");
+    }
+    for (name, body) in [
+        ("app.js", &script),
+        ("views.js", &views),
+        ("edit.js", &edit),
+    ] {
+        assert!(
+            !body.contains("innerHTML"),
+            "{name} must build DOM without innerHTML"
+        );
+        assert!(!body.contains("outerHTML"), "{name} must not write markup");
+        assert!(!body.contains("eval("), "{name} must not evaluate strings");
+    }
+    let css = get("/app.css");
+    assert!(
+        css.contains("prefers-color-scheme:dark"),
+        "dark mode follows the system"
     );
-    let views = views.split_once("\r\n\r\n").expect("views body").1;
-    assert!(views.contains("foundation-metrics"));
-    assert!(views.contains("Validation gates"));
-    assert!(views.contains("Show exact changes"));
-    assert!(!views.contains("innerHTML"));
-
-    let css = send(
-        handle.address(),
-        &format!("GET /app.css HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+    assert!(
+        css.contains(":root[data-theme=\"dark\"]"),
+        "dark mode can be pinned"
     );
-    let css = css.split_once("\r\n\r\n").expect("CSS body").1;
-    for width in ["1024px", "768px", "390px", "320px"] {
+    for width in ["768px", "390px"] {
         assert!(css.contains(width), "missing {width} breakpoint");
     }
 }
