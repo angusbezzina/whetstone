@@ -47,3 +47,13 @@ whetstone/.personal/
 whetstone/.cache/
 whetstone/.metrics.jsonl
 whetstone/.last-run
+
+# Impeccable design-skill transient state (briefs and config stay tracked)
+.impeccable/questions/
+.impeccable/review/
+.impeccable/build/
+.impeccable/critique/
+.impeccable/mocks/
+
+# Third-party agent skills installed by `npx skills add` (tracked by skills-lock.json; reinstall with `npx skills add pbakaus/impeccable -y`)
+.agents/skills/

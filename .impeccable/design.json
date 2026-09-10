@@ -1,0 +1,297 @@
+{
+  "name": "Whetstone",
+  "description": "A quiet engineering journal where the project's records are entries on ruled paper, in light or dark, and colour is spent only on state.",
+  "colors": {
+    "paper": "#fafaf8",
+    "well": "#f0f0ec",
+    "rule": "#e2e1dc",
+    "rule-strong": "#bfbeb8",
+    "ink": "#1e1d1b",
+    "ink-soft": "#5e5c57",
+    "ink-faint": "#6a6963",
+    "accent": "#2b5797",
+    "selection": "#d5e1f4",
+    "pass": "#2e7a3f",
+    "warn": "#8a5a00",
+    "fail": "#b3261e",
+    "dark-paper": "#181817",
+    "dark-well": "#212120",
+    "dark-rule": "#2d2d2b",
+    "dark-rule-strong": "#484742",
+    "dark-ink": "#e8e6e1",
+    "dark-ink-soft": "#a9a69f",
+    "dark-ink-faint": "#96938c",
+    "dark-accent": "#8db2ea",
+    "dark-selection": "#2b3f5f",
+    "dark-pass": "#74c682",
+    "dark-warn": "#d9a94f",
+    "dark-fail": "#f0837b"
+  },
+  "typography": {
+    "headline": {
+      "fontFamily": "ui-serif, 'New York', 'Iowan Old Style', Georgia, 'Times New Roman', serif",
+      "fontSize": "27px",
+      "fontWeight": 400,
+      "lineHeight": 1.25,
+      "letterSpacing": "-0.005em"
+    },
+    "title": {
+      "fontFamily": "ui-serif, 'New York', 'Iowan Old Style', Georgia, 'Times New Roman', serif",
+      "fontSize": "19px",
+      "fontWeight": 400,
+      "lineHeight": 1.4,
+      "letterSpacing": "-0.005em"
+    },
+    "wordmark": {
+      "fontFamily": "ui-serif, 'New York', 'Iowan Old Style', Georgia, 'Times New Roman', serif",
+      "fontSize": "18px",
+      "fontWeight": 400,
+      "lineHeight": 1.4,
+      "letterSpacing": "-0.005em"
+    },
+    "day": {
+      "fontFamily": "ui-serif, 'New York', 'Iowan Old Style', Georgia, 'Times New Roman', serif",
+      "fontSize": "17px",
+      "fontWeight": 400,
+      "lineHeight": 1.4,
+      "letterSpacing": "-0.005em"
+    },
+    "item": {
+      "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      "fontSize": "17px",
+      "fontWeight": 500,
+      "lineHeight": 1.4,
+      "letterSpacing": "-0.005em"
+    },
+    "body": {
+      "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      "fontSize": "15px",
+      "fontWeight": 400,
+      "lineHeight": 1.6,
+      "letterSpacing": "normal"
+    },
+    "body-name": {
+      "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      "fontSize": "15px",
+      "fontWeight": 500,
+      "lineHeight": 1.6,
+      "letterSpacing": "normal"
+    },
+    "nav": {
+      "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      "fontSize": "14.5px",
+      "fontWeight": 400,
+      "lineHeight": 1.6,
+      "letterSpacing": "normal"
+    },
+    "control": {
+      "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      "fontSize": "14px",
+      "fontWeight": 400,
+      "lineHeight": 1.3,
+      "letterSpacing": "normal"
+    },
+    "summary": {
+      "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      "fontSize": "14px",
+      "fontWeight": 400,
+      "lineHeight": 1.6,
+      "letterSpacing": "normal"
+    },
+    "meta": {
+      "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      "fontSize": "13.5px",
+      "fontWeight": 400,
+      "lineHeight": 1.6,
+      "letterSpacing": "normal"
+    },
+    "label": {
+      "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": 400,
+      "lineHeight": 1.6,
+      "letterSpacing": "normal"
+    },
+    "figure": {
+      "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": 400,
+      "lineHeight": 1.6,
+      "letterSpacing": "normal"
+    },
+    "code": {
+      "fontFamily": "ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
+      "fontSize": "12.5px",
+      "fontWeight": 400,
+      "lineHeight": 1.6,
+      "letterSpacing": "normal"
+    },
+    "brief": {
+      "fontFamily": "ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
+      "fontSize": "12.5px",
+      "fontWeight": 400,
+      "lineHeight": 1.55,
+      "letterSpacing": "normal"
+    },
+    "note": {
+      "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      "fontSize": "12.5px",
+      "fontWeight": 400,
+      "lineHeight": 1.6,
+      "letterSpacing": "normal"
+    },
+    "mono-small": {
+      "fontFamily": "ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
+      "fontSize": "12px",
+      "fontWeight": 400,
+      "lineHeight": 1.6,
+      "letterSpacing": "normal"
+    },
+    "headline-narrow": {
+      "fontFamily": "ui-serif, 'New York', 'Iowan Old Style', Georgia, 'Times New Roman', serif",
+      "fontSize": "23px",
+      "fontWeight": 400,
+      "lineHeight": 1.25,
+      "letterSpacing": "-0.005em"
+    }
+  },
+  "rounded": {
+    "r": "4px",
+    "well": "6px",
+    "inner": "3px",
+    "dot": "50%"
+  },
+  "spacing": {
+    "hair": "1px",
+    "xs": "4px",
+    "sm": "8px",
+    "row-y": "0.7rem",
+    "md": "16px",
+    "well": "1rem 1.1rem",
+    "lg": "24px",
+    "section": "2.25rem",
+    "page-x": "1.5rem",
+    "page-max": "48rem"
+  },
+  "components": {
+    "button": {
+      "backgroundColor": "transparent",
+      "textColor": "{colors.ink}",
+      "typography": "{typography.control}",
+      "rounded": "{rounded.r}",
+      "padding": "0.4rem 0.85rem"
+    },
+    "button-hover": {
+      "backgroundColor": "{colors.well}",
+      "textColor": "{colors.ink}"
+    },
+    "button-primary": {
+      "backgroundColor": "{colors.ink}",
+      "textColor": "{colors.paper}",
+      "typography": "{typography.control}",
+      "rounded": "{rounded.r}",
+      "padding": "0.4rem 0.85rem"
+    },
+    "button-primary-hover": {
+      "backgroundColor": "{colors.ink-soft}",
+      "textColor": "{colors.paper}"
+    },
+    "button-quiet": {
+      "backgroundColor": "transparent",
+      "textColor": "{colors.ink-soft}",
+      "typography": "{typography.control}",
+      "rounded": "{rounded.r}",
+      "padding": "0.4rem 0.85rem"
+    },
+    "button-quiet-hover": {
+      "backgroundColor": "{colors.well}",
+      "textColor": "{colors.ink}"
+    },
+    "button-danger": {
+      "backgroundColor": "transparent",
+      "textColor": "{colors.fail}",
+      "typography": "{typography.control}",
+      "rounded": "{rounded.r}",
+      "padding": "0.4rem 0.85rem"
+    },
+    "input": {
+      "backgroundColor": "{colors.paper}",
+      "textColor": "{colors.ink}",
+      "typography": "{typography.body}",
+      "rounded": "{rounded.r}",
+      "padding": "0.45rem 0.6rem"
+    },
+    "section-heading": {
+      "backgroundColor": "{colors.paper}",
+      "textColor": "{colors.ink}",
+      "typography": "{typography.title}",
+      "padding": "0 0 0.4rem"
+    },
+    "row": {
+      "backgroundColor": "{colors.paper}",
+      "textColor": "{colors.ink}",
+      "typography": "{typography.body-name}",
+      "padding": "0.7rem 0"
+    },
+    "well": {
+      "backgroundColor": "{colors.well}",
+      "textColor": "{colors.ink}",
+      "rounded": "{rounded.well}",
+      "padding": "1rem 1.1rem"
+    },
+    "tab": {
+      "backgroundColor": "transparent",
+      "textColor": "{colors.ink-soft}",
+      "typography": "{typography.nav}",
+      "padding": "0.6rem 0 0.65rem"
+    },
+    "tab-selected": {
+      "backgroundColor": "transparent",
+      "textColor": "{colors.ink}"
+    },
+    "tab-disabled": {
+      "backgroundColor": "transparent",
+      "textColor": "{colors.ink-faint}"
+    },
+    "theme-toggle": {
+      "backgroundColor": "transparent",
+      "textColor": "{colors.ink-faint}",
+      "rounded": "{rounded.inner}",
+      "padding": "0.1rem"
+    },
+    "state-pass": {
+      "textColor": "{colors.pass}",
+      "typography": "{typography.figure}"
+    },
+    "state-warn": {
+      "textColor": "{colors.warn}",
+      "typography": "{typography.figure}"
+    },
+    "state-fail": {
+      "textColor": "{colors.fail}",
+      "typography": "{typography.figure}"
+    },
+    "state-muted": {
+      "textColor": "{colors.ink-soft}",
+      "typography": "{typography.figure}"
+    },
+    "state-draft": {
+      "textColor": "{colors.ink-soft}",
+      "typography": "{typography.figure}"
+    },
+    "command-chip": {
+      "backgroundColor": "{colors.well}",
+      "textColor": "{colors.ink}",
+      "typography": "{typography.code}",
+      "rounded": "{rounded.r}",
+      "padding": "0.12rem 0.45rem"
+    },
+    "brief-block": {
+      "backgroundColor": "{colors.paper}",
+      "textColor": "{colors.ink}",
+      "typography": "{typography.brief}",
+      "rounded": "{rounded.r}",
+      "padding": "0.7rem 0.8rem"
+    }
+  }
+}

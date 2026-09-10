@@ -23,7 +23,10 @@ The current hidden developer gates are `validate`, `eval`, and `scan`.
 
 Authoritative references:
 
-- `planning/direction-demo/index.html`: Direction 05 behavior and UI.
+- `planning/direction-demo/index.html`: the dashboard direction reference
+  (behaviour and visual world); `planning/direction-demo/smoke.mjs` validates it.
+- `PRODUCT.md` and `DESIGN.md`: product truth and the design tokens/rules the
+  dashboard implements; `.impeccable/surfaces/` holds the surface brief.
 - `planning/skill-cli-boundary.md`: judgment versus deterministic work.
 - `planning/direction-demo/prune-inventory.md`: R0 allowlist and recovery record.
 - `references/rule-schema.yaml`: temporary retained rule schema.
@@ -69,6 +72,15 @@ bd dolt push
 Use current Dolt-native collaboration, never legacy `bd sync` or a
 `beads-sync` branch. If local state is broken or another machine cannot see
 issues, use `./scripts/beads-repair.sh`.
+
+## Design work
+
+UI changes use the `impeccable` skill. It is installed project-locally under
+`.agents/skills/impeccable` (ignored by Git, pinned by `skills-lock.json`);
+reinstall with `npx skills add pbakaus/impeccable -y`. Run its `context`
+command once per session before editing UI, follow `DESIGN.md`, and update the
+direction reference before the product when the information architecture
+changes.
 
 ## Research
 

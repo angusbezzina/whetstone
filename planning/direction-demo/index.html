@@ -1,64 +1,759 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Whetstone — Direction 05</title>
-  <style>
-    :root{--ink:#152c22;--muted:#64736b;--line:#d9d4c7;--paper:#f4f1e8;--card:#fffdf8;--accent:#1d553e;--warn:#9a5d12;--bad:#a33b32;--soft:#e5eee8;font:16px/1.45 Inter,ui-sans-serif,system-ui,sans-serif;color:var(--ink);background:var(--paper)}*{box-sizing:border-box}body{margin:0}button,input,select,textarea{font:inherit;color:inherit}button{border:1px solid var(--line);border-radius:.55rem;background:var(--card);padding:.65rem .9rem;cursor:pointer}button:hover,button:focus-visible{border-color:var(--accent)}button.primary,[role=tab][aria-selected=true]{color:#fff;background:var(--ink);border-color:var(--ink)}.shell,nav,main{width:min(1120px,calc(100% - 2rem));margin:auto}.shell{display:flex;justify-content:space-between;align-items:end;padding:1.5rem 0 1rem;border-bottom:1px solid var(--line)}h1,h2{font-family:Georgia,serif;margin:0}h1{font-size:clamp(2.4rem,6vw,4.5rem);line-height:.9}h2{font-size:2.25rem}h3,p{margin:.35rem 0}.kicker{font-size:.73rem;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);font-weight:750}.badge,.status{display:inline-flex;border:1px solid #b9c6bd;border-radius:999px;padding:.18rem .55rem;font-size:.78rem}.badge[data-state=draft]{background:#fff1d5;border-color:#d7a758;color:#6b4308}.status[data-state=pass]{color:#17613d;background:#e8f5ec}.status[data-state=unknown]{color:#77520e;background:#fff4d8}.status[data-state=fail]{color:#842d28;background:#fbe9e7}nav{display:flex;gap:.45rem;padding:1rem 0 1.6rem;overflow:auto}[role=tab]{white-space:nowrap}main{padding-bottom:4rem}.page-head{display:flex;justify-content:space-between;gap:1rem;align-items:end;margin-bottom:1rem}.intro,.meta{color:var(--muted)}.mission{padding:1rem 1.15rem;background:var(--ink);color:white;border-radius:.7rem;margin-bottom:1rem}.grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.panel,.attention,.node,.rule,.change{background:var(--card);border:1px solid var(--line);border-radius:.7rem;padding:1rem}.panel>header,.attention>header,.node>header,.change>header{display:flex;justify-content:space-between;gap:1rem;align-items:start}.rows{display:grid;gap:.55rem;margin-top:.8rem}.row{display:grid;grid-template-columns:1fr auto;gap:.6rem;padding:.7rem 0;border-top:1px solid var(--line)}.row:first-child{border-top:0}.row span{display:block}.attention{margin-top:1rem;border-left:4px solid var(--warn)}.secondary-actions{margin-top:.7rem;display:grid;gap:.4rem}.secondary-actions p{padding:.55rem .75rem;background:#f7f4ed;border-radius:.4rem}.tree,.tree ol{list-style:none;margin:0;padding:0}.tree ol{margin-left:1.2rem;padding-left:1rem;border-left:1px solid #9eb1a5}.tree li{position:relative;margin:.65rem 0}.tree ol>.branch:before{content:"";position:absolute;left:-1rem;top:1.5rem;width:1rem;border-top:1px solid #9eb1a5}.node[data-state=draft]{border-color:#d7a758;background:#fffaf0}.node [contenteditable=true]{outline:2px solid #d7a758;border-radius:.25rem;padding:.2rem;background:#fff}.edit-actions{display:flex;gap:.5rem;margin-top:.7rem}.rule{display:grid;grid-template-columns:1.5fr .8fr .8fr 1fr;gap:1rem;align-items:start;margin:.65rem 0}.rule small,.node small{display:block;color:var(--muted)}.rule .label{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.timeline{border-left:2px solid #9eb1a5;padding-left:1.2rem}.change{position:relative;margin:.8rem 0}.change:before{content:"";position:absolute;left:-1.62rem;top:1.3rem;width:.72rem;height:.72rem;border-radius:50%;background:var(--accent);border:3px solid var(--paper)}details{margin-top:.7rem}summary{cursor:pointer;font-weight:700}.notice{font-size:.85rem;padding:.65rem .8rem;border-radius:.5rem;background:var(--soft)}.filters{display:flex;gap:.7rem}.filters label{display:grid;color:var(--muted);font-size:.8rem}.filters input{padding:.55rem;border:1px solid var(--line);border-radius:.4rem;background:white}@media(max-width:760px){.grid{grid-template-columns:1fr}.rule{grid-template-columns:1fr 1fr}.shell{align-items:start}.shell .badge{display:none}}@media(max-width:430px){.shell,nav,main{width:min(100% - 1rem,1120px)}h2{font-size:1.85rem}.rule{grid-template-columns:1fr}.page-head{align-items:start;flex-direction:column}}
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Whetstone — dashboard direction reference</title>
+<script>(function(){try{var t=localStorage.getItem("wh-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+<style>
+:root{
+  --paper:#fafaf8;--well:#f0f0ec;--rule:#e2e1dc;--rule-strong:#bfbeb8;
+  --ink:#1e1d1b;--ink-soft:#5e5c57;--ink-faint:#6a6963;
+  --accent:#2b5797;--selection:#d5e1f4;
+  --pass:#2e7a3f;--warn:#8a5a00;--fail:#b3261e;
+  --serif:ui-serif,"New York","Iowan Old Style",Georgia,"Times New Roman",serif;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --r:4px;--ease:cubic-bezier(.2,.7,.2,1);--t:180ms;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#181817;--well:#212120;--rule:#2d2d2b;--rule-strong:#484742;
+  --ink:#e8e6e1;--ink-soft:#a9a69f;--ink-faint:#96938c;
+  --accent:#8db2ea;--selection:#2b3f5f;
+  --pass:#74c682;--warn:#d9a94f;--fail:#f0837b;
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --paper:#181817;--well:#212120;--rule:#2d2d2b;--rule-strong:#484742;
+  --ink:#e8e6e1;--ink-soft:#a9a69f;--ink-faint:#96938c;
+  --accent:#8db2ea;--selection:#2b3f5f;
+  --pass:#74c682;--warn:#d9a94f;--fail:#f0837b;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{background:var(--paper)}
+body{margin:0;font:15px/1.6 var(--sans);color:var(--ink);background:var(--paper);-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+::selection{background:var(--selection);color:var(--ink)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r)}
+*{scrollbar-color:var(--rule-strong) transparent;scrollbar-width:thin}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:var(--rule-strong);border-radius:var(--r)}
+a{color:var(--ink);text-decoration-color:var(--rule-strong);text-decoration-thickness:1px;text-underline-offset:.22em}
+a:hover{text-decoration-color:var(--ink)}
+h1,h2,h3,h4,p{margin:0}
+h1,h2{font-family:var(--serif);font-weight:400;letter-spacing:-.005em}
+button,input,select,textarea{font:inherit;color:inherit}
+input,textarea,select{background:var(--paper);border:1px solid var(--rule-strong);border-radius:var(--r);padding:.45rem .6rem;width:100%;caret-color:var(--accent);transition:border-color var(--t) var(--ease)}
+input:hover,textarea:hover,select:hover{border-color:var(--ink-faint)}
+input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none;border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+textarea{min-height:4.4rem;resize:vertical;line-height:1.5}
+input::placeholder,textarea::placeholder{color:var(--ink-faint)}
+code,pre{font-family:var(--mono)}
+.skip{position:absolute;left:-999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:20;background:var(--paper);padding:.5rem .7rem;border:1px solid var(--ink)}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+
+/* buttons: one vocabulary, four voices */
+.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.4rem .85rem;border-radius:var(--r);border:1px solid var(--rule-strong);background:transparent;color:var(--ink);cursor:pointer;line-height:1.3;font-size:14px;white-space:nowrap;transition:background var(--t) var(--ease),border-color var(--t) var(--ease),color var(--t) var(--ease)}
+.btn:hover{border-color:var(--ink);background:var(--well)}
+.btn:active{background:var(--rule)}
+.btn[disabled],.btn[aria-disabled=true]{opacity:.5;cursor:not-allowed}
+.btn.primary{background:var(--ink);border-color:var(--ink);color:var(--paper);font-weight:500}
+.btn.primary:hover{background:var(--ink-soft);border-color:var(--ink-soft)}
+.btn.quiet{border-color:transparent;color:var(--ink-soft)}
+.btn.quiet:hover{color:var(--ink);background:var(--well);border-color:transparent}
+.btn.danger{border-color:transparent;color:var(--fail)}
+.btn.danger:hover{border-color:var(--fail);background:transparent}
+.btn svg{width:14px;height:14px;flex:none}
+.btn.busy{position:relative;color:transparent}
+.btn.busy::after{content:"";position:absolute;inset:0;margin:auto;width:14px;height:14px;border-radius:50%;border:1.5px solid var(--paper);border-right-color:transparent;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* demo strip: not the product; it recedes */
+.demo{display:flex;flex-wrap:wrap;gap:.25rem 1rem;align-items:center;padding:.35rem 1.25rem;font-size:12.5px;color:var(--ink-faint);border-bottom:1px solid var(--rule)}
+.demo b{font-weight:500;color:var(--ink-soft)}
+.demo label{display:inline-flex;gap:.35rem;align-items:center;cursor:pointer}
+.demo input{width:auto;margin:0;accent-color:var(--ink-soft)}
+.demo code{font-size:12px}
+.demo .btn{font-size:12.5px;padding:.1rem .45rem}
+
+/* page */
+.app{max-width:48rem;margin:0 auto;padding:0 1.5rem 4rem}
+.top{padding-top:1.4rem}
+.brand-row{display:flex;align-items:baseline;gap:.5rem 1rem;flex-wrap:wrap}
+.brand{display:flex;align-items:baseline;gap:.5rem;font-family:var(--serif);font-size:18px;min-width:0}
+.brand svg{width:15px;height:15px;align-self:center;flex:none}
+.brand .project{font-family:var(--sans);font-size:14px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topstate{margin-left:auto;display:flex;gap:.9rem;align-items:center;font-size:13px;color:var(--ink-soft);flex-wrap:wrap}
+.topstate > span{white-space:nowrap}
+.topstate b{font-weight:500;color:var(--ink)}
+.theme{display:inline-flex;gap:.1rem;border:1px solid var(--rule);border-radius:var(--r);padding:.1rem}
+.theme button{width:1.6rem;height:1.6rem;border:0;background:transparent;color:var(--ink-faint);border-radius:3px;display:grid;place-items:center;cursor:pointer;padding:0;transition:background var(--t) var(--ease),color var(--t) var(--ease)}
+.theme button:hover{color:var(--ink);background:var(--well)}
+.theme button[aria-pressed=true]{color:var(--ink);background:var(--well)}
+.theme svg{width:14px;height:14px}
+.tabs{position:sticky;top:0;z-index:5;background:var(--paper);display:flex;gap:1.5rem;margin-top:1.1rem;border-bottom:1px solid var(--rule);overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{appearance:none;border:0;border-bottom:1px solid transparent;margin-bottom:-1px;background:transparent;padding:.6rem 0 .65rem;color:var(--ink-soft);cursor:pointer;white-space:nowrap;font-size:14.5px;display:inline-flex;align-items:center;gap:.4rem;transition:color var(--t) var(--ease),border-color var(--t) var(--ease)}
+.tabs button:hover{color:var(--ink)}
+.tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink);font-weight:500}
+.tabs button[aria-disabled=true]{color:var(--ink-faint);cursor:not-allowed}
+.tabs button[aria-disabled=true]::after{content:"";width:.4rem;height:.4rem;border-radius:50%;border:1px dashed currentColor}
+main{padding-top:2rem}
+.view[hidden]{display:none}
+.viewhead{margin-bottom:1.75rem}
+.viewhead h1{font-size:27px;line-height:1.25;text-wrap:balance;max-width:30ch}
+.viewhead .sub{color:var(--ink-soft);margin-top:.55rem;max-width:62ch}
+.viewhead .actions{margin-top:.5rem;font-size:13px;color:var(--ink-soft)}
+.viewhead .actions b{color:var(--ink);font-weight:500}
+.colophon{margin-top:3.5rem;padding-top:.8rem;border-top:1px solid var(--rule);font-size:12.5px;color:var(--ink-faint);display:flex;gap:.3rem 1.5rem;flex-wrap:wrap;justify-content:space-between}
+.colophon code{color:var(--ink-soft);font-size:12px}
+
+/* ruled sections */
+.panel{margin-top:2.25rem;min-width:0}
+.panel > .ph{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;padding-bottom:.4rem;border-bottom:1px solid var(--rule-strong)}
+.ph h2,.ph h3{font-family:var(--serif);font-size:19px;font-weight:400;letter-spacing:-.005em;min-width:0}
+.ph .why{font-family:var(--sans);font-size:13px;color:var(--ink-faint);margin-left:.55rem;letter-spacing:0}
+.ph .count{font-size:13px;color:var(--ink-soft);white-space:nowrap}
+.rows{display:grid}
+.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.05rem 1rem;align-items:center;padding:.7rem 0;border-bottom:1px solid var(--rule)}
+.row .name{font-weight:500}
+.row .meta{color:var(--ink-soft);font-size:13.5px;grid-column:1}
+.row .meta code{font-size:12.5px}
+.state{font-size:13px;white-space:nowrap;display:inline-flex;align-items:center;gap:.45rem}
+.row .state{grid-column:2;grid-row:1/span 2;justify-self:end;align-self:center}
+.state::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.state.pass{color:var(--pass)}.state.fail{color:var(--fail)}.state.warn{color:var(--warn)}.state.muted,.state.draft{color:var(--ink-soft)}
+.state.draft::before{background:transparent;border:1px dashed currentColor}
+.state.muted::before{background:transparent;border:1px solid currentColor}
+.empty{padding:.9rem 0;color:var(--ink-soft);border-bottom:1px solid var(--rule)}
+.footrow{display:flex;justify-content:space-between;gap:.25rem 1rem;align-items:baseline;flex-wrap:wrap;padding:.8rem 0;margin-top:1.5rem;border:0;border-bottom:1px solid var(--rule);background:transparent;width:100%;cursor:pointer;text-align:left;color:var(--ink)}
+.footrow:hover .v{text-decoration:underline;text-decoration-color:var(--rule-strong);text-underline-offset:.22em}
+.footrow .k{color:var(--ink-soft);font-size:13.5px}
+.footrow .v{font-weight:500}
+.footrow time{font-size:13px;color:var(--ink-soft);margin-left:.6rem;font-weight:400;white-space:nowrap}
+
+/* attention */
+.attn{padding:1rem 0 1.1rem;border-bottom:1px solid var(--rule)}
+.attn .head{display:flex;justify-content:space-between;gap:.3rem 1rem;align-items:baseline;flex-wrap:wrap}
+.attn h3{font-size:17px;font-weight:500;letter-spacing:-.005em}
+.attn p{color:var(--ink-soft);max-width:62ch;margin-top:.35rem}
+.attn .next{margin:.65rem 0 0;display:grid;grid-template-columns:auto 1fr;gap:.15rem .7rem;font-size:13.5px}
+.attn .next dt{color:var(--ink-faint)}.attn .next dd{margin:0}
+.attn .act{margin-top:1rem}
+.attn.more{padding:.7rem 0;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.05rem 1rem;align-items:center}
+.attn.more .t{font-weight:500}.attn.more .m{color:var(--ink-soft);font-size:13.5px;grid-column:1}
+.attn.more .go{grid-column:2;grid-row:1/span 2}
+
+/* onboarding */
+.onboard{margin-top:1rem}
+.onboard h1{font-size:27px;line-height:1.25;text-wrap:balance;max-width:26ch}
+.onboard p{color:var(--ink-soft);margin-top:.6rem;max-width:58ch}
+.onboard ol{margin:1.4rem 0 0;padding:0;list-style:none;display:grid;border-top:1px solid var(--rule-strong)}
+.onboard li{display:grid;grid-template-columns:2rem 1fr;padding:.55rem 0;border-bottom:1px solid var(--rule);align-items:baseline}
+.onboard li b{font-weight:400;color:var(--ink-faint);font-size:13px}
+.onboard li span{color:var(--ink-soft)}
+.onboard li strong{font-weight:500;color:var(--ink);margin-right:.5rem}
+.onboard .act{display:flex;gap:.8rem;align-items:center;margin-top:1.4rem;flex-wrap:wrap}
+.onboard .or{color:var(--ink-faint);font-size:13px}
+.onboard .private{margin-top:1rem;color:var(--ink-faint);font-size:13px}
+.onboard form{display:grid;gap:.9rem;padding-top:1rem}
+.onboard form label{display:grid;gap:.3rem;font-size:13px;color:var(--ink-soft)}
+.onboard form .two{display:grid;grid-template-columns:1fr 1fr;gap:.9rem}
+code.cmd{font-size:13px;background:var(--well);border-radius:var(--r);padding:.12rem .45rem;color:var(--ink);overflow-wrap:anywhere}
+
+/* foundations */
+.stages{display:flex;gap:.4rem .5rem;flex-wrap:wrap;align-items:center;font-size:13.5px;color:var(--ink-soft)}
+.stages a{color:var(--ink-soft);text-decoration:none;display:inline-flex;gap:.35rem;align-items:baseline;padding:.1rem 0}
+.stages a:hover{color:var(--ink);text-decoration:underline;text-decoration-color:var(--rule-strong)}
+.stages a b{font-weight:400;color:var(--ink-faint)}
+.stages a b.zero{color:var(--ink-faint)}
+.stages .arrow{color:var(--ink-faint);display:inline-flex;align-items:center}.stages .arrow svg{width:12px;height:12px}
+.rec{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:.15rem 1rem;align-items:center;padding:.75rem 0;border-bottom:1px solid var(--rule)}
+.rec.draft{border-bottom-style:dashed}
+.rec .c{grid-column:1;grid-row:1;font-weight:500;max-width:64ch}
+.rec .c.big{font-family:var(--serif);font-weight:400;font-size:19px;line-height:1.4;letter-spacing:-.005em}
+.rec .st{grid-column:2;grid-row:1/span 2;justify-self:end}
+.rec .d{grid-column:1;grid-row:2;color:var(--ink-soft);font-size:13.5px;max-width:64ch}
+.rec .d code{font-size:12.5px}
+.rec .d .k{color:var(--ink-faint)}
+.rec .ver{grid-column:3;grid-row:1/span 2;font-size:13px;color:var(--ink-soft);white-space:nowrap;text-align:right;line-height:1.45}
+.rec .ver b{font-weight:500;color:var(--ink)}
+.rec.draft .ver b{color:var(--ink-soft)}
+.rec .ver i{font-style:italic;color:var(--ink-faint)}
+.rec .e{grid-column:4;grid-row:1/span 2}
+.rec .outcomes{grid-column:1;grid-row:2;margin:.4rem 0 0;padding:0;list-style:none;display:grid;gap:.2rem;color:var(--ink-soft);font-size:14px;max-width:64ch}
+.rec .outcomes li{display:flex;gap:.55rem;align-items:baseline}.rec .outcomes li::before{content:"";flex:none;width:.7rem;border-top:1px solid var(--ink-faint);transform:translateY(-.32em)}
+.addrow{padding:.45rem 0 0}
+.editor{grid-column:1/-1;overflow:hidden;display:grid;grid-template-rows:0fr;transition:grid-template-rows var(--t) var(--ease)}
+.editor.open{grid-template-rows:1fr}
+.editor > div{min-height:0}
+.editor form,.editor .review{margin:.7rem 0 .3rem;padding:1rem 1.1rem;background:var(--well);border-radius:6px;display:grid;gap:.8rem}
+.editor .base{display:flex;justify-content:space-between;gap:.3rem 1rem;font-size:13px;color:var(--ink-soft);flex-wrap:wrap}
+.editor .base b{color:var(--ink);font-weight:500}
+.editor label{display:grid;gap:.3rem;font-size:13px;color:var(--ink-soft)}
+.editor .two{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}
+.editor .act{display:flex;gap:.5rem;justify-content:flex-end;margin-top:.1rem}
+.editor .why{font-size:13.5px;color:var(--ink-soft)}.editor .why .k{color:var(--ink-faint)}
+.diff{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}
+.diff > div{border:1px solid var(--rule-strong);border-radius:var(--r);padding:.6rem .75rem;font-size:14px;background:var(--paper)}
+.diff .lab{font-size:12.5px;color:var(--ink-faint);margin-bottom:.3rem}
+.diff .after{border-color:var(--ink)}
+.diff .after .lab{color:var(--ink)}
+.effects{display:flex;gap:.4rem 1.1rem;flex-wrap:wrap;font-size:13px;color:var(--ink-soft)}
+.effects span b{font-weight:500}.effects .y b{color:var(--pass)}.effects .n b{color:var(--ink-soft)}
+.confirm{margin-top:.3rem;padding-top:.9rem;border-top:1px solid var(--rule);display:flex;flex-wrap:wrap;justify-content:flex-end;gap:.75rem;align-items:center}
+.confirm .note{margin-right:auto;color:var(--ink-faint);font-size:13px;max-width:42ch}
+
+/* checks */
+.checkline{display:flex;gap:.4rem 1.5rem;align-items:center;flex-wrap:wrap;font-size:13.5px;color:var(--ink-soft);padding:.5rem 0 .9rem;border-bottom:1px solid var(--rule-strong)}
+.checkline b{color:var(--ink);font-weight:500}
+.checkline .tally{display:flex;gap:.9rem}
+.tally .pass{color:var(--pass)}.tally .fail{color:var(--fail)}.tally .warn{color:var(--warn)}
+.checkline .run{flex-basis:100%;display:flex;gap:.5rem;align-items:center;margin-top:.35rem}
+.checkline .run input{width:9rem;font-family:var(--mono);font-size:12.5px;padding:.35rem .5rem}
+.board .hd,.brow{display:grid;grid-template-columns:minmax(0,1fr) 9.5rem 7.5rem 1.6rem;gap:1rem;align-items:center;padding:.7rem 0;border-bottom:1px solid var(--rule)}
+.board .hd{font-size:13px;color:var(--ink-faint);padding:.45rem 0}
+.brow .name{font-weight:500;min-width:0}
+.brow .name .strength{font-size:12.5px;color:var(--ink-faint);font-weight:400;margin-left:.45rem}
+.brow .name .how{display:block;color:var(--ink-soft);font-size:13px;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.brow .name .how code{font-size:12.5px}
+.brow .name small{display:block;color:var(--ink-faint);font-size:13px;font-weight:400}
+.brow .when{font-size:13px;color:var(--ink-soft);white-space:nowrap}
+.brow.running .state{color:var(--ink-soft)}
+.brow.running .state::before{animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.2}}
+.brow .exp{width:1.6rem;height:1.6rem;border:0;background:transparent;color:var(--ink-soft);border-radius:var(--r);cursor:pointer;display:grid;place-items:center;padding:0}
+.brow .exp:hover{background:var(--well);color:var(--ink)}
+.brow .exp svg{width:14px;height:14px;transition:transform var(--t) var(--ease)}
+.brow .exp[aria-expanded=true] svg{transform:rotate(90deg)}
+.bdetail{display:grid;grid-template-rows:0fr;transition:grid-template-rows var(--t) var(--ease)}
+.bdetail.open{grid-template-rows:1fr}
+.bdetail > div{min-height:0;overflow:hidden}
+.bdetail .in{margin:.7rem 0 .9rem;padding:1rem 1.1rem;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:1.1rem;background:var(--well);border-radius:6px}
+.bdetail h4{margin:0 0 .5rem;font-size:13px;font-weight:500;color:var(--ink-soft)}
+.bdetail ul{margin:0;padding:0;list-style:none;display:grid;gap:.6rem}
+.bdetail li{display:grid;gap:.1rem;font-size:13.5px}
+.bdetail li code{font-size:12.5px;color:var(--fail);overflow-wrap:anywhere}
+.bdetail .ok{color:var(--ink-soft);font-size:13.5px}
+pre.brief{margin:0;padding:.7rem .8rem;background:var(--paper);border:1px solid var(--rule);border-radius:var(--r);font:12.5px/1.55 var(--mono);color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere}
+pre.brief .k{color:var(--ink-faint)}
+.bdetail .tools{display:flex;gap:.5rem;margin-top:.7rem;align-items:center;flex-wrap:wrap}
+.bdetail .tools .cmd{margin-right:auto}
+.bdetail .tools .note{color:var(--ink-faint);font-size:13px;margin-right:auto}
+.advisory{margin-top:1.5rem;padding:.7rem 0;border-bottom:1px solid var(--rule);color:var(--ink-soft);font-size:13.5px;display:flex;justify-content:space-between;gap:.4rem 1rem;align-items:center;flex-wrap:wrap}
+details.receipts summary{padding:.7rem 0;cursor:pointer;color:var(--ink-soft);font-size:13.5px;list-style:none;display:flex;gap:.45rem;align-items:center}
+details.receipts summary::-webkit-details-marker{display:none}
+summary svg{width:12px;height:12px;flex:none;transition:transform var(--t) var(--ease)}
+details[open] > summary svg{transform:rotate(90deg)}
+details.receipts .rows{border-top:1px solid var(--rule)}
+.hash{font-size:12.5px;color:var(--ink-soft)}
+
+/* changelog */
+.toolbar{display:flex;gap:.8rem;align-items:end;flex-wrap:wrap;margin-bottom:2rem}
+.toolbar label{display:grid;gap:.3rem;font-size:13px;color:var(--ink-soft)}
+.toolbar input{width:16rem;max-width:100%}
+.toolbar .asof-note{font-size:13px;color:var(--ink-soft);padding-bottom:.55rem}
+.day{margin-bottom:2.25rem}
+.day > h2{font-size:17px;padding-bottom:.4rem;border-bottom:1px solid var(--rule-strong);display:flex;justify-content:space-between;align-items:baseline;gap:1rem}
+.day > h2 span{font-family:var(--sans);font-size:13px;color:var(--ink-soft);white-space:nowrap}
+.entry{display:grid;grid-template-columns:4.5rem minmax(0,1fr) auto;gap:.15rem 1rem;padding:.8rem 0;border-bottom:1px solid var(--rule);align-items:start}
+.entry.future{border-bottom-style:dashed}
+.entry.future .t,.entry.future .s,.entry.future time,.entry.future .status{color:var(--ink-faint)}
+.entry.future details{display:none}.entry.future .m::after{content:" · recorded after the as-of time"}
+.entry time{font-size:13px;color:var(--ink-soft);padding-top:.15rem}
+.entry .t{font-weight:500}
+.entry .t .ver{font-size:13px;color:var(--ink-soft);margin-left:.5rem;font-weight:400;white-space:nowrap}
+.entry .s{color:var(--ink-soft);font-size:14px;max-width:64ch;grid-column:2}
+.entry .m{grid-column:2;color:var(--ink-faint);font-size:13px}
+.entry .status{grid-column:3;grid-row:1;justify-self:end}
+.entry .status.accepted{color:var(--pass)}
+.entry .status.superseded{color:var(--ink-faint)}.entry .status.superseded::before{background:transparent;border:1px solid currentColor}
+.entry details{grid-column:2;margin-top:.2rem}
+.entry summary{cursor:pointer;color:var(--ink-soft);font-size:13px;list-style:none;display:inline-flex;gap:.4rem;align-items:center}
+.entry summary::-webkit-details-marker{display:none}
+.entry .diff{margin-top:.6rem}
+.entry pre{margin:.6rem 0 0;padding:.6rem .75rem;font:12.5px/1.5 var(--mono);background:var(--well);border-radius:var(--r);white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink-soft)}
+.entry .diff pre{margin:0;padding:0;background:transparent}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+@media (max-width:768px){
+  .app{padding:0 1.1rem 4rem}
+  .tabs{gap:1.1rem}
+  .attn.more{grid-template-columns:1fr}.attn.more .go{grid-column:1;grid-row:auto;justify-self:start;margin-top:.2rem}
+  .board .hd,.brow{grid-template-columns:minmax(0,1fr) auto 1.6rem}
+  .board .hd > :nth-child(2),.brow > .when{display:none}
+  .brow .name .how{white-space:normal;overflow-wrap:anywhere}
+  .footrow .v{flex-basis:100%}.footrow time{display:block;margin-left:0}
+  .bdetail .in{grid-template-columns:1fr}
+  .diff,.editor .two,.onboard form .two{grid-template-columns:1fr}
+  .confirm .note{flex-basis:100%;margin-right:0;max-width:none}
+  .entry{grid-template-columns:3.6rem minmax(0,1fr) auto}
+  .rec{grid-template-columns:minmax(0,1fr) auto;gap:.25rem .75rem}
+  .rec .c{grid-column:1;grid-row:1}
+  .rec .e{grid-column:2;grid-row:1;align-self:start}
+  .rec .ver{grid-column:1;grid-row:2;text-align:left;justify-self:start}
+  .rec .st{grid-column:2;grid-row:2;justify-self:end;align-self:center}
+  .rec .d,.rec .outcomes{grid-column:1/-1;grid-row:3}
+  .rec .editor{grid-row:4}
+}
+@media (max-width:390px){
+  .app{padding:0 1rem 4rem}
+  .tabs{flex-wrap:wrap;gap:0 1rem;justify-content:flex-start;overflow:visible}
+  .top{padding-top:1.1rem}
+  .viewhead h1,.onboard h1{font-size:23px}
+  .tabs button{font-size:14px}
+  .topstate{gap:.7rem}.topstate .agreement .detail{display:none}
+  .row{grid-template-columns:1fr}.row .state{grid-row:auto;justify-self:start}
+  .entry{grid-template-columns:minmax(0,1fr) auto}
+  .entry time{grid-column:1;grid-row:1;padding:0}
+  .entry .status{grid-column:2;grid-row:1}
+  .entry .t{grid-column:1/-1;grid-row:2}
+  .entry .s,.entry .m,.entry details{grid-column:1/-1}
+}
+</style>
 </head>
 <body>
-  <header class="shell"><div><p class="kicker">Direction 05 · interaction artifact</p><h1>Whetstone</h1></div><span class="badge">Fictional local project</span></header>
-  <nav aria-label="Product views" role="tablist"><button role="tab" aria-selected="true" aria-controls="dashboard">Dashboard</button><button role="tab" aria-selected="false" aria-controls="foundations">Foundations</button><button role="tab" aria-selected="false" aria-controls="enforcement">Enforcement</button><button role="tab" aria-selected="false" aria-controls="decisions">Decisions</button></nav>
-  <main>
-    <section id="dashboard" role="tabpanel">
-      <div class="page-head"><div><h2>Dashboard</h2><p class="intro">Outcomes, safeguards, and only what needs attention.</p></div></div>
-      <p class="mission"><span class="kicker">Mission</span><br><b>Keep human and agent work aligned with the project’s intent.</b></p>
-      <div class="grid">
-        <article class="panel"><header><div><p class="kicker">Key metrics</p><h3>Mission outcomes</h3></div><span class="badge">2 defined</span></header><div class="rows"><div class="row"><div><b>Accepted work needing rework</b><span class="meta">8% → target ≤ 5% · 30 days</span></div><span class="status" data-state="unknown">not observed</span></div><div class="row"><div><b>Owner interruptions</b><span class="meta">3 → target ≤ 2 · 30 days</span></div><span class="status" data-state="pass">on target</span></div></div></article>
-        <article class="panel"><header><div><p class="kicker">Validation gates</p><h3>Engineering safeguards</h3></div><span class="badge">3 configured</span></header><div class="rows"><div class="row"><div><b>Rust quality gates</b><span class="meta">cargo test + clippy</span></div><span class="status" data-state="pass">passing</span></div><div class="row"><div><b>Browser acceptance</b><span class="meta">journey test · current revision</span></div><span class="status" data-state="fail">failing</span></div></div></article>
+<a class="skip" href="#content">Skip to content</a>
+<div class="demo" aria-label="Demo controls">
+  <b>Demo controls</b><span>Not part of the product. Sample data is fictional.</span>
+  <label><input type="radio" name="demo" value="fresh"> Fresh project (before <code>wh init</code>)</label>
+  <label><input type="radio" name="demo" value="established" checked> Established project</label>
+  <button class="btn quiet" id="demo-reset" type="button">Reset sample data</button>
+</div>
+
+<div class="app">
+  <header class="top">
+    <div class="brand-row">
+      <div class="brand">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 11 8 3l6 8"/><path d="M4.5 11h7"/><path d="M2.5 14h11"/></svg>
+        <span class="product">Whetstone</span><span class="project" id="project-name">northstar-commerce</span>
       </div>
-      <article class="attention"><header><div><p class="kicker">Primary action · agent repair</p><h3>Browser acceptance is failing</h3></div><span class="status" data-state="fail">blocking</span></header><p>The exact current check found the checkout retry regression.</p><p class="meta"><b>Next:</b> Return the finding to the same worker, repair within task scope, then run the exact check again.</p><button class="primary" data-open="enforcement">Open enforcement</button><div class="secondary-actions"><p><b>Also:</b> Accepted-work rework has no current observation.</p><p><b>Also:</b> One local gate revision awaits review.</p></div></article>
-    </section>
+      <div class="topstate">
+        <span class="agreement"><span class="lab">agreement </span><b id="agreement-state">—</b><span class="detail" id="agreement-detail"></span></span>
+        <span class="drafts"><b id="draft-count">0</b> <span id="draft-word">drafts</span></span>
+        <span class="theme" role="group" aria-label="Theme">
+          <button type="button" data-theme="system" aria-pressed="true" title="Follow the system theme" aria-label="System theme"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="12" height="8" rx="1"/><path d="M6 13.5h4"/></svg></button>
+          <button type="button" data-theme="light" aria-pressed="false" title="Light theme" aria-label="Light theme"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M3.4 12.6l1.3-1.3M11.3 4.7l1.3-1.3"/></svg></button>
+          <button type="button" data-theme="dark" aria-pressed="false" title="Dark theme" aria-label="Dark theme"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 9.6A5.6 5.6 0 0 1 6.4 2.5a5.6 5.6 0 1 0 7.1 7.1z"/></svg></button>
+        </span>
+      </div>
+    </div>
+    <nav class="tabs" aria-label="Views" role="tablist" id="rail">
+      <button role="tab" id="tab-dashboard" aria-controls="dashboard" aria-selected="true">Dashboard</button>
+      <button role="tab" id="tab-foundations" aria-controls="foundations" aria-selected="false" tabindex="-1">Foundations</button>
+      <button role="tab" id="tab-checks" aria-controls="checks" aria-selected="false" tabindex="-1">Checks</button>
+      <button role="tab" id="tab-changelog" aria-controls="changelog" aria-selected="false" tabindex="-1">Changelog</button>
+    </nav>
+  </header>
 
-    <section id="foundations" role="tabpanel" hidden>
-      <div class="page-head"><div><h2>Foundations</h2><p class="intro">A versioned living map from purpose to measurement and validation.</p></div><span class="badge" data-state="draft">1 local draft</span></div>
-      <ol class="tree">
-        <li><article class="node" data-key="mission"><header><span class="kicker">Mission</span><span class="badge">v4 · current</span></header><h3>Keep human and agent work aligned with the project’s intent.</h3><button data-edit="mission">Edit</button></article>
-          <ol>
-            <li class="branch"><article class="node" data-key="values"><header><span class="kicker">Core values · guide choices</span><span class="badge">v3 · current</span></header><h3>Evidence before assertion; private before shared.</h3><button data-edit="values">Edit</button></article></li>
-            <li class="branch"><article class="node" data-key="outcome"><header><span class="kicker">Desired outcome · defines success</span><span class="badge">v2 · current</span></header><h3>Routine drift is repaired while only accountable decisions reach the owner.</h3><button data-edit="outcome">Edit</button></article>
-              <ol><li class="branch"><article class="node" data-key="metrics"><header><span class="kicker">Key metrics · measure outcomes</span><span class="badge">v2 · current</span></header><h3>Rework rate · owner interruptions</h3><small>Definitions retain source, cohort, window, threshold, freshness, and owner.</small><button data-edit="metrics">Edit</button></article></li></ol>
-            </li>
-            <li class="branch"><article class="node" data-key="philosophy"><header><span class="kicker">Engineering philosophy · guides implementation</span><span class="badge">v5 · current</span></header><h3>Typed services own deterministic work; skills own judgment.</h3><button data-edit="philosophy">Edit</button></article>
-              <ol><li class="branch"><article class="node" data-key="gates" data-state="draft"><header><span class="kicker">Validation gates · enforce safeguards</span><span class="badge" data-state="draft">v4 · local draft</span></header><h3>Native lint · test journeys · protected review</h3><small>Draft definition; not shared, activated, installed, or passing.</small><button data-edit="gates">Edit</button></article></li></ol>
-            </li>
-          </ol>
-        </li>
-      </ol>
-      <p class="notice"><b>Governance:</b> The accountable owner reviews mission, metric, philosophy, and gate changes. Inline edits become local proposals with exact before/after review.</p>
-    </section>
+  <main id="content" tabindex="-1">
+    <p class="sr-only" id="announce" aria-live="polite"></p>
 
-    <section id="enforcement" role="tabpanel" hidden>
-      <div class="page-head"><div><h2>Enforcement</h2><p class="intro">What applies, what ran, and what happens next.</p></div><button class="primary">Run checks</button></div>
-      <div class="grid"><article class="panel"><p class="kicker">Gate status</p><h3>2 passing · 1 failing</h3></article><article class="panel"><p class="kicker">Repair loop</p><h3>1 bounded repair needed</h3></article></div>
-      <article class="rule"><div><b>Browser acceptance</b><small>Checkout retry scope · owner: Commerce</small></div><div><span class="label">Lifecycle</span><b>active · installed</b></div><div><span class="label">Latest result</span><span class="status" data-state="fail">fail · current</span></div><div><span class="label">Mechanism</span><b>browser journey</b></div><details><summary>Finding and next action</summary><p>Retry acknowledgement is missing. Repair in the existing task, then rerun the same snapshot-bound check.</p></details></article>
-      <article class="rule"><div><b>Rust quality gates</b><small>Repository scope · owner: Platform</small></div><div><span class="label">Lifecycle</span><b>active · installed</b></div><div><span class="label">Latest result</span><span class="status" data-state="pass">pass · current</span></div><div><span class="label">Mechanism</span><b>clippy + tests</b></div></article>
-      <article class="rule"><div><b>Prefer narrow typed boundaries</b><small>Advisory engineering guidance</small></div><div><span class="label">Lifecycle</span><b>current guidance</b></div><div><span class="label">Latest result</span><span class="status" data-state="unknown">accountable review</span></div><div><span class="label">Mechanism</span><b>agent context</b></div></article>
-      <article class="panel"><p class="kicker">Agent repair brief</p><h3>Repair, then exact recheck</h3><p><code>Scope: checkout/retry · Finding: missing acknowledgement · Stop: boundary or policy change required · Next: wh check</code></p><p class="meta">This hands work back to the current worker. It does not start an agent or grant authority.</p></article>
-    </section>
-
-    <section id="decisions" role="tabpanel" hidden>
-      <div class="page-head"><div><h2>Decision log</h2><p class="intro">A changelog of what changed, why, and who decided—from project start.</p></div><div class="filters"><label>Search<input type="search" placeholder="Filter changes"></label><label>As of<input type="date"></label></div></div>
-      <div class="timeline" id="timeline"><h3>September 9, 2026</h3><article class="change"><header><div><p class="kicker">Foundations · local draft</p><h3>Validation gates revised</h3></div><span class="badge" data-state="draft">proposed</span></header><p>Added the browser journey as a required gate after retry regressions escaped code review.</p><p class="meta">Angus · v3 → v4 · not shared or activated</p><details><summary>Show exact records</summary><pre>{ "before": "lint + tests", "after": "lint + tests + browser journey" }</pre></details></article><article class="change"><header><div><p class="kicker">Mission metrics · accepted</p><h3>Owner interruption target changed</h3></div><span class="badge">accepted</span></header><p>Changed the monthly target from four interruptions to two after routine repairs became reliable.</p><p class="meta">Angus · v1 → v2</p><details><summary>Show exact records</summary><pre>{ "threshold_before": "≤ 4", "threshold_after": "≤ 2" }</pre></details></article><h3>September 1, 2026</h3><article class="change"><header><div><p class="kicker">Project start · accepted private agreement</p><h3>Project foundations established</h3></div><span class="badge">accepted</span></header><p>Added mission, core values, desired outcome, engineering philosophy, accountable owner, and initial safeguard as one setup operation.</p><p class="meta">Angus · revision 1</p><details><summary>Show exact records</summary><pre>{ "operation": "wh init", "records": 6 }</pre></details></article></div>
-    </section>
+    <section class="view" id="dashboard" role="tabpanel" aria-labelledby="tab-dashboard"></section>
+    <section class="view" id="foundations" role="tabpanel" aria-labelledby="tab-foundations" hidden></section>
+    <section class="view" id="checks" role="tabpanel" aria-labelledby="tab-checks" hidden></section>
+    <section class="view" id="changelog" role="tabpanel" aria-labelledby="tab-changelog" hidden></section>
   </main>
-  <script>
-    const tabs=[...document.querySelectorAll('[role="tab"]')];
-    function openTab(tab){for(const item of tabs){const active=item===tab;item.setAttribute('aria-selected',active);document.getElementById(item.getAttribute('aria-controls')).hidden=!active}tab.focus()}
-    for(const tab of tabs){tab.addEventListener('click',()=>openTab(tab));tab.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();const move=event.key==='ArrowRight'?1:-1;openTab(tabs[(tabs.indexOf(tab)+move+tabs.length)%tabs.length])})}
-    document.addEventListener('click',event=>{const route=event.target.closest('[data-open]');if(route)openTab(tabs.find(tab=>tab.getAttribute('aria-controls')===route.dataset.open));const button=event.target.closest('[data-edit]');if(!button)return;const card=button.closest('.node'),value=card.querySelector('h3'),badge=card.querySelector('.badge');if(value.contentEditable==='true'){value.contentEditable='false';button.textContent='Edit';card.dataset.state='draft';badge.textContent=badge.textContent.replace('current','local draft');badge.dataset.state='draft';const entry=document.createElement('article');entry.className='change';entry.innerHTML='<header><div><p class="kicker">Foundations · local draft</p><h3>'+button.dataset.edit.replaceAll('_',' ')+' revised</h3></div><span class="badge" data-state="draft">proposed</span></header><p>Recorded from the inline editor with exact review required before activation.</p><p class="meta">Local only · version retained</p>';document.getElementById('timeline').prepend(entry)}else{value.contentEditable='true';value.focus();button.textContent='Save local draft'}});
-  </script>
+
+  <footer class="colophon">
+    <span>wh dash · 127.0.0.1:62772 · local, private, unpublished</span>
+    <span>Same records as <code>wh dash --json</code></span>
+  </footer>
+</div>
+
+<script>
+/* Fictional sample data shaped like the typed dashboard projections. Nothing here runs a real check. */
+const ICON = {
+  chev: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>',
+  copy: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="8" height="8" rx="1.2"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/></svg>',
+  play: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 3v10l8-5z"/></svg>',
+  plus: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>',
+  arrow: '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 2 4 4-4 4"/></svg>',
+};
+const NOW = new Date("2026-09-09T14:02:00");
+const fmtDay = d => new Date(d).toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"});
+const fmtTime = d => new Date(d).toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"});
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function seed(){
+  return {
+    project:"northstar-commerce",
+    agreement:{ state:"owner approved", visibility:"private", owner:"Angus" },
+    mission:{ id:"mission.project", content:"Ship checkout changes that customers can trust.", outcomes:["Regressions are caught before release, not by customers.","Only genuine decisions reach the owner; routine drift is repaired by the worker that caused it."], rev:1, state:"accepted", owner:"Angus", at:"2026-09-01T10:12:00" },
+    values:[
+      { id:"value.evidence", content:"Evidence before assertion.", rev:1, state:"accepted", at:"2026-09-01T10:12:00" },
+      { id:"value.private", content:"Private before shared.", rev:1, state:"accepted", at:"2026-09-01T10:12:00" },
+      { id:"value.few", content:"Five trusted checks over fifty noisy rules.", rev:2, state:"accepted", at:"2026-09-04T16:40:00" },
+    ],
+    metrics:[
+      { id:"metric.rework", name:"Accepted work needing rework", direction:"decrease", threshold:"≤ 5%", window:"30 days", source:"github:prs:reopened", cohort:"all merged PRs", latest:"8%", observedAt:"2026-09-07T09:00:00", obs:"off_target", rev:1, state:"accepted", owner:"Angus" },
+      { id:"metric.interrupts", name:"Owner interruptions per week", direction:"decrease", threshold:"≤ 2", window:"7 days", source:"whetstone:decisions:human", cohort:"all decisions", latest:null, obs:"not_observed", rev:2, state:"accepted", owner:"Angus" },
+    ],
+    rules:[
+      { id:"philosophy.implementation", kind:"philosophy", content:"Typed services own deterministic work; skills own judgment.", detail:"Review when a gate fails twice in one week.", rev:1, state:"accepted" },
+      { id:"guidance.boundaries", kind:"guidance", content:"Prefer narrow typed boundaries over shared mutable state.", detail:"Advisory · delivered as agent context, judged in review.", rev:1, state:"accepted" },
+      { id:"guidance.no-weaken", kind:"guidance", content:"Never weaken a failing gate to make it pass.", detail:"Advisory · a green result must keep its meaning.", rev:1, state:"accepted" },
+    ],
+    gates:[
+      { id:"standard.rust", name:"Rust quality gates", strength:"must", mech:"test", ref:"cargo clippy && cargo test", scope:"src", rev:1, state:"accepted", run:{ result:"pass", at:"2026-09-09T14:02:00", fresh:true } },
+      { id:"standard.browser", name:"Browser acceptance journey", strength:"must", mech:"validator", ref:"scripts/test-dashboard-browser.mjs", scope:"assets", rev:3, state:"accepted", run:{ result:"fail", at:"2026-09-09T14:02:00", fresh:true, failures:[["assets/dashboard/app.js:118","retry acknowledgement is not rendered after a failed submit"],["assets/dashboard/app.js:131","focus does not return to the retried control"]] } },
+      { id:"standard.format", name:"Python formatting", strength:"must", mech:"formatter", ref:"ruff format --check scripts tests", scope:"scripts, tests", rev:1, state:"accepted", run:{ result:"pass", at:"2026-09-08T18:20:00", fresh:false } },
+      { id:"standard.regex", name:"No raw regex as enforcement", strength:"should", mech:"ast", ref:"rules/no-regex-enforcement.scm", scope:"src/check", rev:1, state:"draft", run:null },
+    ],
+    changes:[
+      { id:"c5", at:"2026-09-09T09:12:00", title:"Gate proposed: No raw regex as enforcement", ver:"v1", status:"draft", owner:"Angus", area:"gates", summary:"An AST query with known-good and known-bad examples, so regex never counts as a deterministic check.", before:null, after:{ statement:"No raw regex as enforcement", strength:"should", enforcement:{ enforcement:"ast", query:"rules/no-regex-enforcement.scm" } } },
+      { id:"c4", at:"2026-09-08T17:45:00", title:"Gate accepted: Browser acceptance journey", ver:"v2 → v3", status:"accepted", owner:"Angus", area:"gates", summary:"Widened the journey to the retry path after the September regression escaped code review.", before:{ scope:"assets/dashboard/app.js", journeys:["submit"] }, after:{ scope:"assets", journeys:["submit","retry"] } },
+      { id:"c3", at:"2026-09-04T16:40:00", title:"Core value revised: Five trusted checks over fifty noisy rules", ver:"v1 → v2", status:"accepted", owner:"Angus", area:"values", summary:"Reworded from \"prefer few rules\" to state the trade explicitly.", before:{ description:"Prefer few rules." }, after:{ description:"Five trusted checks over fifty noisy rules." } },
+      { id:"c2", at:"2026-09-03T11:05:00", title:"Metric target changed: Owner interruptions per week", ver:"v1 → v2", status:"accepted", owner:"Angus", area:"metrics", summary:"Lowered the weekly target from four to two once routine repairs became reliable.", before:{ threshold:"≤ 4" }, after:{ threshold:"≤ 2" } },
+      { id:"c1s", at:"2026-09-02T09:30:00", title:"Gate: Browser acceptance journey", ver:"v2", status:"superseded", owner:"Angus", area:"gates", summary:"Submit-only journey.", supersededBy:"c4", before:{ journeys:["submit"] }, after:null },
+      { id:"c1", at:"2026-09-01T10:12:00", title:"Foundations established", ver:"revision 1", status:"accepted", owner:"Angus", area:"foundations", summary:"Mission, two outcomes, three core values, engineering philosophy, accountable owner and the first gate, recorded as one wh init operation.", before:null, after:{ operation:"wh init --action agree", records:8 } },
+    ],
+    lastCheck:{ at:"2026-09-09T14:02:00", scope:"src, assets" },
+  };
+}
+let data = seed();
+let demo = "established";
+const $ = id => document.getElementById(id);
+const announce = t => { $("announce").textContent = ""; setTimeout(()=>{ $("announce").textContent = t; }, 30); };
+
+/* ---------- theme ---------- */
+function setTheme(mode){
+  const root = document.documentElement;
+  if (mode==="light"||mode==="dark") root.setAttribute("data-theme", mode); else root.removeAttribute("data-theme");
+  try { if (mode==="system") localStorage.removeItem("wh-theme"); else localStorage.setItem("wh-theme", mode); } catch {}
+  document.querySelectorAll(".theme button").forEach(b=>b.setAttribute("aria-pressed", String(b.dataset.theme===mode)));
+}
+document.querySelectorAll(".theme button").forEach(b=>b.addEventListener("click",()=>{ setTheme(b.dataset.theme); announce(`${b.dataset.theme} theme`); }));
+setTheme((()=>{ try { const t = localStorage.getItem("wh-theme"); return t==="light"||t==="dark" ? t : "system"; } catch { return "system"; } })());
+
+/* ---------- derived ---------- */
+function drafts(){ return [data.mission,...data.values,...data.metrics,...data.rules,...data.gates].filter(r=>r.state==="draft"||r.draft).length; }
+function attention(){
+  const items = [];
+  for (const g of data.gates) if (g.run?.result==="fail") items.push({ kind:"agent repair", tone:"fail", title:`${g.name} is failing`, text:`${g.run.failures.length} failure${g.run.failures.length===1?"":"s"} in the current check of ${g.scope}. The worker that made the change repairs it within task scope, then runs the exact check again.`, actor:"your coding agent", route:"checks", focus:g.id, action:"Open the failing gate", next:"Hand the brief to the agent; return here when it has rerun the check." });
+  for (const m of data.metrics) if (m.obs==="not_observed") items.push({ kind:"outcome not observed", tone:"warn", title:`${m.name} has no observation`, text:`Target ${m.threshold} over ${m.window}; source ${m.source}. Without an observation the mission's success is unknown, not fine.`, actor:"metric owner", route:"foundations", focus:m.id, action:"Open the metric", next:"Connect the source or revise the definition through review." });
+  for (const g of data.gates) if (g.run && g.run.result==="pass" && !g.run.fresh) items.push({ kind:"stale result", tone:"warn", title:`${g.name} passed before the latest change`, text:"The last pass predates edits in its scope. A stale pass is not a current pass.", actor:"you or your agent", route:"checks", focus:g.id, action:"Open checks", next:"Run the check again on the current revision." });
+  const d = drafts(); if (d) items.push({ kind:"review", tone:"muted", title:`${d} local draft${d===1?"":"s"} await${d===1?"s":""} your review`, text:"Drafts are private and inactive until you accept them. Nothing has been shared or installed.", actor:"project owner", route:"changelog", action:"Open the changelog", next:"Accept, revise, or withdraw each draft." });
+  return items;
+}
+function metricState(m){ return m.obs==="not_observed" ? ["warn","not observed"] : m.obs==="off_target" ? ["fail",`${m.latest} · off target`] : ["pass",`${m.latest} · on target`]; }
+function gateState(g){
+  if (g.state==="draft") return ["draft","draft · not run"];
+  if (!g.run) return ["warn","not run"];
+  if (g.run.result==="fail") return ["fail",`fail · ${g.run.failures.length}`];
+  return g.run.fresh ? ["pass","pass"] : ["warn","pass · stale"];
+}
+function mechLabel(g){ return ({test:"Test",validator:"Validator",formatter:"Formatter",lint_proxy:"Lint",ast:"AST query"})[g.mech]||g.mech; }
+
+/* ---------- dashboard ---------- */
+function renderDashboard(){
+  const el = $("dashboard");
+  if (demo==="fresh"){
+    el.innerHTML = `
+    <div class="panel onboard">
+      <h1>This project has no agreement yet.</h1>
+      <p>Whetstone shows outcomes, gates and attention only once the owner has recorded what good means here. Eight decisions, reviewed once, saved privately. None of the eight is recorded yet.</p>
+      <ol>
+        <li><b>1</b><span><strong>Mission</strong>what this project exists to do</span></li>
+        <li><b>2</b><span><strong>Desired outcome</strong>how you will know it is working</span></li>
+        <li><b>3</b><span><strong>Core values</strong>what guides choices when they conflict</span></li>
+        <li><b>4</b><span><strong>Engineering philosophy</strong>how work gets done here</span></li>
+        <li><b>5</b><span><strong>Accountable owner</strong>who decides consequential changes</span></li>
+        <li><b>6</b><span><strong>First gate</strong>one deterministic check you already trust</span></li>
+        <li><b>7</b><span><strong>Gate scope</strong>where that check applies</span></li>
+        <li><b>8</b><span><strong>Review triggers</strong>when to revisit all of this</span></li>
+      </ol>
+      <div class="act">
+        <button class="btn primary" type="button" data-route="foundations">Establish foundations</button>
+        <span class="or">or from the terminal</span><code class="cmd">wh init</code>
+      </div>
+      <p class="private">Nothing is shared, installed or published by this step. Existing lint, tests and CI are inspected, not replaced.</p>
+    </div>`;
+    return;
+  }
+  const items = attention();
+  const primary = items[0];
+  const rest = items.slice(1);
+  el.innerHTML = `
+    <div class="viewhead">
+      <h1 id="mission-line">${esc(data.mission.content)}</h1>
+      <p class="sub">${esc(data.mission.outcomes[0])}</p>
+    </div>
+    <section class="panel" aria-labelledby="h-attn">
+      <div class="ph"><h2 id="h-attn">Needs attention</h2><span class="count">${items.length||"none"}</span></div>
+      ${primary ? `<div class="attn">
+        <div class="head"><h3>${esc(primary.title)}</h3><span class="state ${primary.tone}">${esc(primary.kind)}</span></div>
+        <p>${esc(primary.text)}</p>
+        <dl class="next"><dt>For</dt><dd>${esc(primary.actor)}</dd><dt>Next</dt><dd>${esc(primary.next)}</dd></dl>
+        <div class="act"><button class="btn primary" type="button" data-route="${primary.route}" data-focus="${esc(primary.focus||"")}">${esc(primary.action)}</button></div>
+      </div>` : `<div class="attn"><div class="head"><h3>Nothing needs you right now.</h3><span class="state muted">up to date</span></div><p>Gates are current and every metric has a recent observation. This says nothing about tomorrow: run checks after changes.</p></div>`}
+      ${rest.map(i=>`<div class="attn more"><div class="t">${esc(i.title)}</div><div class="m">${esc(i.actor)} · ${esc(i.next)}</div><button class="btn quiet go" type="button" data-route="${i.route}" data-focus="${esc(i.focus||"")}">${esc(i.action)}</button></div>`).join("")}
+    </section>
+    <section class="panel" aria-labelledby="h-metrics">
+      <div class="ph"><h2 id="h-metrics">Key metrics</h2><span class="count">${data.metrics.length}</span></div>
+      <div class="rows">${data.metrics.map(m=>{const [t,l]=metricState(m);return `<div class="row"><div class="name">${esc(m.name)}</div><span class="state ${t}">${esc(l)}</span><div class="meta">${esc(m.direction)} to ${esc(m.threshold)} · ${esc(m.window)}</div></div>`;}).join("")||`<div class="empty">No metric defined. The mission cannot be measured yet.</div>`}</div>
+    </section>
+    <section class="panel" aria-labelledby="h-gates">
+      <div class="ph"><h2 id="h-gates">Gates</h2><span class="count">${data.gates.length}</span></div>
+      <div class="rows">${data.gates.map(g=>{const [t,l]=gateState(g);return `<div class="row"><div class="name">${esc(g.name)}</div><span class="state ${t}">${esc(l)}</span><div class="meta">${mechLabel(g)} · <code>${esc(g.ref)}</code></div></div>`;}).join("")}</div>
+    </section>
+    <button class="footrow" type="button" data-route="changelog"><span class="k">Latest change</span><span class="v">${esc(data.changes[0].title)}<time>${fmtDay(data.changes[0].at)} ${fmtTime(data.changes[0].at)}</time></span></button>`;
+}
+
+/* ---------- foundations ---------- */
+function verCell(r){ return `<div class="ver"><b>v${r.rev}</b> · ${r.state==="draft"?"<i>draft</i>":"accepted"}${r.draft?`<br><i>draft v${r.draft.rev} pending</i>`:""}</div>`; }
+function editBtn(r){ return `<div class="e"><button class="btn quiet" type="button" data-edit="${esc(r.id)}" aria-expanded="false">Edit</button></div>`; }
+function recRow(r,opts={}){
+  return `<div class="rec ${r.state==="draft"||r.draft?"draft":""}" data-rec="${esc(r.id)}">
+    <div class="c ${opts.big?"big":""}">${esc(r.content||r.name)}</div>
+    ${opts.state?`<span class="state st ${opts.state[0]}">${esc(opts.state[1])}</span>`:""}${verCell(r)}${editBtn(r)}
+    ${opts.detail?`<div class="d">${opts.detail}</div>`:""}
+    <div class="editor" data-editor="${esc(r.id)}"><div></div></div>
+  </div>`;
+}
+function renderFoundations(){
+  const el = $("foundations");
+  if (demo==="fresh"){
+    el.innerHTML = `
+    <div class="viewhead"><h1>Foundations</h1><p class="sub">Mission, values, metrics, rules and gates, in the order each one justifies the next. Empty until the owner records the first agreement.</p></div>
+    <div class="panel onboard">
+      <div class="ph"><h2>First agreement</h2><span class="count">private · unshared</span></div>
+      <form id="init-form">
+        <label>Mission<textarea name="mission" placeholder="What this project exists to do"></textarea></label>
+        <label>Desired outcome<textarea name="outcome" placeholder="How you will know it is working"></textarea></label>
+        <div class="two">
+          <label>Core values<textarea name="values" placeholder="One per line"></textarea></label>
+          <label>Engineering philosophy<textarea name="philosophy" placeholder="How work gets done here"></textarea></label>
+        </div>
+        <div class="two">
+          <label>Accountable owner<input name="owner" placeholder="Name"></label>
+          <label>Review triggers<input name="triggers" placeholder="e.g. a gate fails twice in a week"></label>
+        </div>
+        <div class="two">
+          <label>First gate<input name="gate" placeholder="e.g. cargo test"></label>
+          <label>Gate scope<input name="scope" placeholder="e.g. src"></label>
+        </div>
+        <div class="confirm"><span class="note">Review shows the exact records before anything is saved. Saving creates a private agreement, not team policy.</span><button class="btn" type="button" data-route="dashboard">Cancel</button><button class="btn primary" type="submit">Review agreement</button></div>
+      </form>
+    </div>`;
+    el.querySelector("#init-form").addEventListener("submit",e=>{e.preventDefault();announce("In the product this opens the exact-record review; the demo does not save.");});
+    return;
+  }
+  const g = data.gates, m = data.metrics, r = data.rules, v = data.values;
+  const cnt = (n)=>`<b class="${n?"":"zero"}">${n}</b>`;
+  el.innerHTML = `
+    <div class="viewhead">
+      <h1>Foundations</h1>
+      <p class="sub">From purpose to enforcement. Each stage justifies the next; every record is versioned and edits become private drafts you review before they count.</p>
+      <p class="actions">owner <b>${esc(data.mission.owner)}</b></p>
+    </div>
+    <nav class="stages" aria-label="Stages">
+      <a href="#st-mission">Mission ${cnt(1)}</a><span class="arrow">${ICON.arrow}</span>
+      <a href="#st-values">Core values ${cnt(v.length)}</a><span class="arrow">${ICON.arrow}</span>
+      <a href="#st-metrics">Key metrics ${cnt(m.length)}</a><span class="arrow">${ICON.arrow}</span>
+      <a href="#st-rules">Rules &amp; guidelines ${cnt(r.length)}</a><span class="arrow">${ICON.arrow}</span>
+      <a href="#st-gates">Gates ${cnt(g.length)}</a>
+    </nav>
+    <div class="flow">
+      <section class="stage panel" id="st-mission" aria-labelledby="h-st1">
+        <div class="ph"><h2 id="h-st1">Mission <span class="why">why the project exists</span></h2></div>
+        <div class="rec ${data.mission.draft?"draft":""}" data-rec="${esc(data.mission.id)}">
+          <div class="c big">${esc(data.mission.content)}</div>${verCell(data.mission)}${editBtn(data.mission)}
+          <ul class="outcomes" aria-label="Desired outcomes">${data.mission.outcomes.map(o=>`<li>${esc(o)}</li>`).join("")}</ul>
+          <div class="editor" data-editor="${esc(data.mission.id)}"><div></div></div>
+        </div>
+      </section>
+      <section class="stage panel" id="st-values" aria-labelledby="h-st2">
+        <div class="ph"><h2 id="h-st2">Core values <span class="why">what wins when goals conflict</span></h2><span class="count">${v.length}</span></div>
+        ${v.map(x=>recRow(x)).join("")}
+        <div class="addrow"><button class="btn quiet" type="button" data-add="value">${ICON.plus} Add value</button></div>
+      </section>
+      <section class="stage panel" id="st-metrics" aria-labelledby="h-st3">
+        <div class="ph"><h2 id="h-st3">Key metrics <span class="why">how the mission is known to be working</span></h2><span class="count">${m.length}</span></div>
+        ${m.map(x=>{const st=metricState(x);return recRow({...x,content:x.name},{state:st,detail:`<span class="k">target</span> ${esc(x.direction)} to ${esc(x.threshold)} · <span class="k">window</span> ${esc(x.window)} · <span class="k">source</span> <code>${esc(x.source)}</code> · <span class="k">cohort</span> ${esc(x.cohort)}`});}).join("")}
+        <div class="addrow"><button class="btn quiet" type="button" data-add="metric">${ICON.plus} Add metric</button></div>
+      </section>
+      <section class="stage panel" id="st-rules" aria-labelledby="h-st4">
+        <div class="ph"><h2 id="h-st4">Rules &amp; guidelines <span class="why">how work is done; advisory, judged in review</span></h2><span class="count">${r.length}</span></div>
+        ${r.map(x=>recRow(x,{detail:`<span class="k">${x.kind==="philosophy"?"philosophy":"guidance"}</span> · ${esc(x.detail)}`})).join("")}
+        <div class="addrow"><button class="btn quiet" type="button" data-add="guidance">${ICON.plus} Add guideline</button></div>
+      </section>
+      <section class="stage panel" id="st-gates" aria-labelledby="h-st5">
+        <div class="ph"><h2 id="h-st5">Gates <span class="why">deterministic checks; unknown is never green</span></h2><span class="count">${g.length}</span></div>
+        ${g.map(x=>{const st=gateState(x);return recRow({...x,content:x.name},{state:st,detail:`<span class="k">${esc(x.strength)}</span> · ${mechLabel(x)} <code>${esc(x.ref)}</code> · <span class="k">scope</span> ${esc(x.scope)}`});}).join("")}
+        <div class="addrow"><button class="btn quiet" type="button" data-add="standard">${ICON.plus} Add gate</button></div>
+      </section>
+    </div>`;
+}
+function findRec(id){ return [data.mission,...data.values,...data.metrics,...data.rules,...data.gates].find(r=>r.id===id); }
+function openEditor(id, trigger){
+  document.querySelectorAll(".editor.open").forEach(e=>{ e.classList.remove("open"); e.firstElementChild.innerHTML=""; });
+  document.querySelectorAll("[data-edit][aria-expanded=true]").forEach(b=>b.setAttribute("aria-expanded","false"));
+  const rec = findRec(id); const host = document.querySelector(`[data-editor="${CSS.escape(id)}"]`); if(!rec||!host) return;
+  const current = rec.draft ? rec.draft.content : (rec.content||rec.name);
+  host.firstElementChild.innerHTML = `
+    <form data-form="${esc(id)}">
+      <div class="base"><span>base <b>v${rec.draft?rec.draft.rev:rec.rev}</b> · ${rec.draft?"draft":rec.state} · ${esc(data.agreement.owner)} owns this record</span><span>draft stays private</span></div>
+      <label>${rec.name?"Name":"Content"}<textarea name="content" required>${esc(current)}</textarea></label>
+      ${rec.threshold?`<div class="two"><label>Target<input name="threshold" value="${esc(rec.threshold)}"></label><label>Window<input name="window" value="${esc(rec.window)}"></label></div>`:""}
+      ${rec.ref?`<div class="two"><label>Mechanism<select name="mech">${["test","validator","formatter","lint_proxy","ast"].map(k=>`<option value="${k}" ${k===rec.mech?"selected":""}>${k.replace("_"," ")}</option>`).join("")}</select></label><label>Command or query<input name="ref" value="${esc(rec.ref)}"></label></div>`:""}
+      <div class="two"><label>Why is this changing?<input name="rationale" required placeholder="The reason a reviewer will read"></label><label>Expected effect<input name="effect" required placeholder="What should be different afterwards"></label></div>
+      <div class="act"><button class="btn" type="button" data-cancel>Cancel</button><button class="btn primary" type="submit">Review draft</button></div>
+    </form>`;
+  host.classList.add("open"); trigger?.setAttribute("aria-expanded","true");
+  host.querySelector("textarea").focus();
+  host.querySelector("[data-cancel]").addEventListener("click",()=>{ closeEditor(host); trigger?.focus(); announce("Edit cancelled; nothing changed."); });
+  host.querySelector("form").addEventListener("submit",e=>{
+    e.preventDefault(); const f=new FormData(e.currentTarget); const after=String(f.get("content")).trim(); const rationale=String(f.get("rationale")).trim(); const effect=String(f.get("effect")).trim();
+    host.firstElementChild.innerHTML = `
+      <div class="review" role="group" aria-label="Review draft">
+        <div class="base"><span>exact records on confirm · base <b>v${rec.draft?rec.draft.rev:rec.rev}</b> → draft <b>v${(rec.draft?rec.draft.rev:rec.rev)+1}</b></span></div>
+        <div class="diff"><div class="before"><div class="lab">before · v${rec.draft?rec.draft.rev:rec.rev}</div>${esc(current)}</div><div class="after"><div class="lab">after · v${(rec.draft?rec.draft.rev:rec.rev)+1} draft</div>${esc(after)}</div></div>
+        <div class="why"><span class="k">why</span> ${esc(rationale)} &nbsp;·&nbsp; <span class="k">expected</span> ${esc(effect)}</div>
+        <div class="effects"><span class="y">private draft <b>written</b></span><span class="n">shared <b>no</b></span><span class="n">accepted <b>no</b></span><span class="n">activated <b>no</b></span><span class="n">installed <b>no</b></span><span class="n">checked <b>no</b></span></div>
+        <div class="confirm"><span class="note">Recording a draft never shares, accepts, installs or passes it.</span><button class="btn" type="button" data-back>Back</button><button class="btn primary" type="button" data-confirm>Record local draft</button></div>
+      </div>`;
+    host.querySelector("[data-confirm]").focus();
+    host.querySelector("[data-back]").addEventListener("click",()=>openEditor(id,trigger));
+    host.querySelector("[data-confirm]").addEventListener("click",()=>{
+      const before = current; const nextRev = (rec.draft?rec.draft.rev:rec.rev)+1; if (rec.state==="draft"){ rec.rev=nextRev; if(rec.name) rec.name=after; else rec.content=after; } else { rec.draft = { rev:nextRev, content:after }; }
+      data.changes.unshift({ id:"c"+Date.now(), at:NOW.toISOString(), title:`${rec.ref?"Gate":rec.threshold?"Metric":rec.kind?"Guideline":rec.outcomes?"Mission":"Core value"} revised: ${after}`, ver:`v${nextRev-1} → v${nextRev}`, status:"draft", owner:data.agreement.owner, area: rec.ref?"gates":rec.threshold?"metrics":rec.kind?"rules":id.startsWith("value")?"values":"mission", summary:rationale+" Expected: "+effect, before:{content:before}, after:{content:after} });
+      renderAll(); announce(`Local draft v${nextRev} recorded. It is private and inactive until accepted; the accepted record stays in force.`);
+      document.querySelector(`[data-rec="${CSS.escape(id)}"] [data-edit]`)?.focus();
+    });
+  });
+}
+function closeEditor(host){ host.classList.remove("open"); host.firstElementChild.innerHTML=""; host.closest(".rec")?.querySelector("[data-edit]")?.setAttribute("aria-expanded","false"); }
+
+/* ---------- checks ---------- */
+function renderChecks(){
+  const el = $("checks");
+  if (demo==="fresh"){ el.innerHTML = `<div class="viewhead"><h1>Checks</h1><p class="sub">Available once a gate exists. Establish the foundations first.</p></div><div class="panel"><div class="empty">No gates to run. <code class="cmd">wh check</code> would report unknown, not pass.</div></div>`; return; }
+  const eligible = data.gates.filter(g=>g.state!=="draft");
+  const tally = { pass:eligible.filter(g=>g.run?.result==="pass"&&g.run.fresh).length, fail:eligible.filter(g=>g.run?.result==="fail").length, warn:eligible.filter(g=>!g.run||(g.run.result==="pass"&&!g.run.fresh)).length };
+  el.innerHTML = `
+    <div class="viewhead"><h1>Checks</h1><p class="sub">What ran, what failed, and the exact route back to green. Definitions live in Foundations.</p></div>
+    <div class="checkline">
+      <span>last complete check <b>${fmtDay(data.lastCheck.at)} ${fmtTime(data.lastCheck.at)}</b></span>
+      <span>scope <b>${esc(data.lastCheck.scope)}</b></span>
+      <span class="tally"><span class="pass">${tally.pass} pass</span><span class="fail">${tally.fail} fail</span><span class="warn">${tally.warn} unknown</span></span>
+      <form class="run" id="run-form"><label class="sr-only" for="run-scope">Scope</label><input id="run-scope" value="src, assets"><button class="btn primary" type="submit" id="run-btn">${ICON.play} Run checks</button></form>
+    </div>
+    <div class="board" role="table" aria-label="Gate results">
+      <div class="hd" role="row"><span role="columnheader">Gate</span><span role="columnheader">Last run</span><span role="columnheader">Result</span><span></span></div>
+      ${data.gates.map(g=>{ const [t,l]=gateState(g); const failing = g.run?.result==="fail"; return `
+      <div class="brow" role="row" data-gate="${esc(g.id)}" id="gate-${esc(g.id)}">
+        <div class="name" role="cell">${esc(g.name)}<span class="strength">${esc(g.strength)}</span><span class="how">${mechLabel(g)} · <code>${esc(g.ref)}</code> · ${esc(g.scope)}</span>${g.state==="draft"?`<small>draft · not eligible until accepted</small>`:""}</div>
+        <div class="when" role="cell">${g.run?`${fmtDay(g.run.at)} ${fmtTime(g.run.at)}`:"never"}</div>
+        <span class="state ${t}" role="cell">${esc(l)}</span>
+        <button class="exp" type="button" aria-expanded="${failing?"true":"false"}" aria-controls="det-${esc(g.id)}" aria-label="Details for ${esc(g.name)}">${ICON.chev}</button>
+      </div>
+      <div class="bdetail ${failing?"open":""}" id="det-${esc(g.id)}"><div><div class="in">
+        <div>
+          <h4>${failing?"Failures":g.run?"Result":"Status"}</h4>
+          ${failing?`<ul>${g.run.failures.map(f=>`<li><code>${esc(f[0])}</code><span>${esc(f[1])}</span></li>`).join("")}</ul>`
+            : g.state==="draft"?`<p class="ok">A draft gate is not run. Accept it in the changelog, then it joins the next check.</p>`
+            : !g.run?`<p class="ok">Never run. Unknown is reported as unknown.</p>`
+            : g.run.fresh?`<p class="ok">Passed on the current revision. Receipt bound to the gate v${g.rev}, its scope and the checked snapshot.</p>`
+            :`<p class="ok">Passed, but files in <code>${esc(g.scope)}</code> changed after this run. Rerun to make the result current.</p>`}
+          <div class="tools"><code class="cmd">wh check --path ${esc(g.scope.split(",")[0].trim())}${g.mech==="ast"?" --rule "+esc(g.id):""}</code><button class="btn" type="button" data-copy="wh check --path ${esc(g.scope.split(",")[0].trim())}">${ICON.copy} Copy</button></div>
+        </div>
+        ${failing?`<div>
+          <h4>Repair brief for the current worker</h4>
+          <pre class="brief"><span class="k">gate</span>     ${esc(g.name)} (v${g.rev}, ${esc(g.strength)})
+<span class="k">scope</span>    ${esc(g.scope)}
+<span class="k">failures</span> ${g.run.failures.map(f=>f[0]).join(", ")}
+<span class="k">repair</span>   within the current task; do not change or weaken the gate
+<span class="k">recheck</span>  wh check --path ${esc(g.scope.split(",")[0].trim())}
+<span class="k">stop</span>     if the fix needs a policy or boundary change, hand back to ${esc(data.agreement.owner)}</pre>
+          <div class="tools"><span class="note">Hands the failure back. Starts no agent, grants no permission.</span><button class="btn" type="button" data-copy-brief="${esc(g.id)}">${ICON.copy} Copy brief</button></div>
+        </div>`:""}
+      </div></div></div>`; }).join("")}
+    </div>
+    <div class="advisory"><span>${data.rules.length} rules and guidelines are advisory. They reach the agent as context and are judged in review; they are never counted as checks.</span><button class="btn quiet" type="button" data-route="foundations" data-focus="st-rules">See rules</button></div>
+    <details class="receipts"><summary>${ICON.chev}Receipts for the last check</summary><div class="rows">
+      <div class="row"><div class="name">check receipt</div><code class="hash">sha256:3f43…1278</code><div class="meta">gates v1, v3, v1 · snapshot 2c3f0a3 · scope src, assets · ${fmtDay(data.lastCheck.at)} ${fmtTime(data.lastCheck.at)}</div></div>
+      <div class="row"><div class="name">policy digest</div><code class="hash">sha256:d8f6…64d3</code><div class="meta">accepted revision 1 · private store</div></div>
+    </div></details>`;
+  el.querySelector("#run-form").addEventListener("submit",e=>{ e.preventDefault(); runChecks(); });
+}
+function runChecks(){
+  const btn = $("run-btn"); btn.classList.add("busy"); btn.disabled = true;
+  document.querySelectorAll(".brow").forEach(r=>{ if(!r.querySelector(".state").classList.contains("draft")){ r.classList.add("running"); const s=r.querySelector(".state"); s.className="state muted"; s.textContent="running"; }});
+  announce("Running checks on the current revision.");
+  setTimeout(()=>{
+    const at = new Date(NOW.getTime()+11*60000).toISOString();
+    for (const g of data.gates){ if (g.state==="draft") continue; g.run = g.run ? {...g.run, at, fresh:true} : { result:"pass", at, fresh:true }; }
+    data.lastCheck = { at, scope: $("run-scope").value };
+    renderAll(); announce("Check complete: results updated in place. Failures still need repair.");
+    $("run-btn")?.focus();
+  }, 900);
+}
+
+/* ---------- changelog ---------- */
+let clFilter = { q:"", asOf:"" };
+function renderChangelog(){
+  const el = $("changelog");
+  if (demo==="fresh"){ el.innerHTML = `<div class="viewhead"><h1>Changelog</h1><p class="sub">Every consequential change from project start, newest first. Empty until the first agreement is recorded.</p></div><div class="panel"><div class="empty">No decisions yet.</div></div>`; return; }
+  const q = clFilter.q.toLowerCase(); const asOf = clFilter.asOf ? new Date(clFilter.asOf) : null;
+  const entries = data.changes.filter(c=>!q || (c.title+" "+c.summary+" "+c.area+" "+c.owner).toLowerCase().includes(q));
+  const days = []; for (const c of entries){ const d=fmtDay(c.at); let g=days.find(x=>x.d===d); if(!g){ g={d,items:[]}; days.push(g);} g.items.push(c); }
+  el.innerHTML = `
+    <div class="viewhead"><h1>Changelog</h1><p class="sub">Every consequential change from project start, newest first. Drafts are private; accepted records are what agents receive; superseded ones stay readable.</p></div>
+    <div class="toolbar">
+      <label>Search<input type="search" id="cl-q" value="${esc(clFilter.q)}" placeholder="title, summary, area, owner"></label>
+      <label>As of<input type="datetime-local" id="cl-asof" value="${esc(clFilter.asOf)}"></label>
+      ${asOf?`<span class="asof-note">showing state as of ${fmtDay(asOf)} ${fmtTime(asOf)} · later entries dimmed</span><button class="btn quiet" type="button" id="cl-clear">Clear</button>`:""}
+    </div>
+    ${days.length?days.map(g=>`<section class="day" aria-label="${esc(g.d)}"><h2>${esc(g.d)}<span>${g.items.length} change${g.items.length===1?"":"s"}</span></h2>
+      ${g.items.map(c=>`<article class="entry ${asOf&&new Date(c.at)>asOf?"future":""}" data-change="${esc(c.id)}">
+        <time datetime="${esc(c.at)}">${fmtTime(c.at)}</time>
+        <div class="t">${esc(c.title)}<span class="ver">${esc(c.ver)}</span></div>
+        <span class="state status ${c.status==="draft"?"draft":c.status}">${esc(c.status)}</span>
+        <div class="s">${esc(c.summary)}</div>
+        <div class="m">${esc(c.owner)} · ${esc(c.area)}${c.supersededBy?` · superseded by ${esc(data.changes.find(x=>x.id===c.supersededBy)?.ver||c.supersededBy)}`:""}</div>
+        <details><summary>${ICON.chev}Exact records</summary>
+          ${c.before||c.after?`<div class="diff">${c.before?`<div class="before"><div class="lab">before</div><pre>${esc(JSON.stringify(c.before,null,2))}</pre></div>`:""}${c.after?`<div class="after"><div class="lab">after</div><pre>${esc(JSON.stringify(c.after,null,2))}</pre></div>`:""}</div>`:""}
+          <pre>{ "id": "${esc(c.id)}", "recorded_at": "${esc(c.at)}", "status": "${esc(c.status)}", "owner": "${esc(c.owner)}", "visibility": "private" }</pre>
+        </details>
+      </article>`).join("")}</section>`).join("")
+    : `<div class="panel"><div class="empty">No change matches “${esc(clFilter.q)}”. Clear the search or widen the as-of time.</div></div>`}`;
+  $("cl-q").addEventListener("input",e=>{ clFilter.q=e.target.value; const pos=e.target.selectionStart; renderChangelog(); const i=$("cl-q"); i.focus(); i.setSelectionRange(pos,pos); });
+  $("cl-asof").addEventListener("change",e=>{ clFilter.asOf=e.target.value; renderChangelog(); $("cl-asof").focus(); announce(clFilter.asOf?"Showing state as of the selected time.":"As-of cleared."); });
+  $("cl-clear")?.addEventListener("click",()=>{ clFilter.asOf=""; renderChangelog(); $("cl-asof").focus(); });
+}
+
+/* ---------- shell ---------- */
+const tabs = [...document.querySelectorAll('#rail [role="tab"]')];
+function available(id){ return demo!=="fresh" || id==="tab-dashboard" || id==="tab-foundations"; }
+function show(tab, focusId){
+  if (tab.getAttribute("aria-disabled")==="true"){ announce("Available after foundations are established."); return; }
+  for (const t of tabs){ const on=t===tab; t.setAttribute("aria-selected",on); t.tabIndex=on?0:-1; $(t.getAttribute("aria-controls")).hidden=!on; }
+  tab.focus(); announce(`${tab.textContent.trim()} view`);
+  if (focusId){ const target = $(focusId) || $("gate-"+focusId) || document.querySelector(`[data-rec="${CSS.escape(focusId)}"]`); if(target){ target.scrollIntoView({block:"start",behavior:"smooth"}); target.setAttribute("tabindex","-1"); target.focus({preventScroll:true}); } }
+}
+for (const t of tabs){
+  t.addEventListener("click",()=>show(t));
+  t.addEventListener("keydown",e=>{ const keys={ArrowRight:1,ArrowDown:1,ArrowLeft:-1,ArrowUp:-1}; if(!(e.key in keys)&&e.key!=="Home"&&e.key!=="End") return; e.preventDefault(); let i=tabs.indexOf(t); i=e.key==="Home"?0:e.key==="End"?tabs.length-1:(i+keys[e.key]+tabs.length)%tabs.length; show(tabs[i]); });
+}
+document.addEventListener("click",e=>{
+  const route = e.target.closest("[data-route]"); if(route){ show($("tab-"+route.dataset.route), route.dataset.focus); return; }
+  const edit = e.target.closest("[data-edit]"); if(edit){ const host=document.querySelector(`[data-editor="${CSS.escape(edit.dataset.edit)}"]`); if(host.classList.contains("open")){ closeEditor(host); } else openEditor(edit.dataset.edit, edit); return; }
+  const add = e.target.closest("[data-add]"); if(add){ announce(`In the product, Add ${add.dataset.add} opens the same editor with an empty base; the demo does not create records.`); return; }
+  const exp = e.target.closest(".exp"); if(exp){ const d=$(exp.getAttribute("aria-controls")); const open=!d.classList.contains("open"); d.classList.toggle("open",open); exp.setAttribute("aria-expanded",open); return; }
+  const cp = e.target.closest("[data-copy],[data-copy-brief]"); if(cp){ const text = cp.dataset.copy || document.querySelector(`#det-${CSS.escape(cp.dataset.copyBrief)} pre.brief`)?.textContent || ""; (navigator.clipboard?.writeText(text)||Promise.reject()).then(()=>{ const was=cp.innerHTML; cp.textContent="Copied"; setTimeout(()=>cp.innerHTML=was,1200); announce("Copied to clipboard."); }).catch(()=>announce("Clipboard unavailable; select the text to copy it.")); }
+});
+function renderAll(){
+  $("project-name").textContent = data.project;
+  $("agreement-state").textContent = demo==="fresh" ? "not initialised" : data.agreement.state; $("agreement-detail").textContent = demo==="fresh" ? "" : " · " + data.agreement.visibility;
+  const dc = demo==="fresh" ? 0 : drafts(); $("draft-count").textContent = String(dc); $("draft-word").textContent = dc===1 ? "draft" : "drafts";
+  for (const t of tabs){ const ok=available(t.id); t.setAttribute("aria-disabled", ok?"false":"true"); t.title = ok?"":"Available after foundations are established"; }
+  renderDashboard(); renderFoundations(); renderChecks(); renderChangelog();
+}
+document.querySelectorAll('input[name="demo"]').forEach(r=>r.addEventListener("change",e=>{ demo=e.target.value; renderAll(); show($("tab-dashboard")); }));
+$("demo-reset").addEventListener("click",()=>{ data=seed(); clFilter={q:"",asOf:""}; renderAll(); announce("Sample data reset."); });
+renderAll();
+</script>
 </body>
 </html>
