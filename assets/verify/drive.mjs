@@ -10,15 +10,23 @@
 // beside this file. Evidence goes to $WH_EVIDENCE_DIR (set by `wh check`) or
 // a temporary directory printed in the output; cleanup never deletes it.
 //
+// Commands follow pstack's control-adapter vocabulary (doctor, launch, drive,
+// inspect, screenshot, cleanup) so benny-style automations can call it;
+// `prove` is the composite `wh check` runs.
+//
 //   node whetstone/verify/drive.mjs help
 //   node whetstone/verify/drive.mjs doctor --json
-//   node whetstone/verify/drive.mjs prove --steps-file steps.json --json
-//   node whetstone/verify/drive.mjs step "open /" "expect text=Dashboard" --json
 //   node whetstone/verify/drive.mjs launch --dry-run
+//   node whetstone/verify/drive.mjs drive "open /" "expect text=Dashboard" --json
+//   node whetstone/verify/drive.mjs inspect / --json
+//   node whetstone/verify/drive.mjs screenshot / --json
+//   node whetstone/verify/drive.mjs prove --steps-file steps.json --json
 //   node whetstone/verify/drive.mjs cleanup
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,14 +42,23 @@ const command = args[0] ?? "help";
 
 const HELP = `Verification driver for this repository.
 
-Commands (all accept --json; destructive ones accept --dry-run):
+Commands (all accept --json; anything with side effects accepts --dry-run):
   doctor                     Is this instance worth driving? Read-only.
   launch                     Start the app as configured and wait until ready.
-  prove --steps-file <file>  Launch, run the steps in one session, capture
-                             evidence after every step, clean up, print a verdict.
-  step <step> [<step> ...]   Run ad-hoc steps the same way (exploration).
+                             Leaves it running for drive/inspect/screenshot.
+  drive <step> [<step> ...]  Run steps in one session with evidence after each
+                             (uses the launched instance, or a temporary one).
+  inspect [path]             Read-only state: title, headings, landmarks,
+                             controls and visible text (web); status and body (http).
+  screenshot [path]          Capture the current state of a path (web).
+  prove --steps-file <file>  Composite used by wh check: launch, drive the steps,
+                             capture evidence, clean up, print a verdict.
   cleanup                    Stop anything this driver started. Evidence stays.
   help                       This text.
+
+Isolation: each launch gets a port derived from this checkout (the first free
+port from a checkout-specific base) and its own data directory, exposed to the
+launch command as {port} and {data_dir} and as PORT and WH_DATA_DIR.
 
 Steps (web surface):
   open <path|url>            Navigate, relative to the launched base URL.
@@ -54,12 +71,16 @@ Steps (web surface):
   expect-count <selector> <n>
   viewport <width> <height>
   screenshot <name>
+  settle                     Wait until the page stops changing (500ms quiet).
   eval <js>                  Assert a JavaScript expression is truthy.
 Steps (cli surface):  run <argv...> · expect-output <text> · expect-exit <code>
 Steps (http surface): request <METHOD> <path> [json] · expect-status <code> · expect-body <text>
 
 Configure the app in driver.json: surface (web | cli | http), launch
-(argv, ready pattern with one URL capture group, timeout), and base_url.`;
+(command argv, optional seed argv whose last output line becomes {seed},
+ready pattern with one URL capture group, timeout), base_url, and fresh
+(build artifacts that must be newer than their sources before driving).
+Launch arguments may use {root}, {seed}, {port}, {data_dir} and {bootstrap_file}.`;
 
 function emit(value, code = 0) {
   if (wantsJson) {
@@ -133,6 +154,37 @@ function statePath() {
 
 const delay = (ms) => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 
+const checkoutKey = createHash("sha256").update(ROOT).digest("hex");
+
+function portIsFree(port) {
+  return new Promise((resolvePort) => {
+    const server = createServer();
+    server.once("error", () => resolvePort(false));
+    server.listen(port, "127.0.0.1", () => server.close(() => resolvePort(true)));
+  });
+}
+
+// The first free port from a base derived from this checkout, so parallel
+// checkouts never collide and the same checkout tends to reuse its port.
+async function isolatedPort() {
+  const base = 20000 + (parseInt(checkoutKey.slice(0, 8), 16) % 20000);
+  for (let offset = 0; offset < 200; offset += 1) {
+    const port = base + offset;
+    if (await portIsFree(port)) return port;
+  }
+  throw new Error("no free port near this checkout's base; stop stale instances with cleanup.");
+}
+
+function readState() {
+  try {
+    const state = JSON.parse(readFileSync(statePath(), "utf8"));
+    process.kill(state.pid, 0);
+    return state;
+  } catch {
+    return null;
+  }
+}
+
 // ---------- launch and cleanup ----------
 
 async function launch(config) {
@@ -143,14 +195,38 @@ async function launch(config) {
   }
   const program = which(spec.command[0]);
   if (!program) throw new Error(`launch program ${spec.command[0]} is not on PATH or in the repository.`);
-  const env = { ...process.env, ...(spec.env ?? {}) };
+  const port = await isolatedPort();
+  const dataDir = mkdtempSync(join(tmpdir(), `wh-data-${checkoutKey.slice(0, 12)}-`));
+  const fill = (part) => String(part).replaceAll("{root}", ROOT).replaceAll("{port}", String(port)).replaceAll("{data_dir}", dataDir);
+  const env = { ...process.env, PORT: String(port), WH_DATA_DIR: dataDir };
+  for (const [key, value] of Object.entries(spec.env ?? {})) env[key] = fill(value);
+  // Optional seed: prepares data (a fixture project, a test user, a database)
+  // and prints one line, available to the launch command as {seed}.
+  let seed = "";
+  if (spec.seed?.length) {
+    const seedProgram = which(spec.seed[0]);
+    if (!seedProgram) throw new Error(`seed program ${spec.seed[0]} is not on PATH or in the repository.`);
+    seed = await new Promise((resolveSeed, rejectSeed) => {
+      const child = spawn(seedProgram, spec.seed.slice(1).map(fill), { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"] });
+      let out = "";
+      let err = "";
+      const timer = setTimeout(() => { child.kill("SIGKILL"); rejectSeed(new Error("seed did not finish within 120s")); }, 120_000);
+      child.stdout.on("data", (chunk) => { out += chunk; });
+      child.stderr.on("data", (chunk) => { err += chunk; });
+      child.on("exit", (code) => {
+        clearTimeout(timer);
+        if (code === 0) resolveSeed(out.trim().split("\n").at(-1) ?? "");
+        else rejectSeed(new Error(`seed exited ${code}: ${err.slice(-1000)}`));
+      });
+    });
+  }
   let bootstrapFile = null;
   const argvList = spec.command.slice(1).map((part) => {
     if (part === "{bootstrap_file}") {
       bootstrapFile = join(evidenceDir(), `.bootstrap-${process.pid}`);
       return bootstrapFile;
     }
-    return part.replaceAll("{root}", ROOT);
+    return fill(part).replaceAll("{seed}", seed);
   });
   const child = spawn(program, argvList, {
     cwd: spec.cwd ? join(ROOT, spec.cwd) : ROOT,
@@ -191,24 +267,33 @@ async function launch(config) {
       rmSync(bootstrapFile, { force: true });
     }
   }
-  const state = { pid: child.pid, url, started_at: new Date().toISOString() };
+  const state = { pid: child.pid, url, entry_url: entryUrl, port, data_dir: dataDir, started_at: new Date().toISOString() };
   writeFileSync(statePath(), JSON.stringify(state));
-  return { url, entryUrl, pid: child.pid, external: false };
+  return { url, entryUrl, pid: child.pid, port, dataDir, external: false };
 }
 
 function cleanup() {
   const path = statePath();
-  if (!existsSync(path)) return { stopped: [], detail: "nothing this driver started is running" };
-  const state = JSON.parse(readFileSync(path, "utf8"));
+  if (!existsSync(path)) return { stopped: [], removed: [], retained: ["evidence"], detail: "nothing this driver started is running" };
+  let state = {};
+  try {
+    state = JSON.parse(readFileSync(path, "utf8"));
+  } catch {}
   const stopped = [];
+  const removed = [];
   if (state.pid) {
     try {
       process.kill(-state.pid, "SIGTERM");
       stopped.push(state.pid);
     } catch {}
   }
+  // Scratch data only; evidence lives elsewhere and is never removed here.
+  if (state.data_dir && state.data_dir.startsWith(tmpdir()) && existsSync(state.data_dir)) {
+    rmSync(state.data_dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    removed.push(state.data_dir);
+  }
   rmSync(path, { force: true });
-  return { stopped, detail: stopped.length ? "stopped the launched app" : "the launched app had already exited" };
+  return { stopped, removed, retained: ["evidence"], detail: stopped.length ? "stopped the launched app" : "the launched app had already exited" };
 }
 
 // ---------- Chrome DevTools Protocol ----------
@@ -281,9 +366,15 @@ async function browser(config) {
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: viewport[0], height: viewport[1], deviceScaleFactor: 1, mobile: false });
   return {
     cdp,
-    close() {
-      child.kill("SIGKILL");
-      rmSync(profile, { recursive: true, force: true });
+    // Chrome can still be flushing its profile after SIGKILL; wait for the
+    // exit and retry the removal instead of racing it.
+    async close() {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
+        child.kill("SIGKILL");
+        await Promise.race([exited, delay(2000)]);
+      }
+      rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     },
   };
 }
@@ -382,6 +473,11 @@ async function webStep(session, base, step, directory, index) {
     case "screenshot":
       await screenshot(cdp, directory, `${String(index).padStart(2, "0")}-${rest || "shot"}`);
       return `captured ${rest}`;
+    case "settle": {
+      const settled = await cdp.evaluate(`new Promise((done) => { let last = Date.now(); const seen = new MutationObserver(() => { last = Date.now(); }); seen.observe(document, { subtree: true, childList: true, attributes: true, characterData: true }); const started = Date.now(); const tick = () => { if (document.readyState === "complete" && Date.now() - last >= 500) { seen.disconnect(); done(true); } else if (Date.now() - started > 10000) { seen.disconnect(); done(false); } else setTimeout(tick, 50); }; tick(); })`);
+      if (!settled) throw new Error("the page kept changing for 10s");
+      return "settled";
+    }
     case "eval":
       if (!(await cdp.evaluate(rest))) throw new Error(`expression was falsy: ${rest}`);
       return "expression held";
@@ -440,6 +536,14 @@ async function httpStep(context, base, step) {
   throw new Error(`unknown http step "${verb}"`);
 }
 
+// A running instance started by `launch` is reused (and left running);
+// otherwise a temporary one is started and stopped afterwards.
+async function instance(config) {
+  const running = readState();
+  if (running) return { url: running.url, entryUrl: running.entry_url ?? running.url, pid: running.pid, external: true };
+  return launch(config);
+}
+
 async function runSteps(config, steps) {
   const directory = evidenceDir();
   const results = [];
@@ -448,7 +552,7 @@ async function runSteps(config, steps) {
   let session = null;
   const context = {};
   try {
-    if (config.surface !== "cli") app = await launch(config);
+    if (config.surface !== "cli") app = await instance(config);
     if (config.surface === "web") {
       session = await browser(config);
       await session.cdp.send("Page.navigate", { url: app.entryUrl ?? app.url });
@@ -479,7 +583,7 @@ async function runSteps(config, steps) {
       writeFileSync(join(directory, "transcript.json"), JSON.stringify({ steps: results, last: context.last ?? null }, null, 2));
     }
   } finally {
-    session?.close();
+    await session?.close();
     if (app && !app.external) cleanup();
   }
   return {
@@ -488,6 +592,75 @@ async function runSteps(config, steps) {
     failures,
     evidence_dir: directory,
   };
+}
+
+// ---------- inspect and screenshot ----------
+
+const INSPECT = `(() => {
+  const text = (node) => (node.innerText || node.textContent || "").trim().replace(/\\s+/g, " ");
+  const name = (node) => node.getAttribute("aria-label") || text(node).slice(0, 80);
+  const visible = (node) => { const box = node.getBoundingClientRect(); return box.width > 0 && box.height > 0 && !node.closest("[hidden]"); };
+  return {
+    title: document.title,
+    url: location.href.replace(/#.*$/, ""),
+    headings: [...document.querySelectorAll("h1,h2,h3")].filter(visible).slice(0, 40).map((node) => ({ level: Number(node.tagName[1]), text: text(node).slice(0, 120) })),
+    landmarks: [...document.querySelectorAll("main,nav,header,footer,aside,[role=main],[role=navigation],[role=region][aria-label],[role=tablist]")].slice(0, 20).map((node) => ({ role: node.getAttribute("role") || node.tagName.toLowerCase(), name: node.getAttribute("aria-label") || null })),
+    controls: [...document.querySelectorAll("button,a[href],input,select,textarea,[role=button],[role=tab]")].filter(visible).slice(0, 60).map((node) => ({ role: node.getAttribute("role") || node.tagName.toLowerCase(), name: name(node), id: node.id || null, disabled: Boolean(node.disabled) })),
+    text: text(document.body).slice(0, 4000),
+  };
+})()`;
+
+async function withPage(config, path, work) {
+  const app = await instance(config);
+  const session = await browser(config);
+  try {
+    const base = app.entryUrl ?? app.url;
+    await session.cdp.send("Page.navigate", { url: base });
+    await waitFor(session.cdp, "document.readyState === 'complete'", 15_000);
+    if (path && path !== "/") {
+      await session.cdp.send("Page.navigate", { url: /^https?:/.test(path) ? path : new URL(path, app.url).href });
+      await waitFor(session.cdp, "document.readyState === 'complete'", 15_000);
+    }
+    await delay(400);
+    return await work(session.cdp, app);
+  } finally {
+    await session.close();
+    if (!app.external) cleanup();
+  }
+}
+
+async function inspect(config, path) {
+  if (config.surface === "web") {
+    const directory = evidenceDir();
+    const state = await withPage(config, path, (cdp) => cdp.evaluate(INSPECT));
+    const file = join(directory, "inspect.json");
+    writeFileSync(file, JSON.stringify(state, null, 2));
+    return { ok: true, read_only: true, evidence: file, ...state };
+  }
+  if (config.surface === "http") {
+    const app = await instance(config);
+    try {
+      const response = await fetch(new URL(path || "/", app.url));
+      const body = await response.text();
+      return { ok: true, read_only: true, url: response.url, status: response.status, content_type: response.headers.get("content-type"), body: body.slice(0, 4000) };
+    } finally {
+      if (!app.external) cleanup();
+    }
+  }
+  return { ok: false, detail: "A cli surface has no running state to inspect; run commands with `drive \"run <argv>\"` and read the transcript." };
+}
+
+async function capture(config, path) {
+  if (config.surface !== "web") {
+    return { ok: false, detail: `screenshot needs a web surface; this driver is ${config.surface}. Use drive and read the transcript instead.` };
+  }
+  const directory = evidenceDir();
+  const name = `screenshot-${(path || "root").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "root"}`;
+  const result = await withPage(config, path, async (cdp) => ({
+    file: await screenshot(cdp, directory, name),
+    marker: await cdp.evaluate("document.title"),
+  }));
+  return { ok: true, path: result.file, captured_at: new Date().toISOString(), app_marker: result.marker, shows: `${path || "/"} as rendered at ${(config.viewport ?? [1280, 900]).join("x")}` };
 }
 
 // ---------- commands ----------
@@ -570,10 +743,25 @@ async function main() {
       }
     }
     case "cleanup":
-      if (dryRun) return emit({ ok: true, dry_run: true, state_file: statePath(), exists: existsSync(statePath()) });
+      if (dryRun) {
+        const running = readState();
+        return emit({ ok: true, dry_run: true, would_stop: running ? [running.pid] : [], would_remove: running?.data_dir ? [running.data_dir] : [], retained: ["evidence"] });
+      }
       return emit({ ok: true, ...cleanup() });
+    case "inspect":
+    case "screenshot": {
+      const { config, error } = loadConfig();
+      if (error) return fail(error);
+      if (dryRun) return emit({ ok: true, dry_run: true, command, path: args[1] ?? "/", reuses_running_instance: Boolean(readState()) });
+      try {
+        const result = command === "inspect" ? await inspect(config, args[1]) : await capture(config, args[1]);
+        return emit(result, result.ok ? 0 : 1);
+      } catch (runError) {
+        return fail(runError.message);
+      }
+    }
     case "prove":
-    case "step": {
+    case "drive": {
       const { config, error } = loadConfig();
       if (error) return fail(error);
       let steps = args.slice(1);
@@ -597,7 +785,7 @@ async function main() {
       }
     }
     default:
-      return fail(`unknown command "${command}"; run help.`);
+      return fail(`unknown command "${command}"; run help for doctor, launch, drive, inspect, screenshot, prove and cleanup.`);
   }
 }
 

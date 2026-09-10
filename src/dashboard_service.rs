@@ -63,7 +63,28 @@ impl DashboardBackend for CommandDashboardBackend {
             history_after: query.history_after,
             page_size: query.page_size,
             expected_snapshot: query.expected_snapshot,
+            trail: false,
         })))
+    }
+
+    fn trail(&self) -> BackendResponse {
+        let mut request =
+            DashRequest::basic(self.project_dir.clone(), self.inspect_request_id.clone());
+        request.trail = true;
+        request.page_size = 1;
+        let response = self.service.execute(ServiceRequest::Dash(request));
+        match response
+            .data
+            .get("trail")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some(trail) => BackendResponse {
+                status: 200,
+                content_type: "text/tab-separated-values; charset=utf-8",
+                body: trail.as_bytes().to_vec(),
+            },
+            None => invalid_request(response.summary),
+        }
     }
 
     fn mutate(&self, request_body: &[u8]) -> BackendResponse {
@@ -166,6 +187,8 @@ enum DashboardCommand {
         preview: bool,
         #[serde(default)]
         review: Option<DashboardReview>,
+        #[serde(default)]
+        retire: Option<String>,
     },
     Check {
         #[serde(default)]
@@ -242,6 +265,7 @@ impl DashboardCommand {
                 dry_run,
                 hosts: Vec::new(),
                 regenerate_driver: false,
+                import_from: None,
             }),
             Self::Change {
                 request_id,
@@ -262,6 +286,7 @@ impl DashboardCommand {
                 resume_token,
                 preview,
                 review,
+                retire,
             } => ServiceRequest::Change(ChangeRequest {
                 project_dir,
                 request_id,
@@ -288,6 +313,7 @@ impl DashboardCommand {
                         DashboardVerdict::Withdraw => crate::domain::LocalReviewVerdict::Withdraw,
                     },
                 }),
+                retire,
             }),
             Self::Check {
                 request_id,
@@ -309,6 +335,7 @@ impl DashboardCommand {
                     DashboardCheckMode::Sweep => crate::service::GateMode::Sweep,
                 },
                 timeout_seconds: None,
+                dry_run: false,
             }),
         }
     }
@@ -342,6 +369,7 @@ enum DashboardChangeKind {
     Guidance,
     Standard,
     Feature,
+    Map,
 }
 
 impl From<DashboardChangeKind> for ChangeKind {
@@ -354,6 +382,7 @@ impl From<DashboardChangeKind> for ChangeKind {
             DashboardChangeKind::Guidance => Self::Guidance,
             DashboardChangeKind::Standard => Self::Standard,
             DashboardChangeKind::Feature => Self::Feature,
+            DashboardChangeKind::Map => Self::Map,
         }
     }
 }

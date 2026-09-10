@@ -407,6 +407,7 @@ pub enum RecordBody {
     RepairOperationClaim(Box<RepairOperationClaimRecord>),
     Feature(Feature),
     LocalReview(LocalReview),
+    VerificationMap(VerificationMap),
 }
 
 impl RecordBody {
@@ -433,10 +434,11 @@ impl RecordBody {
             Self::RepairOperationClaim(_) => "repair_operation_claim",
             Self::Feature(_) => "feature",
             Self::LocalReview(_) => "local_review",
+            Self::VerificationMap(_) => "verification_map",
         }
     }
 
-    fn validate(&self) -> Result<(), DomainError> {
+    pub(crate) fn validate(&self) -> Result<(), DomainError> {
         match self {
             Self::Mission(value) => require_text(&value.statement),
             Self::CoreValue(value) => {
@@ -477,6 +479,7 @@ impl RecordBody {
             Self::RepairOperationClaim(value) => value.validate(),
             Self::Feature(value) => value.validate(),
             Self::LocalReview(value) => value.validate(),
+            Self::VerificationMap(value) => value.validate(),
         }
     }
 }
@@ -997,6 +1000,19 @@ pub struct Feature {
     /// Standards (gates) that prove it.
     #[serde(default)]
     pub proven_by: Vec<RecordId>,
+    /// One line after the link in `features/README.md`; defaults to the summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_summary: Option<String>,
+    /// The harness named in "Driving it with <harness>"; defaults to the driver.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
+    /// State the recipe assumes before the first action.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preconditions: Vec<String>,
+    /// Labeled recipe bullets (user action, exact command, observable result)
+    /// for agents; rendered verbatim. Executable steps stay in `drive_steps`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drive_recipe: Vec<String>,
 }
 
 impl Feature {
@@ -1006,11 +1022,25 @@ impl Feature {
         require_text(&self.area)?;
         require_text(&self.user_path)?;
         require_text(&self.proof)?;
+        for text in [&self.index_summary, &self.harness].into_iter().flatten() {
+            require_text(text)?;
+        }
+        if self
+            .harness
+            .as_deref()
+            .is_some_and(|harness| harness.contains('\n') || harness.len() > 120)
+        {
+            return Err(DomainError::InvalidField(
+                "feature harness must be one short line",
+            ));
+        }
         for list in [
             &self.sub_features,
             &self.drive_steps,
             &self.gotchas,
             &self.entry_points,
+            &self.preconditions,
+            &self.drive_recipe,
         ] {
             if list.len() > MAX_FEATURE_LIST_ITEMS {
                 return Err(DomainError::InvalidField("feature list exceeds 64 items"));
@@ -1050,6 +1080,67 @@ impl Feature {
         self.entry_points
             .iter()
             .any(|entry| entry_point_matches(entry.trim_start_matches("./"), path))
+    }
+}
+
+/// Project-wide conventions of the feature map: what `features/README.md`
+/// says before the feature list (pstack's baseline preconditions, driving
+/// conventions, proof and skip reporting, and the feature entry contract).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerificationMap {
+    pub title: String,
+    pub intro: String,
+    #[serde(default)]
+    pub baseline_preconditions: Vec<String>,
+    #[serde(default)]
+    pub driving_conventions: Vec<String>,
+    #[serde(default)]
+    pub proof_reporting: Vec<String>,
+    /// Verbatim entry-contract section; the renderer's standard text when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_contract: Option<String>,
+    /// Sections of an imported skill (Launch, Doctor, Drive, ...) kept verbatim.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skill_notes: Vec<SkillNote>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillNote {
+    pub section: String,
+    pub text: String,
+}
+
+impl VerificationMap {
+    fn validate(&self) -> Result<(), DomainError> {
+        require_text(&self.title)?;
+        require_text(&self.intro)?;
+        for list in [
+            &self.baseline_preconditions,
+            &self.driving_conventions,
+            &self.proof_reporting,
+        ] {
+            if list.len() > MAX_FEATURE_LIST_ITEMS {
+                return Err(DomainError::InvalidField("map list exceeds 64 items"));
+            }
+            for item in list {
+                require_text(item)?;
+            }
+        }
+        if let Some(contract) = &self.entry_contract {
+            require_text(contract)?;
+        }
+        if self.skill_notes.len() > 16 {
+            return Err(DomainError::InvalidField(
+                "map skill notes exceed 16 sections",
+            ));
+        }
+        for note in &self.skill_notes {
+            require_text(&note.section)?;
+            require_text(&note.text)?;
+        }
+        Ok(())
     }
 }
 

@@ -1,0 +1,10 @@
+Copied verbatim from cursor/plugins, pstack v0.15.1,
+skills/create-verification-skill/references/feature-map-example/
+at commit 4ceb6bb36383ba5b735317f4885902c5249c02ed (2026-09-10).
+
+Copyright (c) 2026 Lauren Tan. MIT License; the full notice is in LICENSE
+beside this file.
+
+These files are the conformance fixture for Whetstone's pstack interop
+contract: the importer must read them into draft feature records and the
+renderer must reproduce them byte-for-byte. Do not edit them.

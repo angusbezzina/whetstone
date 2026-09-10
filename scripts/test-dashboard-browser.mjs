@@ -50,7 +50,7 @@ function view(mode) {
     gotchas: [], entry_points: ["assets/dashboard/"],
     serves: [{ id: "mission.project", kind: "mission", title: "Own the outer loop", resolved: true }],
     constrained_by: [], proven_by: [{ id: "standard.journey", kind: "standard", title: "The dashboard journey is proven", resolved: true }],
-    proof_state: label("fail", "fail · 2"),
+    proof_state: label("fail", "fail · 2"), drift: ["assets/dashboard/app.js"],
   };
   const brief = "gate      The dashboard journey is proven (v1, must)\nrecheck   wh check --rule standard.journey";
   return {
@@ -213,11 +213,13 @@ try {
   await cdp.waitFor("document.querySelector('#announce').textContent.includes('private draft')", "recording did not announce");
   check(commands.filter((c) => c.workflow === "change" && !c.review).length === 3, "probe, preview and record are three bound calls");
   check(await cdp.evaluate("document.querySelector('.feat details summary').textContent.includes('Runbook')"), "features carry their runbook");
+  check(await cdp.evaluate("document.querySelector('.feat dl').textContent.includes('Changed since proof')"), "feature drift is shown in the runbook");
 
   // Changelog: decisions by default, accept a draft through review.
   await click("#tab-changelog");
   await cdp.waitFor("document.querySelector('.entry')", "changelog did not render");
   check(await count(".entry") === 2, "verification entries are hidden by default");
+  check(await cdp.evaluate("document.querySelector('#changelog a.export')?.getAttribute('href') === '/api/trail.tsv'"), "the decision trail exports as TSV");
   await cdp.evaluate("[...document.querySelectorAll('.filter button')].find(b => b.textContent === 'All').click(); true");
   check(await count(".entry") === 3, "All shows verification entries too");
   check(await cdp.evaluate("!globalThis.whetstoneXss"), "journal summaries render as text");
@@ -261,6 +263,6 @@ try {
   check(errors.length === 0, `no page errors: ${errors.join("\n")}`);
   console.log(`PASS synthetic dashboard (${checks} assertions)`);
 } finally {
-  browser.close();
+  await browser.close();
   server.close();
 }

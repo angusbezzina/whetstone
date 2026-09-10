@@ -300,15 +300,34 @@ fn features_are_mapped_accepted_wired_proven_and_honest_when_evidence_is_missing
     assert!(skill_md.starts_with("---\nname: verify-"));
     assert!(skill_md.contains("Ship a tiny tool people trust."));
     let feature_md = fs::read_to_string(app_dir.join("features/check-script.md")).expect("feature");
+    // pstack's entry contract: frontmatter, then exactly four H2s in order.
+    assert!(feature_md.starts_with("---\nrecord: \"feature.check-script\"\n"));
+    whetstone::feature_map::conforms(&feature_md).expect("four pstack H2s");
+    assert!(feature_md.contains("\nwhy: \"Serves: "), "{feature_md}");
+    let readme = fs::read_to_string(app_dir.join("features/README.md")).expect("readme");
     for heading in [
-        "## Why",
-        "## Sub-features",
-        "## How to get to it (user POV)",
-        "## Driving it",
-        "## Proof",
-        "## Gotchas",
+        "## Baseline preconditions",
+        "## Driving conventions",
+        "## Proof and skip reporting",
+        "## Feature entry contract",
+        "## Features",
     ] {
-        assert!(feature_md.contains(heading), "missing {heading}");
+        assert!(readme.contains(heading), "README misses {heading}");
+    }
+    assert!(readme.contains("(./check-script.md)"));
+    assert!(skill_md.contains("maintain-verification-skill"));
+    for vocabulary in [
+        "doctor",
+        "launch",
+        "drive",
+        "inspect",
+        "screenshot",
+        "cleanup",
+    ] {
+        assert!(
+            skill_md.contains(&format!("drive.mjs {vocabulary}")),
+            "{vocabulary}"
+        );
     }
     assert!(root.join("whetstone/verify/drive.mjs").is_file());
     assert!(root.join("whetstone/verify/driver.json").is_file());
@@ -330,6 +349,98 @@ fn features_are_mapped_accepted_wired_proven_and_honest_when_evidence_is_missing
             path.display()
         );
     }
+
+    // The drive receipt names what drove it: driver script and config
+    // digests, the exact map revision, and the doctor verdict it followed.
+    let dash = json(&run(&["dash", "--json"], root));
+    let receipt = dash["data"]["changelog"]
+        .as_array()
+        .expect("changelog")
+        .iter()
+        .flat_map(|entry| entry["records"].as_array().cloned().unwrap_or_default())
+        .filter_map(|item| item.get("record").cloned())
+        .find(|record| {
+            record["record_type"] == "verification_receipt"
+                && record["record"]["subject"]["stable_id"] == "gate:standard.check-journey"
+        })
+        .unwrap_or_else(|| panic!("no drive receipt: {dash}"));
+    let systems = receipt["record"]["evidence"]
+        .as_array()
+        .expect("evidence")
+        .iter()
+        .map(|evidence| evidence["system"].as_str().unwrap_or_default().to_string())
+        .collect::<Vec<_>>();
+    for system in [
+        "whetstone_evidence",
+        "whetstone_driver",
+        "whetstone_driver_config",
+        "whetstone_map",
+        "whetstone_doctor",
+        "git_head",
+    ] {
+        assert!(
+            systems.iter().any(|found| found == system),
+            "{system} missing: {systems:?}"
+        );
+    }
+    let map = receipt["record"]["evidence"]
+        .as_array()
+        .expect("evidence")
+        .iter()
+        .find(|evidence| evidence["system"] == "whetstone_map")
+        .expect("map evidence");
+    assert_eq!(map["locator"], "feature.check-script@r1");
+
+    // A committed change under the feature's entry points after its proof is
+    // flagged as possible drift, naming the feature and the file.
+    write_script(
+        root,
+        "#!/bin/sh\necho \"all good\"\necho \"extra\"\nexit 0\n",
+    );
+    git(root, &["add", "check.sh"]);
+    git(
+        root,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "tweak",
+        ],
+    );
+    let drifted = json(&run(&["dash", "--json"], root));
+    let drift = drifted["data"]["current"]["attention"]
+        .as_array()
+        .expect("attention")
+        .iter()
+        .find(|item| item["kind"] == "feature_drift")
+        .cloned()
+        .unwrap_or_else(|| panic!("no drift item: {drifted}"));
+    assert!(drift["title"]
+        .as_str()
+        .expect("title")
+        .contains("Check script"));
+    assert!(drift["text"].as_str().expect("text").contains("check.sh"));
+    assert_eq!(
+        drifted["data"]["current"]["features"][0]["drift"],
+        serde_json::json!(["check.sh"])
+    );
+    let reproven = json(&run(
+        &["check", "--json", "--feature", "feature.check-script"],
+        root,
+    ));
+    assert_eq!(reproven["state"], "success");
+    let settled = json(&run(&["dash", "--json"], root));
+    assert!(
+        !settled["data"]["current"]["attention"]
+            .as_array()
+            .expect("attention")
+            .iter()
+            .any(|item| item["kind"] == "feature_drift"),
+        "re-proving at the new commit clears the drift"
+    );
 
     // Behaviour moves: --changed selects the feature and reports map review.
     write_script(root, "#!/bin/sh\necho \"nope\"\nexit 0\n");

@@ -93,5 +93,5 @@ try {
   check(cdp.errors.length === 0, `no page errors: ${cdp.errors.join("\n")}`);
   console.log(`PASS live dashboard (${checks} assertions)`);
 } finally {
-  browser.close();
+  await browser.close();
 }

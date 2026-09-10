@@ -586,6 +586,7 @@ fn private_only_dashboard_queries_are_typed_filtered_and_do_not_create_shareable
         history_after: None,
         page_size: 7,
         expected_snapshot: None,
+        trail: false,
     }));
     let handle = DashboardHandle::start(
         DashboardMode::Local {

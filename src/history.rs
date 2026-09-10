@@ -628,6 +628,14 @@ impl HistoryIndex {
                 RecordBody::Retirement(retirement) => {
                     if transition.provenance.authority != ProvenanceAuthority::IndependentlyApproved
                     {
+                        // A solo retirement of a private record is a local
+                        // transition: it takes the record out of the owner's
+                        // local force (see AgreementState) but can never change
+                        // team-active context. Only a team-visible retirement
+                        // must carry independent approval.
+                        if self.by_ref[reference].visibility == HistoryVisibility::Private {
+                            continue;
+                        }
                         return Err(HistoryError::UnauthoritativeTransition(reference.clone()));
                     }
                     let target = self.by_ref.get(&retirement.target).ok_or_else(|| {

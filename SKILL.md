@@ -118,7 +118,7 @@ permitted next step. A second agent may advise but cannot approve for the owner.
 The provider-neutral repair host API authenticates an opaque task grant, binds
 the objective, non-goals, applicable guidance, allowed and excluded paths,
 required checks, authority revision and expiry, and stores its counters in the
-private Dolt history. Persisted records are observations, never authority. A
+private record history. Persisted records are observations, never authority. A
 supported host calls the post-edit checkpoint and returns its `RepairFeedback`
 to the same worker in-session. That feedback can authorize another source edit;
 it never authorizes policy/check/baseline changes, publication, merge, release,

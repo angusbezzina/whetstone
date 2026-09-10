@@ -11,7 +11,9 @@
 
 Whetstone will reuse the team's existing GitHub repository, accounts, teams, pull-request reviews, branch rules, status checks, and deployment environments as its first shared trust root. It will not create an identity provider or infer approval from YAML fields, Git authorship, Dolt commit metadata, chat text, an agent claim, or possession of a local credential.
 
-Private drafts remain outside Git in the private Dolt repository. `wh push` will later project only explicitly selected records into the independent shareable Dolt repository and open a pull request containing a small, non-secret activation manifest. The manifest binds the proposal to its content, context, and authority:
+Private drafts remain outside Git in the private record store (a private Beads
+database after `whetstone-k5r.17`; the "Dolt repository" wording below predates
+that decision and refers to the same role). `wh push` will later project only explicitly selected records into the independent shareable Dolt repository and open a pull request containing a small, non-secret activation manifest. The manifest binds the proposal to its content, context, and authority:
 
 ```json
 {

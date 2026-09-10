@@ -43,7 +43,10 @@
         "repair_session",
         "repair_handoff",
         "repair_authority_reservation",
-        "repair_operation_claim"
+        "repair_operation_claim",
+        "feature",
+        "local_review",
+        "verification_map"
       ]
     },
     "record": {
@@ -65,7 +68,10 @@
         { "$ref": "#/$defs/repair_session" },
         { "$ref": "#/$defs/repair_handoff" },
         { "$ref": "#/$defs/repair_authority_reservation" },
-        { "$ref": "#/$defs/repair_operation_claim" }
+        { "$ref": "#/$defs/repair_operation_claim" },
+        { "$ref": "#/$defs/feature" },
+        { "$ref": "#/$defs/local_review" },
+        { "$ref": "#/$defs/verification_map" }
       ]
     }
   },
@@ -87,7 +93,10 @@
     { "if": { "properties": { "record_type": { "const": "repair_session" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/repair_session" } } } },
     { "if": { "properties": { "record_type": { "const": "repair_handoff" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/repair_handoff" } } } },
     { "if": { "properties": { "record_type": { "const": "repair_authority_reservation" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/repair_authority_reservation" } } } },
-    { "if": { "properties": { "record_type": { "const": "repair_operation_claim" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/repair_operation_claim" } } } }
+    { "if": { "properties": { "record_type": { "const": "repair_operation_claim" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/repair_operation_claim" } } } },
+    { "if": { "properties": { "record_type": { "const": "feature" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/feature" } } } },
+    { "if": { "properties": { "record_type": { "const": "local_review" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/local_review" } } } },
+    { "if": { "properties": { "record_type": { "const": "verification_map" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/verification_map" } } } }
   ],
   "$defs": {
     "record_id": {
@@ -270,6 +279,12 @@
           "additionalProperties": false,
           "required": ["enforcement", "command_ref"],
           "properties": { "enforcement": { "enum": ["test", "validator"] }, "command_ref": { "$ref": "#/$defs/nonempty" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enforcement", "feature"],
+          "properties": { "enforcement": { "const": "drive" }, "feature": { "$ref": "#/$defs/record_id" } }
         }
       ]
     },
@@ -573,6 +588,69 @@
         "checkpoint_kind": { "enum": ["post_edit_hook", "explicit_checkpoint"] },
         "started_at_unix": { "type": "integer", "minimum": 1 },
         "resource_units": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "text_list": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/nonempty" } },
+    "record_id_set": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/record_id" } },
+    "feature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "summary", "area", "user_path", "proof"],
+      "properties": {
+        "name": { "$ref": "#/$defs/nonempty" },
+        "summary": { "$ref": "#/$defs/nonempty" },
+        "area": { "$ref": "#/$defs/nonempty" },
+        "sweep_order": { "type": "integer", "minimum": 0 },
+        "sub_features": { "$ref": "#/$defs/text_list" },
+        "user_path": { "$ref": "#/$defs/nonempty" },
+        "drive_steps": { "$ref": "#/$defs/text_list" },
+        "proof": { "$ref": "#/$defs/nonempty" },
+        "gotchas": { "$ref": "#/$defs/text_list" },
+        "entry_points": { "$ref": "#/$defs/text_list" },
+        "serves": { "$ref": "#/$defs/record_id_set" },
+        "constrained_by": { "$ref": "#/$defs/record_id_set" },
+        "proven_by": { "$ref": "#/$defs/record_id_set" },
+        "index_summary": { "$ref": "#/$defs/nonempty" },
+        "harness": { "$ref": "#/$defs/nonempty" },
+        "preconditions": { "$ref": "#/$defs/text_list" },
+        "drive_recipe": { "$ref": "#/$defs/text_list" }
+      }
+    },
+    "local_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proposal", "verdict", "reviewer", "assurance", "rationale", "reviewed_at", "team_activation_permitted"],
+      "properties": {
+        "proposal": { "$ref": "#/$defs/record_ref" },
+        "verdict": { "enum": ["accept", "withdraw"] },
+        "reviewer": { "$ref": "#/$defs/principal" },
+        "assurance": { "const": "solo-local" },
+        "rationale": { "$ref": "#/$defs/nonempty" },
+        "reviewed_at": { "$ref": "#/$defs/timestamp" },
+        "team_activation_permitted": { "const": false }
+      }
+    },
+    "verification_map": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "intro"],
+      "properties": {
+        "title": { "$ref": "#/$defs/nonempty" },
+        "intro": { "$ref": "#/$defs/nonempty" },
+        "baseline_preconditions": { "$ref": "#/$defs/text_list" },
+        "driving_conventions": { "$ref": "#/$defs/text_list" },
+        "proof_reporting": { "$ref": "#/$defs/text_list" },
+        "entry_contract": { "$ref": "#/$defs/nonempty" },
+        "skill_notes": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["section", "text"],
+            "properties": { "section": { "$ref": "#/$defs/nonempty" }, "text": { "$ref": "#/$defs/nonempty" } }
+          }
+        }
       }
     }
   }

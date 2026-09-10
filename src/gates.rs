@@ -112,6 +112,43 @@ pub fn workspace_fingerprint(project_root: &Path) -> Result<String, String> {
     Ok(format!("sha256:{:x}", hasher.finalize()))
 }
 
+/// The current HEAD commit, if the repository has one.
+pub fn head_commit(project_root: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["rev-parse", "--verify", "-q", "HEAD"])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|head| !head.is_empty())
+}
+
+/// Paths changed in commits after `since` (exclusive) up to HEAD.
+pub fn changed_since(project_root: &Path, since: &str) -> Result<Vec<String>, String> {
+    if since.is_empty() || !since.chars().all(|character| character.is_ascii_hexdigit()) {
+        return Err("invalid commit id".into());
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["diff", "--name-only", "-z", since, "HEAD"])
+        .output()
+        .map_err(|error| format!("git is unavailable: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| String::from_utf8_lossy(entry).to_string())
+        .collect())
+}
+
 /// Repository-relative paths changed against HEAD, including untracked files.
 pub fn changed_paths(project_root: &Path) -> Result<Vec<String>, String> {
     let output = Command::new("git")

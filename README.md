@@ -41,15 +41,15 @@ those records atomically without editing project files or creating shared
 state. Setup remains incomplete until the bounded repair loop has a current
 known-bad to known-good proof for the exact code snapshot.
 
-Interactive `wh dash` serves a dependency-free local UI and opens on a minimal
-Dashboard: mission-linked metrics, deterministic gates, one primary action, all
-secondary concerns, and the latest consequential change. Foundations is a
-versioned living tree from mission and values to outcomes, metrics, engineering
-philosophy, safeguards, and gates; definitions are editable as governed local
-drafts. Enforcement separates policy lifecycle from check results and keeps
-scope, mechanisms, failures, exact rechecks, and bounded agent repair feedback
-practical. Decisions presents the complete append-only history as a searchable,
-newest-first changelog with exact records behind disclosure.
+Interactive `wh dash` serves a dependency-free local UI with four views.
+Dashboard shows mission-linked metrics, gate status, what needs attention and
+the latest change, or only the onboarding path before `wh init`. Foundations is
+an editable, versioned flow from mission and values to key metrics, rules and
+guidelines, and gates; edits become governed local drafts with exact
+before/after review. Checks shows the last run per gate, failures, the exact
+recheck route and the repair brief for the current agent. Changelog is the
+complete append-only history, newest first, with exact records behind
+disclosure.
 The standalone Direction 05 one-pager is a planning artifact, not a product
 view. Inspection is credential-free on the loopback listener; mutation
 requires the one-time browser handoff and a second explicit edit-mode step.
@@ -69,11 +69,25 @@ cargo run --quiet --release -- eval
 cargo run --quiet --release -- scan src --lang rust --json --no-fail
 ```
 
-The kernel provides versioned agreement records, separate private/shareable
-local Dolt stores, typed rule validation, tree-sitter checks, golden-example
-evaluation, and verification of native lint, formatter, test, and validator
-bindings. Public `wh check` cannot execute command validators until an exact
-checker is trusted through the later execution-adapter milestone.
+The kernel provides versioned agreement records, in-force versus draft
+resolution, typed rule validation, tree-sitter checks, golden-example
+evaluation, bounded gate execution with per-gate receipts and evidence, and a
+generated verification skill, feature map and driver (`wh init --action wire`).
+
+Today's build still stores records in Whetstone-owned Dolt repositories under
+`.git/whetstone/` and needs a `dolt` binary. That is changing: the owner
+decided on 2026-09-10 that Beads (`bd`, embedded Dolt) is the record store.
+Records become `record` beads with the typed body in JSON metadata, drafts live
+in a private Beads database, and `wh push`/`wh pull` wrap `bd dolt push` and
+`bd dolt pull`. When `whetstone-k5r.17` lands, the install requirements are the
+`wh` binary, `bd`, Node 22 for the driver and a browser for web surfaces.
+
+The generated `verify-<app>` skill is designed to be a valid
+[pstack](https://github.com/cursor/plugins/tree/main/pstack) verification
+skill: the same four sections per feature file and README shape, so pstack's
+`maintain-verification-skill` runs on it unchanged and a pstack-generated skill
+can be imported. Whetstone adds the versioned "why" behind each feature and the
+receipts that prove it; pstack supplies the judgment playbooks.
 
 ## Target product
 

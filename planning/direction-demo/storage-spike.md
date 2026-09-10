@@ -1,12 +1,37 @@
 # ADR-0001: direct Dolt storage with physically separate private and shareable histories
 
-- Status: accepted for M1 implementation
+- Status: superseded on 2026-09-10 (see below); kept as the M1 record
 - Date: 2026-09-09
 - Accepted baseline: `2c3f0a3bb66d2ffa89c7b2f300b864a3ee8fea48`
 - Beads task: `whetstone-k5r.2`
 - Decision owner: Angus Bezzina
 
-## Decision
+## Superseded 2026-09-10: Beads-backed storage
+
+The owner reversed this decision in epic `whetstone-k5r` (section "Beads
+storage and pstack interop", task `whetstone-k5r.17`). Whetstone's own Dolt
+repositories and the standalone `dolt` binary are removed. Records become
+`record` beads in Beads (`bd` 1.1.x, embedded Dolt): typed body, revision,
+digest, supersedes and idempotency key in JSON metadata, lifecycle as a label,
+proposals and acceptances as `decision` beads, receipts as ephemeral `receipt`
+beads. Private drafts live in a second Beads database under
+`.git/whetstone/private` that never gets a remote; `wh push` copies selected
+accepted records into the repository's shared Beads database and calls
+`bd dolt push`.
+
+Why the reversal: the concerns below about a task-shaped interface were
+re-tested on 2026-09-10. Custom types (`types.custom`), arbitrary JSON metadata
+round-tripping byte-for-byte, lifecycle labels and per-record history
+(`bd history`) all work through the public CLI. The owner's requirements
+changed the weighting: no policy in Git commits, one dependency the team
+already runs, and sync (`bd dolt push`/`pull`, federation, `bd bootstrap`)
+that already exists. Accepted costs: no SQL in embedded mode (each read or
+write is one `bd` call), sequential multi-record writes with idempotency keys
+instead of one transaction, integrity by digest and history rather than
+database permissions, and a pinned minimum `bd` version. The original text
+follows unchanged.
+
+## Decision (superseded)
 
 Whetstone will own its records in direct Dolt repositories behind a small typed `StorageRepository` interface. Beads remains the project's issue tracker and optional future event source; Whetstone will not read or write Beads' private tables, store policy as issues or memories, or depend on Beads retention and compaction behavior.
 

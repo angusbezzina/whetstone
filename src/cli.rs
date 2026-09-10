@@ -83,6 +83,9 @@ enum Command {
         /// Replace the team-owned driver script with a fresh scaffold (wire).
         #[arg(long)]
         regenerate_driver: bool,
+        /// A pstack verify-<app>/ skill directory to read into private drafts (import).
+        #[arg(long = "from")]
+        import_from: Option<PathBuf>,
     },
 
     /// Open the inspectable local dashboard.
@@ -111,6 +114,10 @@ enum Command {
         /// appears on stdout or in logs.
         #[arg(long, conflicts_with = "read_only")]
         bootstrap_file: Option<PathBuf>,
+        /// Print the decision trail as show-me-your-work TSV (ts, phase,
+        /// decision, why, evidence, result) instead of serving the dashboard.
+        #[arg(long)]
+        trail: bool,
     },
 
     /// Propose or record a bounded local agreement change.
@@ -162,6 +169,9 @@ enum Command {
         /// Withdraw a pending local draft proposal by its id.
         #[arg(long, conflicts_with_all = ["accept", "kind", "content", "definition"])]
         withdraw: Option<String>,
+        /// Propose retiring an accepted record (history stays); needs --rationale.
+        #[arg(long, conflicts_with_all = ["accept", "withdraw", "kind", "content", "definition"])]
+        retire: Option<String>,
     },
 
     /// Evaluate applicable deterministic rules without repairing or publishing.
@@ -188,6 +198,9 @@ enum Command {
         /// Per-gate time bound in seconds (default 900).
         #[arg(long)]
         timeout: Option<u64>,
+        /// Show which gates and exact commands would run; execute nothing.
+        #[arg(long)]
+        dry_run: bool,
         /// Checkpoint an existing host-authorized repair session.
         #[arg(long, conflicts_with_all = ["paths", "language", "rules", "features", "changed", "sweep"])]
         repair_session: Option<String>,
@@ -268,6 +281,7 @@ enum InitActionArg {
     Agree,
     Cancel,
     Wire,
+    Import,
 }
 
 impl From<InitActionArg> for InitAction {
@@ -277,6 +291,7 @@ impl From<InitActionArg> for InitAction {
             InitActionArg::Agree => Self::Agree,
             InitActionArg::Cancel => Self::Cancel,
             InitActionArg::Wire => Self::Wire,
+            InitActionArg::Import => Self::Import,
         }
     }
 }
@@ -290,6 +305,7 @@ enum ChangeKindArg {
     Guidance,
     Standard,
     Feature,
+    Map,
 }
 
 fn parse_change_definition(value: &str) -> Result<Box<ChangeDefinition>, String> {
@@ -319,6 +335,7 @@ impl From<ChangeKindArg> for ChangeKind {
             ChangeKindArg::Guidance => Self::Guidance,
             ChangeKindArg::Standard => Self::Standard,
             ChangeKindArg::Feature => Self::Feature,
+            ChangeKindArg::Map => Self::Map,
         }
     }
 }
@@ -348,6 +365,7 @@ pub fn run() -> i32 {
             dry_run,
             hosts,
             regenerate_driver,
+            import_from,
         }) => service.execute(ServiceRequest::Init(InitRequest {
             project_dir,
             request_id,
@@ -366,6 +384,7 @@ pub fn run() -> i32 {
             dry_run,
             hosts,
             regenerate_driver,
+            import_from,
         })),
         Some(Command::Dash {
             project_dir,
@@ -376,9 +395,10 @@ pub fn run() -> i32 {
             read_only,
             no_open,
             bootstrap_file,
+            trail,
         }) => {
-            if explicit_json {
-                service.execute(ServiceRequest::Dash(DashRequest {
+            if explicit_json || trail {
+                let response = service.execute(ServiceRequest::Dash(DashRequest {
                     project_dir,
                     request_id,
                     search,
@@ -386,7 +406,20 @@ pub fn run() -> i32 {
                     history_after: None,
                     page_size,
                     expected_snapshot: None,
-                }))
+                    trail,
+                }));
+                if trail && !explicit_json {
+                    match response
+                        .data
+                        .get("trail")
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        Some(tsv) => print!("{tsv}"),
+                        None => eprintln!("{}", response.summary),
+                    }
+                    return response.state.exit_code();
+                }
+                response
             } else {
                 return run_dashboard(project_dir, request_id, read_only, no_open, bootstrap_file);
             }
@@ -412,6 +445,7 @@ pub fn run() -> i32 {
             preview,
             accept,
             withdraw,
+            retire,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
             project_dir,
             request_id,
@@ -442,6 +476,7 @@ pub fn run() -> i32 {
                         verdict: crate::domain::LocalReviewVerdict::Withdraw,
                     })
                 }),
+            retire,
         })),
         Some(Command::Check {
             project_dir,
@@ -453,6 +488,7 @@ pub fn run() -> i32 {
             changed,
             sweep,
             timeout,
+            dry_run,
             repair_session,
             repair_revision,
             authority_evidence,
@@ -488,6 +524,7 @@ pub fn run() -> i32 {
                     GateMode::All
                 },
                 timeout_seconds: timeout,
+                dry_run,
             }))
         }
         Some(Command::Pull {

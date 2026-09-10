@@ -49,6 +49,8 @@ pub struct AgreementState {
     by_ref: BTreeMap<RecordRef, usize>,
     lifecycle: BTreeMap<RecordRef, Lifecycle>,
     proposal_of: BTreeMap<RecordRef, RecordRef>,
+    /// Highest retired revision per record id, from accepted retirements.
+    retired: BTreeMap<RecordId, u64>,
 }
 
 pub fn is_agreement_body(body: &RecordBody) -> bool {
@@ -61,6 +63,7 @@ pub fn is_agreement_body(body: &RecordBody) -> bool {
             | RecordBody::Guidance(_)
             | RecordBody::MetricDefinition(_)
             | RecordBody::Feature(_)
+            | RecordBody::VerificationMap(_)
     )
 }
 
@@ -148,12 +151,42 @@ impl AgreementState {
                 }
             });
         }
+        let mut retired = BTreeMap::<RecordId, u64>::new();
+        for record in &records {
+            if let RecordBody::Retirement(body) = &record.body {
+                let accepted = record
+                    .reference()
+                    .ok()
+                    .and_then(|reference| lifecycle.get(&reference))
+                    .is_some_and(|state| *state == Lifecycle::Accepted);
+                if accepted {
+                    let entry = retired.entry(body.target.id.clone()).or_insert(0);
+                    *entry = (*entry).max(body.target.revision);
+                }
+            }
+        }
         Self {
             records,
             by_ref,
             lifecycle,
             proposal_of,
+            retired,
         }
+    }
+
+    /// Whether the record's latest accepted revision has been retired.
+    pub fn is_retired(&self, id: &RecordId) -> bool {
+        self.retired.get(id).is_some_and(|retired| {
+            self.accepted_revision(id)
+                .is_some_and(|revision| revision <= *retired)
+        })
+    }
+
+    fn accepted_revision(&self, id: &RecordId) -> Option<u64> {
+        self.revisions(id)
+            .filter(|record| self.lifecycle_of(record) == Lifecycle::Accepted)
+            .map(|record| record.revision)
+            .max()
     }
 
     pub fn records(&self) -> &[AgreementRecord] {
@@ -186,8 +219,11 @@ impl AgreementState {
         self.records.iter().filter(move |record| record.id == id)
     }
 
-    /// The highest accepted revision of a record.
+    /// The highest accepted revision of a record, unless it was retired.
     pub fn in_force(&self, id: &RecordId) -> Option<&AgreementRecord> {
+        if self.is_retired(id) {
+            return None;
+        }
         self.revisions(id)
             .filter(|record| self.lifecycle_of(record) == Lifecycle::Accepted)
             .max_by_key(|record| record.revision)
@@ -448,5 +484,37 @@ mod tests {
             ),
         ]);
         assert_ne!(before, accepted.in_force_digest());
+    }
+
+    #[test]
+    fn an_accepted_retirement_takes_a_record_out_of_force() {
+        use crate::domain::Retirement;
+        let v1 = record("value.old", 1, "init", value("Old"));
+        let retire = record(
+            "retirement.value-old",
+            1,
+            "retire-old",
+            RecordBody::Retirement(Retirement {
+                target: v1.reference().expect("ref"),
+                reason: "No longer true".into(),
+                replacement: None,
+            }),
+        );
+        let p = proposal("proposal.retire", &retire);
+        let id = RecordId::new("value.old").expect("id");
+        let drafted = AgreementState::from_records(vec![v1.clone(), retire.clone(), p.clone()]);
+        assert!(
+            drafted.in_force(&id).is_some(),
+            "a drafted retirement changes nothing"
+        );
+        let accepted = AgreementState::from_records(vec![
+            v1.clone(),
+            retire,
+            p.clone(),
+            review("review.retire", &p, LocalReviewVerdict::Accept),
+        ]);
+        assert!(accepted.is_retired(&id));
+        assert!(accepted.in_force(&id).is_none());
+        assert_ne!(drafted.in_force_digest(), accepted.in_force_digest());
     }
 }

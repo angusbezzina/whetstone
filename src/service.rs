@@ -59,6 +59,8 @@ pub struct DashRequest {
     pub history_after: Option<HistoryCursor>,
     pub page_size: usize,
     pub expected_snapshot: Option<ContentDigest>,
+    /// Include the show-me-your-work TSV decision trail as `data.trail`.
+    pub trail: bool,
 }
 
 impl DashRequest {
@@ -71,6 +73,7 @@ impl DashRequest {
             history_after: None,
             page_size: 100,
             expected_snapshot: None,
+            trail: false,
         }
     }
 }
@@ -83,6 +86,8 @@ pub enum InitAction {
     Cancel,
     /// Generate the verification skill and scaffold the driver.
     Wire,
+    /// Read an existing pstack verification skill into private drafts.
+    Import,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -108,6 +113,8 @@ pub struct InitRequest {
     pub hosts: Vec<String>,
     /// Replace the team-owned driver with a fresh scaffold (wire).
     pub regenerate_driver: bool,
+    /// A pstack `verify-<app>/` directory to import as drafts (import).
+    pub import_from: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +126,7 @@ pub enum ChangeKind {
     Guidance,
     Standard,
     Feature,
+    Map,
 }
 
 /// Explicit solo review of a pending local draft.
@@ -128,6 +136,9 @@ pub struct ReviewRequest {
     pub verdict: crate::domain::LocalReviewVerdict,
 }
 
+/// Always stored boxed (`Option<Box<ChangeDefinition>>`), so the feature
+/// variant's size never inflates the requests that carry it.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ChangeDefinition {
@@ -165,6 +176,26 @@ pub enum ChangeDefinition {
         constrained_by: Vec<RecordId>,
         #[serde(default)]
         proven_by: Vec<RecordId>,
+        #[serde(default)]
+        index_summary: Option<String>,
+        #[serde(default)]
+        harness: Option<String>,
+        #[serde(default)]
+        preconditions: Vec<String>,
+        #[serde(default)]
+        drive_recipe: Vec<String>,
+    },
+    /// The feature map's conventions (`features/README.md` before the list).
+    Map {
+        intro: String,
+        #[serde(default)]
+        baseline_preconditions: Vec<String>,
+        #[serde(default)]
+        driving_conventions: Vec<String>,
+        #[serde(default)]
+        proof_reporting: Vec<String>,
+        #[serde(default)]
+        entry_contract: Option<String>,
     },
 }
 
@@ -190,16 +221,18 @@ pub struct ChangeRequest {
     pub preview: bool,
     /// Accept or withdraw an existing draft instead of proposing content.
     pub review: Option<ReviewRequest>,
+    /// Propose retiring an accepted record (reviewed archival; history stays).
+    pub retire: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-struct ChangeNarrative {
-    rationale: String,
-    source: String,
-    expected_effect: String,
-    impact: String,
-    examples: Vec<String>,
-    conflicts: Vec<String>,
+pub(crate) struct ChangeNarrative {
+    pub(crate) rationale: String,
+    pub(crate) source: String,
+    pub(crate) expected_effect: String,
+    pub(crate) impact: String,
+    pub(crate) examples: Vec<String>,
+    pub(crate) conflicts: Vec<String>,
 }
 
 impl ChangeNarrative {
@@ -241,6 +274,8 @@ pub struct CheckRequest {
     pub features: Vec<String>,
     pub gate_mode: GateMode,
     pub timeout_seconds: Option<u64>,
+    /// Report the selection and exact commands without executing anything.
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -516,17 +551,19 @@ impl CommandService {
                         fingerprint: fingerprint.as_deref(),
                         driver_path: crate::gates::driver_path(layout.project_root()),
                         skill: crate::skill::read_manifest(&layout),
+                        changes: projection::changes_for(&state, layout.project_root()),
                     },
                 );
                 let journal = projection::journal(&state, history.as_ref());
-                Ok(Some((view, journal)))
+                let trail = request.trail.then(|| projection::decision_trail(&state));
+                Ok(Some((view, journal, trail)))
             }
             (None, _) => Ok(None),
             (_, Ok(None)) => Ok(None),
             (_, Err(error)) => Err(error),
         };
-        let (current_projection, journal) = match current_projection {
-            Ok(Some((mut view, journal))) => {
+        let (current_projection, journal, trail) = match current_projection {
+            Ok(Some((mut view, journal, trail))) => {
                 view.latest_change =
                     journal
                         .iter()
@@ -535,9 +572,9 @@ impl CommandService {
                             title: entry.title.clone(),
                             at: entry.recorded_at.clone(),
                         });
-                (Some(view), journal)
+                (Some(view), journal, trail)
             }
-            Ok(None) => (None, Vec::new()),
+            Ok(None) => (None, Vec::new(), None),
             Err(_error) => {
                 response.state = ServiceState::Unknown;
                 response.summary =
@@ -548,7 +585,7 @@ impl CommandService {
                     locator: layout.store_path(StoreKind::Private).display().to_string(),
                     digest: None,
                 });
-                (None, Vec::new())
+                (None, Vec::new(), None)
             }
         };
         if let Some(progress) = &progress {
@@ -580,6 +617,10 @@ impl CommandService {
             "lean_baseline_revision": LEAN_BASELINE_REVISION,
             "read_only": true
         });
+        if request.trail {
+            response.data["trail"] =
+                json!(trail.unwrap_or_else(|| format!("{}\n", projection::TRAIL_HEADER)));
+        }
         response
     }
 
@@ -611,6 +652,9 @@ impl CommandService {
         // init` and schema migration; inspect and cancel remain write-free.
         if request.action == InitAction::Wire {
             return crate::skill::wire(&layout, request_id, &request);
+        }
+        if request.action == InitAction::Import {
+            return crate::skill::import(&layout, request_id, &request);
         }
         let private = if request.action == InitAction::Agree && !request.dry_run {
             match DoltRepository::initialize(
@@ -1104,6 +1148,9 @@ impl CommandService {
         if let Some(review) = request.review.clone() {
             return review_draft(&layout, &private, request_id, &review, &request);
         }
+        if let Some(target) = request.retire.clone() {
+            return retire_record(&layout, &private, request_id, &target, &request);
+        }
         let id_text = request.record_id.as_deref().unwrap_or("change.pending");
         let record_id = match RecordId::new(id_text) {
             Ok(id) => id,
@@ -1437,6 +1484,46 @@ impl CommandService {
             Ok(selection) => selection,
             Err(summary) => return unknown_response("check", request_id, summary),
         };
+        if request.dry_run {
+            let mut response = ServiceResponse::new(
+                request_id,
+                "check",
+                ServiceState::NeedsDecision,
+                format!(
+                    "Dry run: {} gate(s) would run; nothing was executed or recorded.",
+                    selection.gates.len()
+                ),
+            );
+            response.permitted_actions = vec!["repeat without --dry-run to run them".into()];
+            response.data = json!({
+                "dry_run": true,
+                "gates": selection.gates.iter().map(|gate| {
+                    let (mechanism, command) = projection::mechanism_label(&gate.standard);
+                    json!({
+                        "id": gate.id.as_str(),
+                        "strength": projection::strength_label(gate.standard.strength),
+                        "mechanism": mechanism,
+                        "command": command,
+                        "argv": match &gate.standard.enforcement {
+                            Enforcement::Test { command_ref } | Enforcement::Validator { command_ref } => {
+                                crate::gates::parse_command(command_ref).ok()
+                            }
+                            _ => None,
+                        },
+                        "timeout_seconds": request.timeout_seconds.unwrap_or(crate::gates::DEFAULT_GATE_TIMEOUT.as_secs()),
+                    })
+                }).collect::<Vec<_>>(),
+                "doctor_required": selection.gates.iter().any(|gate| matches!(gate.standard.enforcement, Enforcement::Drive { .. })),
+                "environment_allowlist": crate::gates::ENV_ALLOWLIST,
+                "selection": {
+                    "mode": format!("{:?}", request.gate_mode).to_ascii_lowercase(),
+                    "skipped_drafts": selection.skipped_drafts,
+                    "changed_paths": selection.changed_paths,
+                    "features_affected": selection.features_affected,
+                },
+            });
+            return response;
+        }
         let scanner_rules = request
             .rules
             .iter()
@@ -1717,6 +1804,13 @@ impl CommandService {
                 };
                 let mut gate_receipts = Vec::new();
                 for (gate, outcome) in selection.gates.iter().zip(&outcomes) {
+                    let feature_ref = match &gate.standard.enforcement {
+                        Enforcement::Drive { feature } => agreement
+                            .as_ref()
+                            .and_then(|state| state.in_force(feature))
+                            .and_then(|record| record.reference().ok()),
+                        _ => None,
+                    };
                     match persist_gate_receipt(
                         layout,
                         &run_id,
@@ -1724,6 +1818,10 @@ impl CommandService {
                         outcome,
                         &fingerprint,
                         &checked_at,
+                        &DriveBinding {
+                            feature: feature_ref,
+                            doctor: doctor.as_ref(),
+                        },
                     ) {
                         Ok(Some(reference)) => gate_receipts.push(reference),
                         Ok(None) => {}
@@ -1980,6 +2078,163 @@ fn review_draft(
         "rationale": rationale,
         "shared": false,
         "team_activation": false,
+    });
+    response
+}
+
+/// Record a private draft that retires an accepted record. Accepting it takes
+/// the record out of force (and a feature out of the sweep); every revision
+/// stays in history.
+fn retire_record(
+    layout: &ProjectLayout,
+    private: &DoltRepository,
+    request_id: String,
+    target: &str,
+    request: &ChangeRequest,
+) -> ServiceResponse {
+    let target_id = match RecordId::new(target) {
+        Ok(id) => id,
+        Err(error) => return domain_response("change", request_id, error),
+    };
+    let records = match private.all_records() {
+        Ok(records) => records,
+        Err(error) => return storage_error("change", request_id, error),
+    };
+    let state = AgreementState::from_records(records);
+    let Some(current) = state.in_force(&target_id) else {
+        return needs_input(
+            "change",
+            request_id,
+            0,
+            String::new(),
+            format!("{target} is not an accepted record in force, so there is nothing to retire."),
+        );
+    };
+    let rationale = match bounded_input(request.rationale.clone(), "rationale", 4_000) {
+        Ok(rationale) => rationale,
+        Err(question) => return needs_input("change", request_id, 0, String::new(), question),
+    };
+    let target_ref = match current.reference() {
+        Ok(reference) => reference,
+        Err(error) => return domain_response("change", request_id, error),
+    };
+    let retirement_id = {
+        let candidate = format!("retirement.{target}");
+        if candidate.len() <= 96 {
+            candidate
+        } else {
+            format!(
+                "retirement.{}",
+                &format!("{:x}", Sha256::digest(target.as_bytes()))[..32]
+            )
+        }
+    };
+    let retirement_id = match RecordId::new(retirement_id) {
+        Ok(id) => id,
+        Err(error) => return domain_response("change", request_id, error),
+    };
+    let existing = match private.by_idempotency_key(&request_id) {
+        Ok(existing) => existing,
+        Err(error) => return storage_error("change", request_id, error),
+    };
+    let body = RecordBody::Retirement(crate::domain::Retirement {
+        target: target_ref.clone(),
+        reason: rationale.clone(),
+        replacement: None,
+    });
+    let previous = state.latest(&retirement_id).cloned();
+    let (record, reference) = match existing {
+        Some(existing) if existing.id == retirement_id && existing.body == body => {
+            match existing.reference() {
+                Ok(reference) => (existing, reference),
+                Err(error) => return domain_response("change", request_id, error),
+            }
+        }
+        Some(_) => return idempotency_conflict("change", request_id.clone(), &request_id),
+        None => {
+            let mut record = match agreement_record(
+                layout,
+                retirement_id.as_str(),
+                request_id.clone(),
+                body,
+                current.owner.display_name.as_deref(),
+            ) {
+                Ok(record) => record,
+                Err(error) => return domain_response("change", request_id, error),
+            };
+            record.revision = previous.as_ref().map_or(1, |record| record.revision + 1);
+            record.supersedes = match previous.as_ref().map(AgreementRecord::reference) {
+                Some(Ok(reference)) => Some(reference),
+                Some(Err(error)) => return domain_response("change", request_id, error),
+                None => None,
+            };
+            if request.preview {
+                let mut response = ServiceResponse::new(
+                    request_id,
+                    "change",
+                    ServiceState::NeedsDecision,
+                    format!("Review the exact effect before you retire {target}."),
+                );
+                response.permitted_actions =
+                    vec!["repeat without --dry-run to record the retirement draft".into()];
+                response.data = json!({
+                    "preview_only": true,
+                    "retire": target_ref,
+                    "title": projection::record_title(current),
+                    "effects": {
+                        "private_record_write_on_confirm": true,
+                        "leaves_force_on_accept": true,
+                        "history_preserved": true,
+                        "team_share": false,
+                    },
+                });
+                return response;
+            }
+            let reference =
+                match private.append(&record, previous.as_ref().map(|record| record.revision)) {
+                    Ok(reference) => reference,
+                    Err(error) => return storage_error("change", request_id, error),
+                };
+            (record, reference)
+        }
+    };
+    let narrative = ChangeNarrative {
+        rationale,
+        source: "owner".into(),
+        expected_effect: format!("{target} leaves force and the sweep; its history stays."),
+        impact: "not stated".into(),
+        examples: Vec::new(),
+        conflicts: Vec::new(),
+    };
+    let proposal = match ensure_local_change_proposal(
+        private,
+        &record,
+        &reference,
+        &narrative,
+        current.revision,
+        &request_id,
+    ) {
+        Ok(reference) => reference,
+        Err(error) => return storage_error("change", request_id, error),
+    };
+    let mut response = ServiceResponse::new(
+        request_id,
+        "change",
+        ServiceState::Success,
+        format!(
+            "A private draft to retire {target} was recorded. It stays in force until you accept the retirement; history is never deleted."
+        ),
+    );
+    response.permitted_actions = vec![
+        format!("wh change --accept {}", proposal.id.as_str()),
+        format!("wh change --withdraw {}", proposal.id.as_str()),
+    ];
+    response.data = json!({
+        "record": reference,
+        "proposal": proposal,
+        "retires": target_ref,
+        "title": projection::record_title(current),
+        "shared": false,
     });
     response
 }
@@ -2364,7 +2619,7 @@ fn bounded_list(
         .collect()
 }
 
-fn ensure_local_change_proposal(
+pub(crate) fn ensure_local_change_proposal(
     repository: &DoltRepository,
     candidate: &AgreementRecord,
     candidate_reference: &crate::domain::RecordRef,
@@ -2409,6 +2664,8 @@ fn ensure_local_change_proposal(
                     RecordBody::MetricDefinition(_) => "metric",
                     RecordBody::Standard(_) => "standard",
                     RecordBody::Feature(_) => "feature",
+                    RecordBody::VerificationMap(_) => "map",
+                    RecordBody::Retirement(_) => "retirement",
                     _ => "record",
                 }),
                 if candidate.revision <= 1 {
@@ -2550,6 +2807,10 @@ fn change_body(request: &ChangeRequest, id_text: &str) -> Result<RecordBody, Str
                 serves,
                 constrained_by,
                 proven_by,
+                index_summary,
+                harness,
+                preconditions,
+                drive_recipe,
             }) = request.definition.as_deref()
             else {
                 return Err("Provide the feature summary, area, user path, drive steps, proof and entry points as a feature definition.".into());
@@ -2568,8 +2829,52 @@ fn change_body(request: &ChangeRequest, id_text: &str) -> Result<RecordBody, Str
                 serves: serves.clone(),
                 constrained_by: constrained_by.clone(),
                 proven_by: proven_by.clone(),
+                index_summary: index_summary
+                    .as_ref()
+                    .map(|value| bounded_input(Some(value.clone()), "index summary", 500))
+                    .transpose()?,
+                harness: harness
+                    .as_ref()
+                    .map(|value| bounded_input(Some(value.clone()), "harness", 120))
+                    .transpose()?,
+                preconditions: bounded_list(preconditions, "preconditions", 64, 1_000)?,
+                drive_recipe: bounded_list(drive_recipe, "drive recipe", 64, 2_000)?,
             };
             RecordBody::Feature(feature)
+        }
+        ChangeKind::Map => {
+            let Some(ChangeDefinition::Map {
+                intro,
+                baseline_preconditions,
+                driving_conventions,
+                proof_reporting,
+                entry_contract,
+            }) = request.definition.as_deref()
+            else {
+                return Err("Provide the map intro, baseline preconditions, driving conventions and proof reporting as a map definition.".into());
+            };
+            RecordBody::VerificationMap(crate::domain::VerificationMap {
+                title: content,
+                intro: bounded_input(Some(intro.clone()), "map intro", 2_000)?,
+                baseline_preconditions: bounded_list(
+                    baseline_preconditions,
+                    "baseline preconditions",
+                    64,
+                    1_000,
+                )?,
+                driving_conventions: bounded_list(
+                    driving_conventions,
+                    "driving conventions",
+                    64,
+                    1_000,
+                )?,
+                proof_reporting: bounded_list(proof_reporting, "proof reporting", 64, 1_000)?,
+                entry_contract: entry_contract
+                    .as_ref()
+                    .map(|value| bounded_input(Some(value.clone()), "entry contract", 8_000))
+                    .transpose()?,
+                skill_notes: Vec::new(),
+            })
         }
     })
 }
@@ -2621,7 +2926,7 @@ fn unavailable(
     response
 }
 
-fn agreement_record(
+pub(crate) fn agreement_record(
     layout: &ProjectLayout,
     id: &str,
     idempotency_key: String,
@@ -2718,7 +3023,7 @@ fn resume_token(project_id: &str, workflow: &str, request_id: &str, revision: u6
     )
 }
 
-fn needs_input(
+pub(crate) fn needs_input(
     workflow: &str,
     request_id: String,
     revision: u64,
@@ -2774,7 +3079,11 @@ fn project_error(
     )
 }
 
-fn storage_error(workflow: &str, request_id: String, error: StorageError) -> ServiceResponse {
+pub(crate) fn storage_error(
+    workflow: &str,
+    request_id: String,
+    error: StorageError,
+) -> ServiceResponse {
     let state = match error {
         StorageError::StaleRevision { .. } => ServiceState::Stale,
         StorageError::IdempotencyConflict(_) => ServiceState::Conflict,
@@ -2793,7 +3102,7 @@ fn storage_error(workflow: &str, request_id: String, error: StorageError) -> Ser
     response
 }
 
-fn domain_response(
+pub(crate) fn domain_response(
     workflow: &str,
     request_id: String,
     error: crate::domain::DomainError,
@@ -2902,7 +3211,7 @@ fn array_len(value: &Value, field: &str) -> u64 {
         .map_or(0, |items| items.len() as u64)
 }
 
-fn digest_bytes(bytes: &[u8]) -> ContentDigest {
+pub(crate) fn digest_bytes(bytes: &[u8]) -> ContentDigest {
     match ContentDigest::new(format!("sha256:{:x}", Sha256::digest(bytes))) {
         Ok(digest) => digest,
         Err(_) => unreachable!("SHA-256 formatting always satisfies the digest contract"),
@@ -3415,6 +3724,60 @@ fn gate_finding(gate: &SelectedGate, failure: &crate::projection::ArtifactFailur
     }
 }
 
+/// What a drive receipt binds besides the gate: the map revision it proved
+/// and the doctor verdict it drove after.
+struct DriveBinding<'a> {
+    feature: Option<crate::domain::RecordRef>,
+    doctor: Option<&'a crate::gates::DoctorResult>,
+}
+
+/// Driver script, driver configuration, map revision and doctor freshness as
+/// receipt evidence, so a proof names exactly what drove it.
+fn drive_evidence(
+    project: &Path,
+    binding: &DriveBinding<'_>,
+    checked_at: &str,
+) -> Vec<EvidenceRef> {
+    let mut evidence = Vec::new();
+    for (system, relative) in [
+        (DRIVER_EVIDENCE, crate::gates::DRIVER_RELATIVE),
+        (DRIVER_CONFIG_EVIDENCE, crate::skill::DRIVER_CONFIG_RELATIVE),
+    ] {
+        if let Ok(bytes) = fs::read(project.join(relative)) {
+            evidence.push(EvidenceRef {
+                system: system.into(),
+                locator: relative.into(),
+                digest: Some(digest_bytes(&bytes)),
+            });
+        }
+    }
+    if let Some(feature) = &binding.feature {
+        evidence.push(EvidenceRef {
+            system: MAP_EVIDENCE.into(),
+            locator: format!("{}@r{}", feature.id.as_str(), feature.revision),
+            digest: Some(feature.digest.clone()),
+        });
+    }
+    if let Some(doctor) = binding.doctor {
+        let verdict = format!(
+            "{} at {checked_at}: {}",
+            if doctor.ok { "ok" } else { "failed" },
+            doctor.detail
+        );
+        evidence.push(EvidenceRef {
+            system: DOCTOR_EVIDENCE.into(),
+            locator: verdict.chars().take(400).collect(),
+            digest: Some(digest_bytes(verdict.as_bytes())),
+        });
+    }
+    evidence
+}
+
+pub const DRIVER_EVIDENCE: &str = "whetstone_driver";
+pub const DRIVER_CONFIG_EVIDENCE: &str = "whetstone_driver_config";
+pub const MAP_EVIDENCE: &str = "whetstone_map";
+pub const DOCTOR_EVIDENCE: &str = "whetstone_doctor";
+
 fn persist_gate_receipt(
     layout: &ProjectLayout,
     run_id: &str,
@@ -3422,6 +3785,7 @@ fn persist_gate_receipt(
     outcome: &crate::gates::GateOutcome,
     fingerprint: &str,
     checked_at: &str,
+    binding: &DriveBinding<'_>,
 ) -> Result<Option<crate::domain::RecordRef>, StorageError> {
     let store_path = layout.store_path(StoreKind::Private);
     if !store_path.join(".dolt").is_dir() {
@@ -3450,13 +3814,18 @@ fn persist_gate_receipt(
     } else {
         verification
     };
+    let mut evidence = outcome.evidence.clone();
+    if let Some(head) = crate::gates::head_commit(layout.project_root()) {
+        evidence.push(EvidenceRef {
+            system: crate::projection::GIT_HEAD_SYSTEM.into(),
+            locator: head,
+            digest: None,
+        });
+    }
     let mut related = vec![gate.reference.clone()];
-    if let Enforcement::Drive { feature } = &gate.standard.enforcement {
-        if let Ok(Some(record)) = repository.latest(feature) {
-            if let Ok(reference) = record.reference() {
-                related.push(reference);
-            }
-        }
+    if matches!(gate.standard.enforcement, Enforcement::Drive { .. }) {
+        related.extend(binding.feature.clone());
+        evidence.extend(drive_evidence(layout.project_root(), binding, checked_at));
     }
     let record = AgreementRecord {
         schema_version: SCHEMA_VERSION_V1,
@@ -3509,7 +3878,7 @@ fn persist_gate_receipt(
             freshness,
             checked_at: checked_at.into(),
             related_records: related,
-            evidence: outcome.evidence.clone(),
+            evidence,
         }),
     };
     repository.append(&record, None).map(Some)

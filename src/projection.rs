@@ -26,6 +26,7 @@ pub const SAFEGUARD_ID: &str = "guidance.initial-safeguard";
 pub const INITIAL_GATE_ID: &str = "standard.initial-gate";
 pub const GATE_SUBJECT_PREFIX: &str = "gate:";
 pub const EVIDENCE_SYSTEM: &str = "whetstone_evidence";
+pub const GIT_HEAD_SYSTEM: &str = "git_head";
 
 /// The eight owner decisions `wh init` records, in the order they are asked.
 pub const ONBOARDING_DECISIONS: [(&str, &str, &str); 8] = [
@@ -171,6 +172,8 @@ pub struct FeatureEntry {
     pub constrained_by: Vec<Link>,
     pub proven_by: Vec<Link>,
     pub proof_state: StateLabel,
+    /// Entry-point paths changed since the feature was last proven.
+    pub drift: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -315,6 +318,132 @@ pub struct ProjectionInput<'a> {
     pub fingerprint: Option<&'a str>,
     pub driver_path: Option<String>,
     pub skill: Option<SkillManifest>,
+    pub changes: Changes,
+}
+
+/// Paths changed in the working tree, and since each commit a proof ran at.
+#[derive(Debug, Clone, Default)]
+pub struct Changes {
+    pub working: Vec<String>,
+    pub since: BTreeMap<String, Vec<String>>,
+}
+
+/// The Git HEAD recorded by the latest receipt of each drive gate.
+fn proof_heads(state: &AgreementState) -> BTreeMap<String, String> {
+    let mut heads = BTreeMap::new();
+    for id in state.agreement_ids(|body| matches!(body, RecordBody::Standard(_))) {
+        if let Some(RecordBody::VerificationReceipt(body)) =
+            latest_gate_receipt(state, &id).map(|record| &record.body)
+        {
+            if let Some(head) = body
+                .evidence
+                .iter()
+                .find(|evidence| evidence.system == GIT_HEAD_SYSTEM)
+            {
+                heads.insert(id.as_str().to_string(), head.locator.clone());
+            }
+        }
+    }
+    heads
+}
+
+/// Gather the Git changes needed to judge feature drift, one call per commit.
+pub fn changes_for(state: &AgreementState, project_root: &Path) -> Changes {
+    let mut changes = Changes {
+        working: crate::gates::changed_paths(project_root).unwrap_or_default(),
+        since: BTreeMap::new(),
+    };
+    for head in proof_heads(state).into_values() {
+        if let std::collections::btree_map::Entry::Vacant(slot) = changes.since.entry(head) {
+            let paths = crate::gates::changed_since(project_root, slot.key()).unwrap_or_default();
+            slot.insert(paths);
+        }
+    }
+    changes
+}
+
+/// When a feature was last proven, and what moved under it since.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct FeatureProof {
+    /// `{at, commit, gate}` of the latest passing proof, if any.
+    pub last_proven: Option<Value>,
+    pub drift: Vec<String>,
+}
+
+/// Proof state for every in-force feature, for projections outside the dashboard.
+pub fn feature_proofs(
+    state: &AgreementState,
+    changes: &Changes,
+) -> BTreeMap<RecordId, FeatureProof> {
+    let heads = proof_heads(state);
+    let mut proofs = BTreeMap::new();
+    for id in state.agreement_ids(|body| matches!(body, RecordBody::Feature(_))) {
+        let Some(RecordBody::Feature(feature)) = state.in_force(&id).map(|record| &record.body)
+        else {
+            continue;
+        };
+        let last_proven = feature
+            .proven_by
+            .iter()
+            .filter_map(|gate| {
+                let receipt = latest_gate_receipt(state, gate)?;
+                let RecordBody::VerificationReceipt(body) = &receipt.body else {
+                    return None;
+                };
+                (body.verification == VerificationAxis::Pass).then(|| {
+                    json!({
+                        "at": body.checked_at,
+                        "gate": gate.as_str(),
+                        "commit": heads.get(gate.as_str()),
+                    })
+                })
+            })
+            .max_by(|left, right| {
+                left["at"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .cmp(right["at"].as_str().unwrap_or_default())
+            });
+        proofs.insert(
+            id,
+            FeatureProof {
+                last_proven,
+                drift: drifted_paths(feature, &heads, changes),
+            },
+        );
+    }
+    proofs
+}
+
+/// Paths under a feature's entry points that changed since its last proof,
+/// or in the working tree when it has never been proven.
+fn drifted_paths(
+    feature: &Feature,
+    heads: &BTreeMap<String, String>,
+    changes: &Changes,
+) -> Vec<String> {
+    let mut paths = changes
+        .working
+        .iter()
+        .filter(|path| feature.covers_path(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    for gate in &feature.proven_by {
+        if let Some(committed) = heads
+            .get(gate.as_str())
+            .and_then(|head| changes.since.get(head))
+        {
+            paths.extend(
+                committed
+                    .iter()
+                    .filter(|path| feature.covers_path(path))
+                    .cloned(),
+            );
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
 }
 
 /// Written by skill rendering; read to detect stale projections.
@@ -372,6 +501,8 @@ fn kind_of(record: &AgreementRecord) -> &'static str {
         RecordBody::MetricDefinition(_) => "metric",
         RecordBody::Standard(_) => "standard",
         RecordBody::Feature(_) => "feature",
+        RecordBody::VerificationMap(_) => "map",
+        RecordBody::Retirement(_) => "retirement",
         _ => "record",
     }
 }
@@ -385,6 +516,8 @@ pub fn kind_label(kind: &str) -> &'static str {
         "metric" => "Metric",
         "standard" => "Gate",
         "feature" => "Feature",
+        "map" => "Feature map",
+        "retirement" => "Retirement",
         _ => "Record",
     }
 }
@@ -399,6 +532,8 @@ pub fn record_title(record: &AgreementRecord) -> String {
         RecordBody::MetricDefinition(body) => body.name.clone(),
         RecordBody::Standard(body) => body.statement.clone(),
         RecordBody::Feature(body) => body.name.clone(),
+        RecordBody::VerificationMap(body) => body.title.clone(),
+        RecordBody::Retirement(body) => format!("Retire {}", body.target.id.as_str()),
         RecordBody::Proposal(body) => body.title.clone(),
         other => other.type_name().replace('_', " "),
     }
@@ -468,6 +603,24 @@ fn edit_base(record: &AgreementRecord) -> EditBase {
                 "serves": body.serves,
                 "constrained_by": body.constrained_by,
                 "proven_by": body.proven_by,
+                "index_summary": body.index_summary,
+                "harness": body.harness,
+                "preconditions": body.preconditions,
+                "drive_recipe": body.drive_recipe,
+            }),
+        ),
+        RecordBody::VerificationMap(body) => (
+            "map",
+            body.title.clone(),
+            None,
+            None,
+            json!({
+                "type": "map",
+                "intro": body.intro,
+                "baseline_preconditions": body.baseline_preconditions,
+                "driving_conventions": body.driving_conventions,
+                "proof_reporting": body.proof_reporting,
+                "entry_contract": body.entry_contract,
             }),
         ),
         _ => ("record", String::new(), None, None, Value::Null),
@@ -666,6 +819,13 @@ pub fn gate_brief(
             feature.entry.title, feature.user_path
         ));
         lines.push(format!("prove     {}", feature.proof));
+        if let Ok(id) = RecordId::new(feature.entry.id.as_str()) {
+            lines.push(format!(
+                "map       features/{}.md in the verify skill (read it before driving)",
+                crate::feature_map::feature_slug(&id)
+            ));
+        }
+        lines.push("proof bar the real user path, the action and its resulting state, side effects checked, evidence that survives cleanup; no evidence is unknown".into());
     }
     lines.push("repair    within the current task; do not change or weaken the gate".into());
     lines.push(format!("recheck   {recheck}"));
@@ -835,7 +995,12 @@ fn gate_runs(
     (runs, last_at.map(|at| LastCheck { at, tally }))
 }
 
-fn features(state: &AgreementState, gates: &BTreeMap<String, StateLabel>) -> Vec<FeatureEntry> {
+fn features(
+    state: &AgreementState,
+    gates: &BTreeMap<String, StateLabel>,
+    changes: &Changes,
+) -> Vec<FeatureEntry> {
+    let heads = proof_heads(state);
     let mut result = Vec::new();
     for id in state.agreement_ids(|body| matches!(body, RecordBody::Feature(_))) {
         let Some(base) = entry(state, &id) else {
@@ -866,7 +1031,17 @@ fn features(state: &AgreementState, gates: &BTreeMap<String, StateLabel>) -> Vec
                     StateLabel::new("warn", "not run")
                 }
             });
-        result.push(feature_entry(state, base, feature, proof_state));
+        let drift = if state.pending(&id).is_some() {
+            Vec::new()
+        } else {
+            drifted_paths(feature, &heads, changes)
+        };
+        let mut entry = feature_entry(state, base, feature, proof_state);
+        if !drift.is_empty() && entry.proof_state.tone != "fail" {
+            entry.entry.state = Some(StateLabel::new("warn", "changed · re-prove"));
+        }
+        entry.drift = drift;
+        result.push(entry);
     }
     result.sort_by(|left, right| {
         (
@@ -909,6 +1084,7 @@ fn feature_entry(
             .collect(),
         proven_by: feature.proven_by.iter().map(|id| link(state, id)).collect(),
         proof_state,
+        drift: Vec::new(),
     }
 }
 
@@ -993,13 +1169,13 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
 
     // Provisional: gate labels needed by features before gate runs exist.
     let placeholder = BTreeMap::new();
-    let provisional_features = features(state, &placeholder);
+    let provisional_features = features(state, &placeholder, &Changes::default());
     let (gate_runs, last_complete) = gate_runs(state, input, &provisional_features, &owner);
     let gate_labels = gate_runs
         .iter()
         .map(|run| (run.id.clone(), run.result.clone()))
         .collect::<BTreeMap<_, _>>();
-    let features = features(state, &gate_labels);
+    let features = features(state, &gate_labels, &input.changes);
 
     let mut gates = state
         .agreement_ids(|body| matches!(body, RecordBody::Standard(_)))
@@ -1268,6 +1444,38 @@ fn attention(
             agent_instruction: None,
         });
     }
+    for feature in features.iter().filter(|feature| !feature.drift.is_empty()) {
+        items.push(Attention {
+            priority: 1,
+            tone: "warn",
+            kind: "feature_drift",
+            kind_label: "map review",
+            title: format!("Behaviour may have moved: {}", feature.entry.title),
+            text: format!(
+                "{} changed under this feature since it was last proven: {}.",
+                if feature.drift.len() == 1 { "One file" } else { "Files" },
+                feature
+                    .drift
+                    .iter()
+                    .take(4)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            actor: "you or your agent".into(),
+            next: format!(
+                "Re-prove with wh check --feature {}; if the behaviour moved, revise the feature entry in the same change.",
+                feature.entry.id
+            ),
+            route: "foundations",
+            focus: Some(feature.entry.id.clone()),
+            action_label: "Open the feature",
+            agent_instruction: Some(format!(
+                "In {root}, run `wh check --feature {id}`. If it fails because the behaviour intentionally moved, update the feature record with `wh change --kind feature --record-id {id}` (user path, drive steps, proof) as a draft for the owner; if it fails because the product regressed, repair the product instead. Never edit the map to hide a regression.",
+                id = feature.entry.id
+            )),
+        });
+    }
     if features.is_empty() {
         items.push(Attention {
             priority: 2,
@@ -1361,7 +1569,7 @@ fn area_of(record: &AgreementRecord) -> &'static str {
         RecordBody::MetricDefinition(_) | RecordBody::ObservationReceipt(_) => "metrics",
         RecordBody::ImplementationPhilosophy(_) | RecordBody::Guidance(_) => "rules",
         RecordBody::Standard(_) => "gates",
-        RecordBody::Feature(_) => "features",
+        RecordBody::Feature(_) | RecordBody::VerificationMap(_) => "features",
         RecordBody::VerificationReceipt(_)
         | RecordBody::RepairSession(_)
         | RecordBody::RepairHandoff(_)
@@ -1539,6 +1747,38 @@ fn journal_entry(
             review.rationale.clone(),
         );
     }
+    if let Some((retirement, body)) = records.iter().find_map(|record| match &record.body {
+        RecordBody::Retirement(body) => Some((*record, body)),
+        _ => None,
+    }) {
+        let target = state.get(&body.target);
+        let title = target.map_or_else(|| body.target.id.as_str().to_string(), record_title);
+        let lifecycle = state.lifecycle_of(retirement);
+        let status = match lifecycle {
+            Lifecycle::Accepted => StateLabel::new("pass", "retired"),
+            Lifecycle::Draft => StateLabel::new("draft", "draft"),
+            Lifecycle::Withdrawn => StateLabel::new("muted", "withdrawn"),
+            Lifecycle::Operational => StateLabel::new("muted", "recorded"),
+        };
+        let mut entry = base(
+            "decision",
+            format!(
+                "{} retirement: {}",
+                kind_label(target.map_or("record", kind_of)),
+                snippet(&title, 90)
+            ),
+            status,
+            target.map_or("governance", area_of),
+            body.reason.clone(),
+        );
+        entry.version = Some(format!("v{} retired", body.target.revision));
+        if lifecycle == Lifecycle::Draft {
+            entry.proposal = state
+                .proposal_for(retirement)
+                .map(|proposal| proposal.id.as_str().to_string());
+        }
+        return entry;
+    }
     let candidates = records
         .iter()
         .filter(|record| crate::agreement::is_agreement_body(&record.body))
@@ -1643,4 +1883,208 @@ pub fn proposal_candidates(state: &AgreementState, proposal_id: &str) -> Vec<Rec
                 .filter_map(|candidate| candidate.reference().ok())
         })
         .collect()
+}
+
+/// pstack show-me-your-work's header row, verbatim.
+pub const TRAIL_HEADER: &str = "ts\tphase\tdecision\twhy\tevidence\tresult";
+
+/// One single-line TSV cell: tabs and newlines become spaces, and a leading
+/// `=`, `+`, `-` or `@` is quoted so spreadsheets never evaluate it.
+fn trail_cell(value: &str) -> String {
+    let flat = value
+        .chars()
+        .map(|character| {
+            if matches!(character, '\t' | '\n' | '\r') {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    let flat = flat.trim().to_string();
+    if flat.starts_with(['=', '+', '-', '@']) {
+        format!("'{flat}")
+    } else if flat.is_empty() {
+        "none".into()
+    } else {
+        flat
+    }
+}
+
+/// The decision history as a show-me-your-work TSV: one row per accepted
+/// change (including retirements) and one per verification receipt, in the
+/// order they happened. pstack's audit and cross-model review read it as is.
+pub fn decision_trail(state: &AgreementState) -> String {
+    let mut rows = Vec::<(String, String, [String; 5])>::new();
+    let acceptance = |record: &AgreementRecord| -> Option<(String, String)> {
+        let proposal = state.proposal_for(record);
+        let reviewed = proposal.and_then(|proposal| {
+            let reference = proposal.reference().ok()?;
+            state
+                .records()
+                .iter()
+                .find_map(|candidate| match &candidate.body {
+                    RecordBody::LocalReview(review)
+                        if review.proposal == reference
+                            && review.verdict == LocalReviewVerdict::Accept =>
+                    {
+                        Some((review.reviewed_at.clone(), review.rationale.clone()))
+                    }
+                    _ => None,
+                })
+        });
+        let why = proposal
+            .and_then(|proposal| match &proposal.body {
+                RecordBody::Proposal(body) => body
+                    .rationale
+                    .lines()
+                    .find_map(|line| line.strip_prefix("Rationale: "))
+                    .map(str::to_owned),
+                _ => None,
+            })
+            .unwrap_or_else(|| "Agreed by the owner during wh init.".into());
+        match reviewed {
+            Some((at, _)) => Some((at, why)),
+            None if proposal.is_none() => Some((record.provenance.recorded_at.clone(), why)),
+            None => None,
+        }
+    };
+    for record in state.records() {
+        let accepted = state.lifecycle_of(record) == Lifecycle::Accepted;
+        match &record.body {
+            body if crate::agreement::is_agreement_body(body) && accepted => {
+                let Some((at, why)) = acceptance(record) else {
+                    continue;
+                };
+                let result = if state.is_retired(&record.id) && state.in_force(&record.id).is_none()
+                {
+                    "accepted, later retired".to_string()
+                } else if let Some(current) = state
+                    .in_force(&record.id)
+                    .filter(|current| current.revision > record.revision)
+                {
+                    format!("accepted, superseded by v{}", current.revision)
+                } else {
+                    "accepted, in force".to_string()
+                };
+                rows.push((
+                    at.clone(),
+                    record.id.as_str().to_string(),
+                    [
+                        area_of(record).into(),
+                        format!(
+                            "{} v{}: {}",
+                            kind_label(kind_of(record)),
+                            record.revision,
+                            snippet(&record_title(record), 160)
+                        ),
+                        why,
+                        format!(
+                            "whetstone:{}@r{} {}",
+                            record.id.as_str(),
+                            record.revision,
+                            record
+                                .digest()
+                                .map(|digest| digest.as_str()[..19].to_string())
+                                .unwrap_or_default()
+                        ),
+                        result,
+                    ],
+                ));
+            }
+            RecordBody::Retirement(body) if accepted => {
+                let Some((at, _)) = acceptance(record) else {
+                    continue;
+                };
+                let title = state
+                    .get(&body.target)
+                    .map_or_else(|| body.target.id.as_str().to_string(), record_title);
+                rows.push((
+                    at,
+                    record.id.as_str().to_string(),
+                    [
+                        state.get(&body.target).map_or("governance", area_of).into(),
+                        format!(
+                            "Retired {} v{}: {}",
+                            body.target.id.as_str(),
+                            body.target.revision,
+                            snippet(&title, 160)
+                        ),
+                        body.reason.clone(),
+                        format!("whetstone:{}@r{}", record.id.as_str(), record.revision),
+                        "retired; history kept".into(),
+                    ],
+                ));
+            }
+            RecordBody::VerificationReceipt(body) => {
+                let gate = body
+                    .subject
+                    .stable_id
+                    .strip_prefix(GATE_SUBJECT_PREFIX)
+                    .map(str::to_owned);
+                let (decision, why) = match &gate {
+                    Some(gate) => {
+                        let statement = RecordId::new(gate.as_str())
+                            .ok()
+                            .and_then(|id| {
+                                body.policy_state
+                                    .accepted
+                                    .as_ref()
+                                    .and_then(|reference| state.get(reference))
+                                    .or_else(|| state.in_force(&id))
+                            })
+                            .and_then(|record| match &record.body {
+                                RecordBody::Standard(standard) => Some(standard.statement.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| gate.clone());
+                        (format!("Ran gate {gate}"), statement)
+                    }
+                    None => (
+                        "Ran the compiled-in scanner".into(),
+                        "Applicable deterministic rules.".into(),
+                    ),
+                };
+                let evidence = body
+                    .evidence
+                    .iter()
+                    .filter(|evidence| evidence.system == EVIDENCE_SYSTEM)
+                    .map(|evidence| evidence.locator.clone())
+                    .take(3)
+                    .collect::<Vec<_>>();
+                rows.push((
+                    body.checked_at.clone(),
+                    record.id.as_str().to_string(),
+                    [
+                        "checks".into(),
+                        decision,
+                        why,
+                        if evidence.is_empty() {
+                            format!("whetstone:{}", record.id.as_str())
+                        } else {
+                            evidence.join(", ")
+                        },
+                        match body.verification {
+                            VerificationAxis::Pass => "pass".into(),
+                            VerificationAxis::Fail => "fail".into(),
+                            VerificationAxis::Unknown => "unknown (not a pass)".into(),
+                        },
+                    ],
+                ));
+            }
+            _ => {}
+        }
+    }
+    rows.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    let mut out = String::from(TRAIL_HEADER);
+    out.push('\n');
+    for (at, _, cells) in rows {
+        out.push_str(&trail_cell(&at));
+        for cell in cells {
+            out.push('\t');
+            out.push_str(&trail_cell(&cell));
+        }
+        out.push('\n');
+    }
+    out
 }

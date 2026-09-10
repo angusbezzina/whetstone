@@ -35,6 +35,14 @@ pub trait DashboardBackend: Send + Sync + 'static {
     /// Read-only query body. An empty body requests the default project view.
     fn inspect(&self, request_body: &[u8]) -> BackendResponse;
     fn mutate(&self, request_body: &[u8]) -> BackendResponse;
+    /// The decision trail as show-me-your-work TSV; read-only.
+    fn trail(&self) -> BackendResponse {
+        BackendResponse {
+            status: 404,
+            content_type: "text/plain; charset=utf-8",
+            body: b"not_found".to_vec(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -374,6 +382,13 @@ fn handle_connection(
         // loopback-only, exact-host checked, and cannot mutate state. Hosted
         // inspection passed the authenticated proxy checks above.
         ("GET", "/api/inspect") => backend.inspect(&[]),
+        ("GET", "/api/trail.tsv") => {
+            extra_headers.push((
+                "Content-Disposition",
+                "attachment; filename=\"whetstone-decisions.tsv\"".to_string(),
+            ));
+            backend.trail()
+        }
         ("POST", "/api/inspect") => {
             if !same_origin(&request, expected_origin)
                 || request.header("sec-fetch-site") != Some("same-origin")

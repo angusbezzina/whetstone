@@ -122,9 +122,15 @@ export async function launch() {
   await Promise.all([cdp.send("Page.enable"), cdp.send("Runtime.enable"), cdp.send("Log.enable"), cdp.send("Network.enable")]);
   return {
     cdp,
-    close() {
-      child.kill("SIGKILL");
-      rmSync(profile, { recursive: true, force: true });
+    // Chrome can still be flushing its profile after SIGKILL; wait for the
+    // exit and retry the removal instead of racing it.
+    async close() {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
+        child.kill("SIGKILL");
+        await Promise.race([exited, delay(2000)]);
+      }
+      rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     },
   };
 }

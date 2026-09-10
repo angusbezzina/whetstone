@@ -693,6 +693,10 @@ fn feature_body() -> Feature {
         serves: vec![id("mission.project")],
         constrained_by: vec![id("value.core")],
         proven_by: vec![id("standard.dashboard-journey")],
+        index_summary: None,
+        harness: None,
+        preconditions: vec![],
+        drive_recipe: vec![],
     }
 }
 

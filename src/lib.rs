@@ -6,6 +6,7 @@ pub mod dashboard;
 pub mod dashboard_service;
 pub mod domain;
 pub mod execution;
+pub mod feature_map;
 pub mod gates;
 pub mod governance;
 pub mod history;

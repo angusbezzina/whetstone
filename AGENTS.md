@@ -6,10 +6,33 @@ agent guidance, deterministic safeguards, repair feedback, and durable history.
 
 ## Current boundary
 
-The repository is at the R0 prune-first foundation of Beads epic
-`whetstone-k5r`. The legacy dependency-extraction product was removed. Its last
-complete revision is `1b7fd8c341b8a5aaea742c564092fbcca26b51bb`; use that
-revision only for read-only archaeology or recovery.
+The repository is past the R0 prune of Beads epic `whetstone-k5r` and inside
+its M1/M2 implementation. The legacy dependency-extraction product was removed.
+Its last complete revision is `1b7fd8c341b8a5aaea742c564092fbcca26b51bb`; use
+that revision only for read-only archaeology or recovery.
+
+Two owner decisions from 2026-09-10 shape all remaining work (read the epic's
+"Beads storage and pstack interop" section before planning):
+
+- **Beads is the record store.** Whetstone's own Dolt repository and the `dolt`
+  binary are being removed (`whetstone-k5r.17`). Records become `record` beads
+  with the typed body in JSON metadata and lifecycle as a label; drafts live in
+  a private Beads database under `.git/whetstone/private`; `wh push` and
+  `wh pull` wrap `bd dolt push` and `bd dolt pull`. Until `.17` lands the code
+  still uses `src/storage.rs`; do not extend that module beyond what an
+  in-flight task needs, and keep the domain and agreement layers
+  storage-agnostic.
+- **pstack interop, not imitation.** The generated `verify-<app>` skill must be
+  a valid pstack verification skill (`cursor/plugins/pstack`, skills
+  `create-verification-skill` and `maintain-verification-skill`): frontmatter
+  plus exactly four H2s per feature file, a pstack-shaped `features/README.md`,
+  `wh init --action import`, control-adapter driver vocabulary and a
+  show-me-your-work TSV export (`whetstone-k5r.38`). Whetstone keeps the
+  deterministic sweep and hygiene; the judgment pass is pstack's skill. Do not
+  write new judgment skills or reimplement pstack playbooks.
+
+M2 exit (`whetstone-k5r.20`) ends the epic's active scope; the former M3/M4
+children are deferred, not prerequisites.
 
 Do not restore old modules, commands, TUI, packs, generators, hooks, MCP server,
 compatibility aliases, Python runtime, fixtures, or packaging as shortcuts. Do
@@ -27,7 +50,10 @@ Authoritative references:
   (behaviour and visual world); `planning/direction-demo/smoke.mjs` validates it.
 - `PRODUCT.md` and `DESIGN.md`: product truth and the design tokens/rules the
   dashboard implements; `.impeccable/surfaces/` holds the surface brief.
-- `planning/skill-cli-boundary.md`: judgment versus deterministic work.
+- `planning/skill-cli-boundary.md`: skill, driver and kernel boundary, storage
+  and the pstack interop contract.
+- `planning/direction-demo/storage-spike.md`: ADR-0001 (direct Dolt), now
+  superseded by the Beads decision recorded at its head; kept as history.
 - `planning/direction-demo/prune-inventory.md`: R0 allowlist and recovery record.
 - `references/rule-schema.yaml`: temporary retained rule schema.
 - `references/signal-strategies.md`: deterministic signal constraints.
@@ -72,6 +98,11 @@ bd dolt push
 Use current Dolt-native collaboration, never legacy `bd sync` or a
 `beads-sync` branch. If local state is broken or another machine cannot see
 issues, use `./scripts/beads-repair.sh`.
+
+Beads is also becoming Whetstone's own record store (see the current boundary).
+Whetstone records in Beads are `record`, `decision` and `receipt` beads whose
+JSON metadata is validated on every read; never hand-edit their metadata with
+`bd update`, and never prune, compact or delete them to tidy the tracker.
 
 ## Design work
 

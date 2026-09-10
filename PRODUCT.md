@@ -30,6 +30,12 @@ state transitions, check execution, receipts) stays in typed services. Unknown,
 stale, skipped or unavailable evidence is never reported as success. Team
 policy needs independent review; local drafts stay private until pushed.
 
+Outputs for agents (2026-09-10): a generated, pstack-compatible verification
+skill with a feature map (one file per user-facing feature: sub-features, how
+a user reaches it, how to drive it, gotchas, plus the versioned "why" in
+frontmatter) and a small team-owned driver script. Records live in Beads
+(`bd`), not in a Whetstone-owned database and not in Git commits.
+
 ## Users and job
 
 Primary user: a software engineer or small engineering team lead who lives in
