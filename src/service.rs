@@ -1,6 +1,5 @@
 //! Shared command services used by CLI and future HTTP adapters.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -11,20 +10,20 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
+use crate::agreement::AgreementState;
 use crate::check;
 use crate::domain::{
     AgreementRecord, AuthorizationAxis, ContentDigest, CoreValue, Enforcement, EvidenceRef,
     ExternalRef, ExternalSystem, Freshness, Guidance, ImplementationPhilosophy, MetricDefinition,
     MetricDirection, Mission, PolicyStateSnapshot, PrincipalKind, PrincipalRef, Proposal,
-    ProposalState, Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId,
-    RecordRef, Scope, Standard, StandardStrength, VerificationAxis, VerificationReceipt,
-    SCHEMA_VERSION_V1,
+    ProposalState, Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, Scope,
+    Standard, StandardStrength, VerificationAxis, VerificationReceipt, SCHEMA_VERSION_V1,
 };
 use crate::history::{
-    AccessBoundary, HistoryCursor, HistoryError, HistoryInspection, HistoryInspectionRequest,
-    HistoryInspectionService, HistoryItem,
+    AccessBoundary, HistoryCursor, HistoryError, HistoryInspectionRequest, HistoryInspectionService,
 };
 use crate::onboarding;
+use crate::projection;
 use crate::storage::{AppendRequest, DoltRepository, ProjectLayout, StorageError, StoreKind};
 use crate::verification::{
     self, AttestationState, EvidencePointer, Finding, RequirementKind, SnapshotBinding,
@@ -76,14 +75,17 @@ impl DashRequest {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InitAction {
+    #[default]
     Inspect,
     Agree,
     Cancel,
+    /// Generate the verification skill and scaffold the driver.
+    Wire,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InitRequest {
     pub project_dir: PathBuf,
     pub request_id: Option<String>,
@@ -98,6 +100,14 @@ pub struct InitRequest {
     pub initial_safeguard: Option<String>,
     pub safeguard_scope: Option<String>,
     pub revision_triggers: Option<String>,
+    /// Command that enforces the first gate; recorded as a Standard.
+    pub gate_command: Option<String>,
+    /// Report exact writes without performing them (agree and wire).
+    pub dry_run: bool,
+    /// Agent hosts to project the verification skill into (wire).
+    pub hosts: Vec<String>,
+    /// Replace the team-owned driver with a fresh scaffold (wire).
+    pub regenerate_driver: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +118,14 @@ pub enum ChangeKind {
     Metric,
     Guidance,
     Standard,
+    Feature,
+}
+
+/// Explicit solo review of a pending local draft.
+#[derive(Debug, Clone)]
+pub struct ReviewRequest {
+    pub proposal: String,
+    pub verdict: crate::domain::LocalReviewVerdict,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,9 +144,31 @@ pub enum ChangeDefinition {
         strength: StandardStrength,
         enforcement: Enforcement,
     },
+    Feature {
+        summary: String,
+        area: String,
+        #[serde(default)]
+        sweep_order: u32,
+        #[serde(default)]
+        sub_features: Vec<String>,
+        user_path: String,
+        #[serde(default)]
+        drive_steps: Vec<String>,
+        proof: String,
+        #[serde(default)]
+        gotchas: Vec<String>,
+        #[serde(default)]
+        entry_points: Vec<String>,
+        #[serde(default)]
+        serves: Vec<RecordId>,
+        #[serde(default)]
+        constrained_by: Vec<RecordId>,
+        #[serde(default)]
+        proven_by: Vec<RecordId>,
+    },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ChangeRequest {
     pub project_dir: PathBuf,
     pub request_id: Option<String>,
@@ -148,6 +188,8 @@ pub struct ChangeRequest {
     pub expected_revision: Option<u64>,
     pub resume_token: Option<String>,
     pub preview: bool,
+    /// Accept or withdraw an existing draft instead of proposing content.
+    pub review: Option<ReviewRequest>,
 }
 
 #[derive(Debug, Clone)]
@@ -174,13 +216,31 @@ impl ChangeNarrative {
     }
 }
 
-#[derive(Debug, Clone)]
+/// Which in-force gates a check executes besides the compiled-in scanner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GateMode {
+    /// Every in-force gate (or those named by `rules`).
+    #[default]
+    All,
+    /// Gates proving features whose entry points cover changed paths.
+    Changed,
+    /// Every drive gate, in feature-map sweep order.
+    Sweep,
+    /// Scanner only; used inside repair sessions bound to the scanner snapshot.
+    None,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct CheckRequest {
     pub project_dir: PathBuf,
     pub request_id: Option<String>,
     pub paths: Vec<PathBuf>,
     pub language: Option<String>,
     pub rules: Vec<String>,
+    /// Feature ids whose proving gates should run.
+    pub features: Vec<String>,
+    pub gate_mode: GateMode,
+    pub timeout_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -262,6 +322,16 @@ pub struct ServiceResponse {
 }
 
 impl ServiceResponse {
+    /// Construct an envelope for workflows implemented outside this module.
+    pub fn new_public(
+        request_id: String,
+        workflow: &str,
+        state: ServiceState,
+        summary: impl Into<String>,
+    ) -> Self {
+        Self::new(request_id, workflow, state, summary)
+    }
+
     fn new(
         request_id: String,
         workflow: &str,
@@ -404,12 +474,53 @@ impl CommandService {
             Ok(progress) => (Some(progress), "available", None),
             Err(error) => (None, "unavailable", Some(error.to_string())),
         };
-        let current_projection = match progress
-            .as_ref()
-            .map(|progress| dashboard_current_projection(&layout, progress))
-            .transpose()
-        {
-            Ok(projection) => projection,
+        let agreement_state = if private_store_exists {
+            DoltRepository::open_existing(
+                &layout.store_path(StoreKind::Private),
+                StoreKind::Private,
+            )
+            .and_then(|repository| repository.all_records())
+            .map(|records| Some(AgreementState::from_records(records)))
+        } else {
+            Ok(Some(AgreementState::default()))
+        };
+        let current_projection = match (progress.as_ref(), agreement_state) {
+            (Some(progress), Ok(Some(state))) => {
+                let fingerprint = crate::gates::workspace_fingerprint(layout.project_root()).ok();
+                let evidence_root = crate::gates::evidence_root(&layout);
+                let view = projection::dashboard_view(
+                    &state,
+                    &projection::ProjectionInput {
+                        project_label: project_label(layout.project_root()),
+                        project_root: layout.project_root(),
+                        evidence_root: &evidence_root,
+                        agreement_complete: progress.agreement_complete,
+                        missing_decisions: &progress.missing_decisions,
+                        fingerprint: fingerprint.as_deref(),
+                        driver_path: crate::gates::driver_path(layout.project_root()),
+                        skill: crate::skill::read_manifest(&layout),
+                    },
+                );
+                let journal = projection::journal(&state, history.as_ref());
+                Ok(Some((view, journal)))
+            }
+            (None, _) => Ok(None),
+            (_, Ok(None)) => Ok(None),
+            (_, Err(error)) => Err(error),
+        };
+        let (current_projection, journal) = match current_projection {
+            Ok(Some((mut view, journal))) => {
+                view.latest_change =
+                    journal
+                        .iter()
+                        .find(|entry| entry.kind == "decision")
+                        .map(|entry| projection::LatestChange {
+                            title: entry.title.clone(),
+                            at: entry.recorded_at.clone(),
+                        });
+                (Some(view), journal)
+            }
+            Ok(None) => (None, Vec::new()),
             Err(_error) => {
                 response.state = ServiceState::Unknown;
                 response.summary =
@@ -420,7 +531,7 @@ impl CommandService {
                     locator: layout.store_path(StoreKind::Private).display().to_string(),
                     digest: None,
                 });
-                None
+                (None, Vec::new())
             }
         };
         if let Some(progress) = &progress {
@@ -430,15 +541,7 @@ impl CommandService {
                 .map(|decision| format!("What should the project's {decision} be?"))
                 .collect();
         }
-        if response.blocking_questions.is_empty() {
-            if let Some(prompt) = current_projection
-                .as_ref()
-                .and_then(|projection| projection.workspace.needed_decision.as_ref())
-            {
-                response.blocking_questions.push(prompt.question.clone());
-            }
-        }
-        let changelog = dashboard_changelog(history.as_ref());
+        let changelog = journal;
         response.data = json!({
             "setup": setup,
             "progress": progress,
@@ -469,7 +572,7 @@ impl CommandService {
             Err(error) => return project_error("init", request.request_id, error),
         };
         let request_id = match bounded_request_id(
-            request.request_id,
+            request.request_id.clone(),
             format!("init-{}", &layout.project_id()[..16]),
         ) {
             Ok(request_id) => request_id,
@@ -489,7 +592,10 @@ impl CommandService {
         // resume private storage. Doing this before the read-side progress
         // query makes an exact retry recover a process stop between `dolt
         // init` and schema migration; inspect and cancel remain write-free.
-        let private = if request.action == InitAction::Agree {
+        if request.action == InitAction::Wire {
+            return crate::skill::wire(&layout, request_id, &request);
+        }
+        let private = if request.action == InitAction::Agree && !request.dry_run {
             match DoltRepository::initialize(
                 &layout.store_path(StoreKind::Private),
                 StoreKind::Private,
@@ -546,9 +652,19 @@ impl CommandService {
         if request.action == InitAction::Inspect {
             return onboarding_inspection_response(request_id, resume, setup, progress);
         }
-        let private = private.expect("agreement action initializes private storage");
-        let existing_records = match init_idempotent_records(&private, &request_id) {
-            Ok(records) => records,
+        let private = private.or_else(|| {
+            DoltRepository::open_existing(
+                &layout.store_path(StoreKind::Private),
+                StoreKind::Private,
+            )
+            .ok()
+        });
+        let existing_records = match private
+            .as_ref()
+            .map(|private| init_idempotent_records(private, &request_id))
+            .transpose()
+        {
+            Ok(records) => records.unwrap_or_default(),
             Err(error) => return storage_error("init", request_id, error),
         };
         let retrying_same_request = !existing_records.is_empty();
@@ -589,8 +705,12 @@ impl CommandService {
                 "The onboarding answer does not target the current project revision.",
             );
         }
-        let stored_records = match private.all_records() {
-            Ok(records) => records,
+        let stored_records = match private
+            .as_ref()
+            .map(DoltRepository::all_records)
+            .transpose()
+        {
+            Ok(records) => records.unwrap_or_default(),
             Err(error) => return storage_error("init", request_id, error),
         };
         let current_mission = latest_record(&stored_records, "mission.project");
@@ -706,6 +826,46 @@ impl CommandService {
                 return needs_input("init", request_id, current_revision, resume, question);
             }
         };
+        let gate_command = match request
+            .gate_command
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(command) => match crate::gates::parse_command(command) {
+                Ok(_) if command.len() <= 1_000 => Some(command.to_string()),
+                Ok(_) => {
+                    return needs_input(
+                        "init",
+                        request_id,
+                        current_revision,
+                        resume,
+                        "The gate command exceeds 1000 bytes.".into(),
+                    )
+                }
+                Err(error) => {
+                    return needs_input("init", request_id, current_revision, resume, error)
+                }
+            },
+            None => None,
+        };
+        let initial_gate = gate_command.as_ref().map(|command| {
+            agreement_record(
+                &layout,
+                projection::INITIAL_GATE_ID,
+                format!("{request_id}:base-{target_revision}:gate"),
+                RecordBody::Standard(Standard {
+                    statement: initial_safeguard.clone(),
+                    rationale: format!("Owner-confirmed first gate for {safeguard_scope}."),
+                    strength: StandardStrength::Must,
+                    enforcement: Enforcement::Test {
+                        command_ref: command.clone(),
+                    },
+                    examples: Vec::new(),
+                }),
+                Some(&owner),
+            )
+        });
         let records = [
             agreement_record(
                 &layout,
@@ -752,7 +912,11 @@ impl CommandService {
                 Some(&owner),
             ),
         ];
-        let mut records = match records.into_iter().collect::<Result<Vec<_>, _>>() {
+        let mut records = match records
+            .into_iter()
+            .chain(initial_gate)
+            .collect::<Result<Vec<_>, _>>()
+        {
             Ok(records) => records,
             Err(error) => return domain_response("init", request_id, error),
         };
@@ -786,6 +950,9 @@ impl CommandService {
                         "initial safeguard" | "initial safeguard scope"
                     )
                 }),
+                projection::INITIAL_GATE_ID => {
+                    latest_record(&stored_records, projection::INITIAL_GATE_ID).is_none()
+                }
                 _ => false,
             });
             for record in &mut records {
@@ -823,7 +990,36 @@ impl CommandService {
                 }
             }
             references
+        } else if request.dry_run {
+            let mut response = ServiceResponse::new(
+                request_id,
+                "init",
+                ServiceState::NeedsDecision,
+                "Dry run: these exact private records would be written on agreement; nothing was written.",
+            );
+            response.expected_revision = Some(current_revision);
+            response.resume_token = Some(resume);
+            response.permitted_actions =
+                vec!["repeat the same request without --dry-run to record the agreement".into()];
+            response.data = json!({
+                "dry_run": true,
+                "records": records,
+                "effects": {
+                    "private_store_would_be_created": !layout.store_path(StoreKind::Private).exists(),
+                    "private_record_write_on_confirm": true,
+                    "team_share": false,
+                    "platform_configuration_writes": [],
+                },
+            });
+            return response;
         } else {
+            let Some(private) = private.as_ref() else {
+                return unknown_response(
+                    "init",
+                    request_id,
+                    "The private store is unavailable after initialization.".into(),
+                );
+            };
             let requests = records
                 .iter()
                 .map(|record| AppendRequest {
@@ -888,6 +1084,9 @@ impl CommandService {
             Ok(repository) => repository,
             Err(error) => return storage_error("change", request_id, error),
         };
+        if let Some(review) = request.review.clone() {
+            return review_draft(&layout, &private, request_id, &review, &request);
+        }
         let id_text = request.record_id.as_deref().unwrap_or("change.pending");
         let record_id = match RecordId::new(id_text) {
             Ok(id) => id,
@@ -904,22 +1103,37 @@ impl CommandService {
             &format!("{request_id}:{id_text}"),
             current_revision,
         );
-        if request.kind.is_none()
-            || request.record_id.is_none()
-            || request.content.is_none()
-            || request.rationale.is_none()
-            || request.source.is_none()
-            || request.expected_effect.is_none()
-            || request.impact.is_none()
-            || request.expected_revision.is_none()
-        {
+        let missing = [
+            ("--kind", request.kind.is_none()),
+            ("--record-id", request.record_id.is_none()),
+            ("--content", request.content.is_none()),
+            ("--rationale", request.rationale.is_none()),
+        ]
+        .into_iter()
+        .filter_map(|(flag, absent)| absent.then_some(flag))
+        .collect::<Vec<_>>();
+        if !missing.is_empty() || request.expected_revision.is_none() {
+            let question = if missing.is_empty() {
+                format!(
+                    "Base revision {current_revision} is ready. Repeat the same request with --expected-revision {current_revision} --resume {resume} to record it (add --dry-run to preview)."
+                )
+            } else {
+                format!(
+                    "Missing {}. Then repeat with --expected-revision {current_revision} --resume {resume}.",
+                    missing.join(", ")
+                )
+            };
             let mut response = needs_input(
                 "change",
                 request_id,
                 current_revision,
-                resume,
-                "Provide kind, record ID, content, rationale, source, expected effect, impact, expected revision, and the returned resume token.".into(),
+                resume.clone(),
+                question,
             );
+            response.permitted_actions = vec![format!(
+                "wh change --request-id {} --kind <kind> --record-id {} --content <text> --rationale <why> --expected-revision {current_revision} --resume {resume}",
+                response.request_id, id_text
+            )];
             response.data = json!({
                 "current_record": current,
                 "base_revision": current_revision,
@@ -1089,33 +1303,21 @@ impl CommandService {
             },
             None => None,
         };
-        let standard = request.kind == Some(ChangeKind::Standard);
         let mut response = ServiceResponse::new(
             request_id,
             "change",
-            if standard {
-                ServiceState::NeedsDecision
-            } else {
-                ServiceState::Success
-            },
-            if standard {
-                "The local standard draft was recorded, but checker design and independent approval are still required."
-            } else if idempotent_replay {
+            ServiceState::Success,
+            if idempotent_replay {
                 "The existing local draft was returned; no duplicate was created."
             } else {
-                "The local agreement draft was recorded; team policy is unchanged."
+                "The private draft was recorded. It is not in force until you accept it; nothing was shared."
             },
         );
         response.expected_revision = Some(record.revision);
-        response.permitted_actions = if standard {
-            response.blocking_questions = vec![
-                "Which trusted checker enforces this standard, and who independently approves it?"
-                    .into(),
-            ];
-            vec!["design the checker and submit the draft for independent approval".into()]
-        } else {
-            vec!["wh check".into(), "wh push".into()]
-        };
+        response.permitted_actions = vec![
+            format!("wh change --accept {}", proposal.id.as_str()),
+            format!("wh change --withdraw {}", proposal.id.as_str()),
+        ];
         response.data = json!({
             "record": reference,
             "proposal": proposal,
@@ -1138,11 +1340,11 @@ impl CommandService {
     }
 
     fn check(&self, request: CheckRequest) -> ServiceResponse {
-        if request.paths.len() > 64 || request.rules.len() > 64 {
+        if request.paths.len() > 64 || request.rules.len() > 64 || request.features.len() > 64 {
             return unknown_response(
                 "check",
                 "invalid-request".into(),
-                "A check accepts at most 64 paths and 64 rule filters.".into(),
+                "A check accepts at most 64 paths, 64 rule filters and 64 features.".into(),
             );
         }
         if request
@@ -1152,6 +1354,7 @@ impl CommandService {
             || request
                 .rules
                 .iter()
+                .chain(request.features.iter())
                 .any(|rule| rule.is_empty() || rule.len() > 256)
             || request.language.as_ref().is_some_and(|language| {
                 language.is_empty()
@@ -1160,12 +1363,14 @@ impl CommandService {
                         .chars()
                         .all(|character| character.is_ascii_alphanumeric() || character == '-')
             })
+            || request
+                .timeout_seconds
+                .is_some_and(|seconds| seconds == 0 || seconds > 3_600)
         {
             return unknown_response(
                 "check",
                 "invalid-request".into(),
-                "A check input exceeds its bound or contains an invalid language/rule filter."
-                    .into(),
+                "A check input exceeds its bound or contains an invalid language, rule, feature or timeout.".into(),
             );
         }
         let project = match request.project_dir.canonicalize() {
@@ -1179,7 +1384,7 @@ impl CommandService {
             }
         };
         let request_id = match bounded_request_id(
-            request.request_id,
+            request.request_id.clone(),
             format!(
                 "check-{:x}",
                 Sha256::digest(project.to_string_lossy().as_bytes())
@@ -1189,12 +1394,38 @@ impl CommandService {
             Ok(request_id) => request_id,
             Err(summary) => return unknown_response("check", "invalid-request-id".into(), summary),
         };
+        let layout = ProjectLayout::resolve(&project, None).ok();
+        let agreement = match layout.as_ref() {
+            Some(layout) if layout.store_path(StoreKind::Private).join(".dolt").is_dir() => {
+                match DoltRepository::open_existing(
+                    &layout.store_path(StoreKind::Private),
+                    StoreKind::Private,
+                )
+                .and_then(|repository| repository.all_records())
+                {
+                    Ok(records) => Some(AgreementState::from_records(records)),
+                    Err(error) => return storage_error("check", request_id, error),
+                }
+            }
+            _ => None,
+        };
+        let selection = match select_gates(agreement.as_ref(), &project, &request) {
+            Ok(selection) => selection,
+            Err(summary) => return unknown_response("check", request_id, summary),
+        };
+        let scanner_rules = request
+            .rules
+            .iter()
+            .filter(|rule| !selection.gate_ids.contains(rule.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let rules_only_name_gates = !request.rules.is_empty() && scanner_rules.is_empty();
         let requested_paths = if request.paths.is_empty() {
             vec![PathBuf::from(".")]
         } else {
             request.paths.clone()
         };
-        let (scan_paths, _relative_paths, snapshot) = match compute_check_snapshot(
+        let (scan_paths, _relative_paths, mut snapshot) = match compute_check_snapshot(
             &project,
             &requested_paths,
             request.language.as_deref(),
@@ -1203,7 +1434,21 @@ impl CommandService {
             Ok(snapshot) => snapshot,
             Err(error) => return unknown_response("check", request_id, error),
         };
-        let filter = (!request.rules.is_empty()).then_some(request.rules.as_slice());
+        if !selection.gates.is_empty() {
+            snapshot.environment = digest_json(&json!({
+                "os": std::env::consts::OS,
+                "arch": std::env::consts::ARCH,
+                "command_validators": false,
+                "owner_accepted_gates": true,
+            }));
+            snapshot.trust = digest_bytes(
+                format!(
+                    "{LEAN_BASELINE_REVISION}\0compiled-in-deterministic-scanner\0owner-accepted-gates-bounded-execution"
+                )
+                .as_bytes(),
+            );
+        }
+        let filter = (!scanner_rules.is_empty()).then_some(scanner_rules.as_slice());
         let result = check::run(check::CheckOptions {
             project_dir: &project,
             rules_dir: None,
@@ -1230,6 +1475,10 @@ impl CommandService {
         } else {
             AttestationState::Success
         };
+        // With owner-accepted gates, an empty scanner is simply not part of
+        // this check rather than an unknown requirement.
+        let include_native = !rules_only_name_gates
+            && (selection.gates.is_empty() || rules_applied > 0 || violations > 0);
         let native_summary = match native_state {
             AttestationState::Success => format!(
                 "The compiled-in scanner applied {rules_applied} rules to {files_scanned} files without violations."
@@ -1246,16 +1495,10 @@ impl CommandService {
         };
         let findings = scan_findings(&project, &result);
         let scan_digest = digest_json(&result);
-        let evaluated_at_unix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |duration| duration.as_secs());
-        let plan = VerificationPlan {
-            subject: format!(
-                "project:{:x}:check",
-                Sha256::digest(project.to_string_lossy().as_bytes())
-            ),
-            snapshot: snapshot.clone(),
-            requirements: vec![VerificationRequirement {
+        let mut requirements = Vec::new();
+        let mut evidence_items = Vec::new();
+        if include_native {
+            requirements.push(VerificationRequirement {
                 id: "whetstone.native-scan".into(),
                 kind: RequirementKind::NativeCheck,
                 required: true,
@@ -1268,24 +1511,166 @@ impl CommandService {
                     .into(),
                 verification_command: "wh check --json".into(),
                 freshness_seconds: 300,
-            }],
-        };
-        let evidence = TrustedEvidenceSet {
-            items: vec![VerificationEvidence::NativeCheck {
+            });
+            evidence_items.push(VerificationEvidence::NativeCheck {
                 requirement_id: "whetstone.native-scan".into(),
-                snapshot,
+                snapshot: snapshot.clone(),
                 state: native_state,
                 evidence: EvidencePointer {
                     source: "whetstone-compiled-in-scanner".into(),
                     locator: "local-project".into(),
-                    digest: scan_digest,
+                    digest: scan_digest.clone(),
                 },
-                observed_at_unix: evaluated_at_unix,
+                observed_at_unix: unix_now(),
                 summary: native_summary,
                 findings,
-            }],
+            });
+        }
+        // Execute selected in-force gates.
+        let fingerprint = match crate::gates::workspace_fingerprint(&project) {
+            Ok(value) => value,
+            Err(error) if !selection.gates.is_empty() => {
+                return unknown_response(
+                    "check",
+                    request_id,
+                    format!("The working tree could not be fingerprinted, so gate results could not be bound: {error}"),
+                )
+            }
+            Err(_) => String::new(),
         };
-        let report = match verification::aggregate(&plan, &evidence, evaluated_at_unix, &[]) {
+        let run_id = {
+            let digest = digest_bytes(
+                format!(
+                    "{request_id}\0{fingerprint}\0{}",
+                    selection
+                        .gates
+                        .iter()
+                        .map(|gate| gate.reference.digest.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+                .as_bytes(),
+            );
+            digest.as_str()["sha256:".len().."sha256:".len() + 16].to_string()
+        };
+        let mut outcomes = Vec::new();
+        let mut doctor = None;
+        if let (Some(layout), false) = (layout.as_ref(), selection.gates.is_empty()) {
+            let run_dir = crate::gates::evidence_root(layout).join(&run_id);
+            if let Err(error) = fs::create_dir_all(&run_dir) {
+                return unknown_response(
+                    "check",
+                    request_id,
+                    format!("The evidence directory could not be created: {error}"),
+                );
+            }
+            if selection
+                .gates
+                .iter()
+                .any(|gate| matches!(gate.standard.enforcement, Enforcement::Drive { .. }))
+            {
+                doctor = Some(crate::gates::run_doctor(&project, &run_dir));
+            }
+            let context = crate::gates::GateContext {
+                project_root: &project,
+                run_dir: &run_dir,
+                run_id: &run_id,
+                features: &selection.features,
+                doctor: doctor.as_ref(),
+                timeout: request.timeout_seconds.map_or(
+                    crate::gates::DEFAULT_GATE_TIMEOUT,
+                    std::time::Duration::from_secs,
+                ),
+            };
+            for gate in &selection.gates {
+                let outcome = crate::gates::run_gate(&context, &gate.id, &gate.standard);
+                let state = match outcome.state {
+                    VerificationAxis::Pass => AttestationState::Success,
+                    VerificationAxis::Fail => AttestationState::Violated,
+                    VerificationAxis::Unknown => AttestationState::Unknown,
+                };
+                let requirement_id = format!("gate:{}", gate.id.as_str());
+                let manifest = gate.reference.digest.clone();
+                requirements.push(VerificationRequirement {
+                    id: requirement_id.clone(),
+                    kind: RequirementKind::NativeCheck,
+                    required: gate.standard.strength == StandardStrength::Must,
+                    checker_manifest: Some(manifest.clone()),
+                    governing_records: vec![gate.reference.clone()],
+                    rationale: gate.standard.rationale.clone(),
+                    repair_direction: "Repair within the current task scope; never change or weaken the gate to pass it.".into(),
+                    permitted_next_action: format!("repair, then wh check --rule {}", gate.id.as_str()),
+                    verification_command: format!("wh check --rule {}", gate.id.as_str()),
+                    freshness_seconds: 3_600,
+                });
+                let evidence_digest = outcome
+                    .evidence
+                    .last()
+                    .and_then(|evidence| evidence.digest.clone())
+                    .unwrap_or_else(|| digest_bytes(outcome.summary.as_bytes()));
+                evidence_items.push(VerificationEvidence::Execution {
+                    requirement_id: requirement_id.clone(),
+                    snapshot: snapshot.clone(),
+                    receipt: Box::new(gate_execution_receipt(gate, &outcome, &manifest)),
+                    evidence: EvidencePointer {
+                        source: crate::projection::EVIDENCE_SYSTEM.into(),
+                        locator: outcome
+                            .evidence
+                            .last()
+                            .map_or_else(|| run_id.clone(), |evidence| evidence.locator.clone()),
+                        digest: evidence_digest,
+                    },
+                    observed_at_unix: unix_now(),
+                    findings: outcome
+                        .failures
+                        .iter()
+                        .map(|failure| gate_finding(gate, failure))
+                        .collect(),
+                });
+                let _ = state;
+                outcomes.push(outcome);
+            }
+        }
+        if requirements.is_empty() {
+            let summary = if selection.skipped_drafts.is_empty() {
+                "Nothing ran: no scanner rule or in-force gate applies, which is unknown, not a pass.".to_string()
+            } else {
+                format!(
+                    "Nothing ran: {} is a draft and cannot run until accepted; that is unknown, not a pass.",
+                    selection.skipped_drafts.join(", ")
+                )
+            };
+            let mut response =
+                ServiceResponse::new(request_id, "check", ServiceState::Unknown, summary);
+            response.permitted_actions = if selection.skipped_drafts.is_empty() {
+                vec!["record a gate with wh change --kind standard, then accept it".into()]
+            } else {
+                vec!["accept the draft with wh change --accept <proposal>, then wh check".into()]
+            };
+            response.data = json!({
+                "gates": [],
+                "selection": {
+                    "mode": format!("{:?}", request.gate_mode).to_ascii_lowercase(),
+                    "gates": [],
+                    "skipped_drafts": selection.skipped_drafts,
+                    "changed_paths": selection.changed_paths,
+                    "features_affected": selection.features_affected,
+                },
+            });
+            return response;
+        }
+        let plan = VerificationPlan {
+            subject: format!(
+                "project:{:x}:check",
+                Sha256::digest(project.to_string_lossy().as_bytes())
+            ),
+            snapshot: snapshot.clone(),
+            requirements,
+        };
+        let evidence = TrustedEvidenceSet {
+            items: evidence_items,
+        };
+        let report = match verification::aggregate(&plan, &evidence, unix_now(), &[]) {
             Ok(report) => report,
             Err(error) => {
                 return unknown_response(
@@ -1296,14 +1681,34 @@ impl CommandService {
             }
         };
         let checked_at = utc_now();
-        let receipt_record = match ProjectLayout::resolve(&project, None) {
-            Ok(layout) => {
-                match persist_verification_receipt(&layout, &request_id, &report, &checked_at) {
-                    Ok(reference) => reference,
-                    Err(error) => return storage_error("check", request_id, error),
+        let (receipt_record, gate_receipts) = match layout.as_ref() {
+            Some(layout) => {
+                let native = if include_native {
+                    match persist_verification_receipt(layout, &request_id, &report, &checked_at) {
+                        Ok(reference) => reference,
+                        Err(error) => return storage_error("check", request_id, error),
+                    }
+                } else {
+                    None
+                };
+                let mut gate_receipts = Vec::new();
+                for (gate, outcome) in selection.gates.iter().zip(&outcomes) {
+                    match persist_gate_receipt(
+                        layout,
+                        &run_id,
+                        gate,
+                        outcome,
+                        &fingerprint,
+                        &checked_at,
+                    ) {
+                        Ok(Some(reference)) => gate_receipts.push(reference),
+                        Ok(None) => {}
+                        Err(error) => return storage_error("check", request_id, error),
+                    }
                 }
+                (native, gate_receipts)
             }
-            Err(_) => None,
+            None => (None, Vec::new()),
         };
         let state = service_state(report.state);
         let mut response = ServiceResponse::new(request_id, "check", state, report.human_summary());
@@ -1320,21 +1725,239 @@ impl CommandService {
             locator: "local-project".into(),
             digest: Some(report.receipt_id.as_str().into()),
         }];
+        for outcome in &outcomes {
+            for evidence in &outcome.evidence {
+                response.evidence.push(ServiceEvidence {
+                    kind: format!("gate:{}", outcome.id),
+                    locator: evidence.locator.clone(),
+                    digest: evidence
+                        .digest
+                        .as_ref()
+                        .map(|digest| digest.as_str().to_string()),
+                });
+            }
+        }
         response.permitted_actions = match state {
             ServiceState::Success => vec!["handoff the verified result".into()],
             ServiceState::Violated => {
-                vec!["repair within the current task scope, then wh check".into()]
+                let failing = outcomes
+                    .iter()
+                    .filter(|outcome| outcome.state == VerificationAxis::Fail)
+                    .map(|outcome| format!("repair, then wh check --rule {}", outcome.id))
+                    .collect::<Vec<_>>();
+                if failing.is_empty() {
+                    vec!["repair within the current task scope, then wh check".into()]
+                } else {
+                    failing
+                }
             }
-            _ => vec!["restore the required policy/checker, then wh check".into()],
+            _ => vec!["restore the required policy, checker or driver, then wh check".into()],
         };
         response.data = json!({
             "report": report,
             "raw_scan": result,
-            "receipt_persisted": receipt_record.is_some(),
+            "scanner_included": include_native,
+            "receipt_persisted": receipt_record.is_some() || !gate_receipts.is_empty(),
             "receipt_record": receipt_record,
+            "gate_receipts": gate_receipts,
+            "gates": outcomes,
+            "run_id": if selection.gates.is_empty() { None } else { Some(run_id) },
+            "evidence_root": layout.as_ref().map(|layout| crate::gates::evidence_root(layout).display().to_string()),
+            "doctor": doctor,
+            "selection": {
+                "mode": format!("{:?}", request.gate_mode).to_ascii_lowercase(),
+                "gates": selection.gates.iter().map(|gate| gate.id.as_str()).collect::<Vec<_>>(),
+                "skipped_drafts": selection.skipped_drafts,
+                "changed_paths": selection.changed_paths,
+                "features_affected": selection.features_affected,
+            },
         });
         response
     }
+}
+
+fn review_draft(
+    layout: &ProjectLayout,
+    private: &DoltRepository,
+    request_id: String,
+    review: &ReviewRequest,
+    request: &ChangeRequest,
+) -> ServiceResponse {
+    use crate::domain::{LocalReview, LocalReviewVerdict, LOCAL_REVIEW_ASSURANCE};
+    let key = format!("review:{request_id}");
+    match private.by_idempotency_key(&key) {
+        Ok(Some(existing)) => {
+            let mut response = ServiceResponse::new(
+                request_id,
+                "change",
+                ServiceState::Success,
+                "The existing review was returned; no duplicate was created.",
+            );
+            response.data = json!({"review": existing.reference().ok(), "idempotent_replay": true});
+            return response;
+        }
+        Ok(None) => {}
+        Err(error) => return storage_error("change", request_id, error),
+    }
+    let records = match private.all_records() {
+        Ok(records) => records,
+        Err(error) => return storage_error("change", request_id, error),
+    };
+    let state = AgreementState::from_records(records);
+    let pending = state.pending_proposals();
+    let Some(target) = pending
+        .iter()
+        .find(|pending| pending.proposal.id.as_str() == review.proposal)
+    else {
+        let mut response = needs_input(
+            "change",
+            request_id,
+            0,
+            String::new(),
+            if pending.is_empty() {
+                format!(
+                    "{} is not a pending draft; nothing awaits review.",
+                    review.proposal
+                )
+            } else {
+                format!(
+                    "{} is not a pending draft. Pending: {}.",
+                    review.proposal,
+                    pending
+                        .iter()
+                        .map(|pending| pending.proposal.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            },
+        );
+        response.expected_revision = None;
+        response.resume_token = None;
+        response.data = json!({
+            "pending": pending.iter().map(|pending| json!({
+                "proposal": pending.proposal.id.as_str(),
+                "title": projection::record_title(pending.proposal),
+            })).collect::<Vec<_>>(),
+        });
+        return response;
+    };
+    let proposal_ref = match target.proposal.reference() {
+        Ok(reference) => reference,
+        Err(error) => return domain_response("change", request_id, error),
+    };
+    let rationale = request
+        .rationale
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map_or_else(
+            || match review.verdict {
+                LocalReviewVerdict::Accept => "Explicit solo acceptance by the owner.".to_string(),
+                LocalReviewVerdict::Withdraw => "Withdrawn by the owner.".to_string(),
+            },
+            |value| value.chars().take(4_000).collect(),
+        );
+    let reviewer = target.proposal.owner.clone();
+    let suffix = &format!("{:x}", Sha256::digest(key.as_bytes()))[..24];
+    let record = AgreementRecord {
+        schema_version: SCHEMA_VERSION_V1,
+        id: match RecordId::new(format!("review.{suffix}")) {
+            Ok(id) => id,
+            Err(error) => return domain_response("change", request_id, error),
+        },
+        revision: 1,
+        scope: target.proposal.scope.clone(),
+        owner: reviewer.clone(),
+        provenance: Provenance {
+            kind: ProvenanceKind::HumanAuthored,
+            recorded_by: reviewer.clone(),
+            recorded_at: utc_now(),
+            sources: vec![EvidenceRef {
+                system: "whetstone_cli".into(),
+                locator: "explicit_owner_review".into(),
+                digest: None,
+            }],
+            authority: ProvenanceAuthority::OwnerAuthored,
+        },
+        supersedes: None,
+        idempotency_key: key,
+        body: RecordBody::LocalReview(LocalReview {
+            proposal: proposal_ref.clone(),
+            verdict: review.verdict,
+            reviewer,
+            assurance: LOCAL_REVIEW_ASSURANCE.into(),
+            rationale: rationale.clone(),
+            reviewed_at: utc_now(),
+            team_activation_permitted: false,
+        }),
+    };
+    let candidates = target
+        .candidates
+        .iter()
+        .map(|candidate| {
+            json!({
+                "record": candidate.id.as_str(),
+                "version": candidate.revision,
+                "title": projection::record_title(candidate),
+                "replaces": state.in_force(&candidate.id).map(|current| current.revision),
+            })
+        })
+        .collect::<Vec<_>>();
+    let verb = match review.verdict {
+        LocalReviewVerdict::Accept => "accept",
+        LocalReviewVerdict::Withdraw => "withdraw",
+    };
+    if request.preview {
+        let mut response = ServiceResponse::new(
+            request_id,
+            "change",
+            ServiceState::NeedsDecision,
+            format!("Review the exact effect before you {verb} this draft."),
+        );
+        response.permitted_actions = vec!["repeat without --dry-run to record the review".into()];
+        response.data = json!({
+            "preview_only": true,
+            "proposal": proposal_ref,
+            "verdict": verb,
+            "candidates": candidates,
+            "effects": {
+                "private_record_write_on_confirm": true,
+                "becomes_in_force": review.verdict == LocalReviewVerdict::Accept,
+                "team_share": false,
+                "team_activation": false,
+            },
+        });
+        return response;
+    }
+    let reference = match private.append(&record, None) {
+        Ok(reference) => reference,
+        Err(error) => return storage_error("change", request_id, error),
+    };
+    let _ = layout;
+    let mut response = ServiceResponse::new(
+        request_id,
+        "change",
+        ServiceState::Success,
+        match review.verdict {
+            LocalReviewVerdict::Accept => {
+                "The draft was accepted locally and is now in force for this private agreement; nothing was shared or activated for a team."
+            }
+            LocalReviewVerdict::Withdraw => {
+                "The draft was withdrawn; the previously accepted record stays in force."
+            }
+        },
+    );
+    response.permitted_actions = vec!["wh check".into(), "wh init --action wire".into()];
+    response.data = json!({
+        "review": reference,
+        "proposal": proposal_ref,
+        "verdict": verb,
+        "candidates": candidates,
+        "rationale": rationale,
+        "shared": false,
+        "team_activation": false,
+    });
+    response
 }
 
 fn init_idempotent_records(
@@ -1395,891 +2018,6 @@ struct OnboardingProgress {
     shared: bool,
     platform_configuration_writes: Vec<String>,
     lean_baseline_revision: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DashboardAgreementProjection {
-    state: String,
-    team_activation: String,
-    mission: Option<AgreementRecord>,
-    core_values: Option<AgreementRecord>,
-    implementation_philosophy: Option<AgreementRecord>,
-    initial_safeguard: Option<AgreementRecord>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DashboardFoundationNode {
-    kind: String,
-    parent: Option<String>,
-    relationship: String,
-    label: String,
-    content: String,
-    detail: Option<String>,
-    state: String,
-    reference: Option<RecordRef>,
-    owner: Option<String>,
-    changed_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DashboardMetricSummary {
-    reference: RecordRef,
-    name: String,
-    rationale: String,
-    source: EvidenceRef,
-    cohort: String,
-    window: String,
-    direction: String,
-    threshold: String,
-    freshness_seconds: u64,
-    lifecycle: String,
-    state: String,
-    latest_observation: Option<AgreementRecord>,
-    owner: Option<String>,
-    changed_at: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DashboardControlSummary {
-    reference: RecordRef,
-    kind: String,
-    statement: String,
-    rationale: String,
-    strength: Option<String>,
-    mechanism: String,
-    scope: String,
-    lifecycle: String,
-    execution: String,
-    currentness: String,
-    last_checked: Option<String>,
-    owner: Option<String>,
-    changed_at: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DashboardAttentionItem {
-    priority: u8,
-    kind: String,
-    title: String,
-    explanation: String,
-    actor: String,
-    route: String,
-    permitted_next_action: String,
-    agent_instruction: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DashboardChangeGroup {
-    id: String,
-    recorded_at: String,
-    title: String,
-    summary: String,
-    status: String,
-    owner: Option<String>,
-    area: String,
-    records: Vec<HistoryItem>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DashboardWorkspaceProjection {
-    latest_verification: Option<AgreementRecord>,
-    verification_currentness: String,
-    latest_repair: Option<AgreementRecord>,
-    repair_currentness: String,
-    latest_observation: Option<AgreementRecord>,
-    required_policy: String,
-    installed_state: String,
-    experimental_local_drafts: usize,
-    delivered_context_revision: Option<String>,
-    needed_decision: Option<DashboardDecisionPrompt>,
-    next_action: Option<DashboardNextAction>,
-    pending_operations: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DashboardDecisionPrompt {
-    question: String,
-    owner: String,
-    consequence: String,
-    permitted_next_action: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DashboardNextAction {
-    title: String,
-    explanation: String,
-    actor: String,
-    permitted_next_action: String,
-    route: String,
-    agent_instruction: Option<String>,
-}
-
-fn dashboard_next_action(
-    has_needed_decision: bool,
-    has_repair_proof: bool,
-    draft_count: usize,
-    project_root: &Path,
-    safeguard: &str,
-) -> Option<DashboardNextAction> {
-    if has_needed_decision {
-        None
-    } else if !has_repair_proof {
-        Some(DashboardNextAction {
-            title: "Test your first safeguard".into(),
-            explanation: "Your project agreement is saved. An agent still needs to show that the safeguard catches a known issue, repairs it within existing permissions, and passes the same check afterward.".into(),
-            actor: "your coding agent".into(),
-            permitted_next_action: "Give the repair-proof handoff to your agent; return here when it has produced a result for review.".into(),
-            route: "enforcement".into(),
-            agent_instruction: Some(format!(
-                "In {}, use Whetstone to prove this safeguard: {safeguard}. Run one scoped known-bad to authorized-repair to exact-recheck loop within current permissions. Return failures to the same worker and stop for an owner decision when blocked. Reopen wh dash after recording the proof.",
-                project_root.display()
-            )),
-        })
-    } else if draft_count > 0 {
-        Some(DashboardNextAction {
-            title: format!("Inspect your {draft_count} local draft proposal(s)"),
-            explanation: "These drafts remain private and inactive until deliberately reviewed."
-                .into(),
-            actor: "project owner".into(),
-            permitted_next_action: "Open Decisions to inspect the exact drafts and their impact."
-                .into(),
-            route: "decisions".into(),
-            agent_instruction: None,
-        })
-    } else {
-        None
-    }
-}
-
-fn dashboard_record_state(record: &AgreementRecord, draft_records: &BTreeSet<RecordRef>) -> String {
-    match record.reference() {
-        Ok(reference) if draft_records.contains(&reference) => "local_draft",
-        _ => "current",
-    }
-    .into()
-}
-
-#[allow(clippy::too_many_arguments)]
-fn dashboard_foundation_node(
-    kind: &str,
-    parent: Option<&str>,
-    relationship: &str,
-    label: &str,
-    record: Option<&AgreementRecord>,
-    content: Option<String>,
-    detail: Option<String>,
-    draft_records: &BTreeSet<RecordRef>,
-) -> DashboardFoundationNode {
-    DashboardFoundationNode {
-        kind: kind.into(),
-        parent: parent.map(str::to_owned),
-        relationship: relationship.into(),
-        label: label.into(),
-        content: content.unwrap_or_else(|| "Not established".into()),
-        detail,
-        state: record
-            .map(|record| dashboard_record_state(record, draft_records))
-            .unwrap_or_else(|| "missing".into()),
-        reference: record.and_then(|record| record.reference().ok()),
-        owner: record.and_then(|record| record.owner.display_name.clone()),
-        changed_at: record.map(|record| record.provenance.recorded_at.clone()),
-    }
-}
-
-fn standard_mechanism(standard: &crate::domain::Standard) -> String {
-    match &standard.enforcement {
-        crate::domain::Enforcement::Ast { query } => format!("AST query: {query}"),
-        crate::domain::Enforcement::LintProxy { tool, code } => {
-            format!("{tool} rule {code}")
-        }
-        crate::domain::Enforcement::Formatter { tool } => format!("Formatter: {tool}"),
-        crate::domain::Enforcement::Test { command_ref } => format!("Test: {command_ref}"),
-        crate::domain::Enforcement::Validator { command_ref } => {
-            format!("Validator: {command_ref}")
-        }
-    }
-}
-
-fn dashboard_attention_items(
-    needed_decision: Option<&DashboardDecisionPrompt>,
-    metrics: &[DashboardMetricSummary],
-    controls: &[DashboardControlSummary],
-    has_repair_proof: bool,
-    draft_count: usize,
-    next_action: Option<&DashboardNextAction>,
-) -> Vec<DashboardAttentionItem> {
-    let mut items = Vec::new();
-    if let Some(decision) = needed_decision {
-        items.push(DashboardAttentionItem {
-            priority: 0,
-            kind: "human_decision".into(),
-            title: decision.question.clone(),
-            explanation: decision.consequence.clone(),
-            actor: decision.owner.clone(),
-            route: "foundations".into(),
-            permitted_next_action: decision.permitted_next_action.clone(),
-            agent_instruction: None,
-        });
-    }
-    if metrics.is_empty() {
-        items.push(DashboardAttentionItem {
-            priority: 1,
-            kind: "human_decision".into(),
-            title: "No key metric is defined".into(),
-            explanation: "Whetstone cannot show whether the mission is succeeding without a versioned metric definition and source.".into(),
-            actor: "project owner".into(),
-            route: "foundations".into(),
-            permitted_next_action: "Define a mission-linked metric without treating an engineering gate as an outcome.".into(),
-            agent_instruction: None,
-        });
-    }
-    if !controls.iter().any(|control| control.kind == "standard") {
-        items.push(DashboardAttentionItem {
-            priority: 1,
-            kind: "human_decision".into(),
-            title: "No validation gate is defined".into(),
-            explanation: "Whetstone cannot deterministically enforce the engineering philosophy until a trusted mechanism is recorded and independently activated.".into(),
-            actor: "project owner".into(),
-            route: "foundations".into(),
-            permitted_next_action: "Define a deterministic gate; keep it a local draft until its checker and reviewer are known.".into(),
-            agent_instruction: None,
-        });
-    }
-    for metric in metrics.iter().filter(|metric| metric.state != "fresh") {
-        items.push(DashboardAttentionItem {
-            priority: 1,
-            kind: "outcome_signal".into(),
-            title: format!("{} is {}", metric.name, metric.state.replace('_', " ")),
-            explanation: format!(
-                "Target {} over {}; source {}:{}.",
-                metric.threshold, metric.window, metric.source.system, metric.source.locator
-            ),
-            actor: metric
-                .owner
-                .clone()
-                .unwrap_or_else(|| "metric owner".into()),
-            route: "foundations".into(),
-            permitted_next_action:
-                "Inspect the metric source or revise the definition through review.".into(),
-            agent_instruction: None,
-        });
-    }
-    for control in controls
-        .iter()
-        .filter(|control| control.kind == "standard" && control.execution != "pass")
-    {
-        items.push(DashboardAttentionItem {
-            priority: if control.execution == "fail" { 0 } else { 1 },
-            kind: "validation_gate".into(),
-            title: format!(
-                "{} is {}",
-                control.statement,
-                control.execution.replace('_', " ")
-            ),
-            explanation: format!("{} · {}", control.scope, control.mechanism),
-            actor: control
-                .owner
-                .clone()
-                .unwrap_or_else(|| "control owner".into()),
-            route: "enforcement".into(),
-            permitted_next_action:
-                "Inspect evidence, repair within scope, and run the exact check again.".into(),
-            agent_instruction: None,
-        });
-    }
-    if !has_repair_proof {
-        if let Some(action) = next_action {
-            items.push(DashboardAttentionItem {
-                priority: 2,
-                kind: "repair_proof".into(),
-                title: action.title.clone(),
-                explanation: action.explanation.clone(),
-                actor: action.actor.clone(),
-                route: action.route.clone(),
-                permitted_next_action: action.permitted_next_action.clone(),
-                agent_instruction: action.agent_instruction.clone(),
-            });
-        }
-    } else if draft_count > 0 {
-        if let Some(action) = next_action {
-            items.push(DashboardAttentionItem {
-                priority: 2,
-                kind: "local_draft".into(),
-                title: action.title.clone(),
-                explanation: action.explanation.clone(),
-                actor: action.actor.clone(),
-                route: action.route.clone(),
-                permitted_next_action: action.permitted_next_action.clone(),
-                agent_instruction: action.agent_instruction.clone(),
-            });
-        }
-    }
-    items.sort_by(|left, right| {
-        (left.priority, left.title.as_str()).cmp(&(right.priority, right.title.as_str()))
-    });
-    items
-}
-
-fn changelog_key(record: &AgreementRecord) -> String {
-    let key = record
-        .idempotency_key
-        .strip_suffix(":proposal")
-        .unwrap_or(&record.idempotency_key);
-    key.find(":base-")
-        .map_or_else(|| key.to_string(), |index| key[..index].to_string())
-}
-
-fn changelog_area(record: &AgreementRecord) -> &'static str {
-    match record.body {
-        RecordBody::Mission(_)
-        | RecordBody::CoreValue(_)
-        | RecordBody::ImplementationPhilosophy(_) => "foundations",
-        RecordBody::MetricDefinition(_) | RecordBody::ObservationReceipt(_) => "metrics",
-        RecordBody::Standard(_)
-        | RecordBody::Guidance(_)
-        | RecordBody::VerificationReceipt(_)
-        | RecordBody::RepairSession(_)
-        | RecordBody::RepairHandoff(_)
-        | RecordBody::RepairAuthorityReservation(_)
-        | RecordBody::RepairOperationClaim(_) => "rules_and_gates",
-        _ => "governance",
-    }
-}
-
-fn changelog_record_title(record: &AgreementRecord) -> String {
-    match &record.body {
-        RecordBody::Mission(_) => "Mission changed".into(),
-        RecordBody::CoreValue(_) => "Core values changed".into(),
-        RecordBody::ImplementationPhilosophy(_) => "Engineering philosophy changed".into(),
-        RecordBody::MetricDefinition(metric) => format!("Metric changed: {}", metric.name),
-        RecordBody::Standard(standard) => {
-            format!("Validation gate changed: {}", standard.statement)
-        }
-        RecordBody::Guidance(guidance) => format!("Guidance changed: {}", guidance.statement),
-        RecordBody::Proposal(proposal) => proposal.title.clone(),
-        RecordBody::Decision(decision) => {
-            format!("Proposal {:?}", decision.verdict).to_ascii_lowercase()
-        }
-        RecordBody::Activation(_) => "Policy activated".into(),
-        RecordBody::Retirement(_) => "Policy retired".into(),
-        _ => "Governance record changed".into(),
-    }
-}
-
-fn dashboard_changelog(history: Option<&HistoryInspection>) -> Vec<DashboardChangeGroup> {
-    let Some(history) = history else {
-        return Vec::new();
-    };
-    let mut grouped = BTreeMap::<String, Vec<HistoryItem>>::new();
-    for item in &history.decision_history.items {
-        let Some(record) = item.record.as_ref() else {
-            grouped
-                .entry(format!(
-                    "redacted:{}:{}",
-                    item.reference.id.as_str(),
-                    item.reference.revision
-                ))
-                .or_default()
-                .push(item.clone());
-            continue;
-        };
-        if matches!(
-            record.body,
-            RecordBody::VerificationReceipt(_)
-                | RecordBody::ObservationReceipt(_)
-                | RecordBody::RepairSession(_)
-                | RecordBody::RepairHandoff(_)
-                | RecordBody::RepairAuthorityReservation(_)
-                | RecordBody::RepairOperationClaim(_)
-        ) {
-            continue;
-        }
-        grouped
-            .entry(changelog_key(record))
-            .or_default()
-            .push(item.clone());
-    }
-    let mut result = grouped
-        .into_iter()
-        .map(|(id, mut items)| {
-            items.sort_by(|left, right| {
-                (
-                    left.recorded_at.as_str(),
-                    left.reference.id.as_str(),
-                    left.reference.revision,
-                )
-                    .cmp(&(
-                        right.recorded_at.as_str(),
-                        right.reference.id.as_str(),
-                        right.reference.revision,
-                    ))
-            });
-            let recorded_at = items
-                .iter()
-                .map(|item| item.recorded_at.as_str())
-                .max()
-                .unwrap_or_default()
-                .to_string();
-            let records = items
-                .iter()
-                .filter_map(|item| item.record.as_ref())
-                .collect::<Vec<_>>();
-            let proposal = records.iter().find_map(|record| match &record.body {
-                RecordBody::Proposal(proposal) => Some(proposal),
-                _ => None,
-            });
-            let decision = records.iter().find_map(|record| match &record.body {
-                RecordBody::Decision(decision) => Some(decision),
-                _ => None,
-            });
-            let initial_foundations = records.len() > 1
-                && records.iter().all(|record| {
-                    matches!(
-                        record.body,
-                        RecordBody::Mission(_)
-                            | RecordBody::CoreValue(_)
-                            | RecordBody::ImplementationPhilosophy(_)
-                            | RecordBody::Guidance(_)
-                    )
-                });
-            let title = if initial_foundations {
-                "Project foundations established".into()
-            } else if let Some(proposal) = proposal {
-                proposal.title.clone()
-            } else {
-                records.last().map_or_else(
-                    || "Unavailable historical record".into(),
-                    |record| changelog_record_title(record),
-                )
-            };
-            let summary = if initial_foundations {
-                "Added the mission, core values, engineering philosophy, and initial safeguard."
-                    .into()
-            } else if let Some(proposal) = proposal {
-                proposal.rationale.clone()
-            } else if let Some(decision) = decision {
-                decision.rationale.clone()
-            } else {
-                "The exact before and after records are available below.".into()
-            };
-            let status = if let Some(decision) = decision {
-                format!("{:?}", decision.verdict).to_ascii_lowercase()
-            } else if let Some(proposal) = proposal {
-                format!("{:?}", proposal.state).to_ascii_lowercase()
-            } else if records.iter().any(|record| record.supersedes.is_some()) {
-                "changed".into()
-            } else {
-                "added".into()
-            };
-            let owner = records
-                .last()
-                .and_then(|record| record.owner.display_name.clone());
-            let area = records
-                .last()
-                .map_or("governance", |record| changelog_area(record))
-                .into();
-            DashboardChangeGroup {
-                id,
-                recorded_at,
-                title,
-                summary,
-                status,
-                owner,
-                area,
-                records: items,
-            }
-        })
-        .collect::<Vec<_>>();
-    result.sort_by(|left, right| {
-        (right.recorded_at.as_str(), right.id.as_str())
-            .cmp(&(left.recorded_at.as_str(), left.id.as_str()))
-    });
-    result
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DashboardCurrentProjection {
-    local_agreement: DashboardAgreementProjection,
-    workspace: DashboardWorkspaceProjection,
-    foundations: Vec<DashboardFoundationNode>,
-    metrics: Vec<DashboardMetricSummary>,
-    controls: Vec<DashboardControlSummary>,
-    attention_items: Vec<DashboardAttentionItem>,
-}
-
-fn dashboard_current_projection(
-    layout: &ProjectLayout,
-    progress: &OnboardingProgress,
-) -> Result<DashboardCurrentProjection, StorageError> {
-    let store_path = layout.store_path(StoreKind::Private);
-    if !store_path.join(".dolt").is_dir() {
-        return Ok(DashboardCurrentProjection {
-            local_agreement: DashboardAgreementProjection {
-                state: "not_initialized".into(),
-                team_activation: "not_configured".into(),
-                mission: None,
-                core_values: None,
-                implementation_philosophy: None,
-                initial_safeguard: None,
-            },
-            workspace: DashboardWorkspaceProjection {
-                latest_verification: None,
-                verification_currentness: "unknown_without_check".into(),
-                latest_repair: None,
-                repair_currentness: "unproven".into(),
-                latest_observation: None,
-                required_policy: "not_configured".into(),
-                installed_state: "not_installed".into(),
-                experimental_local_drafts: 0,
-                delivered_context_revision: None,
-                needed_decision: Some(DashboardDecisionPrompt {
-                    question: "What mission, values, philosophy, owner, safeguard, scope, and revision triggers should govern this project?".into(),
-                    owner: "project owner (not yet identified)".into(),
-                    consequence: "The private project agreement remains incomplete and no initial safeguard can be treated as accepted.".into(),
-                    permitted_next_action: "review and confirm the eight wh init owner decisions".into(),
-                }),
-                next_action: None,
-                pending_operations: vec!["complete the explicit private onboarding agreement".into()],
-            },
-            foundations: Vec::new(),
-            metrics: Vec::new(),
-            controls: Vec::new(),
-            attention_items: vec![DashboardAttentionItem {
-                priority: 0,
-                kind: "human_decision".into(),
-                title: "Establish the project foundations".into(),
-                explanation: "Mission, values, success measures, engineering philosophy, and safeguards are not established.".into(),
-                actor: "project owner".into(),
-                route: "foundations".into(),
-                permitted_next_action: "Complete the private project agreement.".into(),
-                agent_instruction: None,
-            }],
-        });
-    }
-    let repository = DoltRepository::open_existing(&store_path, StoreKind::Private)?;
-    let records = repository.all_records()?;
-    let draft_records = records
-        .iter()
-        .filter_map(|record| match &record.body {
-            RecordBody::Proposal(proposal) if proposal.state == ProposalState::Draft => {
-                Some(proposal.proposed_records.iter().cloned())
-            }
-            _ => None,
-        })
-        .flatten()
-        .collect::<BTreeSet<_>>();
-    let canonical = |id: &str| -> Result<Option<AgreementRecord>, StorageError> {
-        let id = RecordId::new(id).map_err(StorageError::Domain)?;
-        repository.latest(&id)
-    };
-    let latest_matching = |predicate: fn(&RecordBody) -> bool| {
-        records
-            .iter()
-            .filter(|record| predicate(&record.body))
-            .max_by(|left, right| {
-                (
-                    left.provenance.recorded_at.as_str(),
-                    left.id.as_str(),
-                    left.revision,
-                )
-                    .cmp(&(
-                        right.provenance.recorded_at.as_str(),
-                        right.id.as_str(),
-                        right.revision,
-                    ))
-            })
-            .cloned()
-    };
-    let latest_verification =
-        latest_matching(|body| matches!(body, RecordBody::VerificationReceipt(_)));
-    let latest_repair = latest_matching(|body| matches!(body, RecordBody::RepairSession(_)));
-    let latest_observation =
-        latest_matching(|body| matches!(body, RecordBody::ObservationReceipt(_)));
-    let repair_current = match (&latest_repair, &progress.repair_proof) {
-        (Some(record), Some(proof)) => record
-            .reference()
-            .is_ok_and(|reference| &reference == proof),
-        _ => false,
-    };
-    let draft_count = records
-        .iter()
-        .filter(|record| {
-            matches!(
-                &record.body,
-                RecordBody::Proposal(proposal) if proposal.state == ProposalState::Draft
-            )
-        })
-        .count();
-    let mut pending_operations = progress.missing_decisions.clone();
-    if progress.repair_proof.is_none() {
-        pending_operations.push("prove one current known-bad repair and exact recheck".into());
-    }
-    if draft_count > 0 {
-        pending_operations.push(format!("review {draft_count} local draft proposal(s)"));
-    }
-    let mission = canonical("mission.project")?;
-    let values = canonical("value.core")?;
-    let philosophy = canonical("philosophy.implementation")?;
-    let initial_safeguard = canonical("guidance.initial-safeguard")?;
-    let needed_decision =
-        progress
-            .missing_decisions
-            .first()
-            .map(|decision| DashboardDecisionPrompt {
-                question: format!("What should the project's {decision} be?"),
-                owner: mission
-                    .as_ref()
-                    .and_then(|record| record.owner.display_name.clone())
-                    .unwrap_or_else(|| "project owner (not yet identified)".into()),
-                consequence: format!(
-                "The private agreement remains incomplete until {decision} is explicitly confirmed."
-            ),
-                permitted_next_action:
-                    "review the exact onboarding proposal, then confirm or cancel it".into(),
-            });
-    let safeguard = initial_safeguard
-        .as_ref()
-        .and_then(|record| match &record.body {
-            RecordBody::Guidance(guidance) => Some(guidance.statement.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| "the accepted initial safeguard".into());
-    let next_action = dashboard_next_action(
-        needed_decision.is_some(),
-        progress.repair_proof.is_some(),
-        draft_count,
-        layout.project_root(),
-        &safeguard,
-    );
-    let mut visible_by_id = BTreeMap::<&str, &AgreementRecord>::new();
-    for record in &records {
-        if matches!(
-            record.body,
-            RecordBody::MetricDefinition(_) | RecordBody::Standard(_) | RecordBody::Guidance(_)
-        ) && visible_by_id
-            .get(record.id.as_str())
-            .map_or(true, |current| current.revision < record.revision)
-        {
-            visible_by_id.insert(record.id.as_str(), record);
-        }
-    }
-    let visible_records = visible_by_id.into_values().collect::<Vec<_>>();
-    let mut metrics = Vec::new();
-    let mut controls = Vec::new();
-    for record in visible_records {
-        let Ok(reference) = record.reference() else {
-            continue;
-        };
-        match &record.body {
-            RecordBody::MetricDefinition(metric) => {
-                let observation = records
-                    .iter()
-                    .filter(|candidate| {
-                        matches!(&candidate.body, RecordBody::ObservationReceipt(body) if body.metric == reference)
-                    })
-                    .max_by_key(|candidate| candidate.provenance.recorded_at.as_str())
-                    .cloned();
-                let state =
-                    observation
-                        .as_ref()
-                        .map_or("not_observed", |record| match &record.body {
-                            RecordBody::ObservationReceipt(body) => match body.freshness {
-                                Freshness::Fresh => "fresh",
-                                Freshness::Stale => "stale",
-                                Freshness::Missing => "missing",
-                            },
-                            _ => "unknown",
-                        });
-                metrics.push(DashboardMetricSummary {
-                    reference,
-                    name: metric.name.clone(),
-                    rationale: metric.rationale.clone(),
-                    source: metric.source.clone(),
-                    cohort: metric.cohort.clone(),
-                    window: metric.window.clone(),
-                    direction: format!("{:?}", metric.direction).to_ascii_lowercase(),
-                    threshold: metric.threshold.clone(),
-                    freshness_seconds: metric.freshness_seconds,
-                    lifecycle: dashboard_record_state(record, &draft_records),
-                    state: state.into(),
-                    latest_observation: observation,
-                    owner: record.owner.display_name.clone(),
-                    changed_at: record.provenance.recorded_at.clone(),
-                });
-            }
-            RecordBody::Standard(standard) => {
-                let verification = records
-                    .iter()
-                    .filter(|candidate| {
-                        matches!(&candidate.body, RecordBody::VerificationReceipt(body) if body.related_records.contains(&reference))
-                    })
-                    .max_by_key(|candidate| candidate.provenance.recorded_at.as_str());
-                let (execution, currentness, last_checked) = verification.map_or(
-                    ("not_checked".into(), "unknown".into(), None),
-                    |receipt| match &receipt.body {
-                        RecordBody::VerificationReceipt(body) => (
-                            format!("{:?}", body.verification).to_ascii_lowercase(),
-                            format!("{:?}", body.freshness).to_ascii_lowercase(),
-                            Some(body.checked_at.clone()),
-                        ),
-                        _ => ("unknown".into(), "unknown".into(), None),
-                    },
-                );
-                controls.push(DashboardControlSummary {
-                    reference,
-                    kind: "standard".into(),
-                    statement: standard.statement.clone(),
-                    rationale: standard.rationale.clone(),
-                    strength: Some(format!("{:?}", standard.strength).to_ascii_lowercase()),
-                    mechanism: standard_mechanism(standard),
-                    scope: record.scope.project.clone(),
-                    lifecycle: dashboard_record_state(record, &draft_records),
-                    execution,
-                    currentness,
-                    last_checked,
-                    owner: record.owner.display_name.clone(),
-                    changed_at: record.provenance.recorded_at.clone(),
-                });
-            }
-            RecordBody::Guidance(guidance) => controls.push(DashboardControlSummary {
-                reference,
-                kind: "guidance".into(),
-                statement: guidance.statement.clone(),
-                rationale: guidance.rationale.clone(),
-                strength: None,
-                mechanism: "Agent guidance and accountable review".into(),
-                scope: record.scope.project.clone(),
-                lifecycle: dashboard_record_state(record, &draft_records),
-                execution: "advisory".into(),
-                currentness: "not_applicable".into(),
-                last_checked: None,
-                owner: record.owner.display_name.clone(),
-                changed_at: record.provenance.recorded_at.clone(),
-            }),
-            _ => {}
-        }
-    }
-    metrics.sort_by(|left, right| left.name.cmp(&right.name));
-    controls.sort_by(|left, right| {
-        (left.kind.as_str(), left.statement.as_str())
-            .cmp(&(right.kind.as_str(), right.statement.as_str()))
-    });
-    let mission_body = mission.as_ref().and_then(|record| match &record.body {
-        RecordBody::Mission(body) => Some(body),
-        _ => None,
-    });
-    let value_body = values.as_ref().and_then(|record| match &record.body {
-        RecordBody::CoreValue(body) => Some(body),
-        _ => None,
-    });
-    let philosophy_body = philosophy.as_ref().and_then(|record| match &record.body {
-        RecordBody::ImplementationPhilosophy(body) => Some(body),
-        _ => None,
-    });
-    let safeguard_body = initial_safeguard
-        .as_ref()
-        .and_then(|record| match &record.body {
-            RecordBody::Guidance(body) => Some(body),
-            _ => None,
-        });
-    let foundations = vec![
-        dashboard_foundation_node(
-            "mission",
-            None,
-            "governs",
-            "Mission",
-            mission.as_ref(),
-            mission_body.map(|body| body.statement.clone()),
-            None,
-            &draft_records,
-        ),
-        dashboard_foundation_node(
-            "core_values",
-            Some("mission"),
-            "guides",
-            "Core values",
-            values.as_ref(),
-            value_body.map(|body| body.description.clone()),
-            None,
-            &draft_records,
-        ),
-        dashboard_foundation_node(
-            "desired_outcome",
-            Some("mission"),
-            "defines success",
-            "Desired outcome",
-            mission.as_ref(),
-            mission_body.and_then(|body| body.desired_outcomes.first().cloned()),
-            None,
-            &draft_records,
-        ),
-        dashboard_foundation_node(
-            "implementation_philosophy",
-            Some("mission"),
-            "guides implementation",
-            "Engineering philosophy",
-            philosophy.as_ref(),
-            philosophy_body.map(|body| body.statement.clone()),
-            philosophy_body.and_then(|body| body.review_triggers.first().cloned()),
-            &draft_records,
-        ),
-        dashboard_foundation_node(
-            "initial_safeguard",
-            Some("implementation_philosophy"),
-            "guides validation",
-            "Initial safeguard",
-            initial_safeguard.as_ref(),
-            safeguard_body.map(|body| body.statement.clone()),
-            safeguard_body.map(|body| body.rationale.clone()),
-            &draft_records,
-        ),
-    ];
-    let attention_items = dashboard_attention_items(
-        needed_decision.as_ref(),
-        &metrics,
-        &controls,
-        progress.repair_proof.is_some(),
-        draft_count,
-        next_action.as_ref(),
-    );
-    Ok(DashboardCurrentProjection {
-        local_agreement: DashboardAgreementProjection {
-            state: if progress.agreement_complete {
-                "owner_approved_private".into()
-            } else {
-                "incomplete".into()
-            },
-            team_activation: "not_configured".into(),
-            mission,
-            core_values: values,
-            implementation_philosophy: philosophy,
-            initial_safeguard,
-        },
-        workspace: DashboardWorkspaceProjection {
-            latest_verification,
-            verification_currentness: "unknown_without_exact_recheck".into(),
-            latest_repair,
-            repair_currentness: if repair_current {
-                "current_exact_proof".into()
-            } else if progress.repair_proof.is_some() {
-                "stale".into()
-            } else {
-                "unproven".into()
-            },
-            latest_observation,
-            required_policy: "not_configured".into(),
-            installed_state: "private_local_store".into(),
-            experimental_local_drafts: draft_count,
-            delivered_context_revision: None,
-            needed_decision,
-            next_action,
-            pending_operations,
-        },
-        foundations,
-        metrics,
-        controls,
-        attention_items,
-    })
 }
 
 fn onboarding_progress(layout: &ProjectLayout) -> Result<OnboardingProgress, StorageError> {
@@ -2476,6 +2214,13 @@ fn snapshot_matches_repair(
         && current.trust == reviewed.trust
 }
 
+fn project_label(root: &Path) -> String {
+    root.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "project".into())
+}
+
 fn latest_record<'a>(records: &'a [AgreementRecord], id: &str) -> Option<&'a AgreementRecord> {
     records
         .iter()
@@ -2542,12 +2287,29 @@ fn onboarding_inspection_response(
     response
 }
 
+fn optional_input(
+    value: Option<String>,
+    name: &str,
+    maximum: usize,
+    fallback: &str,
+) -> Result<String, String> {
+    match value.as_deref().map(str::trim) {
+        None | Some("") => Ok(fallback.to_string()),
+        Some(_) => bounded_input(value, name, maximum),
+    }
+}
+
 fn change_narrative(request: &ChangeRequest) -> Result<ChangeNarrative, String> {
     Ok(ChangeNarrative {
         rationale: bounded_input(request.rationale.clone(), "rationale", 4_000)?,
-        source: bounded_input(request.source.clone(), "source", 2_048)?,
-        expected_effect: bounded_input(request.expected_effect.clone(), "expected effect", 4_000)?,
-        impact: bounded_input(request.impact.clone(), "impact", 4_000)?,
+        source: optional_input(request.source.clone(), "source", 2_048, "owner")?,
+        expected_effect: optional_input(
+            request.expected_effect.clone(),
+            "expected effect",
+            4_000,
+            "not stated",
+        )?,
+        impact: optional_input(request.impact.clone(), "impact", 4_000, "not stated")?,
         examples: bounded_list(&request.examples, "examples", 16, 2_000)?,
         conflicts: bounded_list(&request.conflicts, "conflicts", 16, 2_000)?,
     })
@@ -2603,7 +2365,28 @@ fn ensure_local_change_proposal(
         idempotency_key: proposal_key.clone(),
         body: RecordBody::Proposal(Proposal {
             state: ProposalState::Draft,
-            title: format!("Change {}", candidate.id.as_str()),
+            title: format!(
+                "{} {}: {}",
+                projection::kind_label(match &candidate.body {
+                    RecordBody::Mission(_) => "mission",
+                    RecordBody::CoreValue(_) => "value",
+                    RecordBody::ImplementationPhilosophy(_) => "philosophy",
+                    RecordBody::Guidance(_) => "guidance",
+                    RecordBody::MetricDefinition(_) => "metric",
+                    RecordBody::Standard(_) => "standard",
+                    RecordBody::Feature(_) => "feature",
+                    _ => "record",
+                }),
+                if candidate.revision <= 1 {
+                    "proposed"
+                } else {
+                    "revised"
+                },
+                projection::record_title(candidate)
+                    .chars()
+                    .take(120)
+                    .collect::<String>()
+            ),
             rationale: narrative.render(base_revision),
             proposed_records: vec![candidate_reference.clone()],
             binding: None,
@@ -2706,6 +2489,11 @@ fn change_body(request: &ChangeRequest, id_text: &str) -> Result<RecordBody, Str
                     "Provide the standard strength and deterministic enforcement mechanism.".into(),
                 );
             };
+            if let Enforcement::Test { command_ref } | Enforcement::Validator { command_ref } =
+                enforcement
+            {
+                crate::gates::parse_command(command_ref)?;
+            }
             RecordBody::Standard(Standard {
                 statement: content,
                 rationale,
@@ -2713,6 +2501,41 @@ fn change_body(request: &ChangeRequest, id_text: &str) -> Result<RecordBody, Str
                 enforcement: enforcement.clone(),
                 examples: request.examples.clone(),
             })
+        }
+        ChangeKind::Feature => {
+            let Some(ChangeDefinition::Feature {
+                summary,
+                area,
+                sweep_order,
+                sub_features,
+                user_path,
+                drive_steps,
+                proof,
+                gotchas,
+                entry_points,
+                serves,
+                constrained_by,
+                proven_by,
+            }) = request.definition.as_deref()
+            else {
+                return Err("Provide the feature summary, area, user path, drive steps, proof and entry points as a feature definition.".into());
+            };
+            let feature = crate::domain::Feature {
+                name: content,
+                summary: bounded_input(Some(summary.clone()), "feature summary", 500)?,
+                area: bounded_input(Some(area.clone()), "feature area", 120)?,
+                sweep_order: *sweep_order,
+                sub_features: bounded_list(sub_features, "sub-features", 64, 500)?,
+                user_path: bounded_input(Some(user_path.clone()), "user path", 2_000)?,
+                drive_steps: bounded_list(drive_steps, "drive steps", 64, 1_000)?,
+                proof: bounded_input(Some(proof.clone()), "proof", 1_000)?,
+                gotchas: bounded_list(gotchas, "gotchas", 64, 1_000)?,
+                entry_points: bounded_list(entry_points, "entry points", 64, 500)?,
+                serves: serves.clone(),
+                constrained_by: constrained_by.clone(),
+                proven_by: proven_by.clone(),
+            };
+            RecordBody::Feature(feature)
         }
     })
 }
@@ -2808,6 +2631,11 @@ fn agreement_record(
     };
     record.validate()?;
     Ok(record)
+}
+
+/// Current UTC time in RFC 3339 form, second precision.
+pub fn utc_timestamp() -> String {
+    utc_now()
 }
 
 fn utc_now() -> String {
@@ -3312,6 +3140,347 @@ fn persist_verification_receipt(
     repository.append(&record, None).map(Some)
 }
 
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
+}
+
+/// An in-force gate chosen for this check.
+struct SelectedGate {
+    id: RecordId,
+    reference: crate::domain::RecordRef,
+    standard: Standard,
+}
+
+#[derive(Default)]
+struct GateSelection {
+    gates: Vec<SelectedGate>,
+    gate_ids: std::collections::BTreeSet<String>,
+    features: std::collections::BTreeMap<RecordId, crate::domain::Feature>,
+    skipped_drafts: Vec<String>,
+    changed_paths: Vec<String>,
+    features_affected: Vec<Value>,
+}
+
+fn select_gates(
+    agreement: Option<&AgreementState>,
+    project: &Path,
+    request: &CheckRequest,
+) -> Result<GateSelection, String> {
+    let mut selection = GateSelection::default();
+    let Some(state) = agreement else {
+        if !request.features.is_empty() {
+            return Err("No private agreement exists, so no feature can be proven yet.".into());
+        }
+        return Ok(selection);
+    };
+    for id in state.agreement_ids(|body| matches!(body, RecordBody::Feature(_))) {
+        if let Some(record) = state.in_force(&id) {
+            if let RecordBody::Feature(feature) = &record.body {
+                selection.features.insert(id, feature.clone());
+            }
+        }
+    }
+    let standard_ids = state.agreement_ids(|body| matches!(body, RecordBody::Standard(_)));
+    for id in &standard_ids {
+        selection.gate_ids.insert(id.as_str().to_string());
+    }
+    if request.gate_mode == GateMode::None {
+        return Ok(selection);
+    }
+    let named = request
+        .rules
+        .iter()
+        .filter(|rule| selection.gate_ids.contains(rule.as_str()))
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut wanted: Option<std::collections::BTreeSet<String>> =
+        (!named.is_empty()).then_some(named);
+    let mut feature_filter = request.features.clone();
+    if request.gate_mode == GateMode::Changed {
+        let changed = crate::gates::changed_paths(project)?;
+        for (id, feature) in &selection.features {
+            let touched = changed
+                .iter()
+                .filter(|path| feature.covers_path(path))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !touched.is_empty() {
+                feature_filter.push(id.as_str().to_string());
+                selection.features_affected.push(json!({
+                    "feature": id.as_str(),
+                    "name": feature.name,
+                    "paths": touched,
+                    "map_review": "Behaviour in these paths changed; confirm the feature entry still describes it, or revise it with wh change --kind feature.",
+                }));
+            }
+        }
+        selection.changed_paths = changed;
+        if feature_filter.is_empty() {
+            return Ok(selection);
+        }
+    }
+    if !feature_filter.is_empty() {
+        let mut ids = wanted.take().unwrap_or_default();
+        for feature_id in &feature_filter {
+            let id = RecordId::new(feature_id.as_str())
+                .map_err(|_| format!("{feature_id} is not a valid feature id."))?;
+            let Some(feature) = selection.features.get(&id) else {
+                return Err(format!(
+                    "Feature {feature_id} is not in force; accept its draft before proving it."
+                ));
+            };
+            ids.extend(
+                feature
+                    .proven_by
+                    .iter()
+                    .map(|gate| gate.as_str().to_string()),
+            );
+            // Drive gates that name this feature prove it even when unlisted.
+            for gate_id in &standard_ids {
+                if let Some(RecordBody::Standard(standard)) =
+                    state.in_force(gate_id).map(|record| &record.body)
+                {
+                    if matches!(&standard.enforcement, Enforcement::Drive { feature } if feature == &id)
+                    {
+                        ids.insert(gate_id.as_str().to_string());
+                    }
+                }
+            }
+        }
+        wanted = Some(ids);
+    }
+    for id in &standard_ids {
+        if wanted
+            .as_ref()
+            .is_some_and(|wanted| !wanted.contains(id.as_str()))
+        {
+            continue;
+        }
+        let Some(record) = state.in_force(id) else {
+            selection.skipped_drafts.push(id.as_str().to_string());
+            continue;
+        };
+        let RecordBody::Standard(standard) = &record.body else {
+            continue;
+        };
+        if request.gate_mode == GateMode::Sweep
+            && !matches!(standard.enforcement, Enforcement::Drive { .. })
+        {
+            continue;
+        }
+        let reference = record.reference().map_err(|error| error.to_string())?;
+        selection.gates.push(SelectedGate {
+            id: id.clone(),
+            reference,
+            standard: standard.clone(),
+        });
+    }
+    if request.gate_mode == GateMode::Sweep {
+        let order = |gate: &SelectedGate| match &gate.standard.enforcement {
+            Enforcement::Drive { feature } => selection
+                .features
+                .get(feature)
+                .map_or((String::from("~"), u32::MAX), |feature| {
+                    (feature.area.clone(), feature.sweep_order)
+                }),
+            _ => (String::from("~"), u32::MAX),
+        };
+        let mut keyed = selection
+            .gates
+            .drain(..)
+            .map(|gate| (order(&gate), gate))
+            .collect::<Vec<_>>();
+        keyed.sort_by(|left, right| left.0.cmp(&right.0));
+        selection.gates = keyed.into_iter().map(|(_, gate)| gate).collect();
+    }
+    if let Some(wanted) = wanted {
+        for name in wanted {
+            if !selection.gate_ids.contains(name.as_str()) {
+                return Err(format!("{name} is not a gate in this agreement."));
+            }
+        }
+    }
+    Ok(selection)
+}
+
+/// Owner acceptance of the exact gate revision is the execution grant: the
+/// manifest digest is the accepted gate's content digest.
+fn gate_execution_receipt(
+    gate: &SelectedGate,
+    outcome: &crate::gates::GateOutcome,
+    manifest: &ContentDigest,
+) -> crate::execution::ExecutionReceipt {
+    use crate::execution::{CapturedOutput, ExecutionReceipt, ExecutionState, LimitEvidence};
+    ExecutionReceipt {
+        schema: crate::execution::RECEIPT_SCHEMA.into(),
+        checker_id: gate.id.as_str().into(),
+        checker_version: format!("v{}", gate.reference.revision),
+        manifest_digest: manifest.as_str().into(),
+        execution_grant_reference: Some(format!("accepted-gate:{}", manifest.as_str())),
+        authority_revision: Some(gate.reference.revision),
+        authority_checked_at: Some(utc_now()),
+        state: match outcome.state {
+            VerificationAxis::Pass => ExecutionState::Success,
+            VerificationAxis::Fail => ExecutionState::Violated,
+            VerificationAxis::Unknown => ExecutionState::Unknown,
+        },
+        reason_code: match outcome.state {
+            VerificationAxis::Pass => "gate_passed",
+            VerificationAxis::Fail => "gate_failed",
+            VerificationAxis::Unknown => "gate_unknown",
+        }
+        .into(),
+        summary: outcome.summary.clone(),
+        process_started: outcome.exit_code.is_some() || outcome.program.is_some(),
+        executable_digest: outcome.program_digest.clone(),
+        consumed_configurations: Vec::new(),
+        exit_code: outcome.exit_code,
+        elapsed_ms: outcome.elapsed_ms,
+        stdout: CapturedOutput::default(),
+        stderr: CapturedOutput::default(),
+        limits: LimitEvidence {
+            timeout_ms: crate::gates::DEFAULT_GATE_TIMEOUT.as_millis() as u64,
+            stdout_bytes: 2 * 1024 * 1024,
+            stderr_bytes: 2 * 1024 * 1024,
+            timeout_mechanism: "wall-clock bound with process-group termination".into(),
+            output_mechanism: "bounded capture; overflow is unknown".into(),
+            filesystem_network_memory_process_limits:
+                "not sandboxed: repository-scoped working directory and allowlisted environment only"
+                    .into(),
+        },
+        process_group_cleanup: "unix process group".into(),
+        isolation_caveat: "Gate commands run as the local user without an OS sandbox.".into(),
+    }
+}
+
+fn gate_finding(gate: &SelectedGate, failure: &crate::projection::ArtifactFailure) -> Finding {
+    let (file, line) = match failure.location.rsplit_once(':') {
+        Some((file, line))
+            if line.chars().all(|character| character.is_ascii_digit())
+                && !file.contains(' ')
+                && !file.starts_with('/')
+                && !file.contains("..") =>
+        {
+            (Some(file.to_string()), line.parse::<u32>().ok())
+        }
+        _ => (None, None),
+    };
+    Finding {
+        file,
+        line,
+        column: None,
+        rule_id: gate.id.as_str().into(),
+        observed: failure.message.clone(),
+        expected: gate.standard.statement.clone(),
+        rationale: gate.standard.rationale.clone(),
+        repair_direction: "Repair within the current task scope; never weaken the gate.".into(),
+        permitted_next_action: format!("repair, then wh check --rule {}", gate.id.as_str()),
+        verification_command: format!("wh check --rule {}", gate.id.as_str()),
+    }
+}
+
+fn persist_gate_receipt(
+    layout: &ProjectLayout,
+    run_id: &str,
+    gate: &SelectedGate,
+    outcome: &crate::gates::GateOutcome,
+    fingerprint: &str,
+    checked_at: &str,
+) -> Result<Option<crate::domain::RecordRef>, StorageError> {
+    let store_path = layout.store_path(StoreKind::Private);
+    if !store_path.join(".dolt").is_dir() {
+        return Ok(None);
+    }
+    let repository = DoltRepository::initialize(&store_path, StoreKind::Private)?;
+    let idempotency_key = format!("gate:{run_id}:{}", gate.id.as_str());
+    if let Some(existing) = repository.by_idempotency_key(&idempotency_key)? {
+        return existing.reference().map(Some).map_err(StorageError::Domain);
+    }
+    let principal = PrincipalRef {
+        kind: PrincipalKind::LocalUser,
+        stable_id: "whetstone:gate-runner".into(),
+        display_name: None,
+    };
+    let key_digest = digest_bytes(idempotency_key.as_bytes());
+    let suffix = &key_digest.as_str()["sha256:".len().."sha256:".len() + 24];
+    let verification = outcome.state;
+    let freshness = if verification == VerificationAxis::Pass && outcome.evidence.is_empty() {
+        Freshness::Missing
+    } else {
+        Freshness::Fresh
+    };
+    let verification = if freshness == Freshness::Missing {
+        VerificationAxis::Unknown
+    } else {
+        verification
+    };
+    let mut related = vec![gate.reference.clone()];
+    if let Enforcement::Drive { feature } = &gate.standard.enforcement {
+        if let Ok(Some(record)) = repository.latest(feature) {
+            if let Ok(reference) = record.reference() {
+                related.push(reference);
+            }
+        }
+    }
+    let record = AgreementRecord {
+        schema_version: SCHEMA_VERSION_V1,
+        id: RecordId::new(format!("verification.gate_{suffix}")).map_err(StorageError::Domain)?,
+        revision: 1,
+        scope: Scope {
+            organization: None,
+            project: format!("project-{}", &layout.project_id()[..12]),
+            component: None,
+            environment: None,
+        },
+        owner: principal.clone(),
+        provenance: Provenance {
+            kind: ProvenanceKind::DeterministicCheck,
+            recorded_by: principal,
+            recorded_at: checked_at.into(),
+            sources: vec![EvidenceRef {
+                system: crate::projection::EVIDENCE_SYSTEM.into(),
+                locator: run_id.into(),
+                digest: None,
+            }],
+            authority: ProvenanceAuthority::CandidateOnly,
+        },
+        supersedes: None,
+        idempotency_key,
+        body: RecordBody::VerificationReceipt(VerificationReceipt {
+            subject: ExternalRef {
+                system: ExternalSystem::Custom,
+                stable_id: format!(
+                    "{}{}",
+                    crate::projection::GATE_SUBJECT_PREFIX,
+                    gate.id.as_str()
+                ),
+                revision: Some(fingerprint.into()),
+            },
+            code_digest: ContentDigest::new(if fingerprint.starts_with("sha256:") {
+                fingerprint.to_string()
+            } else {
+                digest_bytes(fingerprint.as_bytes()).as_str().to_string()
+            })
+            .map_err(StorageError::Domain)?,
+            policy_state: PolicyStateSnapshot {
+                accepted: Some(gate.reference.clone()),
+                required: None,
+                installed: None,
+                experimental: None,
+            },
+            verification,
+            authorization: AuthorizationAxis::Unknown,
+            freshness,
+            checked_at: checked_at.into(),
+            related_records: related,
+            evidence: outcome.evidence.clone(),
+        }),
+    };
+    repository.append(&record, None).map(Some)
+}
+
 fn digest_rule_inputs(project: &Path) -> Result<String, std::io::Error> {
     let mut files = WalkDir::new(project.join("whetstone"))
         .follow_links(false)
@@ -3407,28 +3576,5 @@ mod tests {
             resume_token("a", "init", "request", 1),
             resume_token("a", "init", "other", 1)
         );
-    }
-
-    #[test]
-    fn dashboard_attention_prioritizes_decisions_repairs_and_private_drafts() {
-        let root = Path::new("/project");
-        assert!(dashboard_next_action(true, false, 2, root, "Keep gates meaningful").is_none());
-
-        let repair = dashboard_next_action(false, false, 2, root, "Keep gates meaningful")
-            .expect("repair action");
-        assert_eq!(repair.route, "enforcement");
-        assert!(repair
-            .agent_instruction
-            .as_deref()
-            .is_some_and(|instruction| instruction.contains("/project")
-                && instruction.contains("Keep gates meaningful")));
-
-        let drafts = dashboard_next_action(false, true, 2, root, "Keep gates meaningful")
-            .expect("draft action");
-        assert_eq!(drafts.route, "decisions");
-        assert!(drafts.title.contains("2 local draft"));
-        assert!(drafts.agent_instruction.is_none());
-
-        assert!(dashboard_next_action(false, true, 0, root, "Keep gates meaningful").is_none());
     }
 }

@@ -1551,6 +1551,9 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
             paths: paths.iter().map(PathBuf::from).collect(),
             language,
             rules,
+            features: Vec::new(),
+            gate_mode: crate::service::GateMode::None,
+            timeout_seconds: None,
         })
     }
 

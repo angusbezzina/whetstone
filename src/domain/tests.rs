@@ -669,3 +669,156 @@ fn personal_and_team_policy_states_remain_distinct() {
     assert_eq!(value["required"], value["installed"]);
     assert_ne!(value["experimental"], value["accepted"]);
 }
+
+fn local_principal() -> PrincipalRef {
+    PrincipalRef {
+        kind: PrincipalKind::LocalUser,
+        stable_id: "local:owner".into(),
+        display_name: Some("Owner".into()),
+    }
+}
+
+fn feature_body() -> Feature {
+    Feature {
+        name: "Foundations".into(),
+        summary: "Five-stage agreement flow".into(),
+        area: "Dashboard".into(),
+        sweep_order: 2,
+        sub_features: vec!["edit: inline governed edit".into()],
+        user_path: "Open wh dash and choose Foundations.".into(),
+        drive_steps: vec!["open /".into(), "click #tab-foundations".into()],
+        proof: "Five stages render in order.".into(),
+        gotchas: vec![],
+        entry_points: vec!["assets/dashboard/".into(), "src/**/dashboard*.rs".into()],
+        serves: vec![id("mission.project")],
+        constrained_by: vec![id("value.core")],
+        proven_by: vec![id("standard.dashboard-journey")],
+    }
+}
+
+#[test]
+fn feature_records_validate_links_paths_and_bounds() {
+    let valid = record(
+        "feature.foundations",
+        "100",
+        RecordBody::Feature(feature_body()),
+    );
+    valid.validate().expect("valid feature");
+    assert_eq!(valid.body.type_name(), "feature");
+    let json = serde_json::to_value(&valid).expect("serialize");
+    assert_eq!(json["record_type"], "feature");
+
+    for mutate in [
+        |body: &mut Feature| body.proof = " ".into(),
+        |body: &mut Feature| body.entry_points = vec!["../outside".into()],
+        |body: &mut Feature| body.entry_points = vec!["/etc/passwd".into()],
+        |body: &mut Feature| body.serves = vec![id("mission.project"), id("mission.project")],
+        |body: &mut Feature| body.drive_steps = vec!["".into()],
+    ] {
+        let mut body = feature_body();
+        mutate(&mut body);
+        assert!(
+            record("feature.bad", "100", RecordBody::Feature(body))
+                .validate()
+                .is_err(),
+            "invalid feature accepted"
+        );
+    }
+}
+
+#[test]
+fn feature_entry_points_match_prefixes_and_globs_only() {
+    let feature = feature_body();
+    assert!(feature.covers_path("assets/dashboard/app.js"));
+    assert!(feature.covers_path("./assets/dashboard/index.html"));
+    assert!(feature.covers_path("src/dashboard.rs"));
+    assert!(feature.covers_path("src/nested/dashboard_service.rs"));
+    assert!(!feature.covers_path("assets/dashboardx/app.js"));
+    assert!(!feature.covers_path("src/service.rs"));
+    assert!(entry_point_matches("tests/*.rs", "tests/a.rs"));
+    assert!(!entry_point_matches("tests/*.rs", "tests/nested/a.rs"));
+    assert!(entry_point_matches("**/README.md", "docs/deep/README.md"));
+}
+
+#[test]
+fn drive_gates_require_a_feature_reference() {
+    let gate = record(
+        "standard.dashboard-journey",
+        "100",
+        RecordBody::Standard(Standard {
+            statement: "The dashboard journey is proven by driving it".into(),
+            rationale: "Browser behaviour is the product".into(),
+            strength: StandardStrength::Must,
+            enforcement: Enforcement::Drive {
+                feature: id("feature.foundations"),
+            },
+            examples: vec![],
+        }),
+    );
+    gate.validate().expect("drive gate");
+    let json = serde_json::to_string(&gate).expect("serialize");
+    assert!(json.contains(r#""enforcement":"drive""#));
+    assert!(json.contains(r#""feature":"feature.foundations""#));
+}
+
+#[test]
+fn solo_review_binds_an_owned_draft_and_never_permits_team_activation() {
+    let mut history = AgreementHistory::default();
+    let mut candidate = record(
+        "value.evidence",
+        "100",
+        RecordBody::CoreValue(CoreValue {
+            name: "Evidence".into(),
+            description: "Evidence before assertion".into(),
+        }),
+    );
+    candidate.owner = local_principal();
+    candidate.provenance.recorded_by = local_principal();
+    let candidate_ref = history.append(candidate, None).expect("candidate");
+    let mut proposal = record(
+        "proposal.local",
+        "100",
+        RecordBody::Proposal(Proposal {
+            state: ProposalState::Draft,
+            title: "Add evidence value".into(),
+            rationale: "Owner wants it".into(),
+            proposed_records: vec![candidate_ref],
+            binding: None,
+        }),
+    );
+    proposal.owner = local_principal();
+    proposal.provenance.recorded_by = local_principal();
+    let proposal_ref = history.append(proposal, None).expect("proposal");
+
+    let review = |reviewer: PrincipalRef, permitted: bool| {
+        let mut review = record(
+            "review.local",
+            "100",
+            RecordBody::LocalReview(LocalReview {
+                proposal: proposal_ref.clone(),
+                verdict: LocalReviewVerdict::Accept,
+                reviewer: reviewer.clone(),
+                assurance: LOCAL_REVIEW_ASSURANCE.into(),
+                rationale: "Explicit solo confirmation".into(),
+                reviewed_at: "2026-09-10T10:00:00Z".into(),
+                team_activation_permitted: permitted,
+            }),
+        );
+        review.owner = reviewer.clone();
+        review.provenance.recorded_by = reviewer;
+        review
+    };
+    let valid = review(local_principal(), false);
+    valid.validate().expect("valid review");
+    history
+        .validate_local_review(&valid)
+        .expect("owner may self-review a draft");
+    assert_eq!(
+        review(local_principal(), true).validate(),
+        Err(DomainError::InvalidLocalReview)
+    );
+    assert_eq!(
+        history.validate_local_review(&review(principal("200"), false)),
+        Err(DomainError::PrincipalMismatch)
+    );
+}

@@ -1042,13 +1042,79 @@ fn stale_change_is_rejected_and_standard_needs_a_decision() {
         ],
         temp.path(),
     );
-    assert_eq!(decision.status.code(), Some(5));
-    assert_eq!(json(&decision)["state"], "needs_decision");
-    assert_eq!(json(&decision)["data"]["recorded"], true);
-    assert_eq!(json(&decision)["data"]["base_revision"], 0);
+    assert_eq!(decision.status.code(), Some(0));
+    let decision_json = json(&decision);
+    assert_eq!(decision_json["state"], "success");
+    assert_eq!(decision_json["data"]["recorded"], true);
+    assert_eq!(decision_json["data"]["base_revision"], 0);
     assert_eq!(
-        json(&decision)["data"]["diff"]["after"]["record_type"],
+        decision_json["data"]["diff"]["after"]["record_type"],
         "standard"
+    );
+    // A recorded standard is a private draft: it is not in force, so a check
+    // never runs it until the owner explicitly accepts it.
+    let proposal = decision_json["data"]["proposal"]["id"]
+        .as_str()
+        .expect("proposal id")
+        .to_string();
+    let draft_check = run(
+        &[
+            "check",
+            "--json",
+            "--project-dir",
+            &project,
+            "--rule",
+            "standard.boundary",
+        ],
+        temp.path(),
+    );
+    assert_eq!(
+        json(&draft_check)["data"]["selection"]["gates"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        json(&draft_check)["data"]["selection"]["skipped_drafts"],
+        serde_json::json!(["standard.boundary"])
+    );
+    let accepted = run(
+        &[
+            "change",
+            "--json",
+            "--project-dir",
+            &project,
+            "--request-id",
+            "accept-1",
+            "--accept",
+            &proposal,
+            "--rationale",
+            "Owner accepts the boundary gate.",
+        ],
+        temp.path(),
+    );
+    assert_eq!(
+        json(&accepted)["state"],
+        "success",
+        "{}",
+        String::from_utf8_lossy(&accepted.stdout)
+    );
+    assert_eq!(json(&accepted)["data"]["team_activation"], false);
+    let replayed = run(
+        &[
+            "change",
+            "--json",
+            "--project-dir",
+            &project,
+            "--request-id",
+            "accept-2",
+            "--accept",
+            &proposal,
+        ],
+        temp.path(),
+    );
+    assert_eq!(
+        json(&replayed)["state"],
+        "needs_input",
+        "a reviewed draft is no longer pending"
     );
 }
 

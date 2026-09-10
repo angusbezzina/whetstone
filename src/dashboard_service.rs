@@ -124,6 +124,10 @@ enum DashboardCommand {
         safeguard_scope: Option<String>,
         #[serde(default)]
         revision_triggers: Option<String>,
+        #[serde(default)]
+        gate_command: Option<String>,
+        #[serde(default)]
+        dry_run: bool,
     },
     Change {
         #[serde(default)]
@@ -160,6 +164,8 @@ enum DashboardCommand {
         resume_token: Option<String>,
         #[serde(default)]
         preview: bool,
+        #[serde(default)]
+        review: Option<DashboardReview>,
     },
     Check {
         #[serde(default)]
@@ -170,7 +176,34 @@ enum DashboardCommand {
         language: Option<String>,
         #[serde(default)]
         rules: Vec<String>,
+        #[serde(default)]
+        features: Vec<String>,
+        #[serde(default)]
+        mode: DashboardCheckMode,
     },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DashboardReview {
+    proposal: String,
+    verdict: DashboardVerdict,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DashboardVerdict {
+    Accept,
+    Withdraw,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DashboardCheckMode {
+    #[default]
+    All,
+    Changed,
+    Sweep,
 }
 
 impl DashboardCommand {
@@ -189,6 +222,8 @@ impl DashboardCommand {
                 initial_safeguard,
                 safeguard_scope,
                 revision_triggers,
+                gate_command,
+                dry_run,
             } => ServiceRequest::Init(InitRequest {
                 project_dir,
                 request_id,
@@ -203,6 +238,10 @@ impl DashboardCommand {
                 initial_safeguard,
                 safeguard_scope,
                 revision_triggers,
+                gate_command,
+                dry_run,
+                hosts: Vec::new(),
+                regenerate_driver: false,
             }),
             Self::Change {
                 request_id,
@@ -222,6 +261,7 @@ impl DashboardCommand {
                 expected_revision,
                 resume_token,
                 preview,
+                review,
             } => ServiceRequest::Change(ChangeRequest {
                 project_dir,
                 request_id,
@@ -241,18 +281,34 @@ impl DashboardCommand {
                 expected_revision,
                 resume_token,
                 preview,
+                review: review.map(|review| crate::service::ReviewRequest {
+                    proposal: review.proposal,
+                    verdict: match review.verdict {
+                        DashboardVerdict::Accept => crate::domain::LocalReviewVerdict::Accept,
+                        DashboardVerdict::Withdraw => crate::domain::LocalReviewVerdict::Withdraw,
+                    },
+                }),
             }),
             Self::Check {
                 request_id,
                 paths,
                 language,
                 rules,
+                features,
+                mode,
             } => ServiceRequest::Check(CheckRequest {
                 project_dir,
                 request_id,
                 paths,
                 language,
                 rules,
+                features,
+                gate_mode: match mode {
+                    DashboardCheckMode::All => crate::service::GateMode::All,
+                    DashboardCheckMode::Changed => crate::service::GateMode::Changed,
+                    DashboardCheckMode::Sweep => crate::service::GateMode::Sweep,
+                },
+                timeout_seconds: None,
             }),
         }
     }
@@ -285,6 +341,7 @@ enum DashboardChangeKind {
     Metric,
     Guidance,
     Standard,
+    Feature,
 }
 
 impl From<DashboardChangeKind> for ChangeKind {
@@ -296,6 +353,7 @@ impl From<DashboardChangeKind> for ChangeKind {
             DashboardChangeKind::Metric => Self::Metric,
             DashboardChangeKind::Guidance => Self::Guidance,
             DashboardChangeKind::Standard => Self::Standard,
+            DashboardChangeKind::Feature => Self::Feature,
         }
     }
 }

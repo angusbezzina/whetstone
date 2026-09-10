@@ -208,6 +208,7 @@ fn fact(root: &Path, path: &Path, kind: DiscoveryKind) -> Result<DetectedFact, D
 
 fn digest_directory(root: &Path, directory: &Path) -> Result<ContentDigest, DiscoveryError> {
     let mut files = Vec::<PathBuf>::new();
+    let mut links = Vec::<(PathBuf, PathBuf)>::new();
     for entry in WalkDir::new(directory).follow_links(false).max_depth(8) {
         let entry = entry.map_err(|error| {
             DiscoveryError::Io(
@@ -220,7 +221,15 @@ fn digest_directory(root: &Path, directory: &Path) -> Result<ContentDigest, Disc
         let path = entry.path();
         let metadata = fs::symlink_metadata(path).map_err(DiscoveryError::Io)?;
         if metadata.file_type().is_symlink() {
-            return Err(DiscoveryError::UnsafePath(path.display().to_string()));
+            // Never followed: installed skills are commonly symlinked. The
+            // link text is bound into the digest so a retarget is detected.
+            links.push((
+                path.strip_prefix(root)
+                    .map_err(|_| DiscoveryError::UnsafePath(path.display().to_string()))?
+                    .to_path_buf(),
+                fs::read_link(path).map_err(DiscoveryError::Io)?,
+            ));
+            continue;
         }
         if metadata.is_file() {
             files.push(path.to_path_buf());
@@ -240,6 +249,12 @@ fn digest_directory(root: &Path, directory: &Path) -> Result<ContentDigest, Disc
             .map_err(|_| DiscoveryError::UnsafePath(file.display().to_string()))?;
         hasher.update(relative.to_string_lossy().as_bytes());
         hasher.update(fs::read(file).map_err(DiscoveryError::Io)?);
+    }
+    links.sort();
+    for (relative, target) in links {
+        hasher.update(b"symlink\0");
+        hasher.update(relative.to_string_lossy().as_bytes());
+        hasher.update(target.to_string_lossy().as_bytes());
     }
     ContentDigest::new(format!("sha256:{:x}", hasher.finalize()))
         .map_err(|_| DiscoveryError::InvalidRoot)
@@ -263,5 +278,24 @@ mod tests {
         assert!(plan.inferences.iter().any(|value| value.contains("may be")));
         assert!(!plan.remote_required);
         assert_eq!(plan.executable_access.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_skill_directories_are_recorded_not_followed() {
+        let temp = tempfile::tempdir().expect("temp");
+        let outside = tempfile::tempdir().expect("outside");
+        fs::write(outside.path().join("SKILL.md"), "outside").expect("outside skill");
+        fs::create_dir_all(temp.path().join(".claude/skills")).expect("skills");
+        std::os::unix::fs::symlink(outside.path(), temp.path().join(".claude/skills/linked"))
+            .expect("symlink");
+        let first = inspect(temp.path()).expect("inspection tolerates symlinks");
+        assert!(first.facts.iter().any(|fact| fact.path == ".claude/skills"));
+        fs::write(outside.path().join("SKILL.md"), "changed outside").expect("rewrite");
+        let second = inspect(temp.path()).expect("inspection");
+        assert_eq!(
+            first.facts, second.facts,
+            "content behind a symlink is never read"
+        );
     }
 }

@@ -123,6 +123,7 @@ impl AgreementRecord {
                 links.extend(body.session.clone());
             }
             RecordBody::RepairOperationClaim(body) => links.push(body.session.clone()),
+            RecordBody::LocalReview(body) => links.push(body.proposal.clone()),
             _ => {}
         }
         links
@@ -404,9 +405,37 @@ pub enum RecordBody {
     RepairHandoff(Box<RepairHandoffRecord>),
     RepairAuthorityReservation(Box<RepairAuthorityReservationRecord>),
     RepairOperationClaim(Box<RepairOperationClaimRecord>),
+    Feature(Feature),
+    LocalReview(LocalReview),
 }
 
 impl RecordBody {
+    /// Stable snake_case name matching the serialized `record_type` tag.
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Self::Mission(_) => "mission",
+            Self::CoreValue(_) => "core_value",
+            Self::ImplementationPhilosophy(_) => "implementation_philosophy",
+            Self::Standard(_) => "standard",
+            Self::Guidance(_) => "guidance",
+            Self::MetricDefinition(_) => "metric_definition",
+            Self::SourceSnapshot(_) => "source_snapshot",
+            Self::Proposal(_) => "proposal",
+            Self::Decision(_) => "decision",
+            Self::Mandate(_) => "mandate",
+            Self::Activation(_) => "activation",
+            Self::VerificationReceipt(_) => "verification_receipt",
+            Self::ObservationReceipt(_) => "observation_receipt",
+            Self::Retirement(_) => "retirement",
+            Self::RepairSession(_) => "repair_session",
+            Self::RepairHandoff(_) => "repair_handoff",
+            Self::RepairAuthorityReservation(_) => "repair_authority_reservation",
+            Self::RepairOperationClaim(_) => "repair_operation_claim",
+            Self::Feature(_) => "feature",
+            Self::LocalReview(_) => "local_review",
+        }
+    }
+
     fn validate(&self) -> Result<(), DomainError> {
         match self {
             Self::Mission(value) => require_text(&value.statement),
@@ -446,6 +475,8 @@ impl RecordBody {
             Self::RepairHandoff(value) => value.validate(),
             Self::RepairAuthorityReservation(value) => value.validate(),
             Self::RepairOperationClaim(value) => value.validate(),
+            Self::Feature(value) => value.validate(),
+            Self::LocalReview(value) => value.validate(),
         }
     }
 }
@@ -863,11 +894,28 @@ pub enum StandardStrength {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "enforcement", rename_all = "snake_case")]
 pub enum Enforcement {
-    Ast { query: String },
-    LintProxy { tool: String, code: String },
-    Formatter { tool: String },
-    Test { command_ref: String },
-    Validator { command_ref: String },
+    Ast {
+        query: String,
+    },
+    LintProxy {
+        tool: String,
+        code: String,
+    },
+    Formatter {
+        tool: String,
+    },
+    Test {
+        command_ref: String,
+    },
+    Validator {
+        command_ref: String,
+    },
+    /// Prove a mapped feature by driving the running app with the project's
+    /// verification driver. Evidence is mandatory; a drive without evidence
+    /// is unknown, never a pass.
+    Drive {
+        feature: RecordId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -895,6 +943,7 @@ impl Standard {
             Enforcement::Test { command_ref } | Enforcement::Validator { command_ref } => {
                 require_text(command_ref)
             }
+            Enforcement::Drive { .. } => Ok(()),
         }
     }
 }
@@ -906,6 +955,192 @@ pub struct Guidance {
     pub rationale: String,
     #[serde(default)]
     pub examples: Vec<String>,
+}
+
+pub const MAX_FEATURE_LIST_ITEMS: usize = 64;
+pub const LOCAL_REVIEW_ASSURANCE: &str = "solo-local";
+
+/// A user-facing capability of the governed app: what it is, how a person
+/// reaches it, how an agent drives and proves it, and why it exists.
+///
+/// The record is the source of truth; the agent runbook (four fixed headings
+/// plus Why) and the human journal entry are projections of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Feature {
+    pub name: String,
+    pub summary: String,
+    /// Grouping used for the sweep order, for example "Dashboard".
+    pub area: String,
+    #[serde(default)]
+    pub sweep_order: u32,
+    #[serde(default)]
+    pub sub_features: Vec<String>,
+    /// How a person reaches the feature, written from the user's point of view.
+    pub user_path: String,
+    /// Driver commands executed in one session, in order.
+    #[serde(default)]
+    pub drive_steps: Vec<String>,
+    /// The observable end state that proves the feature works.
+    pub proof: String,
+    #[serde(default)]
+    pub gotchas: Vec<String>,
+    /// Repository-relative path prefixes or globs whose changes affect this feature.
+    #[serde(default)]
+    pub entry_points: Vec<String>,
+    /// Mission, outcome or metric records this feature exists to serve.
+    #[serde(default)]
+    pub serves: Vec<RecordId>,
+    /// Values, philosophy and guidance that constrain how it is built.
+    #[serde(default)]
+    pub constrained_by: Vec<RecordId>,
+    /// Standards (gates) that prove it.
+    #[serde(default)]
+    pub proven_by: Vec<RecordId>,
+}
+
+impl Feature {
+    fn validate(&self) -> Result<(), DomainError> {
+        require_text(&self.name)?;
+        require_text(&self.summary)?;
+        require_text(&self.area)?;
+        require_text(&self.user_path)?;
+        require_text(&self.proof)?;
+        for list in [
+            &self.sub_features,
+            &self.drive_steps,
+            &self.gotchas,
+            &self.entry_points,
+        ] {
+            if list.len() > MAX_FEATURE_LIST_ITEMS {
+                return Err(DomainError::InvalidField("feature list exceeds 64 items"));
+            }
+            for item in list {
+                require_text(item)?;
+            }
+        }
+        for entry in &self.entry_points {
+            let path = std::path::Path::new(entry);
+            if path.is_absolute()
+                || entry.contains('\\')
+                || path
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+            {
+                return Err(DomainError::InvalidField(
+                    "feature entry points must be repository-relative",
+                ));
+            }
+        }
+        for links in [&self.serves, &self.constrained_by, &self.proven_by] {
+            if links.len() > MAX_FEATURE_LIST_ITEMS {
+                return Err(DomainError::InvalidField("feature links exceed 64 items"));
+            }
+            let unique = links.iter().collect::<BTreeSet<_>>();
+            if unique.len() != links.len() {
+                return Err(DomainError::InvalidField("feature links must be unique"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether a repository-relative path is covered by this feature's entry points.
+    pub fn covers_path(&self, path: &str) -> bool {
+        let path = path.trim_start_matches("./");
+        self.entry_points
+            .iter()
+            .any(|entry| entry_point_matches(entry.trim_start_matches("./"), path))
+    }
+}
+
+/// Matches a path against a prefix (`src/`, `src/dashboard.rs`) or a simple
+/// glob with `*` (one segment) and `**` (any depth).
+pub fn entry_point_matches(pattern: &str, path: &str) -> bool {
+    if !pattern.contains('*') {
+        let pattern = pattern.trim_end_matches('/');
+        return path == pattern
+            || path
+                .strip_prefix(pattern)
+                .is_some_and(|rest| rest.starts_with('/'));
+    }
+    glob_match(
+        &pattern.split('/').collect::<Vec<_>>(),
+        &path.split('/').collect::<Vec<_>>(),
+    )
+}
+
+fn glob_match(pattern: &[&str], path: &[&str]) -> bool {
+    match (pattern.first(), path.first()) {
+        (None, None) => true,
+        (Some(&"**"), _) => {
+            glob_match(&pattern[1..], path) || (!path.is_empty() && glob_match(pattern, &path[1..]))
+        }
+        (Some(segment), Some(candidate)) => {
+            segment_match(segment, candidate) && glob_match(&pattern[1..], &path[1..])
+        }
+        _ => false,
+    }
+}
+
+fn segment_match(pattern: &str, candidate: &str) -> bool {
+    let parts = pattern.split('*').collect::<Vec<_>>();
+    if parts.len() == 1 {
+        return pattern == candidate;
+    }
+    let mut rest = candidate;
+    for (index, part) in parts.iter().enumerate() {
+        if index == 0 {
+            let Some(stripped) = rest.strip_prefix(part) else {
+                return false;
+            };
+            rest = stripped;
+        } else if index == parts.len() - 1 {
+            return rest.ends_with(part);
+        } else if let Some(position) = rest.find(part) {
+            rest = &rest[position + part.len()..];
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalReviewVerdict {
+    Accept,
+    Withdraw,
+}
+
+/// Explicit solo self-review of a private local draft.
+///
+/// This is not a team decision: it can never activate team policy, and it is
+/// only valid for a draft proposal owned by the same principal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalReview {
+    pub proposal: RecordRef,
+    pub verdict: LocalReviewVerdict,
+    pub reviewer: PrincipalRef,
+    pub assurance: String,
+    pub rationale: String,
+    pub reviewed_at: String,
+    pub team_activation_permitted: bool,
+}
+
+impl LocalReview {
+    fn validate(&self) -> Result<(), DomainError> {
+        self.proposal.validate()?;
+        self.reviewer.validate()?;
+        require_text(&self.rationale)?;
+        if self.assurance != LOCAL_REVIEW_ASSURANCE || self.team_activation_permitted {
+            return Err(DomainError::InvalidLocalReview);
+        }
+        if !looks_like_utc_timestamp(&self.reviewed_at) {
+            return Err(DomainError::InvalidTimestamp(self.reviewed_at.clone()));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1284,6 +1519,7 @@ impl AgreementHistory {
             RecordBody::Decision(_) => self.validate_decision(&record)?,
             RecordBody::Activation(_) => self.validate_activation(&record)?,
             RecordBody::ObservationReceipt(_) => self.validate_observation(&record)?,
+            RecordBody::LocalReview(_) => self.validate_local_review(&record)?,
             _ => {}
         }
 
@@ -1415,6 +1651,30 @@ impl AgreementHistory {
         Ok(())
     }
 
+    /// A solo review binds an existing draft owned by the reviewer. It never
+    /// substitutes for an independent team decision.
+    pub fn validate_local_review(&self, review: &AgreementRecord) -> Result<(), DomainError> {
+        let RecordBody::LocalReview(body) = &review.body else {
+            return Err(DomainError::WrongRecordType("local_review"));
+        };
+        let proposal_record = self
+            .by_ref(&body.proposal)
+            .ok_or_else(|| DomainError::UnknownReference(body.proposal.id.clone()))?;
+        let RecordBody::Proposal(proposal) = &proposal_record.body else {
+            return Err(DomainError::WrongRecordType("proposal"));
+        };
+        if proposal.state != ProposalState::Draft {
+            return Err(DomainError::InvalidLocalReview);
+        }
+        if review.owner != body.reviewer || proposal_record.owner != body.reviewer {
+            return Err(DomainError::PrincipalMismatch);
+        }
+        if !proposal_record.scope.contains(&review.scope) {
+            return Err(DomainError::UnauthorizedScope);
+        }
+        Ok(())
+    }
+
     pub fn validate_observation(&self, observation: &AgreementRecord) -> Result<(), DomainError> {
         let RecordBody::ObservationReceipt(body) = &observation.body else {
             return Err(DomainError::WrongRecordType("observation_receipt"));
@@ -1517,6 +1777,7 @@ pub enum DomainError {
     ObservationWrongRelease,
     InvalidRepairRecord,
     OperationalRecordCannotGrantAuthority,
+    InvalidLocalReview,
     Serialization(String),
 }
 

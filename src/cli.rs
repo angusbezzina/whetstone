@@ -19,7 +19,8 @@ use crate::repair_host::{
 use crate::repair_transport::HostSocketAuthorityVerifier;
 use crate::service::{
     BasicRequest, ChangeDefinition, ChangeKind, ChangeRequest, CheckRequest, CommandService,
-    DashRequest, InitAction, InitRequest, ServiceRequest, ServiceResponse, ServiceState,
+    DashRequest, GateMode, InitAction, InitRequest, ReviewRequest, ServiceRequest, ServiceResponse,
+    ServiceState,
 };
 use crate::storage::ProjectLayout;
 use crate::{check, dashboard, dashboard_service, output, rules};
@@ -70,6 +71,18 @@ enum Command {
         safeguard_scope: Option<String>,
         #[arg(long)]
         revision_triggers: Option<String>,
+        /// Command that enforces the first gate, run without a shell (agree).
+        #[arg(long)]
+        gate_command: Option<String>,
+        /// Show the exact records or files that would be written, and write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Agent host to receive the verification skill: claude, cursor or agents (wire).
+        #[arg(long = "host")]
+        hosts: Vec<String>,
+        /// Replace the team-owned driver script with a fresh scaffold (wire).
+        #[arg(long)]
+        regenerate_driver: bool,
     },
 
     /// Open the inspectable local dashboard.
@@ -93,6 +106,11 @@ enum Command {
         /// Serve in the foreground without trying to open a browser.
         #[arg(long)]
         no_open: bool,
+        /// For automation: write the one-time edit URL to this new file
+        /// (mode 0600) instead of opening a browser. The capability never
+        /// appears on stdout or in logs.
+        #[arg(long, conflicts_with = "read_only")]
+        bootstrap_file: Option<PathBuf>,
     },
 
     /// Propose or record a bounded local agreement change.
@@ -136,8 +154,14 @@ enum Command {
         #[arg(long = "resume")]
         resume_token: Option<String>,
         /// Inspect the exact before/after proposal without recording it.
-        #[arg(long)]
+        #[arg(long, visible_alias = "dry-run")]
         preview: bool,
+        /// Accept a pending local draft proposal by its id (solo, explicit).
+        #[arg(long, conflicts_with_all = ["withdraw", "kind", "content", "definition"])]
+        accept: Option<String>,
+        /// Withdraw a pending local draft proposal by its id.
+        #[arg(long, conflicts_with_all = ["accept", "kind", "content", "definition"])]
+        withdraw: Option<String>,
     },
 
     /// Evaluate applicable deterministic rules without repairing or publishing.
@@ -152,8 +176,20 @@ enum Command {
         language: Option<String>,
         #[arg(long = "rule")]
         rules: Vec<String>,
+        /// Prove a mapped feature by running the gates that prove it.
+        #[arg(long = "feature")]
+        features: Vec<String>,
+        /// Run the gates of features whose entry points cover changed files.
+        #[arg(long, conflicts_with = "sweep")]
+        changed: bool,
+        /// Drive every mapped feature in sweep order.
+        #[arg(long)]
+        sweep: bool,
+        /// Per-gate time bound in seconds (default 900).
+        #[arg(long)]
+        timeout: Option<u64>,
         /// Checkpoint an existing host-authorized repair session.
-        #[arg(long, conflicts_with_all = ["paths", "language", "rules"])]
+        #[arg(long, conflicts_with_all = ["paths", "language", "rules", "features", "changed", "sweep"])]
         repair_session: Option<String>,
         /// Exact durable repair-session revision expected by the caller.
         #[arg(long, requires = "repair_session")]
@@ -231,6 +267,7 @@ enum InitActionArg {
     Inspect,
     Agree,
     Cancel,
+    Wire,
 }
 
 impl From<InitActionArg> for InitAction {
@@ -239,6 +276,7 @@ impl From<InitActionArg> for InitAction {
             InitActionArg::Inspect => Self::Inspect,
             InitActionArg::Agree => Self::Agree,
             InitActionArg::Cancel => Self::Cancel,
+            InitActionArg::Wire => Self::Wire,
         }
     }
 }
@@ -251,6 +289,7 @@ enum ChangeKindArg {
     Metric,
     Guidance,
     Standard,
+    Feature,
 }
 
 fn parse_change_definition(value: &str) -> Result<Box<ChangeDefinition>, String> {
@@ -279,6 +318,7 @@ impl From<ChangeKindArg> for ChangeKind {
             ChangeKindArg::Metric => Self::Metric,
             ChangeKindArg::Guidance => Self::Guidance,
             ChangeKindArg::Standard => Self::Standard,
+            ChangeKindArg::Feature => Self::Feature,
         }
     }
 }
@@ -304,6 +344,10 @@ pub fn run() -> i32 {
             initial_safeguard,
             safeguard_scope,
             revision_triggers,
+            gate_command,
+            dry_run,
+            hosts,
+            regenerate_driver,
         }) => service.execute(ServiceRequest::Init(InitRequest {
             project_dir,
             request_id,
@@ -318,6 +362,10 @@ pub fn run() -> i32 {
             initial_safeguard,
             safeguard_scope,
             revision_triggers,
+            gate_command,
+            dry_run,
+            hosts,
+            regenerate_driver,
         })),
         Some(Command::Dash {
             project_dir,
@@ -327,6 +375,7 @@ pub fn run() -> i32 {
             page_size,
             read_only,
             no_open,
+            bootstrap_file,
         }) => {
             if explicit_json {
                 service.execute(ServiceRequest::Dash(DashRequest {
@@ -339,7 +388,7 @@ pub fn run() -> i32 {
                     expected_snapshot: None,
                 }))
             } else {
-                return run_dashboard(project_dir, request_id, read_only, no_open);
+                return run_dashboard(project_dir, request_id, read_only, no_open, bootstrap_file);
             }
         }
         Some(Command::Change {
@@ -361,6 +410,8 @@ pub fn run() -> i32 {
             expected_revision,
             resume_token,
             preview,
+            accept,
+            withdraw,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
             project_dir,
             request_id,
@@ -380,6 +431,17 @@ pub fn run() -> i32 {
             expected_revision,
             resume_token,
             preview,
+            review: accept
+                .map(|proposal| ReviewRequest {
+                    proposal,
+                    verdict: crate::domain::LocalReviewVerdict::Accept,
+                })
+                .or_else(|| {
+                    withdraw.map(|proposal| ReviewRequest {
+                        proposal,
+                        verdict: crate::domain::LocalReviewVerdict::Withdraw,
+                    })
+                }),
         })),
         Some(Command::Check {
             project_dir,
@@ -387,6 +449,10 @@ pub fn run() -> i32 {
             paths,
             language,
             rules,
+            features,
+            changed,
+            sweep,
+            timeout,
             repair_session,
             repair_revision,
             authority_evidence,
@@ -413,6 +479,15 @@ pub fn run() -> i32 {
                 paths,
                 language,
                 rules,
+                features,
+                gate_mode: if sweep {
+                    GateMode::Sweep
+                } else if changed {
+                    GateMode::Changed
+                } else {
+                    GateMode::All
+                },
+                timeout_seconds: timeout,
             }))
         }
         Some(Command::Pull {
@@ -829,6 +904,7 @@ fn run_dashboard(
     request_id: Option<String>,
     read_only: bool,
     no_open: bool,
+    bootstrap_file: Option<PathBuf>,
 ) -> i32 {
     let backend = Arc::new(dashboard_service::CommandDashboardBackend::new(
         project_dir,
@@ -849,6 +925,23 @@ fn run_dashboard(
 
     // This is the only URL printed or suitable for logs. It contains no
     // bootstrap/session capability and remains useful for headless inspection.
+    if let Some(path) = bootstrap_file {
+        match handle.take_bootstrap_fragment() {
+            Some(bootstrap) => {
+                if let Err(error) = write_private_new_file(
+                    &path,
+                    format!("{}#bootstrap={bootstrap}", handle.public_url()).as_bytes(),
+                ) {
+                    eprintln!("The bootstrap file could not be written safely: {error}");
+                    return 4;
+                }
+            }
+            None => {
+                eprintln!("No edit capability is available for this dashboard.");
+                return 4;
+            }
+        }
+    }
     println!("Whetstone dashboard: {}", handle.public_url());
     if !no_open {
         let launch_url = if read_only {
@@ -871,6 +964,22 @@ fn run_dashboard(
     loop {
         thread::park_timeout(Duration::from_secs(60));
     }
+}
+
+/// Create a new file readable only by the current user; never follow or
+/// replace an existing path.
+fn write_private_new_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 fn launch_browser(url: &str) -> std::io::Result<()> {
@@ -952,6 +1061,60 @@ fn format_human_response(response: &ServiceResponse) -> String {
     }
     for action in &response.permitted_actions {
         let _ = writeln!(rendered, "Next: {action}");
+    }
+    if let Some(gates) = response
+        .data
+        .get("gates")
+        .and_then(serde_json::Value::as_array)
+    {
+        for gate in gates {
+            let text = |field: &str| {
+                gate.get(field)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            let _ = writeln!(
+                rendered,
+                "Gate {} · {} · {}",
+                text("state"),
+                text("id"),
+                text("summary")
+            );
+            for failure in gate
+                .get("failures")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .take(10)
+            {
+                let _ = writeln!(
+                    rendered,
+                    "  {}: {}",
+                    failure
+                        .get("location")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("?"),
+                    failure
+                        .get("message")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("")
+                );
+            }
+        }
+        if let Some(root) = response
+            .data
+            .get("evidence_root")
+            .and_then(serde_json::Value::as_str)
+        {
+            if let Some(run) = response
+                .data
+                .get("run_id")
+                .and_then(serde_json::Value::as_str)
+            {
+                let _ = writeln!(rendered, "Evidence: {root}/{run}");
+            }
+        }
     }
     for detail in repair_detail_lines(&response.data) {
         let _ = writeln!(rendered, "{detail}");

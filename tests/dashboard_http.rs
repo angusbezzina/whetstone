@@ -99,6 +99,7 @@ fn install_private_agreement(root: &Path) {
         initial_safeguard: None,
         safeguard_scope: None,
         revision_triggers: None,
+        ..Default::default()
     }));
     let accepted = CommandService.execute(ServiceRequest::Init(InitRequest {
         project_dir: root.to_path_buf(),
@@ -114,6 +115,7 @@ fn install_private_agreement(root: &Path) {
         initial_safeguard: Some("Never weaken a failing check to get green.".into()),
         safeguard_scope: Some("All repository changes".into()),
         revision_triggers: Some("Mission, architecture, or repeated friction".into()),
+        ..Default::default()
     }));
     assert_eq!(accepted.state, whetstone::service::ServiceState::NeedsInput);
 }
@@ -426,6 +428,7 @@ fn command_backend_preserves_service_stale_rejection_and_fixed_project_scope() {
         initial_safeguard: None,
         safeguard_scope: None,
         revision_triggers: None,
+        ..Default::default()
     }));
     let current_revision = inspection.expected_revision.expect("revision");
     let body = serde_json::json!({
@@ -452,6 +455,7 @@ fn command_backend_preserves_service_stale_rejection_and_fixed_project_scope() {
         initial_safeguard: Some("Never weaken a failing gate to get green.".into()),
         safeguard_scope: Some("All repository changes".into()),
         revision_triggers: Some("Mission or architecture changes".into()),
+        ..Default::default()
     }));
 
     let handle = DashboardHandle::start(
@@ -515,6 +519,7 @@ fn dashboard_init_inspection_is_identical_to_the_cli_service_path() {
         initial_safeguard: None,
         safeguard_scope: None,
         revision_triggers: None,
+        ..Default::default()
     }));
     let handle = DashboardHandle::start(
         DashboardMode::Local {
@@ -602,13 +607,13 @@ fn private_only_dashboard_queries_are_typed_filtered_and_do_not_create_shareable
     assert_eq!(page.as_array().map(Vec::len), Some(1));
     assert_eq!(page[0]["record"]["record_type"], "core_value", "{page}");
     assert_eq!(
-        body["data"]["current"]["local_agreement"]["mission"]["record"]["statement"],
-        "Make project intent inspectable.",
+        body["data"]["current"]["mission"]["title"], "Make project intent inspectable.",
         "filtered history must never replace the independent current-state projection"
     );
     assert_eq!(
-        body["data"]["current"]["workspace"]["verification_currentness"],
-        "unknown_without_exact_recheck"
+        body["data"]["current"]["checks"]["last_complete"],
+        serde_json::Value::Null,
+        "no gate has run, so no completed check may be claimed"
     );
     assert!(!layout.store_path(StoreKind::Shareable).exists());
 }
@@ -778,6 +783,7 @@ fn dashboard_change_check_conflict_and_permission_paths_preserve_service_semanti
         expected_revision: None,
         resume_token: None,
         preview: false,
+        ..Default::default()
     }));
     let probe = send(
         handle.address(),
@@ -826,11 +832,13 @@ fn dashboard_change_check_conflict_and_permission_paths_preserve_service_semanti
                     expected_revision: None,
                     resume_token: None,
                     preview: false,
+                    ..Default::default()
                 }))
                 .resume_token
                 .expect("change token"),
         ),
         preview: false,
+        ..Default::default()
     };
     let preview_request = ChangeRequest {
         preview: true,
@@ -903,6 +911,7 @@ fn dashboard_change_check_conflict_and_permission_paths_preserve_service_semanti
         paths: vec![Path::new(".").to_path_buf()],
         language: None,
         rules: vec![],
+        ..Default::default()
     }));
     let body = serde_json::json!({
         "workflow": "check",

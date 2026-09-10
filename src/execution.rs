@@ -957,16 +957,18 @@ fn valid_env_name(value: &str) -> bool {
         })
 }
 
-struct RunResult {
-    status: ExitStatus,
-    elapsed: Duration,
-    stdout: CapturedOutput,
-    stderr: CapturedOutput,
-    timed_out: bool,
-    cleanup: String,
+pub(crate) struct RunResult {
+    pub(crate) status: ExitStatus,
+    pub(crate) elapsed: Duration,
+    pub(crate) stdout: CapturedOutput,
+    pub(crate) stderr: CapturedOutput,
+    pub(crate) timed_out: bool,
+    pub(crate) cleanup: String,
 }
 
-fn run_bounded(
+/// Run a literal argv (no shell) with a cleared environment, a process
+/// group, a wall-clock bound and bounded output capture.
+pub(crate) fn run_bounded(
     executable: &Path,
     argv: &[String],
     cwd: &Path,

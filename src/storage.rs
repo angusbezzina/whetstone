@@ -1254,27 +1254,7 @@ fn render_markdown(payload: &ProjectionPayload, digest: &ContentDigest) -> Strin
 }
 
 fn record_type_name(record: &AgreementRecord) -> &'static str {
-    use crate::domain::RecordBody;
-    match &record.body {
-        RecordBody::Mission(_) => "mission",
-        RecordBody::CoreValue(_) => "core_value",
-        RecordBody::ImplementationPhilosophy(_) => "implementation_philosophy",
-        RecordBody::Standard(_) => "standard",
-        RecordBody::Guidance(_) => "guidance",
-        RecordBody::MetricDefinition(_) => "metric_definition",
-        RecordBody::SourceSnapshot(_) => "source_snapshot",
-        RecordBody::Proposal(_) => "proposal",
-        RecordBody::Decision(_) => "decision",
-        RecordBody::Mandate(_) => "mandate",
-        RecordBody::Activation(_) => "activation",
-        RecordBody::VerificationReceipt(_) => "verification_receipt",
-        RecordBody::ObservationReceipt(_) => "observation_receipt",
-        RecordBody::Retirement(_) => "retirement",
-        RecordBody::RepairSession(_) => "repair_session",
-        RecordBody::RepairHandoff(_) => "repair_handoff",
-        RecordBody::RepairAuthorityReservation(_) => "repair_authority_reservation",
-        RecordBody::RepairOperationClaim(_) => "repair_operation_claim",
-    }
+    record.body.type_name()
 }
 
 fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
@@ -1341,7 +1321,7 @@ fn validate_logical_records(records: &[AgreementRecord]) -> Result<(), StorageEr
 
 fn logical_stage(record: &AgreementRecord) -> u8 {
     match &record.body {
-        RecordBody::Decision(_) => 1,
+        RecordBody::Decision(_) | RecordBody::LocalReview(_) => 1,
         RecordBody::Activation(_)
         | RecordBody::ObservationReceipt(_)
         | RecordBody::RepairSession(_)

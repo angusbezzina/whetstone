@@ -526,6 +526,7 @@ fn install_owner_agreement(fixture: &Fixture) -> whetstone::domain::RecordRef {
         initial_safeguard: None,
         safeguard_scope: None,
         revision_triggers: None,
+        ..Default::default()
     }));
     assert_eq!(inspection.state, ServiceState::NeedsInput);
     let accepted = CommandService.execute(ServiceRequest::Init(InitRequest {
@@ -542,6 +543,7 @@ fn install_owner_agreement(fixture: &Fixture) -> whetstone::domain::RecordRef {
         initial_safeguard: Some("Never weaken a failing check to get green.".into()),
         safeguard_scope: Some("All repository changes".into()),
         revision_triggers: Some("Mission, architecture, or repeated-friction changes".into()),
+        ..Default::default()
     }));
     assert_eq!(accepted.state, ServiceState::NeedsInput);
     assert_eq!(accepted.data["progress"]["agreement"], "approved");
@@ -616,6 +618,7 @@ fn onboarding_is_verified_only_while_the_exact_repair_snapshot_is_current() {
         initial_safeguard: None,
         safeguard_scope: None,
         revision_triggers: None,
+        ..Default::default()
     }));
     assert_eq!(verified.state, ServiceState::Success);
     assert_eq!(verified.data["progress"]["feedback_loop"], "verified");
@@ -642,6 +645,7 @@ fn onboarding_is_verified_only_while_the_exact_repair_snapshot_is_current() {
         initial_safeguard: None,
         safeguard_scope: None,
         revision_triggers: None,
+        ..Default::default()
     }));
     assert_eq!(stale.state, ServiceState::NeedsInput);
     assert_eq!(stale.data["progress"]["setup_complete"], false);
@@ -665,6 +669,7 @@ fn onboarding_is_verified_only_while_the_exact_repair_snapshot_is_current() {
         initial_safeguard: None,
         safeguard_scope: None,
         revision_triggers: None,
+        ..Default::default()
     }));
     assert_eq!(restored.state, ServiceState::Success);
     fs::write(
@@ -686,6 +691,7 @@ fn onboarding_is_verified_only_while_the_exact_repair_snapshot_is_current() {
         initial_safeguard: None,
         safeguard_scope: None,
         revision_triggers: None,
+        ..Default::default()
     }));
     assert_eq!(protected_stale.state, ServiceState::NeedsInput);
     assert!(protected_stale.data["progress"]["proof_status"]
@@ -734,6 +740,7 @@ fn onboarding_rejects_an_initially_green_session_as_repair_proof() {
         initial_safeguard: None,
         safeguard_scope: None,
         revision_triggers: None,
+        ..Default::default()
     }));
     assert_eq!(inspection.state, ServiceState::NeedsInput);
     assert_eq!(inspection.data["progress"]["setup_complete"], false);
@@ -842,6 +849,7 @@ fn humans_get_the_same_actionable_check_without_implicitly_authorizing_an_agent(
         paths: vec![PathBuf::from("src/app.py")],
         language: Some("python".into()),
         rules: Vec::new(),
+        ..Default::default()
     }));
     assert_eq!(human.state, ServiceState::Violated);
     assert_eq!(
