@@ -1222,7 +1222,9 @@ mod tests {
             }],
             accepted_input_scopes: vec!["src".into()],
             environment_allowlist: BTreeSet::from(["CHECK_TOKEN".into()]),
-            timeout_ms: 1_000,
+            // Headroom for a freshly written script to start on a loaded
+            // machine; the timeout test sets its own 50 ms bound.
+            timeout_ms: MAX_TIMEOUT_MS,
             stdout_limit_bytes: 4_096,
             stderr_limit_bytes: 4_096,
             violation_exit_codes: BTreeSet::from([1]),
