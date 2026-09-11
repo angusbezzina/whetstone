@@ -1722,11 +1722,19 @@ fn area_of(record: &AgreementRecord) -> &'static str {
 
 /// Group history items into human journal entries, newest first.
 pub fn journal(state: &AgreementState, history: Option<&HistoryInspection>) -> Vec<JournalEntry> {
-    let Some(history) = history else {
-        return Vec::new();
-    };
+    history.map_or_else(Vec::new, |history| {
+        journal_from_items(state, &history.decision_history.items)
+    })
+}
+
+/// Journal entries from any set of history items (the dashboard passes the
+/// whole visible history, so the newest entries are never paged away).
+pub fn journal_from_items(
+    state: &AgreementState,
+    items: &[crate::history::HistoryItem],
+) -> Vec<JournalEntry> {
     let mut groups = BTreeMap::<String, Vec<crate::history::HistoryItem>>::new();
-    for item in &history.decision_history.items {
+    for item in items {
         let key = item.record.as_ref().map_or_else(
             || {
                 format!(
@@ -1753,6 +1761,38 @@ pub fn journal(state: &AgreementState, history: Option<&HistoryInspection>) -> V
             .then_with(|| left.id.cmp(&right.id))
     });
     entries
+}
+
+/// Keep the entries whose visible text (title, summary, area, kind, owner,
+/// note, version) or underlying records contain `term`, case-insensitively.
+pub fn search_journal(entries: Vec<JournalEntry>, term: Option<&str>) -> Vec<JournalEntry> {
+    let Some(term) = term.map(str::trim).filter(|term| !term.is_empty()) else {
+        return entries;
+    };
+    let term = term.to_lowercase();
+    entries
+        .into_iter()
+        .filter(|entry| {
+            let visible = [
+                entry.title.as_str(),
+                entry.summary.as_str(),
+                entry.area,
+                entry.kind,
+                entry.owner.as_deref().unwrap_or_default(),
+                entry.note.as_deref().unwrap_or_default(),
+                entry.version.as_deref().unwrap_or_default(),
+            ];
+            visible
+                .iter()
+                .any(|text| text.to_lowercase().contains(&term))
+                || entry.records.iter().any(|item| {
+                    item.record
+                        .as_ref()
+                        .and_then(|record| serde_json::to_string(record).ok())
+                        .is_some_and(|text| text.to_lowercase().contains(&term))
+                })
+        })
+        .collect()
 }
 
 fn journal_entry(

@@ -211,6 +211,36 @@ impl HistoryInspectionService {
         Self::from_repositories(&private, &shareable)
     }
 
+    /// Every visible decision-history item as of `base`, unfiltered and in
+    /// order, read in the largest pages; `true` when the bound (20,000
+    /// items) stopped collection early.
+    pub fn all_decision_items(
+        &self,
+        base: &HistoryInspectionRequest,
+    ) -> Option<(Vec<HistoryItem>, bool)> {
+        const PAGE: usize = 500;
+        const MAX_PAGES: usize = 40;
+        let mut items = Vec::new();
+        let mut after = None;
+        for _ in 0..MAX_PAGES {
+            let page = self
+                .inspect(&HistoryInspectionRequest {
+                    search: None,
+                    history_after: after.take(),
+                    page_size: PAGE,
+                    expected_snapshot: None,
+                    ..base.clone()
+                })
+                .ok()?;
+            items.extend(page.decision_history.items);
+            match page.decision_history.next {
+                Some(next) => after = Some(next),
+                None => return Some((items, false)),
+            }
+        }
+        Some((items, true))
+    }
+
     /// Build from records already read from both stores.
     pub fn from_records(
         private: Vec<AgreementRecord>,
@@ -1735,6 +1765,51 @@ mod tests {
                 as_of: "not-a-time".into(),
             }),
             Err(HistoryError::InvalidQuery)
+        );
+    }
+
+    #[test]
+    fn all_decision_items_reach_past_every_page_to_the_newest() {
+        let records = (0..1_203u32)
+            .map(|index| {
+                let (day, rest) = (index / 1_440, index % 1_440);
+                guidance(
+                    &format!("guidance.bulk-{index:04}"),
+                    1,
+                    &format!(
+                        "2026-01-{:02}T{:02}:{:02}:00Z",
+                        day + 1,
+                        rest / 60,
+                        rest % 60
+                    ),
+                    &format!("Bulk guidance {index}"),
+                    None,
+                )
+            })
+            .collect::<Vec<_>>();
+        let service = HistoryInspectionService::from_records(records, Vec::new()).expect("service");
+        let (items, truncated) = service
+            .all_decision_items(&HistoryInspectionRequest {
+                project: "whetstone".into(),
+                as_of: "2026-02-01T00:00:00Z".into(),
+                access: AccessBoundary::PrivateStore,
+                search: Some("ignored for the full journal".into()),
+                history_after: None,
+                page_size: 100,
+                expected_snapshot: None,
+                redact_private_before: None,
+            })
+            .expect("all items");
+        assert!(!truncated);
+        assert_eq!(
+            items.len(),
+            1_203,
+            "every page is collected, search ignored"
+        );
+        assert_eq!(
+            items.last().map(|item| item.reference.id.as_str()),
+            Some("guidance.bulk-1202"),
+            "the newest record is present"
         );
     }
 }

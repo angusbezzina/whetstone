@@ -98,10 +98,13 @@ const journal = [
   { id: "c1", recorded_at: "2026-09-01T09:00:00Z", kind: "decision", title: "Foundations established", version: "revision 1", status: label("pass", "accepted"), owner: "Owner", area: "mission", summary: "Recorded as one wh init operation.", note: null, proposal: null, records: [] },
 ];
 
+// A long history: the journal pages locally, 100 entries at a time.
+const longJournal = Array.from({ length: 130 }, (_, index) => ({ id: `long-${index}`, recorded_at: new Date(Date.UTC(2026, 8, 10, 12, 0) - index * 60_000).toISOString(), kind: "decision", title: `Decision ${index}`, version: "revision 1", status: label("pass", "accepted"), owner: "Owner", area: "rules", summary: `Entry ${index}`, note: null, proposal: null, records: [] }));
+
 let mode = "established";
 const commands = [];
 function envelope() {
-  return { schema: "whetstone.command-response.v1", state: "success", summary: "ok", data: { current: view(mode), changelog: mode === "fresh" ? [] : journal, history: { snapshot_digest: "sha256:x", decision_history: { next: null } }, sync: { shared_store: "/repo", team_active: { "standard.journey": "standard.journey@1#sha256:x" }, required_workflow: false } } };
+  return { schema: "whetstone.command-response.v1", state: "success", summary: "ok", data: { current: view(mode), changelog: mode === "fresh" ? [] : mode === "long" ? longJournal : journal, history: { snapshot_digest: "sha256:x", decision_history: { next: null } }, sync: { shared_store: "/repo", team_active: { "standard.journey": "standard.journey@1#sha256:x" }, required_workflow: false } } };
 }
 
 const server = createServer((request, response) => {
@@ -254,6 +257,18 @@ try {
       check(overflow <= 1, `${tab} fits at ${width}px (overflow ${overflow})`);
     }
   }
+
+  // Long history: the newest entries first, older ones appended in place.
+  mode = "long";
+  await cdp.navigate(`${origin}/`);
+  await cdp.waitFor("document.querySelector('#mission-line')", "long dashboard did not render");
+  await click("#tab-changelog");
+  await cdp.waitFor("document.querySelector('.entry')", "long changelog did not render");
+  check(await count(".entry") === 100 && await cdp.evaluate("document.querySelector('.entry').textContent.includes('Decision 0')"), "the first page holds the newest 100 entries");
+  const before = commands.length;
+  await click("#cl-more");
+  check(await count(".entry") === 130 && !(await cdp.evaluate("Boolean(document.querySelector('#cl-more'))")), "Load more appends the older entries");
+  check(commands.length === before, "Load more pages locally without a new command");
 
   // Inspection failure: no health claim.
   mode = "error";

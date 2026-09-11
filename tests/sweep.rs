@@ -593,3 +593,39 @@ fn a_change_is_proven_with_its_own_steps_and_committed_work_selects_its_features
     ));
     assert_eq!(unknown_base["state"], "unknown", "{unknown_base}");
 }
+
+/// The changelog search finds what users see: a journal title the
+/// projection builds, not only text stored inside records.
+#[test]
+fn the_changelog_search_finds_visible_titles() {
+    let temp = tempfile::tempdir().expect("temp");
+    let root = temp.path();
+    establish(root);
+    let everything = json(&run(&["dash", "--json"], root));
+    let titles = everything["data"]["changelog"]
+        .as_array()
+        .expect("changelog")
+        .iter()
+        .map(|entry| entry["title"].as_str().unwrap_or_default().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        titles
+            .iter()
+            .any(|title| title == "Foundations established"),
+        "{titles:?}"
+    );
+    assert_eq!(everything["data"]["changelog_truncated"], false);
+    let found = json(&run(
+        &["dash", "--json", "--search", "foundations ESTABLISHED"],
+        root,
+    ));
+    let found = found["data"]["changelog"].as_array().expect("changelog");
+    assert!(
+        found
+            .iter()
+            .any(|entry| entry["title"] == "Foundations established"),
+        "{found:?}"
+    );
+    let none = json(&run(&["dash", "--json", "--search", "zqxj-nothing"], root));
+    assert_eq!(none["data"]["changelog"].as_array().map(Vec::len), Some(0));
+}

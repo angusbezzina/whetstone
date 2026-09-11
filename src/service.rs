@@ -614,18 +614,26 @@ impl CommandService {
             )),
             Err(error) => Err(HistoryError::Storage(error.to_string())),
         };
-        let history = history_service.and_then(|service| {
-            service.inspect(&HistoryInspectionRequest {
-                project: format!("project-{}", &layout.project_id()[..12]),
-                as_of,
-                access: AccessBoundary::PrivateStore,
-                search: request.search,
-                history_after: request.history_after,
-                page_size,
-                expected_snapshot: request.expected_snapshot,
-                redact_private_before: None,
-            })
-        });
+        let history_request = HistoryInspectionRequest {
+            project: format!("project-{}", &layout.project_id()[..12]),
+            as_of,
+            access: AccessBoundary::PrivateStore,
+            search: request.search.clone(),
+            history_after: request.history_after,
+            page_size,
+            expected_snapshot: request.expected_snapshot,
+            redact_private_before: None,
+        };
+        let (history, journal_items) = match history_service {
+            Ok(service) => {
+                let page = service.inspect(&history_request);
+                // The journal groups the whole visible history (bounded), so
+                // its newest entries are never cut off by record paging.
+                let all = service.all_decision_items(&history_request);
+                (page, all)
+            }
+            Err(error) => (Err(error), None),
+        };
         let progress = match &private_records {
             Some(Ok(records)) => onboarding_progress_from_records(&layout, Some(records)),
             Some(Err(_)) | None => onboarding_progress(&layout),
@@ -688,7 +696,13 @@ impl CommandService {
                         team_active: team_active_refs(loaded.as_ref().ok()),
                     },
                 );
-                let journal = projection::journal(&state, history.as_ref());
+                let journal = match &journal_items {
+                    Some((items, _)) => projection::search_journal(
+                        projection::journal_from_items(&state, items),
+                        request.search.as_deref(),
+                    ),
+                    None => projection::journal(&state, history.as_ref()),
+                };
                 let trail = request.trail.then(|| projection::decision_trail(&state));
                 Ok(Some((view, journal, trail)))
             }
@@ -730,6 +744,9 @@ impl CommandService {
                 .collect();
         }
         let changelog = journal;
+        let changelog_truncated = journal_items
+            .as_ref()
+            .is_some_and(|(_, truncated)| *truncated);
         let shared_exists = matches!(&loaded, Ok(loaded) if loaded.shared.is_some());
         let team_active = team_active_refs(loaded.as_ref().ok());
         let sync = json!({
@@ -750,6 +767,7 @@ impl CommandService {
             "history_state": history_state,
             "history_detail": history_detail,
             "changelog": changelog,
+            "changelog_truncated": changelog_truncated,
             "current": current_projection,
             "workflows": [
                 {"name": "init", "state": "available", "effect": "inspect or establish private agreement"},
