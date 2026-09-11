@@ -359,10 +359,16 @@ async function browser(config) {
   if (!existsSync(portFile)) throw new Error("Chrome did not expose a debugging port.");
   const port = readFileSync(portFile, "utf8").split("\n")[0];
   let page;
-  for (let attempt = 0; attempt < 400 && !page; attempt += 1) {
+  // Headless Chrome occasionally starts without its initial tab; after a
+  // second with no page target, ask for one instead of waiting it out.
+  for (let attempt = 0; attempt < 800 && !page; attempt += 1) {
     try {
       const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json());
       page = targets.find((target) => target.type === "page" && !target.url.startsWith("chrome-extension:"));
+      if (!page && attempt > 0 && attempt % 40 === 0) {
+        const created = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" }).then((response) => response.json());
+        if (created?.type === "page" && created.webSocketDebuggerUrl) page = created;
+      }
     } catch {}
     if (!page) await delay(25);
   }
