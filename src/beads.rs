@@ -288,8 +288,13 @@ impl RecordStore {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| StorageError::Serialization(error.to_string()))?
             .as_nanos();
-        let stage =
-            std::env::temp_dir().join(format!("whetstone-private-{}-{nonce}", std::process::id()));
+        // Unique per call even when threads start in the same instant.
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let stage = std::env::temp_dir().join(format!(
+            "whetstone-private-{}-{nonce}-{sequence}",
+            std::process::id()
+        ));
         create_private_dir(&stage)?;
         let result = (|| {
             let output = Command::new("bd")
