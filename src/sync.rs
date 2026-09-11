@@ -35,6 +35,9 @@ pub struct PushRequest {
     pub canaries: Vec<String>,
     pub confirm: Option<String>,
     pub dry_run: bool,
+    /// Also open team activation for shared policy not yet team-active: a
+    /// shared proposal plus the manifest a pull request reviews.
+    pub propose: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -278,6 +281,122 @@ fn build_package(
     }
 }
 
+/// Map an activation denial onto the response envelope.
+pub fn denial_state(code: &str) -> ServiceState {
+    match code {
+        "stale_base" | "authority_stale" | "expired" => ServiceState::Stale,
+        "platform_unavailable" | "protection_unverified" | "authority_missing" => {
+            ServiceState::Unavailable
+        }
+        "self_review"
+        | "stale_review"
+        | "no_independent_approval"
+        | "unauthorized_proposer"
+        | "not_merged"
+        | "manifest_not_reviewed"
+        | "nothing_to_propose" => ServiceState::NeedsDecision,
+        "digest_mismatch" | "repository_mismatch" | "scope_mismatch" => ServiceState::Conflict,
+        _ => ServiceState::Unknown,
+    }
+}
+
+/// Open team activation for shared policy records that are neither
+/// team-active nor already in a shared proposal.
+fn propose_shared(layout: &ProjectLayout, shared: &RecordStore) -> Value {
+    let records = match shared.all_records() {
+        Ok(records) => records,
+        Err(error) => return json!({"proposed": false, "reason": error.to_string()}),
+    };
+    let active = crate::activation::team_active(&records);
+    let active_refs = active
+        .entries
+        .values()
+        .filter_map(|entry| entry.policy.reference().ok())
+        .collect::<BTreeSet<_>>();
+    let proposed = records
+        .iter()
+        .filter_map(|record| match &record.body {
+            RecordBody::Proposal(body) if body.binding.is_some() => {
+                Some(body.proposed_records.clone())
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect::<BTreeSet<_>>();
+    let mut latest = BTreeMap::<RecordId, &AgreementRecord>::new();
+    for record in records
+        .iter()
+        .filter(|record| crate::agreement::is_agreement_body(&record.body))
+    {
+        if latest
+            .get(&record.id)
+            .map_or(true, |current| current.revision < record.revision)
+        {
+            latest.insert(record.id.clone(), record);
+        }
+    }
+    let policies = latest
+        .values()
+        .filter_map(|record| record.reference().ok())
+        .filter(|reference| !active_refs.contains(reference) && !proposed.contains(reference))
+        .collect::<Vec<_>>();
+    let now = crate::service::utc_timestamp();
+    let expires = expiry_after(&now, 7);
+    let platform = crate::authority::platform_for(layout.project_root());
+    match crate::activation::propose(
+        layout.project_root(),
+        shared,
+        platform.as_ref(),
+        &policies,
+        &now,
+        &expires,
+    ) {
+        Ok(proposed) => {
+            let transmitted = shared.push_remote().is_ok();
+            let branch = format!(
+                "whetstone/{}",
+                proposed.proposal.id.as_str().replace('.', "-")
+            );
+            json!({
+                "proposed": true,
+                "proposal": proposed.proposal,
+                "manifest": proposed.manifest_path,
+                "binding": proposed.manifest,
+                "transmitted": transmitted,
+                "next": [
+                    format!("git switch -c {branch}"),
+                    format!("git add {}", proposed.manifest_path),
+                    "git commit -m \"Propose team policy\"".to_string(),
+                    format!("git push -u origin {branch}"),
+                    "gh pr create --fill".to_string(),
+                    "An authorized reviewer other than you approves; after merge the whetstone-policy workflow activates it.".to_string(),
+                ],
+            })
+        }
+        Err(denial) => json!({"proposed": false, "code": denial.code, "reason": denial.detail}),
+    }
+}
+
+/// An RFC 3339 instant `days` after `now` (second precision, UTC).
+fn expiry_after(now: &str, days: i64) -> String {
+    let output = std::process::Command::new("date")
+        .args(["-u", "-v", &format!("+{days}d"), "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .or_else(|| {
+            std::process::Command::new("date")
+                .args(["-u", "-d", &format!("+{days} days"), "+%Y-%m-%dT%H:%M:%SZ"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+        });
+    output
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|value| value.ends_with('Z'))
+        .unwrap_or_else(|| now.to_string())
+}
+
 fn digest(parts: &[&str]) -> String {
     let mut hasher = Sha256::new();
     for part in parts {
@@ -432,6 +551,9 @@ pub fn push(request: PushRequest) -> ServiceResponse {
         );
         let mut data = data;
         data["transmitted"] = json!(matches!(transmitted, Some(Ok(_))));
+        if request.propose && !request.dry_run {
+            data["activation"] = propose_shared(&layout, &shared);
+        }
         response.data = data;
         return response;
     }
@@ -521,6 +643,9 @@ pub fn push(request: PushRequest) -> ServiceResponse {
     data["copied"] = json!(copied.iter().map(reference_text).collect::<Vec<_>>());
     data["transmitted"] = json!(transmitted.is_ok());
     data["transmit_detail"] = json!(transmitted.err());
+    if request.propose {
+        data["activation"] = propose_shared(&layout, &shared);
+    }
     response.data = data;
     response
 }

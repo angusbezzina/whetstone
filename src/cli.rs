@@ -86,6 +86,15 @@ enum Command {
         /// A pstack verify-<app>/ skill directory to read into private drafts (import).
         #[arg(long = "from")]
         import_from: Option<PathBuf>,
+        /// Install Claude Code hooks (SessionStart context, Stop-time repair feedback) (wire).
+        #[arg(long)]
+        hooks: bool,
+        /// Scaffold the protected policy workflow, authority file and CODEOWNERS (wire).
+        #[arg(long)]
+        ci: bool,
+        /// GitHub login allowed to review team policy (wire --ci; repeatable).
+        #[arg(long = "reviewer")]
+        reviewers: Vec<String>,
     },
 
     /// Open the inspectable local dashboard.
@@ -118,6 +127,13 @@ enum Command {
         /// decision, why, evidence, result) instead of serving the dashboard.
         #[arg(long)]
         trail: bool,
+        /// Run as an agent-host hook: `session-start` prints the canonical
+        /// context for the host (never pointing at a stale skill).
+        #[arg(long, value_enum)]
+        hook: Option<DashHookArg>,
+        /// The agent host the hook serves (claude, cursor, agents).
+        #[arg(long, default_value = "claude")]
+        host: String,
     },
 
     /// Propose or record a bounded local agreement change.
@@ -172,6 +188,10 @@ enum Command {
         /// Propose retiring an accepted record (history stays); needs --rationale.
         #[arg(long, conflicts_with_all = ["accept", "withdraw", "kind", "content", "definition"])]
         retire: Option<String>,
+        /// Activate a merged manifest (.whetstone/proposals/<id>.json) after
+        /// verifying its independent review on GitHub (the CI activator).
+        #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind", "content", "definition"])]
+        activate: Option<String>,
     },
 
     /// Evaluate applicable deterministic rules without repairing or publishing.
@@ -207,6 +227,16 @@ enum Command {
         /// The maintain run's notes file (repository path) or PR URL.
         #[arg(long, requires = "maintain_outcome")]
         maintain_evidence: Option<String>,
+        /// Enforce team-active policy only (the whetstone/policy CI check).
+        #[arg(long, conflicts_with_all = ["changed", "sweep", "features", "maintain_outcome"])]
+        required: bool,
+        /// Record an explicit checkpoint for this agent host (claude, cursor, agents).
+        #[arg(long)]
+        host: Option<String>,
+        /// Run as an agent-host hook: `stop` returns violations to the same
+        /// Claude Code session (exit 2), bounded to three returns.
+        #[arg(long, value_enum)]
+        hook: Option<CheckHookArg>,
         /// Checkpoint an existing host-authorized repair session.
         #[arg(long, conflicts_with_all = ["paths", "language", "rules", "features", "changed", "sweep"])]
         repair_session: Option<String>,
@@ -265,6 +295,10 @@ enum Command {
         /// Show the exact package, destination and base; share nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Also open team activation: a shared proposal and the manifest a
+        /// pull request reviews (needs an authenticated gh).
+        #[arg(long)]
+        propose: bool,
     },
 
     /// Internal schema gate retained for repository maintenance.
@@ -323,6 +357,16 @@ impl From<InitActionArg> for InitAction {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
+enum CheckHookArg {
+    Stop,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DashHookArg {
+    SessionStart,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
 enum MaintainOutcomeArg {
     Clean,
     Changed,
@@ -339,6 +383,7 @@ enum ChangeKindArg {
     Standard,
     Feature,
     Map,
+    Exception,
 }
 
 fn parse_change_definition(value: &str) -> Result<Box<ChangeDefinition>, String> {
@@ -369,6 +414,7 @@ impl From<ChangeKindArg> for ChangeKind {
             ChangeKindArg::Standard => Self::Standard,
             ChangeKindArg::Feature => Self::Feature,
             ChangeKindArg::Map => Self::Map,
+            ChangeKindArg::Exception => Self::Exception,
         }
     }
 }
@@ -399,6 +445,9 @@ pub fn run() -> i32 {
             hosts,
             regenerate_driver,
             import_from,
+            hooks,
+            ci,
+            reviewers,
         }) => service.execute(ServiceRequest::Init(InitRequest {
             project_dir,
             request_id,
@@ -418,6 +467,9 @@ pub fn run() -> i32 {
             hosts,
             regenerate_driver,
             import_from,
+            hooks,
+            ci,
+            reviewers,
         })),
         Some(Command::Dash {
             project_dir,
@@ -429,7 +481,18 @@ pub fn run() -> i32 {
             no_open,
             bootstrap_file,
             trail,
+            hook,
+            host,
         }) => {
+            if matches!(hook, Some(DashHookArg::SessionStart)) {
+                let response = service.execute(ServiceRequest::Dash(DashRequest::basic(
+                    project_dir,
+                    request_id,
+                )));
+                let value = serde_json::to_value(&response).unwrap_or(json!({}));
+                println!("{}", crate::hosts::session_context(&value, &host));
+                return 0;
+            }
             if explicit_json || trail {
                 let response = service.execute(ServiceRequest::Dash(DashRequest {
                     project_dir,
@@ -479,6 +542,7 @@ pub fn run() -> i32 {
             accept,
             withdraw,
             retire,
+            activate,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
             project_dir,
             request_id,
@@ -510,6 +574,7 @@ pub fn run() -> i32 {
                     })
                 }),
             retire,
+            activate,
         })),
         Some(Command::Check {
             project_dir,
@@ -524,6 +589,9 @@ pub fn run() -> i32 {
             dry_run,
             maintain_outcome,
             maintain_evidence,
+            required,
+            host,
+            hook,
             repair_session,
             repair_revision,
             authority_evidence,
@@ -544,7 +612,7 @@ pub fn run() -> i32 {
                     machine,
                 );
             }
-            service.execute(ServiceRequest::Check(CheckRequest {
+            let request = CheckRequest {
                 project_dir,
                 request_id,
                 paths,
@@ -553,7 +621,7 @@ pub fn run() -> i32 {
                 features,
                 gate_mode: if sweep {
                     GateMode::Sweep
-                } else if changed {
+                } else if changed || hook.is_some() {
                     GateMode::Changed
                 } else {
                     GateMode::All
@@ -566,7 +634,13 @@ pub fn run() -> i32 {
                     MaintainOutcomeArg::Blocked => crate::service::MaintainOutcome::Blocked,
                 }),
                 maintain_evidence,
-            }))
+                required,
+                host: host.or_else(|| hook.map(|_| "claude".to_string())),
+            };
+            if matches!(hook, Some(CheckHookArg::Stop)) {
+                return run_stop_hook(&service, request);
+            }
+            service.execute(ServiceRequest::Check(request))
         }
         Some(Command::Pull {
             project_dir,
@@ -585,6 +659,7 @@ pub fn run() -> i32 {
             canaries,
             confirm,
             dry_run,
+            propose,
         }) => service.execute(ServiceRequest::Push(crate::sync::PushRequest {
             project_dir,
             request_id,
@@ -593,6 +668,7 @@ pub fn run() -> i32 {
             canaries,
             confirm,
             dry_run,
+            propose,
         })),
         Some(Command::Validate { project_dir }) => return validate(&project_dir, machine),
         Some(Command::Eval { project_dir, lang }) => {
@@ -619,6 +695,67 @@ pub fn run() -> i32 {
     };
     emit_response(&response, machine);
     response.state.exit_code()
+}
+
+/// Claude Code `Stop` hook: run the change-scoped check and hand violations
+/// back to the same session (exit 2, brief on stderr). Bounded: after three
+/// consecutive returns the agent is told to stop and hand back to the owner.
+fn run_stop_hook(service: &CommandService, request: CheckRequest) -> i32 {
+    use std::io::{IsTerminal, Read};
+    let mut input = String::new();
+    if !std::io::stdin().is_terminal() {
+        let _ = std::io::stdin().take(64 * 1024).read_to_string(&mut input);
+    }
+    let hook = serde_json::from_str::<serde_json::Value>(&input).unwrap_or(json!({}));
+    let continuing = hook["stop_hook_active"].as_bool().unwrap_or(false);
+    let session = hook["session_id"].as_str().unwrap_or("default").to_string();
+    let counter = ProjectLayout::resolve(&request.project_dir, None)
+        .ok()
+        .map(|layout| {
+            let digest = format!(
+                "{:x}",
+                <sha2::Sha256 as sha2::Digest>::digest(session.as_bytes())
+            );
+            layout
+                .state_root()
+                .join("hooks")
+                .join(format!("stop-{}.count", &digest[..16]))
+        });
+    let read_count = || {
+        counter
+            .as_ref()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| text.trim().parse::<u32>().ok())
+            .unwrap_or(0)
+    };
+    let write_count = |count: u32| {
+        if let Some(path) = &counter {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(path, count.to_string());
+        }
+    };
+    let previous = if continuing { read_count() } else { 0 };
+    let response = service.execute(ServiceRequest::Check(request));
+    let value = serde_json::to_value(&response).unwrap_or(json!({}));
+    let (code, text) = crate::hosts::stop_feedback(&value);
+    if code == 2 {
+        let attempts = previous + 1;
+        if attempts > 3 {
+            write_count(0);
+            eprintln!("{text}\nWhetstone: three repair attempts did not clear the failing checks. Stop here and hand the brief above to the owner; do not weaken the gate.");
+            return 0;
+        }
+        write_count(attempts);
+        eprintln!("{text}");
+        return 2;
+    }
+    write_count(0);
+    if !text.is_empty() {
+        eprintln!("{text}");
+    }
+    0
 }
 
 #[allow(clippy::too_many_arguments)]

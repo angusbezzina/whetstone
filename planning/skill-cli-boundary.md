@@ -148,6 +148,68 @@ accepts incoming content, and local drafts are untouched. Local preferences
 cannot weaken required team policy, and a policy author cannot self-approve
 protected activation.
 
+## Team activation and required checks
+
+Sharing is not enforcement. Pushed records are visible to the team; they
+become required only through activation (ADR-0002, `src/authority.rs`,
+`src/activation.rs`):
+
+1. `wh push --propose` records a shared proposal owned by the authenticated
+   GitHub user (numeric id from `gh api user`), bound to the exact payload
+   digest, the team-active base digest, the authority revision in
+   `.whetstone/authority.json` and an expiry, and writes the activation
+   manifest `.whetstone/proposals/<id>.json`. The manifest (digests, never
+   policy content) goes through a pull request.
+2. GitHub's protected review is the independent approval: code owner review
+   of `.whetstone/**`, stale approvals dismissed, the last push approved by
+   someone else, the `whetstone/policy` required check, no force pushes.
+3. After the manifest merges, the CI activator runs
+   `wh change --activate <manifest>`: it re-fetches the pull request, its
+   reviews and the branch rules, and verifies repository, expiry, authority
+   revision, payload and proposal digests, base, proposer and reviewer
+   authority and scope, and an approval of the exact merged head by someone
+   other than the proposer and the author. Only then does it append the team
+   decision and one activation per policy record, pinning the repository
+   files each activated gate runs. Any mismatch is a denial with a reason
+   code (`self_review`, `stale_review`, `digest_mismatch`, `stale_base`,
+   `expired`, `authority_stale`, `protection_unverified`, ...) and no write.
+4. `wh check --required` (the `whetstone/policy` status check) enforces
+   team-active policy only: it rebuilds activations from the shared records,
+   rejects any that fail validation, re-verifies each activation's pull
+   request evidence, ignores private stores and unactivated records, and runs
+   pinned checkers; in CI a checker the change modified is restored to its
+   activated bytes, locally it is reported and cannot pass.
+
+Recovery and rollback go through the same review: a gate exception
+(`wh change --kind exception`, content is the reason, definition
+`{"type":"exception","gate":"<gate>","expires_at":"<RFC 3339>"}`) activated
+like any policy makes a failing required gate report as *excepted* until it
+expires, never as passing; an activated retirement takes its target out of
+team policy, and a rollback is an activation of an earlier revision's
+content.
+
+Accepted (a local or shared decision), active (an independent activation)
+and installed (the protected workflow present) are separate states. Integrity
+is by digest, history and platform re-verification; a repository
+administrator or a compromised reviewer account remains inside the trust
+root, and unobservable branch rules make team activation unsupported rather
+than advisory.
+
+## Agent hosts
+
+The same skill and map are written byte-identically into every selected host
+(`.claude/skills`, `.cursor/skills`, `.agents/skills`), stamped with the
+agreement digest. Claude Code is hook-capable: `wh init --action wire --hooks`
+adds a `SessionStart` hook (`wh dash --hook session-start`) that prints the
+canonical context or says the skill is stale and must not be relied on, and a
+`Stop` hook (`wh check --hook stop`) that returns violations to the same
+session for repair, bounded to three returns before handing back to the
+owner. Cursor and other hosts use explicit checkpoints
+(`wh check --changed --host <name>`). Each checkpoint records the skill
+revision the host actually has; no checkpoint means not acknowledged, and a
+projection that is stale, missing or hand-edited is reported per host, never
+treated as delivered.
+
 ## Onboarding
 
 `wh init` inspects the repository read-only, then records the owner's eight

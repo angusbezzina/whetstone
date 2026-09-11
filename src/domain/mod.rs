@@ -408,6 +408,7 @@ pub enum RecordBody {
     Feature(Feature),
     LocalReview(LocalReview),
     VerificationMap(VerificationMap),
+    PolicyException(PolicyException),
 }
 
 impl RecordBody {
@@ -435,6 +436,7 @@ impl RecordBody {
             Self::Feature(_) => "feature",
             Self::LocalReview(_) => "local_review",
             Self::VerificationMap(_) => "verification_map",
+            Self::PolicyException(_) => "policy_exception",
         }
     }
 
@@ -480,6 +482,13 @@ impl RecordBody {
             Self::Feature(value) => value.validate(),
             Self::LocalReview(value) => value.validate(),
             Self::VerificationMap(value) => value.validate(),
+            Self::PolicyException(value) => {
+                require_text(&value.reason)?;
+                if !looks_like_utc_timestamp(&value.expires_at) {
+                    return Err(DomainError::InvalidTimestamp(value.expires_at.clone()));
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -1083,6 +1092,17 @@ impl Feature {
     }
 }
 
+/// A reviewed, expiring exception to one gate: while it is team-active and
+/// unexpired, a required check still runs the gate but reports a failure as
+/// excepted (visible, never a pass) so authorized recovery can merge.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyException {
+    pub gate: RecordId,
+    pub reason: String,
+    pub expires_at: String,
+}
+
 /// Project-wide conventions of the feature map: what `features/README.md`
 /// says before the feature list (pstack's baseline preconditions, driving
 /// conventions, proof and skip reporting, and the feature entry contract).
@@ -1432,6 +1452,10 @@ pub struct Activation {
     pub binding: ProposalBinding,
     pub activation_sequence: u64,
     pub activated_at: String,
+    /// Repository files the activated gate runs, pinned by digest at the
+    /// merge commit (`<commit>:<path>`), so required checks run exactly them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned_checkers: Vec<EvidenceRef>,
 }
 
 impl Activation {

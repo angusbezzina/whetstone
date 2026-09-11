@@ -1,0 +1,98 @@
+# Whetstone protected policy workflow, scaffolded by `wh init --action wire --ci`.
+# The team owns this file; protect it with CODEOWNERS like .whetstone/**.
+#
+# - Pull requests: the `whetstone/policy` required status check runs the
+#   team-active gates (records activated through reviewed pull requests) from
+#   the shared Beads data in refs/dolt/data, never from the contributor's
+#   local store. It runs from the base branch's copy of this workflow
+#   (pull_request_target) with a read-only token and no secrets, and gate
+#   checkers a pull request changed are restored to their activated bytes.
+# - Pushes to the default branch: merged activation manifests
+#   (.whetstone/proposals/*.json) are verified against the pull request's
+#   reviews and the branch rules, then activated; nothing activates on
+#   evidence that cannot be verified.
+name: whetstone-policy
+
+on:
+  pull_request_target:
+  push:
+    branches: [main]
+
+jobs:
+  policy:
+    name: whetstone/policy
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install pinned bd and wh
+        shell: bash
+        env:
+          BD_VERSION: "1.1.2"
+          BD_ARCHIVE_SHA256: a72d71ed374955dc9f83a0f90b54bd7b6a0016709dd1676ae2e368651ed401c2
+          WHETSTONE_VERSION: "__WHETSTONE_VERSION__"
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/bd.tar.gz"
+          curl -fsSL -o "$archive" "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION}/beads_${BD_VERSION}_linux_amd64.tar.gz"
+          echo "$BD_ARCHIVE_SHA256  $archive" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/bin" && tar -xzf "$archive" -C "$RUNNER_TEMP/bin" bd
+          curl -fsSL "https://raw.githubusercontent.com/angusbezzina/whetstone/v${WHETSTONE_VERSION}/install.sh" \
+            | INSTALL_DIR="$RUNNER_TEMP/bin" sh -s -- --version "v${WHETSTONE_VERSION}"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Receive team policy (read-only)
+        run: bd bootstrap --yes
+      - name: Required checks against team-active policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: wh check --required --json > whetstone-policy.json || (cat whetstone-policy.json; exit 1)
+
+  activate:
+    name: whetstone/activate
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install pinned bd and wh
+        shell: bash
+        env:
+          BD_VERSION: "1.1.2"
+          BD_ARCHIVE_SHA256: a72d71ed374955dc9f83a0f90b54bd7b6a0016709dd1676ae2e368651ed401c2
+          WHETSTONE_VERSION: "__WHETSTONE_VERSION__"
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/bd.tar.gz"
+          curl -fsSL -o "$archive" "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION}/beads_${BD_VERSION}_linux_amd64.tar.gz"
+          echo "$BD_ARCHIVE_SHA256  $archive" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/bin" && tar -xzf "$archive" -C "$RUNNER_TEMP/bin" bd
+          curl -fsSL "https://raw.githubusercontent.com/angusbezzina/whetstone/v${WHETSTONE_VERSION}/install.sh" \
+            | INSTALL_DIR="$RUNNER_TEMP/bin" sh -s -- --version "v${WHETSTONE_VERSION}"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          git config --global user.name "whetstone-activator"
+          git config --global user.email "whetstone-activator@users.noreply.github.com"
+      - name: Receive team policy
+        run: bd bootstrap --yes
+      - name: Activate merged manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for manifest in $(git diff --name-only --diff-filter=A "${{ github.event.before }}" "${{ github.sha }}" -- .whetstone/proposals); do
+            wh change --activate "$manifest" --json
+          done

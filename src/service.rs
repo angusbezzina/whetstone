@@ -109,6 +109,12 @@ pub struct InitRequest {
     pub regenerate_driver: bool,
     /// A pstack `verify-<app>/` directory to import as drafts (import).
     pub import_from: Option<PathBuf>,
+    /// Install host hooks (Claude Code SessionStart and Stop) (wire).
+    pub hooks: bool,
+    /// Scaffold the protected policy workflow and authority file (wire).
+    pub ci: bool,
+    /// GitHub logins allowed to review team policy (wire --ci).
+    pub reviewers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +127,7 @@ pub enum ChangeKind {
     Standard,
     Feature,
     Map,
+    Exception,
 }
 
 /// Explicit solo review of a pending local draft.
@@ -179,6 +186,8 @@ pub enum ChangeDefinition {
         #[serde(default)]
         drive_recipe: Vec<String>,
     },
+    /// A reviewed, expiring exception to one gate (content is the reason).
+    Exception { gate: RecordId, expires_at: String },
     /// The feature map's conventions (`features/README.md` before the list).
     Map {
         intro: String,
@@ -217,6 +226,8 @@ pub struct ChangeRequest {
     pub review: Option<ReviewRequest>,
     /// Propose retiring an accepted record (reviewed archival; history stays).
     pub retire: Option<String>,
+    /// Activate a merged activation manifest (the CI activator's step).
+    pub activate: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -275,6 +286,12 @@ pub struct CheckRequest {
     pub maintain_outcome: Option<MaintainOutcome>,
     /// The maintain run's notes or PR: a repository path or a URL.
     pub maintain_evidence: Option<String>,
+    /// Enforce team-active policy only (activated through reviewed pull
+    /// requests), ignoring private stores and unactivated records.
+    pub required: bool,
+    /// Record an explicit host checkpoint: which skill revision this agent
+    /// host has on disk right now.
+    pub host: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -455,6 +472,28 @@ impl LoadedRecords {
     }
 }
 
+/// Team-active refs from the shared records (structurally validated;
+/// platform re-verification happens in required checks).
+fn team_active_refs(loaded: Option<&LoadedRecords>) -> std::collections::BTreeMap<String, String> {
+    loaded
+        .and_then(|loaded| loaded.shared.as_ref())
+        .map(|shared| {
+            crate::activation::team_active(shared)
+                .entries
+                .into_iter()
+                .filter_map(|(id, entry)| {
+                    entry.policy.reference().ok().map(|reference| {
+                        (
+                            id.as_str().to_string(),
+                            crate::activation::reference_text(&reference),
+                        )
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Read both stores without creating either.
 pub fn load_records(layout: &ProjectLayout) -> Result<LoadedRecords, StorageError> {
     let private = if layout.private_store_exists() {
@@ -482,7 +521,15 @@ impl CommandService {
             ServiceRequest::Init(request) => self.init(request),
             ServiceRequest::Dash(request) => self.dash(request),
             ServiceRequest::Change(request) => self.change(request),
-            ServiceRequest::Check(request) => self.check(request),
+            ServiceRequest::Check(request) => {
+                let host = request.host.clone();
+                let project_dir = request.project_dir.clone();
+                let mut response = self.check(request);
+                if let Some(host) = host {
+                    attach_host_checkpoint(&mut response, &project_dir, &host);
+                }
+                response
+            }
             ServiceRequest::Pull(request) => crate::sync::pull(request),
             ServiceRequest::Push(request) => crate::sync::push(request),
         }
@@ -632,6 +679,7 @@ impl CommandService {
                             layout.project_root(),
                             crate::skill::read_manifest(&layout).as_ref(),
                         ),
+                        team_active: team_active_refs(loaded.as_ref().ok()),
                     },
                 );
                 let journal = projection::journal(&state, history.as_ref());
@@ -677,11 +725,15 @@ impl CommandService {
         }
         let changelog = journal;
         let shared_exists = matches!(&loaded, Ok(loaded) if loaded.shared.is_some());
+        let team_active = team_active_refs(loaded.as_ref().ok());
         let sync = json!({
             "private_store": loaded.as_ref().is_ok_and(|loaded| loaded.private.is_some()),
             "shared_store": layout.shared_store().map(|dir| dir.display().to_string()),
             "shared_records": loaded.as_ref().ok().and_then(|loaded| loaded.shared.as_ref()).map_or(0, Vec::len),
             "conflicts": sync_conflicts,
+            "team_active": team_active,
+            "required_workflow": layout.project_root().join(".github/workflows/whetstone-policy.yml").is_file(),
+            "authority": layout.project_root().join(crate::authority::AUTHORITY_PATH).is_file(),
         });
         response.data = json!({
             "setup": setup,
@@ -1222,6 +1274,9 @@ impl CommandService {
                 return unknown_response("change", "invalid-request-id".into(), summary)
             }
         };
+        if let Some(manifest) = request.activate.clone() {
+            return activate_manifest(&layout, request_id, &manifest);
+        }
         let private = match RecordStore::initialize(&layout.private_store(), StoreKind::Private) {
             Ok(repository) => repository,
             Err(error) => return storage_error("change", request_id, error),
@@ -1562,9 +1617,16 @@ impl CommandService {
             Some(Err(error)) => return storage_error("check", request_id, error),
             _ => None,
         };
-        let selection = match select_gates(agreement.as_ref(), &project, &request) {
-            Ok(selection) => selection,
-            Err(summary) => return unknown_response("check", request_id, summary),
+        let selection = if request.required {
+            match required_selection(layout.as_ref(), &project) {
+                Ok(selection) => selection,
+                Err(summary) => return unknown_response("check", request_id, summary),
+            }
+        } else {
+            match select_gates(agreement.as_ref(), &project, &request) {
+                Ok(selection) => selection,
+                Err(summary) => return unknown_response("check", request_id, summary),
+            }
         };
         if request.dry_run {
             let mut response = ServiceResponse::new(
@@ -1670,7 +1732,10 @@ impl CommandService {
         };
         // With owner-accepted gates, an empty scanner is simply not part of
         // this check rather than an unknown requirement.
-        let include_native = !rules_only_name_gates
+        // Required checks enforce activated team policy only; the
+        // repository's own scanner rules are contributor-controlled.
+        let include_native = !request.required
+            && !rules_only_name_gates
             && (selection.gates.is_empty() || rules_applied > 0 || violations > 0);
         let native_summary = match native_state {
             AttestationState::Success => format!(
@@ -1774,8 +1839,12 @@ impl CommandService {
             let mut halted: Option<String> = None;
             for gate in &selection.gates {
                 let is_drive = matches!(gate.standard.enforcement, Enforcement::Drive { .. });
-                let outcome = match (&halted, is_drive) {
-                    (Some(reason), true) => {
+                let blocked = selection.blocked.get(gate.id.as_str());
+                let outcome = match (&halted, is_drive, blocked) {
+                    (_, _, Some(reason)) => {
+                        crate::gates::skipped_outcome(&gate.id, &gate.standard, reason)
+                    }
+                    (Some(reason), true, None) => {
                         crate::gates::skipped_outcome(&gate.id, &gate.standard, reason)
                     }
                     _ => {
@@ -1818,7 +1887,8 @@ impl CommandService {
                 requirements.push(VerificationRequirement {
                     id: requirement_id.clone(),
                     kind: RequirementKind::NativeCheck,
-                    required: gate.standard.strength == StandardStrength::Must,
+                    required: gate.standard.strength == StandardStrength::Must
+                        && !selection.excepted.contains_key(gate.id.as_str()),
                     checker_manifest: Some(manifest.clone()),
                     governing_records: vec![gate.reference.clone()],
                     rationale: gate.standard.rationale.clone(),
@@ -1876,6 +1946,7 @@ impl CommandService {
             response.data = json!({
                 "gates": [],
                 "sweep": sweep,
+                "required": selection.required,
                 "selection": {
                     "mode": format!("{:?}", request.gate_mode).to_ascii_lowercase(),
                     "gates": [],
@@ -1883,6 +1954,34 @@ impl CommandService {
                     "changed_paths": selection.changed_paths,
                     "features_affected": selection.features_affected,
                 },
+            });
+            return response;
+        }
+        // Every required gate is under an active, reviewed exception: say so
+        // plainly, list each result, and let authorized recovery through.
+        if request.required
+            && !requirements.is_empty()
+            && requirements.iter().all(|requirement| !requirement.required)
+            && !selection.excepted.is_empty()
+        {
+            let mut response = ServiceResponse::new(
+                request_id,
+                "check",
+                ServiceState::Success,
+                format!(
+                    "Every required gate is under an active, reviewed exception ({}); the results below are reported, not enforced, until the exceptions expire.",
+                    selection
+                        .excepted
+                        .iter()
+                        .map(|(gate, (_, expires))| format!("{gate} until {expires}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+            response.data = json!({
+                "gates": outcomes,
+                "required": selection.required,
+                "excepted_only": true,
             });
             return response;
         }
@@ -2019,6 +2118,7 @@ impl CommandService {
             "evidence_root": layout.as_ref().map(|layout| crate::gates::evidence_root(layout).display().to_string()),
             "doctor": doctor,
             "sweep": sweep,
+            "required": selection.required,
             "selection": {
                 "mode": format!("{:?}", request.gate_mode).to_ascii_lowercase(),
                 "gates": selection.gates.iter().map(|gate| gate.id.as_str()).collect::<Vec<_>>(),
@@ -2486,6 +2586,77 @@ fn review_draft(
         "team_activation": false,
     });
     response
+}
+
+/// The CI activator's step: verify a merged manifest against the platform
+/// and append the team decision and activations to the shared database.
+fn activate_manifest(
+    layout: &ProjectLayout,
+    request_id: String,
+    manifest: &str,
+) -> ServiceResponse {
+    let Some(shared_dir) = layout.shared_store() else {
+        return unknown_response(
+            "change",
+            request_id,
+            "Activation writes to the shared Beads database, and this checkout has none; run bd bootstrap first.".into(),
+        );
+    };
+    let shared = match RecordStore::open_existing(&shared_dir, StoreKind::Shareable) {
+        Ok(store) => store,
+        Err(error) => return storage_error("change", request_id, error),
+    };
+    let platform = crate::authority::platform_for(layout.project_root());
+    match crate::activation::activate(
+        layout.project_root(),
+        &shared,
+        platform.as_ref(),
+        manifest,
+        &utc_now(),
+    ) {
+        Ok(activated) => {
+            let transmitted = if activated.replay {
+                Ok(String::new())
+            } else {
+                shared.push_remote().map_err(|error| error.to_string())
+            };
+            let mut response = ServiceResponse::new(
+                request_id,
+                "change",
+                if transmitted.is_ok() {
+                    ServiceState::Success
+                } else {
+                    ServiceState::Unavailable
+                },
+                if activated.replay {
+                    "This proposal was already activated; nothing was written twice.".to_string()
+                } else {
+                    format!(
+                        "Activated {} record(s) after independent approval by GitHub user {} in pull request #{}.",
+                        activated.activations.len(),
+                        activated.reviewer_id,
+                        activated.pull_request
+                    )
+                },
+            );
+            response.permitted_actions = vec!["wh check --required".into()];
+            response.data = json!({"activation": activated, "transmitted": transmitted.is_ok(), "transmit_detail": transmitted.err()});
+            response
+        }
+        Err(denial) => {
+            let mut response = ServiceResponse::new(
+                request_id,
+                "change",
+                crate::sync::denial_state(denial.code),
+                format!(
+                    "Activation denied ({}): {}. Nothing was written.",
+                    denial.code, denial.detail
+                ),
+            );
+            response.data = json!({"denied": denial});
+            response
+        }
+    }
 }
 
 /// Record a private draft that retires an accepted record. Accepting it takes
@@ -3072,6 +3243,7 @@ pub(crate) fn ensure_local_change_proposal(
                     RecordBody::Feature(_) => "feature",
                     RecordBody::VerificationMap(_) => "map",
                     RecordBody::Retirement(_) => "retirement",
+                    RecordBody::PolicyException(_) => "exception",
                     _ => "record",
                 }),
                 if candidate.revision <= 1 {
@@ -3247,6 +3419,18 @@ fn change_body(request: &ChangeRequest, id_text: &str) -> Result<RecordBody, Str
                 drive_recipe: bounded_list(drive_recipe, "drive recipe", 64, 2_000)?,
             };
             RecordBody::Feature(feature)
+        }
+        ChangeKind::Exception => {
+            let Some(ChangeDefinition::Exception { gate, expires_at }) =
+                request.definition.as_deref()
+            else {
+                return Err("Provide the gate and the expiry (RFC 3339 UTC) as an exception definition; the content is the reason.".into());
+            };
+            RecordBody::PolicyException(crate::domain::PolicyException {
+                gate: gate.clone(),
+                reason: content,
+                expires_at: bounded_input(Some(expires_at.clone()), "exception expiry", 40)?,
+            })
         }
         ChangeKind::Map => {
             let Some(ChangeDefinition::Map {
@@ -3887,6 +4071,240 @@ struct GateSelection {
     skipped_drafts: Vec<String>,
     changed_paths: Vec<String>,
     features_affected: Vec<Value>,
+    /// Gates that must not run, with the reason (unknown, never a pass).
+    blocked: std::collections::BTreeMap<String, String>,
+    /// Required mode: what was enforced and why.
+    required: Option<Value>,
+    /// Gates under an active, unexpired, team-activated exception:
+    /// gate id -> (exception record, expiry). Run, reported, not blocking.
+    excepted: std::collections::BTreeMap<String, (String, String)>,
+}
+
+/// Record which skill revision an agent host has on disk at this checkpoint.
+/// Current only when the host's files match the manifest and the manifest
+/// matches the accepted agreement; anything else is unknown, never assumed
+/// delivered.
+fn attach_host_checkpoint(response: &mut ServiceResponse, project_dir: &Path, host: &str) {
+    if !crate::skill::HOSTS.iter().any(|(name, _)| *name == host) {
+        response.data["host_checkpoint"] = json!({"host": host, "state": "unknown_host"});
+        return;
+    }
+    let Ok(layout) = ProjectLayout::resolve(project_dir, None) else {
+        return;
+    };
+    let state = match load_records(&layout) {
+        Ok(loaded) if loaded.exists() => AgreementState::from_records(loaded.union().0),
+        _ => return,
+    };
+    let manifest = crate::skill::read_manifest(&layout);
+    let projections = crate::hosts::projections(
+        layout.project_root(),
+        manifest.as_ref(),
+        &state.in_force_digest(),
+    );
+    let projection = projections
+        .iter()
+        .find(|projection| projection.host == host);
+    let installed = crate::hosts::installed_skill_digest(&layout, host);
+    let current = projection.is_some_and(|projection| projection.state == "current")
+        && installed.is_some()
+        && installed == projection.and_then(|projection| projection.skill_digest.clone());
+    let checked_at = utc_now();
+    let key = format!("host:{host}:{checked_at}:{}", response.request_id);
+    let key_digest = digest_bytes(key.as_bytes());
+    let suffix = &key_digest.as_str()["sha256:".len()..][..24];
+    let principal = PrincipalRef {
+        kind: PrincipalKind::LocalUser,
+        stable_id: format!("whetstone:host-{host}"),
+        display_name: None,
+    };
+    let mut evidence = vec![EvidenceRef {
+        system: "whetstone_adapter".into(),
+        locator: crate::hosts::ADAPTER_VERSION.into(),
+        digest: None,
+    }];
+    if let Some(installed) = &installed {
+        if let Ok(digest) = ContentDigest::new(installed.clone()) {
+            evidence.push(EvidenceRef {
+                system: "whetstone_skill".into(),
+                locator: format!("{host}/SKILL.md"),
+                digest: Some(digest),
+            });
+        }
+    }
+    let Ok(id) = RecordId::new(format!("verification.host_{suffix}")) else {
+        return;
+    };
+    let record = AgreementRecord {
+        schema_version: SCHEMA_VERSION_V1,
+        id,
+        revision: 1,
+        scope: Scope {
+            organization: None,
+            project: format!("project-{}", &layout.project_id()[..12]),
+            component: None,
+            environment: None,
+        },
+        owner: principal.clone(),
+        provenance: Provenance {
+            kind: ProvenanceKind::DeterministicCheck,
+            recorded_by: principal,
+            recorded_at: checked_at.clone(),
+            sources: vec![EvidenceRef {
+                system: "agent_host".into(),
+                locator: host.into(),
+                digest: None,
+            }],
+            authority: ProvenanceAuthority::CandidateOnly,
+        },
+        supersedes: None,
+        idempotency_key: key,
+        body: RecordBody::VerificationReceipt(VerificationReceipt {
+            subject: ExternalRef {
+                system: ExternalSystem::Custom,
+                stable_id: format!("{}{host}", crate::hosts::HOST_SUBJECT_PREFIX),
+                revision: installed.clone(),
+            },
+            code_digest: digest_bytes(
+                crate::gates::workspace_fingerprint(layout.project_root())
+                    .unwrap_or_default()
+                    .as_bytes(),
+            ),
+            policy_state: PolicyStateSnapshot {
+                accepted: None,
+                required: None,
+                installed: None,
+                experimental: None,
+            },
+            verification: if current {
+                VerificationAxis::Pass
+            } else {
+                VerificationAxis::Unknown
+            },
+            authorization: AuthorizationAxis::Unknown,
+            freshness: Freshness::Fresh,
+            checked_at,
+            related_records: Vec::new(),
+            evidence,
+        }),
+    };
+    let recorded = layout
+        .private_store_exists()
+        .then(|| RecordStore::open_existing(&layout.private_store(), StoreKind::Private))
+        .and_then(Result::ok)
+        .map(|store| store.append(&record, None).is_ok())
+        .unwrap_or(false);
+    response.data["host_checkpoint"] = json!({
+        "host": host,
+        "skill": projection.map_or("not installed", |projection| projection.state),
+        "detail": projection.map(|projection| projection.detail.clone()),
+        "installed_skill_digest": installed,
+        "acknowledged": current,
+        "recorded": recorded,
+        "delivery": crate::hosts::delivery(host),
+    });
+    if !current {
+        response.permitted_actions.push(format!(
+            "wh init --action wire --host {host} (the projection for {host} is not current)"
+        ));
+    }
+}
+
+/// Whether this process runs in CI, where a checkout is disposable and a
+/// changed checker may be restored to its activated bytes.
+fn in_ci() -> bool {
+    std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
+        || std::env::var("CI").as_deref() == Ok("true")
+}
+
+/// Team-active policy as a gate selection: activations rebuilt and validated
+/// from the shared records, each one's pull request evidence re-verified on
+/// the platform, and every activated checker file pinned.
+fn required_selection(
+    layout: Option<&ProjectLayout>,
+    project: &Path,
+) -> Result<GateSelection, String> {
+    let layout = layout.ok_or("Required checks need a Git repository.")?;
+    let shared_dir = layout.shared_store().ok_or(
+        "Required checks enforce team-active policy from the shared Beads database, and this checkout has none; run bd bootstrap first.",
+    )?;
+    let records = RecordStore::open_existing(&shared_dir, StoreKind::Shareable)
+        .and_then(|store| store.all_records())
+        .map_err(|error| format!("The shared records could not be read: {error}"))?;
+    let active = crate::activation::team_active(&records);
+    let platform = crate::authority::platform_for(project);
+    let restore = in_ci();
+    let now = utc_now();
+    let mut selection = GateSelection::default();
+    for entry in active.entries.values() {
+        if let RecordBody::PolicyException(exception) = &entry.policy.body {
+            if exception.expires_at.as_str() > now.as_str()
+                && crate::activation::verify_recorded(entry, platform.as_ref()).is_ok()
+            {
+                selection.excepted.insert(
+                    exception.gate.as_str().to_string(),
+                    (
+                        entry.policy.id.as_str().to_string(),
+                        exception.expires_at.clone(),
+                    ),
+                );
+            }
+        }
+    }
+    let mut unverified = Vec::new();
+    let mut pins = Vec::new();
+    for (id, entry) in &active.entries {
+        let verified = crate::activation::verify_recorded(entry, platform.as_ref());
+        match &entry.policy.body {
+            RecordBody::Feature(feature) => {
+                if verified.is_ok() {
+                    selection.features.insert(id.clone(), feature.clone());
+                }
+            }
+            RecordBody::Standard(standard) => {
+                let reference = entry
+                    .policy
+                    .reference()
+                    .map_err(|error| error.to_string())?;
+                selection.gate_ids.insert(id.as_str().to_string());
+                if let Err(denial) = &verified {
+                    unverified.push(json!({"gate": id.as_str(), "reason": denial.to_string()}));
+                    selection.blocked.insert(
+                        id.as_str().to_string(),
+                        format!("Its activation could not be verified on the platform ({denial}); unverifiable policy is never enforced as passing."),
+                    );
+                } else {
+                    let outcomes = crate::activation::enforce_pins(project, &entry.pins(), restore);
+                    if let Some(changed) =
+                        outcomes.iter().find(|outcome| outcome.state == "changed")
+                    {
+                        selection.blocked.insert(
+                            id.as_str().to_string(),
+                            format!("Checker {} {}.", changed.path, changed.detail),
+                        );
+                    }
+                    pins.push(json!({"gate": id.as_str(), "pins": outcomes}));
+                }
+                selection.gates.push(SelectedGate {
+                    id: id.clone(),
+                    reference,
+                    standard: standard.clone(),
+                });
+            }
+            _ => {}
+        }
+    }
+    selection.required = Some(json!({
+        "team_active_digest": active.digest(),
+        "active": active.entries.keys().map(RecordId::as_str).collect::<Vec<_>>(),
+        "rejected": active.rejected,
+        "unverified": unverified,
+        "pins": pins,
+        "excepted": selection.excepted.iter().map(|(gate, (exception, expires))| json!({"gate": gate, "exception": exception, "expires_at": expires})).collect::<Vec<_>>(),
+        "restores_changed_checkers": restore,
+        "private_store_ignored": true,
+    }));
+    Ok(selection)
 }
 
 fn select_gates(
@@ -3943,9 +4361,22 @@ fn select_gates(
             }
         }
         selection.changed_paths = changed;
-        if feature_filter.is_empty() {
+        // Repository-wide gates (tests, linters, validators) always apply to a
+        // change; drive gates apply when the change touches their feature.
+        let mut always = std::collections::BTreeSet::new();
+        for id in &standard_ids {
+            if let Some(RecordBody::Standard(standard)) =
+                state.in_force(id).map(|record| &record.body)
+            {
+                if !matches!(standard.enforcement, Enforcement::Drive { .. }) {
+                    always.insert(id.as_str().to_string());
+                }
+            }
+        }
+        if feature_filter.is_empty() && always.is_empty() {
             return Ok(selection);
         }
+        wanted = Some(always);
     }
     if !feature_filter.is_empty() {
         let mut ids = wanted.take().unwrap_or_default();

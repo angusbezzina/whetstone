@@ -1,0 +1,15 @@
+{
+  "surface": "web",
+  "launch": {
+    "command": ["target/release/whetstone", "dash", "--no-open", "--read-only", "--project-dir", "{root}"],
+    "ready": "Whetstone dashboard: (http://127\\.0\\.0\\.1:\\d+)",
+    "timeout_seconds": 60
+  },
+  "fresh": [
+    {
+      "artifact": "target/release/whetstone",
+      "sources": ["src", "assets", "Cargo.toml"]
+    }
+  ],
+  "viewport": [1280, 900]
+}

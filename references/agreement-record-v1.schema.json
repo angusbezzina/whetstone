@@ -46,7 +46,8 @@
         "repair_operation_claim",
         "feature",
         "local_review",
-        "verification_map"
+        "verification_map",
+        "policy_exception"
       ]
     },
     "record": {
@@ -71,7 +72,8 @@
         { "$ref": "#/$defs/repair_operation_claim" },
         { "$ref": "#/$defs/feature" },
         { "$ref": "#/$defs/local_review" },
-        { "$ref": "#/$defs/verification_map" }
+        { "$ref": "#/$defs/verification_map" },
+        { "$ref": "#/$defs/policy_exception" }
       ]
     }
   },
@@ -96,7 +98,8 @@
     { "if": { "properties": { "record_type": { "const": "repair_operation_claim" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/repair_operation_claim" } } } },
     { "if": { "properties": { "record_type": { "const": "feature" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/feature" } } } },
     { "if": { "properties": { "record_type": { "const": "local_review" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/local_review" } } } },
-    { "if": { "properties": { "record_type": { "const": "verification_map" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/verification_map" } } } }
+    { "if": { "properties": { "record_type": { "const": "verification_map" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/verification_map" } } } },
+    { "if": { "properties": { "record_type": { "const": "policy_exception" } } }, "then": { "properties": { "record": { "$ref": "#/$defs/policy_exception" } } } }
   ],
   "$defs": {
     "record_id": {
@@ -403,6 +406,7 @@
         "policy": { "$ref": "#/$defs/record_ref" },
         "binding": { "$ref": "#/$defs/proposal_binding" },
         "activation_sequence": { "type": "integer", "minimum": 1 },
+        "pinned_checkers": { "type": "array", "items": { "$ref": "#/$defs/evidence_ref" } },
         "activated_at": { "$ref": "#/$defs/timestamp" }
       }
     },
@@ -628,6 +632,16 @@
         "rationale": { "$ref": "#/$defs/nonempty" },
         "reviewed_at": { "$ref": "#/$defs/timestamp" },
         "team_activation_permitted": { "const": false }
+      }
+    },
+    "policy_exception": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gate", "reason", "expires_at"],
+      "properties": {
+        "gate": { "$ref": "#/$defs/record_id" },
+        "reason": { "$ref": "#/$defs/nonempty" },
+        "expires_at": { "$ref": "#/$defs/timestamp" }
       }
     },
     "verification_map": {

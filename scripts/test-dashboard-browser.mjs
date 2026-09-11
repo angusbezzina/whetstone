@@ -101,7 +101,7 @@ const journal = [
 let mode = "established";
 const commands = [];
 function envelope() {
-  return { schema: "whetstone.command-response.v1", state: "success", summary: "ok", data: { current: view(mode), changelog: mode === "fresh" ? [] : journal, history: { snapshot_digest: "sha256:x", decision_history: { next: null } } } };
+  return { schema: "whetstone.command-response.v1", state: "success", summary: "ok", data: { current: view(mode), changelog: mode === "fresh" ? [] : journal, history: { snapshot_digest: "sha256:x", decision_history: { next: null } }, sync: { shared_store: "/repo", team_active: { "standard.journey": "standard.journey@1#sha256:x" }, required_workflow: false } } };
 }
 
 const server = createServer((request, response) => {
@@ -188,6 +188,7 @@ try {
   await cdp.waitFor("!document.querySelector('#checks').hidden && document.querySelector('#det-standard\\\\.journey.open')", "attention did not open the failing gate");
   check(await cdp.evaluate("document.activeElement?.dataset.id === 'standard.journey'"), "focus moves to the failing gate");
   check(await cdp.evaluate("document.querySelector('#det-standard\\\\.journey pre.brief').textContent.includes('recheck')"), "the repair brief is shown");
+  check(await cdp.evaluate("document.querySelector('#checks').textContent.includes('Team policy') && document.querySelector('#checks').textContent.includes('required check not installed')"), "team activation state is shown");
   check(await cdp.evaluate("!globalThis.whetstoneXss"), "failure messages render as text");
   check(await cdp.evaluate("document.querySelector('#gate-standard\\\\.draft small').textContent.includes('not eligible')"), "draft gates are marked not eligible");
   await cdp.evaluate("document.querySelector('#checks select').value = 'changed'; true");

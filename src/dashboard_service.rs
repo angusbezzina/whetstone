@@ -266,6 +266,9 @@ impl DashboardCommand {
                 hosts: Vec::new(),
                 regenerate_driver: false,
                 import_from: None,
+                hooks: false,
+                ci: false,
+                reviewers: Vec::new(),
             }),
             Self::Change {
                 request_id,
@@ -314,6 +317,7 @@ impl DashboardCommand {
                     },
                 }),
                 retire,
+                activate: None,
             }),
             Self::Check {
                 request_id,
@@ -338,6 +342,8 @@ impl DashboardCommand {
                 dry_run: false,
                 maintain_outcome: None,
                 maintain_evidence: None,
+                required: false,
+                host: None,
             }),
         }
     }

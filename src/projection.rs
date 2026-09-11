@@ -215,6 +215,9 @@ pub struct GateRun {
     pub brief: Option<String>,
     pub evidence: Vec<EvidenceSummary>,
     pub feature: Option<Link>,
+    /// Accepted (here) versus active (required for the team): "active",
+    /// "active at another revision" or "not team-active".
+    pub team: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -275,6 +278,11 @@ pub struct SkillState {
     pub hosts: Vec<String>,
     pub rendered_at: Option<String>,
     pub label: StateLabel,
+    /// Each host's copy compared with the manifest and the agreement.
+    pub projections: Vec<crate::hosts::HostProjection>,
+    /// The latest checkpoint per host: the skill revision it actually had.
+    /// A host missing here has not acknowledged anything.
+    pub acknowledged: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -322,6 +330,9 @@ pub struct ProjectionInput<'a> {
     pub skill: Option<SkillManifest>,
     pub changes: Changes,
     pub hygiene: Vec<crate::hygiene::HygieneFinding>,
+    /// Team-active policy refs (id -> `id@revision#digest`) from the shared
+    /// store's verified activations.
+    pub team_active: BTreeMap<String, String>,
 }
 
 /// Paths changed in the working tree, and since each commit a proof ran at.
@@ -506,6 +517,7 @@ fn kind_of(record: &AgreementRecord) -> &'static str {
         RecordBody::Feature(_) => "feature",
         RecordBody::VerificationMap(_) => "map",
         RecordBody::Retirement(_) => "retirement",
+        RecordBody::PolicyException(_) => "exception",
         _ => "record",
     }
 }
@@ -521,6 +533,7 @@ pub fn kind_label(kind: &str) -> &'static str {
         "feature" => "Feature",
         "map" => "Feature map",
         "retirement" => "Retirement",
+        "exception" => "Gate exception",
         _ => "Record",
     }
 }
@@ -537,6 +550,12 @@ pub fn record_title(record: &AgreementRecord) -> String {
         RecordBody::Feature(body) => body.name.clone(),
         RecordBody::VerificationMap(body) => body.title.clone(),
         RecordBody::Retirement(body) => format!("Retire {}", body.target.id.as_str()),
+        RecordBody::PolicyException(body) => format!(
+            "Exception to {} until {}: {}",
+            body.gate.as_str(),
+            body.expires_at,
+            body.reason
+        ),
         RecordBody::Proposal(body) => body.title.clone(),
         other => other.type_name().replace('_', " "),
     }
@@ -990,6 +1009,18 @@ fn gate_runs(
             brief,
             evidence,
             feature,
+            team: match (
+                input.team_active.get(id.as_str()),
+                in_force.and_then(|record| record.reference().ok()),
+            ) {
+                (Some(active), Some(reference))
+                    if *active == crate::activation::reference_text(&reference) =>
+                {
+                    "active"
+                }
+                (Some(_), _) => "active at another revision",
+                (None, _) => "not team-active",
+            },
         });
     }
     runs.sort_by(|left, right| {
@@ -1207,7 +1238,13 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
     let advisory = rules.len();
     let pending = state.pending_proposals();
     let drafts = pending.len();
-    let skill = skill_state(state, input.skill.as_ref());
+    let mut skill = skill_state(state, input.skill.as_ref());
+    skill.projections = crate::hosts::projections(
+        input.project_root,
+        input.skill.as_ref(),
+        &state.in_force_digest(),
+    );
+    skill.acknowledged = host_acknowledgements(state, &skill.projections);
     let driver = DriverState {
         configured: input.driver_path.is_some(),
         label: if input.driver_path.is_some() {
@@ -1297,6 +1334,66 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
     }
 }
 
+/// The latest host checkpoint receipts, and whether the host has checked in
+/// since its skill or the adapter changed (if not, rerun the regression set).
+fn host_acknowledgements(
+    state: &AgreementState,
+    projections: &[crate::hosts::HostProjection],
+) -> Vec<Value> {
+    let mut latest = BTreeMap::<String, &AgreementRecord>::new();
+    for record in state.records() {
+        if let RecordBody::VerificationReceipt(body) = &record.body {
+            if let Some(host) = body
+                .subject
+                .stable_id
+                .strip_prefix(crate::hosts::HOST_SUBJECT_PREFIX)
+            {
+                let newer = latest.get(host).map_or(true, |current| {
+                    current.provenance.recorded_at < record.provenance.recorded_at
+                });
+                if newer {
+                    latest.insert(host.to_string(), record);
+                }
+            }
+        }
+    }
+    let mut result = Vec::new();
+    for projection in projections {
+        let receipt = latest
+            .get(&projection.host)
+            .and_then(|record| match &record.body {
+                RecordBody::VerificationReceipt(body) => Some(body),
+                _ => None,
+            });
+        let acknowledged_digest = receipt.and_then(|body| body.subject.revision.clone());
+        let adapter = receipt.and_then(|body| {
+            body.evidence
+                .iter()
+                .find(|evidence| evidence.system == "whetstone_adapter")
+                .map(|evidence| evidence.locator.clone())
+        });
+        let in_step = acknowledged_digest.is_some()
+            && acknowledged_digest == projection.skill_digest
+            && adapter.as_deref() == Some(crate::hosts::ADAPTER_VERSION);
+        result.push(json!({
+            "host": projection.host,
+            "last_checkpoint": receipt.map(|body| body.checked_at.clone()),
+            "acknowledged_skill_digest": acknowledged_digest,
+            "adapter": adapter,
+            "state": if receipt.is_none() {
+                "not acknowledged"
+            } else if in_step {
+                "acknowledged"
+            } else {
+                "changed since last checkpoint"
+            },
+            "regression": (!in_step && receipt.is_some())
+                .then_some("The skill or the adapter changed since this host last checked in: run wh check --sweep before relying on earlier results."),
+        }));
+    }
+    result
+}
+
 fn skill_state(state: &AgreementState, manifest: Option<&SkillManifest>) -> SkillState {
     match manifest {
         None => SkillState {
@@ -1305,6 +1402,8 @@ fn skill_state(state: &AgreementState, manifest: Option<&SkillManifest>) -> Skil
             hosts: Vec::new(),
             rendered_at: None,
             label: StateLabel::new("warn", "not generated"),
+            projections: Vec::new(),
+            acknowledged: Vec::new(),
         },
         Some(manifest) => {
             let current = manifest.agreement_digest == state.in_force_digest();
@@ -1318,6 +1417,8 @@ fn skill_state(state: &AgreementState, manifest: Option<&SkillManifest>) -> Skil
                 } else {
                     StateLabel::new("warn", "stale · regenerate")
                 },
+                projections: Vec::new(),
+                acknowledged: Vec::new(),
             }
         }
     }
@@ -1722,6 +1823,37 @@ fn journal_entry(
             ),
         );
     }
+    // An agent host checked in with the skill revision it had.
+    if let Some(body) = records.iter().find_map(|record| match &record.body {
+        RecordBody::VerificationReceipt(body)
+            if body
+                .subject
+                .stable_id
+                .starts_with(crate::hosts::HOST_SUBJECT_PREFIX) =>
+        {
+            Some(body)
+        }
+        _ => None,
+    }) {
+        let host = body
+            .subject
+            .stable_id
+            .trim_start_matches(crate::hosts::HOST_SUBJECT_PREFIX)
+            .to_string();
+        return base(
+            "verification",
+            format!("Host checkpoint: {host}"),
+            match body.verification {
+                VerificationAxis::Pass => StateLabel::new("pass", "current skill"),
+                _ => StateLabel::new("warn", "skill not current"),
+            },
+            "checks",
+            format!(
+                "{host} had skill revision {} at this checkpoint.",
+                body.subject.revision.as_deref().unwrap_or("none")
+            ),
+        );
+    }
     // Verification runs: gate receipts and native scans.
     if records
         .iter()
@@ -2091,6 +2223,31 @@ pub fn decision_trail(state: &AgreementState) -> String {
                     .strip_prefix(GATE_SUBJECT_PREFIX)
                     .map(str::to_owned);
                 let maintain = body.subject.stable_id == crate::service::MAINTAIN_SUBJECT;
+                if let Some(host) = body
+                    .subject
+                    .stable_id
+                    .strip_prefix(crate::hosts::HOST_SUBJECT_PREFIX)
+                {
+                    rows.push((
+                        body.checked_at.clone(),
+                        record.id.as_str().to_string(),
+                        [
+                            "hosts".into(),
+                            format!("Host checkpoint: {host}"),
+                            "An agent host reported the skill revision it had.".into(),
+                            body.subject
+                                .revision
+                                .clone()
+                                .unwrap_or_else(|| "no skill installed".into()),
+                            if body.verification == VerificationAxis::Pass {
+                                "current skill".into()
+                            } else {
+                                "skill not current".into()
+                            },
+                        ],
+                    ));
+                    continue;
+                }
                 let (decision, why) = match &gate {
                     _ if maintain => (
                         format!(

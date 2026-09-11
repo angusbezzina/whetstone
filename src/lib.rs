@@ -1,5 +1,7 @@
+pub mod activation;
 pub mod agreement;
 mod ast;
+pub mod authority;
 pub mod beads;
 mod check;
 mod cli;
@@ -11,6 +13,7 @@ pub mod feature_map;
 pub mod gates;
 pub mod governance;
 pub mod history;
+pub mod hosts;
 pub mod hygiene;
 pub mod onboarding;
 mod output;

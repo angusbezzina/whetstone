@@ -1542,6 +1542,8 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
             dry_run: false,
             maintain_outcome: None,
             maintain_evidence: None,
+            required: false,
+            host: None,
         })
     }
 

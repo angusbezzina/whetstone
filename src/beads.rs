@@ -157,6 +157,7 @@ fn bead_type(body: &RecordBody) -> &'static str {
         | RecordBody::MetricDefinition(_)
         | RecordBody::Feature(_)
         | RecordBody::VerificationMap(_)
+        | RecordBody::PolicyException(_)
         | RecordBody::SourceSnapshot(_) => "record",
         RecordBody::Proposal(_)
         | RecordBody::Decision(_)

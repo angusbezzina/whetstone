@@ -30,6 +30,7 @@ use crate::storage::{ProjectLayout, RecordStore, StoreKind};
 pub const MANIFEST_FILE: &str = "skill.json";
 pub const MAP_ID: &str = "map.verification";
 pub const DRIVER_TEMPLATE: &str = include_str!("../assets/verify/drive.mjs");
+pub const CI_TEMPLATE: &str = include_str!("../assets/ci/whetstone-policy.yml");
 pub const DRIVER_CONFIG_RELATIVE: &str = "whetstone/verify/driver.json";
 pub const HOSTS: [(&str, &str); 3] = [
     ("claude", ".claude/skills"),
@@ -282,7 +283,7 @@ fn skill_markdown(
     let _ = writeln!(out, "## Helpers\n");
     let _ = writeln!(
         out,
-        "- `{driver}` is executable with Node 22 and has no dependencies; `{driver} help` documents every command.\n- `wh check --feature <id>` proves one feature through its drive gate and records a receipt; `wh check --changed` proves what your change touched; `wh check --sweep` drives every feature in the order below.\n- `wh check --dry-run` shows exactly which gates and commands would run.\n"
+        "- `{driver}` is executable with Node 22 and has no dependencies; `{driver} help` documents every command.\n- `wh check --feature <id>` proves one feature through its drive gate and records a receipt; `wh check --changed` proves what your change touched; `wh check --sweep` drives every feature in the order below.\n- `wh check --dry-run` shows exactly which gates and commands would run.\n- Before handing off, run `wh check --changed --host <this host>` (claude, cursor or agents): it proves what the change touched and records which revision of this skill you used. With Claude Code hooks installed this runs at every stop and returns failures to you.\n"
     );
     let _ = writeln!(out, "## Gates\n");
     let gates = state.in_force_matching(|body| matches!(body, RecordBody::Standard(_)));
@@ -683,6 +684,80 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
             "scaffolded once; team-owned",
         ));
     }
+    let mut integration_notes = Vec::new();
+    if request.hooks {
+        if hosts.iter().any(|(name, _)| *name == "claude") {
+            let existing = fs::read_to_string(root.join(crate::hosts::CLAUDE_SETTINGS)).ok();
+            match crate::hosts::merged_claude_settings(existing.as_deref()) {
+                Ok((text, true)) => writes.push((
+                    crate::hosts::CLAUDE_SETTINGS.to_string(),
+                    text,
+                    "claude",
+                    "merged; the team's other settings and hooks are kept",
+                )),
+                Ok((_, false)) => {
+                    integration_notes.push("Claude Code hooks are already installed.".to_string())
+                }
+                Err(error) => return error_response(request_id, ServiceState::NeedsInput, error),
+            }
+        } else {
+            integration_notes.push("Hooks apply to Claude Code; other hosts use explicit checkpoints (wh check --changed --host <name>).".to_string());
+        }
+    }
+    if request.ci {
+        let workflow = ".github/workflows/whetstone-policy.yml";
+        if !root.join(workflow).exists() {
+            writes.push((
+                workflow.to_string(),
+                CI_TEMPLATE.replace("__WHETSTONE_VERSION__", env!("CARGO_PKG_VERSION")),
+                "repository",
+                "scaffolded once; team-owned; protect with CODEOWNERS",
+            ));
+        }
+        if !root.join(crate::authority::AUTHORITY_PATH).exists() {
+            match authority_template(root, &request.reviewers) {
+                Ok((authority, owner_login)) => {
+                    writes.push((
+                        crate::authority::AUTHORITY_PATH.to_string(),
+                        authority,
+                        "repository",
+                        "protected policy: commit through a reviewed pull request",
+                    ));
+                    let codeowners = ".github/CODEOWNERS";
+                    let existing = fs::read_to_string(root.join(codeowners)).unwrap_or_default();
+                    let mut lines = existing.clone();
+                    for pattern in [
+                        "/.whetstone/",
+                        "/.github/workflows/whetstone-policy.yml",
+                        "/.github/CODEOWNERS",
+                    ] {
+                        if !existing
+                            .lines()
+                            .any(|line| line.split_whitespace().next() == Some(pattern))
+                        {
+                            if !lines.is_empty() && !lines.ends_with('\n') {
+                                lines.push('\n');
+                            }
+                            lines.push_str(&format!("{pattern} @{owner_login}\n"));
+                        }
+                    }
+                    if lines != existing {
+                        writes.push((
+                            codeowners.to_string(),
+                            lines,
+                            "repository",
+                            "appended; existing owners kept",
+                        ));
+                    }
+                }
+                Err(reason) => integration_notes.push(format!(
+                    "{} was not written: {reason}",
+                    crate::authority::AUTHORITY_PATH
+                )),
+            }
+        }
+        integration_notes.push("Team activation also needs branch rules on the default branch: a required approving review, code owner review, dismissal of stale approvals, approval of the last push by someone else, the whetstone/policy required check with up-to-date branches, and no force pushes or deletion. Whetstone refuses to activate when it cannot observe them.".to_string());
+    }
     let plan = writes
         .iter()
         .map(|(path, contents, host, ownership)| {
@@ -719,6 +794,8 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
             "interview": interviewed.get("interview"),
             "agreement_digest": agreement_digest,
             "footprint": footprint,
+        "integrations": integration_notes,
+            "integrations": integration_notes,
             "preview": generated.first().map(|file| file.contents.clone()),
         });
         return response;
@@ -804,6 +881,45 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
         "footprint": footprint,
     });
     response
+}
+
+/// A first authority file: the authenticated GitHub user as maintainer and
+/// the named reviewers, all by immutable numeric id.
+fn authority_template(root: &Path, reviewers: &[String]) -> Result<(String, String), String> {
+    let platform = crate::authority::platform_for(root);
+    let actor = platform.actor().map_err(|denial| denial.detail)?;
+    let repository_id = platform.repository_id().map_err(|denial| denial.detail)?;
+    let mut principals =
+        vec![json!({"github_id": actor.github_id, "login": actor.login, "roles": ["maintainer"]})];
+    for login in reviewers {
+        if !login
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        {
+            return Err(format!("{login} is not a GitHub login"));
+        }
+        let output = std::process::Command::new("gh")
+            .args(["api", &format!("users/{login}"), "--jq", ".id"])
+            .current_dir(root)
+            .output()
+            .map_err(|error| error.to_string())?;
+        let id = String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| format!("GitHub user {login} could not be resolved"))?;
+        principals.push(json!({"github_id": id, "login": login, "roles": ["reviewer"]}));
+    }
+    let authority = json!({
+        "schema": crate::authority::AUTHORITY_SCHEMA,
+        "repository_id": repository_id,
+        "revision": 1,
+        "principals": principals,
+        "activator_workflows": ["whetstone-policy.yml"],
+    });
+    Ok((
+        serde_json::to_string_pretty(&authority).map_err(|error| error.to_string())? + "\n",
+        actor.login,
+    ))
 }
 
 /// Every private record, or none when no private store exists yet.
@@ -1036,6 +1152,35 @@ pub fn import(
                 .iter()
                 .map(|note| format!("{stem}.md: {note}")),
         );
+        // A feature that names a proving gate nobody has recorded, and has
+        // executable steps, gets a draft drive gate to review with it.
+        if !parsed.feature.drive_steps.is_empty() {
+            for gate in &parsed.feature.proven_by {
+                let exists = state.in_force(gate).is_some()
+                    || state.pending(gate).is_some()
+                    || candidates.iter().any(|candidate| &candidate.id == gate);
+                if exists && !replayed(&state, &request_id, gate.as_str()) {
+                    continue;
+                }
+                let standard = RecordBody::Standard(crate::domain::Standard {
+                    statement: format!("{} is proven by driving it", parsed.feature.name),
+                    rationale: format!(
+                        "Proposed with the imported feature map: the drive steps in {stem}.md, run by the project's driver, prove the feature from the user's path."
+                    ),
+                    strength: crate::domain::StandardStrength::Must,
+                    enforcement: Enforcement::Drive {
+                        feature: parsed.id.clone(),
+                    },
+                    examples: Vec::new(),
+                });
+                candidates.push(ImportCandidate {
+                    id: gate.clone(),
+                    body: standard,
+                    source: relative(path),
+                    source_digest: file_digest.clone(),
+                });
+            }
+        }
         let body = RecordBody::Feature(parsed.feature);
         if let Err(error) = crate::domain::RecordBody::validate(&body) {
             return import_error(

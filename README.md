@@ -12,23 +12,34 @@ Project data under `whetstone/`, Beads history, and Git history were preserved.
 
 ## Current state: local-alpha foundation
 
-The current binary is not yet the complete MVP. It does expose the six stable
-workflow families and a versioned JSON envelope. `init`, `change`, and the
-observational `check` have an initial local implementation; `dash` exposes the
-same service through a lightweight local UI. `pull` and `push` return
-`unavailable` until their implementation milestones pass. Bare `wh` is a
-read-only orientation and never starts a TUI.
+The binary exposes the six workflow families and a versioned JSON envelope,
+all implemented against the Beads record store. Milestone acceptance (the
+owner's own walkthroughs and a live two-person GitHub activation) is still
+open in Beads, so treat this as a pre-release. Bare `wh` is a read-only
+orientation and never starts a TUI.
 
 ```bash
-wh init --json
-wh change --json
-wh change --json --record-id guidance.example   # bind an exact base
-wh check --json --path src
-wh dash --json       # inspect locally; editing requires explicit edit mode
-wh dash --json --search "architecture" --as-of 2026-09-09T12:00:00Z
-wh pull --json       # unavailable until M2.1
-wh push --json       # unavailable until M2.1
+wh init --json                              # inspect; --action agree records the eight decisions
+wh init --action wire --host claude --host cursor --hooks   # skill, map, driver, hooks
+wh init --action import --from path/to/verify-app           # pstack skill -> drafts
+wh change --json --record-id guidance.example               # bind an exact base
+wh change --retire feature.old --rationale "replaced"       # reviewed archival
+wh check --json --changed                   # prove what the change touched
+wh check --sweep                            # drive every mapped feature
+wh check --required                         # team-active policy only (CI)
+wh dash --json                              # inspect; editing needs explicit edit mode
+wh dash --trail                             # decision trail as show-me-your-work TSV
+wh push                                     # review the exact package, then --confirm <token>
+wh push --propose                           # open team activation for shared policy
+wh pull                                     # receive; never executes or activates
 ```
+
+Team use: the repository keeps a shared Beads database (`bd init` once, with
+the Git remote as its Dolt remote). `wh push` shares accepted records without
+private drafts or their ancestry; `wh push --propose` writes an activation
+manifest for a pull request; after protected review and merge, the
+`whetstone-policy` workflow (`wh init --action wire --ci`) activates it, and
+`wh check --required` enforces only activated policy on every pull request.
 
 Machine clients consume `whetstone.command-response.v1`; its strict schema is
 in `references/command-response-v1.schema.json`. Noninteractive requests never

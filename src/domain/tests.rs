@@ -335,6 +335,7 @@ fn draft_self_approval_and_activation_without_acceptance_are_rejected() {
             binding: binding(),
             activation_sequence: 1,
             activated_at: "2026-09-09T12:01:00Z".into(),
+            pinned_checkers: Vec::new(),
         }),
     );
     assert_eq!(
@@ -394,6 +395,7 @@ fn independently_accepted_policy_activates_and_traces_without_collapsing_states(
             binding: binding(),
             activation_sequence: 1,
             activated_at: "2026-09-09T12:01:00Z".into(),
+            pinned_checkers: Vec::new(),
         }),
     );
     let mut history = AgreementHistory::default();

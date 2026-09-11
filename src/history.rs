@@ -1158,6 +1158,7 @@ mod tests {
                 },
                 activation_sequence: 1,
                 activated_at: "2026-01-04T00:00:00Z".into(),
+                pinned_checkers: Vec::new(),
             }),
             None,
         );
@@ -1612,6 +1613,7 @@ mod tests {
                 binding,
                 activation_sequence: 1,
                 activated_at: "2026-01-04T00:00:00Z".into(),
+                pinned_checkers: Vec::new(),
             }),
             None,
         );

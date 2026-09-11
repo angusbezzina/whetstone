@@ -64,6 +64,7 @@ pub fn is_agreement_body(body: &RecordBody) -> bool {
             | RecordBody::MetricDefinition(_)
             | RecordBody::Feature(_)
             | RecordBody::VerificationMap(_)
+            | RecordBody::PolicyException(_)
     )
 }
 

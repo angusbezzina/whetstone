@@ -302,3 +302,154 @@ fn the_web_driver_proves_a_dashboard_feature_with_screenshots_and_locates_failur
         "a failing drive still captures its final state"
     );
 }
+
+/// The seed map shipped for this repository (whetstone/verify/seed-map)
+/// imports as drafts with its drive gates, and once accepted a sweep proves
+/// every dashboard feature against the real `wh dash` service in Chrome.
+#[test]
+fn the_repository_seed_map_sweeps_the_real_dashboard() {
+    if !node_available() || !chrome_available() {
+        eprintln!("SKIP: node and Chrome are required for the seed map sweep");
+        return;
+    }
+    let temp = tempfile::tempdir().expect("temp");
+    let root = temp.path();
+    assert!(Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(root)
+        .status()
+        .expect("git")
+        .success());
+    let inspected = json(&run(&["init", "--json", "--request-id", "seed-init"], root));
+    let token = inspected["resume_token"]
+        .as_str()
+        .expect("token")
+        .to_string();
+    let agreed = json(&run(
+        &[
+            "init",
+            "--json",
+            "--action",
+            "agree",
+            "--request-id",
+            "seed-init",
+            "--expected-revision",
+            "0",
+            "--resume",
+            &token,
+            "--mission",
+            "Keep project intent inspectable.",
+            "--desired-outcome",
+            "Routine drift is repaired before handoff.",
+            "--values",
+            "Evidence before assertion.",
+            "--philosophy",
+            "Typed services own deterministic work.",
+            "--owner",
+            "Owner",
+            "--initial-safeguard",
+            "The toolchain answers.",
+            "--safeguard-scope",
+            "repository",
+            "--revision-triggers",
+            "a gate fails twice",
+            "--gate-command",
+            "git --version",
+        ],
+        root,
+    ));
+    assert_eq!(
+        agreed["data"]["records"].as_array().map(Vec::len),
+        Some(5),
+        "{agreed}"
+    );
+    let verify = root.join("whetstone/verify");
+    fs::create_dir_all(&verify).expect("verify dir");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/verify/drive.mjs"),
+        verify.join("drive.mjs"),
+    )
+    .expect("driver");
+    let config = serde_json::json!({
+        "surface": "web",
+        "launch": {
+            "command": [bin().display().to_string(), "dash", "--no-open", "--read-only", "--project-dir", "{root}"],
+            "ready": "Whetstone dashboard: (http://127\\.0\\.0\\.1:\\d+)",
+            "timeout_seconds": 60
+        },
+        "viewport": [1280, 900]
+    });
+    fs::write(
+        verify.join("driver.json"),
+        serde_json::to_string_pretty(&config).expect("config"),
+    )
+    .expect("driver config");
+    let seed = Path::new(env!("CARGO_MANIFEST_DIR")).join("whetstone/verify/seed-map");
+    let imported = json(&run(
+        &[
+            "init",
+            "--json",
+            "--action",
+            "import",
+            "--from",
+            seed.to_str().expect("path"),
+            "--request-id",
+            "seed",
+        ],
+        root,
+    ));
+    assert_eq!(imported["state"], "needs_decision", "{imported}");
+    let drafts = imported["data"]["drafts"]
+        .as_array()
+        .expect("drafts")
+        .clone();
+    assert_eq!(
+        drafts.len(),
+        9,
+        "the map, four features and four drive gates: {imported}"
+    );
+    for draft in &drafts {
+        let proposal = draft["proposal"]["id"].as_str().expect("proposal");
+        let accepted = json(&run(
+            &[
+                "change",
+                "--json",
+                "--request-id",
+                &format!("accept-{proposal}"),
+                "--accept",
+                proposal,
+            ],
+            root,
+        ));
+        assert_eq!(accepted["state"], "success", "{accepted}");
+    }
+    let wired = json(&run(
+        &["init", "--json", "--action", "wire", "--host", "agents"],
+        root,
+    ));
+    assert_eq!(wired["state"], "success", "{wired}");
+    let swept = json(&run(
+        &["check", "--json", "--sweep", "--timeout", "180"],
+        root,
+    ));
+    let sweep = &swept["data"]["sweep"];
+    for feature in [
+        "feature.dashboard-home",
+        "feature.foundations",
+        "feature.checks",
+        "feature.changelog",
+    ] {
+        let row = sweep["features"]
+            .as_array()
+            .expect("features")
+            .iter()
+            .find(|row| row["feature"] == feature)
+            .unwrap_or_else(|| panic!("{feature} missing: {sweep}"));
+        assert_eq!(row["outcome"], "proven", "{feature}: {row}");
+        assert!(
+            row["evidence"].to_string().contains(".png"),
+            "{feature} has screenshots"
+        );
+    }
+    assert_eq!(swept["state"], "success", "{}", swept["summary"]);
+}
