@@ -481,6 +481,11 @@ async function webStep(session, base, step, directory, index) {
       const event = keyEvent(rest);
       await cdp.send("Input.dispatchKeyEvent", { ...event, type: event.text ? "keyDown" : "rawKeyDown" });
       await cdp.send("Input.dispatchKeyEvent", { ...event, type: "keyUp", text: undefined, commands: undefined });
+      if (event.commands?.includes("selectAll")) {
+        // The editing command is not reliably applied in headless Chrome;
+        // select exactly what the shortcut selects in the focused control.
+        await cdp.evaluate(`(() => { const node = document.activeElement; if (node && typeof node.select === "function") node.select(); else document.execCommand("selectAll"); return true; })()`);
+      }
       await delay(150);
       return `pressed ${rest}`;
     }
