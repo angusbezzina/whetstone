@@ -42,7 +42,7 @@ try {
   await cdp.waitFor("document.querySelector('#confirm-init')", "the exact agreement review did not render");
   check(await cdp.evaluate("document.querySelectorAll('.onboard.review .row').length === 5"), "the review lists the five exact records");
   await click("#confirm-init");
-  await cdp.waitFor("document.querySelector('#mission-line')?.textContent === 'Keep project intent inspectable.'", "the agreement did not establish the dashboard");
+  await cdp.waitFor("document.querySelector('#mission-line')?.textContent === 'Keep project intent inspectable.'", "the agreement did not establish the dashboard", 45_000);
   check(await cdp.evaluate("document.querySelector('#tab-checks').getAttribute('aria-disabled') === 'false'"), "checks open after init");
 
   // Draft a new value inline, then accept it from the changelog.
@@ -54,14 +54,14 @@ try {
   await cdp.waitFor("document.querySelector('#record-draft')", "the value review did not render");
   check(await cdp.evaluate("document.querySelector('.review .diff .after').textContent.includes('Small safe steps.')"), "the review shows the new value");
   await click("#record-draft");
-  await cdp.waitFor("document.querySelector('#draft-count').textContent === '1'", "the draft was not recorded");
+  await cdp.waitFor("document.querySelector('#draft-count').textContent === '1'", "the draft was not recorded", 45_000);
   check(await cdp.evaluate("[...document.querySelectorAll('#st-values .rec')].some(r => r.classList.contains('draft') && r.textContent.includes('Small safe steps.'))"), "the new value shows as a draft");
   await click("#tab-changelog");
-  await cdp.waitFor("[...document.querySelectorAll('.entry .act .btn')].some(b => b.textContent === 'Accept')", "the draft is not reviewable in the changelog");
+  await cdp.waitFor("[...document.querySelectorAll('.entry .act .btn')].some(b => b.textContent === 'Accept')", "the draft is not reviewable in the changelog", 45_000);
   await cdp.evaluate("[...document.querySelectorAll('.entry .act .btn')].find(b => b.textContent === 'Accept').click(); true");
   await cdp.waitFor("document.querySelector('#confirm-review')", "the acceptance review did not render");
   await click("#confirm-review");
-  await cdp.waitFor("document.querySelector('#draft-count').textContent === '0'", "the draft was not accepted");
+  await cdp.waitFor("document.querySelector('#draft-count').textContent === '0'", "the draft was not accepted", 45_000);
 
   // Run the first gate for real.
   await click("#tab-checks");

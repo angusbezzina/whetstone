@@ -73,6 +73,9 @@ Steps (web surface):
   screenshot <name>
   settle                     Wait until the page stops changing (500ms quiet).
   eval <js>                  Assert a JavaScript expression is truthy.
+Any surface:          require <env:NAME|program:NAME|file:path|os:darwin|linux>
+                      stops with an "unreachable" verdict naming the unmet
+                      prerequisite instead of failing the feature.
 Steps (cli surface):  run <argv...> · expect-output <text> · expect-exit <code>
 Steps (http surface): request <METHOD> <path> [json] · expect-status <code> · expect-body <text>
 
@@ -544,10 +547,33 @@ async function instance(config) {
   return launch(config);
 }
 
+// A stated prerequisite the driver can check before touching the app.
+function unmetPrerequisite(condition) {
+  const [kind, ...rest] = condition.split(":");
+  const value = rest.join(":");
+  if (kind === "env") return process.env[value] ? null : `environment variable ${value} is not set`;
+  if (kind === "program") return which(value) ? null : `program ${value} is not installed`;
+  if (kind === "file") return existsSync(join(ROOT, value)) ? null : `file ${value} does not exist`;
+  if (kind === "os") return process.platform === value ? null : `needs ${value}, this is ${process.platform}`;
+  return `unknown prerequisite "${condition}" (use env:, program:, file: or os:)`;
+}
+
 async function runSteps(config, steps) {
   const directory = evidenceDir();
   const results = [];
   const failures = [];
+  // Prerequisites come first: an unreachable feature is reported with its
+  // reason and never driven half-way.
+  for (const step of steps) {
+    const [verb, rest] = splitStep(step);
+    if (verb !== "require") continue;
+    const unmet = unmetPrerequisite(rest);
+    if (unmet) {
+      writeFileSync(join(directory, "unreachable.json"), JSON.stringify({ prerequisite: rest, detail: unmet }, null, 2));
+      return { state: "unreachable", prerequisite: rest, detail: unmet, steps: [], failures: [], evidence_dir: directory };
+    }
+  }
+  steps = steps.filter((step) => splitStep(step)[0] !== "require");
   let app = null;
   let session = null;
   const context = {};
@@ -778,7 +804,7 @@ async function main() {
       if (dryRun) return emit({ ok: true, dry_run: true, steps });
       try {
         const verdict = await runSteps(config, steps);
-        return emit({ ok: verdict.state === "pass", ...verdict }, verdict.state === "pass" ? 0 : 1);
+        return emit({ ok: verdict.state === "pass", ...verdict }, verdict.state === "pass" ? 0 : verdict.state === "unreachable" ? 3 : 1);
       } catch (runError) {
         cleanup();
         return fail(runError.message);

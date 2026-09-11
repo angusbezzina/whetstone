@@ -16,7 +16,7 @@ use whetstone::repair_host::{RepairBudget, RepairTaskContext};
 use whetstone::repair_transport::{
     HostRepairLaunch, AUTHORITY_SECRET_ENV, AUTHORITY_SOCKET_ENV, REPAIR_LAUNCH_ENV,
 };
-use whetstone::storage::{DoltRepository, ProjectLayout, StoreKind};
+use whetstone::storage::{ProjectLayout, RecordStore, StoreKind};
 
 const SECRET: &str = "host-generated-secret-000000000000000000000001";
 const AUTHORITY_LOCATOR: &str = "host-task:transport-42";
@@ -207,13 +207,10 @@ fn host_socket_returns_post_edit_feedback_and_explicit_final_checkpoint() {
     assert_eq!(final_json["data"]["repair"]["release_authorized"], false);
     assert_eq!(final_json["data"]["repair"]["outcome"], "unknown");
 
-    let persisted = DoltRepository::open_existing(
-        &fixture.layout.store_path(StoreKind::Private),
-        StoreKind::Private,
-    )
-    .expect("reopen private store")
-    .all_records()
-    .expect("read private history");
+    let persisted = RecordStore::open_existing(&fixture.layout.private_store(), StoreKind::Private)
+        .expect("reopen private store")
+        .all_records()
+        .expect("read private history");
     let persisted_json = serde_json::to_string(&persisted).expect("serialize private history");
     assert!(!persisted_json.contains(SECRET));
     assert!(!persisted_json.contains(checkpoint_socket.to_string_lossy().as_ref()));
@@ -443,7 +440,7 @@ rules:
         ],
     );
     let layout = ProjectLayout::resolve(&project, None).expect("layout");
-    DoltRepository::initialize(&layout.store_path(StoreKind::Private), StoreKind::Private)
+    RecordStore::initialize(&layout.private_store(), StoreKind::Private)
         .expect("private repair store");
     Fixture {
         _project_dir: project_dir,
@@ -477,15 +474,12 @@ fn repair_context() -> RepairTaskContext {
 
 fn latest_revision(fixture: &Fixture, session_id: &str) -> u64 {
     use whetstone::domain::RecordId;
-    DoltRepository::open_existing(
-        &fixture.layout.store_path(StoreKind::Private),
-        StoreKind::Private,
-    )
-    .expect("open private store")
-    .latest(&RecordId::new(format!("repair.session.{session_id}")).expect("session id"))
-    .expect("read session")
-    .expect("session record")
-    .revision
+    RecordStore::open_existing(&fixture.layout.private_store(), StoreKind::Private)
+        .expect("open private store")
+        .latest(&RecordId::new(format!("repair.session.{session_id}")).expect("session id"))
+        .expect("read session")
+        .expect("session record")
+        .revision
 }
 
 fn command(cwd: &Path, program: &str, args: &[&str]) {

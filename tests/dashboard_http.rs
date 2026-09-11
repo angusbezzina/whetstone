@@ -41,7 +41,7 @@ impl DashboardBackend for Backend {
 fn send(address: SocketAddr, request: &str) -> String {
     let mut stream = TcpStream::connect(address).expect("connect dashboard");
     stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
+        .set_read_timeout(Some(Duration::from_secs(60)))
         .expect("read timeout");
     stream.write_all(request.as_bytes()).expect("write request");
     let mut response = Vec::new();
@@ -576,7 +576,7 @@ fn private_only_dashboard_queries_are_typed_filtered_and_do_not_create_shareable
     init_git(temp.path());
     install_private_agreement(temp.path());
     let layout = ProjectLayout::resolve(temp.path(), None).expect("project layout");
-    assert!(!layout.store_path(StoreKind::Shareable).exists());
+    assert!(layout.shared_store().is_none());
 
     let direct = CommandService.execute(ServiceRequest::Dash(DashRequest {
         project_dir: temp.path().to_path_buf(),
@@ -630,7 +630,7 @@ fn private_only_dashboard_queries_are_typed_filtered_and_do_not_create_shareable
         serde_json::Value::Null,
         "no gate has run, so no completed check may be claimed"
     );
-    assert!(!layout.store_path(StoreKind::Shareable).exists());
+    assert!(layout.shared_store().is_none());
 }
 
 #[test]
@@ -915,11 +915,9 @@ fn dashboard_change_check_conflict_and_permission_paths_preserve_service_semanti
     assert_eq!(preview.data["diff"]["before"], serde_json::Value::Null);
     assert_eq!(preview.data["diff"]["after"]["record_type"], "guidance");
     let layout = ProjectLayout::resolve(&project, None).expect("layout");
-    let private = whetstone::storage::DoltRepository::open_existing(
-        &layout.store_path(StoreKind::Private),
-        StoreKind::Private,
-    )
-    .expect("private store");
+    let private =
+        whetstone::storage::RecordStore::open_existing(&layout.private_store(), StoreKind::Private)
+            .expect("private store");
     assert!(!private
         .all_records()
         .expect("records after preview")

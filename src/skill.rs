@@ -25,7 +25,7 @@ use crate::domain::{Enforcement, Feature, RecordBody, RecordId};
 use crate::feature_map;
 use crate::projection::{self, SkillFile, SkillManifest};
 use crate::service::{InitRequest, ServiceResponse, ServiceState};
-use crate::storage::{DoltRepository, ProjectLayout, StoreKind};
+use crate::storage::{ProjectLayout, RecordStore, StoreKind};
 
 pub const MANIFEST_FILE: &str = "skill.json";
 pub const MAP_ID: &str = "map.verification";
@@ -551,8 +551,8 @@ fn error_response(request_id: String, state: ServiceState, summary: String) -> S
 /// Generate the verification skill, feature map and journal from accepted
 /// records, and scaffold the team-owned driver when absent.
 pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -> ServiceResponse {
-    let store = layout.store_path(StoreKind::Private);
-    if !store.join(".dolt").is_dir() {
+    let store = layout.private_store();
+    if !crate::beads::is_initialized(&store) {
         return error_response(
             request_id,
             ServiceState::NeedsInput,
@@ -560,7 +560,7 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
                 .into(),
         );
     }
-    let records = match DoltRepository::open_existing(&store, StoreKind::Private)
+    let records = match RecordStore::open_existing(&store, StoreKind::Private)
         .and_then(|repository| repository.all_records())
     {
         Ok(records) => records,
@@ -808,11 +808,11 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
 
 /// Every private record, or none when no private store exists yet.
 fn private_records(layout: &ProjectLayout) -> Result<Vec<crate::domain::AgreementRecord>, String> {
-    let store = layout.store_path(StoreKind::Private);
-    if !store.join(".dolt").is_dir() {
+    let store = layout.private_store();
+    if !crate::beads::is_initialized(&store) {
         return Ok(Vec::new());
     }
-    DoltRepository::open_existing(&store, StoreKind::Private)
+    RecordStore::open_existing(&store, StoreKind::Private)
         .and_then(|repository| repository.all_records())
         .map_err(|error| error.to_string())
 }
@@ -1110,8 +1110,8 @@ pub fn import(
         });
         return response;
     }
-    let private = match crate::storage::DoltRepository::initialize(
-        &layout.store_path(StoreKind::Private),
+    let private = match crate::storage::RecordStore::initialize(
+        &layout.private_store(),
         StoreKind::Private,
     ) {
         Ok(private) => private,

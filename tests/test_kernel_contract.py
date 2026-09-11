@@ -60,13 +60,19 @@ def test_legacy_command_is_not_dispatchable() -> None:
     assert "unrecognized subcommand" in result.stderr
 
 
-def test_sync_is_explicitly_unavailable() -> None:
-    for workflow in ("pull", "push"):
-        result = run(workflow, "--json", "--request-id", "python-client")
-        assert result.returncode == 4
-        response = json.loads(result.stdout)
-        assert response["state"] == "unavailable"
-        assert response["workflow"] == workflow
+def test_sync_without_a_shared_database_changes_nothing(tmp_path: Path) -> None:
+    # A throwaway repository: never this repository's real .beads.
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    pull = run("pull", "--json", "--request-id", "python-client", cwd=tmp_path)
+    assert pull.returncode == 4
+    response = json.loads(pull.stdout)
+    assert response["state"] == "unavailable"
+    assert response["workflow"] == "pull"
+    push = run("push", "--json", "--request-id", "python-client", cwd=tmp_path)
+    assert push.returncode == 6
+    response = json.loads(push.stdout)
+    assert response["state"] == "needs_input"
+    assert "nothing was published" in response["summary"]
 
 
 def test_validation_and_eval_do_real_work() -> None:

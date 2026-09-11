@@ -289,6 +289,8 @@ pub struct DashboardView {
     pub attention: Vec<Attention>,
     pub latest_change: Option<LatestChange>,
     pub skill: SkillState,
+    /// Deterministic map hygiene findings (see `crate::hygiene`).
+    pub hygiene: Vec<crate::hygiene::HygieneFinding>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -319,6 +321,7 @@ pub struct ProjectionInput<'a> {
     pub driver_path: Option<String>,
     pub skill: Option<SkillManifest>,
     pub changes: Changes,
+    pub hygiene: Vec<crate::hygiene::HygieneFinding>,
 }
 
 /// Paths changed in the working tree, and since each commit a proof ran at.
@@ -1290,6 +1293,7 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
         attention,
         latest_change: None,
         skill,
+        hygiene: input.hygiene.clone(),
     }
 }
 
@@ -1476,6 +1480,42 @@ fn attention(
             )),
         });
     }
+    let mut by_feature = BTreeMap::<&str, Vec<&crate::hygiene::HygieneFinding>>::new();
+    for finding in &input.hygiene {
+        by_feature
+            .entry(finding.feature.as_str())
+            .or_default()
+            .push(finding);
+    }
+    for (feature, found) in by_feature.into_iter().take(6) {
+        let title = state
+            .in_force(
+                &RecordId::new(feature)
+                    .unwrap_or_else(|_| RecordId::new("unknown").expect("constant")),
+            )
+            .map_or_else(|| feature.to_string(), record_title);
+        items.push(Attention {
+            priority: 2,
+            tone: "warn",
+            kind: "map_hygiene",
+            kind_label: "map hygiene",
+            title: format!("Feature map: {}", snippet(&title, 70)),
+            text: found
+                .iter()
+                .map(|finding| finding.detail.clone())
+                .collect::<Vec<_>>()
+                .join(" "),
+            actor: "you or your agent".into(),
+            next: found[0].next.clone(),
+            route: "foundations",
+            focus: RecordId::new(feature).ok().map(|id| id.as_str().to_string()),
+            action_label: "Open the feature",
+            agent_instruction: Some(format!(
+                "In {root}: {} Change records only through wh change; never edit product code to satisfy the map.",
+                found.iter().map(|finding| finding.next.clone()).collect::<Vec<_>>().join(" ")
+            )),
+        });
+    }
     if features.is_empty() {
         items.push(Attention {
             priority: 2,
@@ -1652,6 +1692,34 @@ fn journal_entry(
             StateLabel::new("muted", "redacted"),
             "governance",
             "This history item is not visible from this boundary.".into(),
+        );
+    }
+    // A reported maintain pass (pstack's maintain-verification-skill).
+    if let Some(body) = records.iter().find_map(|record| match &record.body {
+        RecordBody::VerificationReceipt(body)
+            if body.subject.stable_id == crate::service::MAINTAIN_SUBJECT =>
+        {
+            Some(body)
+        }
+        _ => None,
+    }) {
+        let outcome = body
+            .subject
+            .revision
+            .clone()
+            .unwrap_or_else(|| "reported".into());
+        return base(
+            "verification",
+            format!("Maintain pass: {outcome}"),
+            match body.verification {
+                VerificationAxis::Pass => StateLabel::new("pass", outcome.as_str()),
+                _ => StateLabel::new("warn", "unknown"),
+            },
+            "features",
+            body.evidence.first().map_or_else(
+                || "No evidence was supplied, so the pass counts as unknown.".to_string(),
+                |evidence| format!("Evidence: {}", evidence.locator),
+            ),
         );
     }
     // Verification runs: gate receipts and native scans.
@@ -2022,7 +2090,15 @@ pub fn decision_trail(state: &AgreementState) -> String {
                     .stable_id
                     .strip_prefix(GATE_SUBJECT_PREFIX)
                     .map(str::to_owned);
+                let maintain = body.subject.stable_id == crate::service::MAINTAIN_SUBJECT;
                 let (decision, why) = match &gate {
+                    _ if maintain => (
+                        format!(
+                            "Recorded the maintain pass outcome: {}",
+                            body.subject.revision.as_deref().unwrap_or("reported")
+                        ),
+                        "pstack's maintain-verification-skill kept the feature map honest.".into(),
+                    ),
                     Some(gate) => {
                         let statement = RecordId::new(gate.as_str())
                             .ok()
@@ -2048,7 +2124,9 @@ pub fn decision_trail(state: &AgreementState) -> String {
                 let evidence = body
                     .evidence
                     .iter()
-                    .filter(|evidence| evidence.system == EVIDENCE_SYSTEM)
+                    .filter(|evidence| {
+                        evidence.system == EVIDENCE_SYSTEM || evidence.system == "maintain_run"
+                    })
                     .map(|evidence| evidence.locator.clone())
                     .take(3)
                     .collect::<Vec<_>>();
@@ -2056,7 +2134,11 @@ pub fn decision_trail(state: &AgreementState) -> String {
                     body.checked_at.clone(),
                     record.id.as_str().to_string(),
                     [
-                        "checks".into(),
+                        if maintain {
+                            "maintain".into()
+                        } else {
+                            "checks".into()
+                        },
                         decision,
                         why,
                         if evidence.is_empty() {

@@ -95,24 +95,35 @@ or a drive without evidence is unknown, never a pass. Draft gates never run.
 
 ## Storage
 
-Records live in Beads. Each agreement record is a `record` bead whose JSON
-metadata holds the typed body, revision, content digest, supersedes reference
-and idempotency key, with lifecycle as a label; proposals and acceptances are
-`decision` beads linked to the records they promote; receipts are ephemeral
-`receipt` beads with evidence paths. The kernel validates every body on read
-and write and reports malformed metadata rather than repairing it. In-force
-resolution, digests and the draft-never-displaces-accepted invariant stay in
-the kernel; integrity is by digest and `bd history`, which makes tampering
-visible rather than impossible.
+Records live in Beads (`src/beads.rs`, `bd` 1.1.2 or later). Each record
+revision is one bead: agreement records are `record` beads, proposals,
+reviews, decisions and retirements are `decision` beads, and receipts and
+repair sessions are `receipt` beads, all labelled `whetstone`. The metadata
+holds the typed body as ASCII-escaped canonical JSON (`wh_record`; Beads
+re-sorts metadata objects and a raw U+2028 breaks its reads), the revision,
+content digest, supersedes reference and idempotency key; a `supersedes`
+dependency links consecutive revisions, and lifecycle is a `wh:lifecycle:*`
+label kept in step with the kernel. The kernel validates every body and digest
+on read and reports malformed or edited metadata with the bead id rather than
+repairing it. One bead per revision (not per record id) is deliberate:
+`bd history` does not carry metadata, an accepted revision and a pending draft
+need separate lifecycle labels, and new revisions never collide as cell
+conflicts on pull. In-force resolution, digests and the
+draft-never-displaces-accepted invariant stay in the kernel; integrity is by
+digest and `bd history`, which makes tampering visible rather than
+impossible.
 
-Drafts and personal experiments live in a private Beads database under
-`.git/whetstone/private` that never gets a remote. Accepted, shared records
-live in the repository's Beads database. Nothing about policy is committed to
-the code branch; the Beads remote is transport only. Embedded Beads has no SQL,
-so every read or write is one `bd` call and multi-record writes are sequential
-with idempotency keys and a completion marker. The `dolt` binary is not a
-requirement. (Until `whetstone-k5r.17` lands, the code still uses the earlier
-Whetstone-owned Dolt repositories; this section describes the target.)
+Drafts, receipts and personal experiments live in a private Beads database
+under `.git/whetstone/` that never gets a remote: it is initialized and used
+with Git discovery fenced off (`GIT_CEILING_DIRECTORIES`), because `bd init`
+inside a repository whose origin carries Beads data would clone the team's
+database and wire its remote. Accepted, shared records live in the
+repository's Beads database. Nothing about policy is committed to the code
+branch; the Beads remote is transport only (`refs/dolt/data` in the Git
+remote today). Embedded Beads has no SQL, so every read or write is one `bd`
+call (about half a second for a write), and multi-record writes are sequential
+idempotent appends closed by a completion marker; repeating an interrupted
+request resumes it. The `dolt` binary is not a requirement.
 
 ## Records, lifecycle and authority
 
@@ -123,10 +134,19 @@ mode) or an independent reviewer approves it (team mode). A draft never
 displaces the accepted record. Every accepted change is append-only and linked
 to what it supersedes; corrections are new records, not rewrites.
 
-`wh push` copies selected accepted records from the private database into the
-shared one and calls `bd dolt push`; `wh pull` calls `bd dolt pull` and never
-executes or activates incoming content. Local preferences cannot weaken required team
-policy, and a policy author cannot self-approve protected activation.
+`wh push` shows the exact package (accepted revisions with the proposals and
+reviews that accepted them), the destination and the base, and copies it into
+the shared database and calls `bd dolt push` only with the matching
+`--confirm` token; any change to package, destination or base invalidates the
+token. A record whose revision chain holds a draft or withdrawn revision
+carries private ancestry and is blocked unless that ancestry is explicitly
+selected (`--include-ancestry`); a record linking to something unshared is
+blocked until that is shared too; `--canary` text blocks a push outright.
+`wh pull` calls `bd dolt pull`, verifies every incoming record and reports
+arrivals and any collision with local drafts; it never executes, activates or
+accepts incoming content, and local drafts are untouched. Local preferences
+cannot weaken required team policy, and a policy author cannot self-approve
+protected activation.
 
 ## Onboarding
 

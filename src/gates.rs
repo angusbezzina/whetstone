@@ -587,6 +587,15 @@ fn finish(
     outcome
 }
 
+/// Summary prefix of a drive the driver could not reach, with the unmet
+/// prerequisite it named.
+pub const UNREACHABLE_PREFIX: &str = "Unreachable: ";
+
+/// A gate that was deliberately not run; unknown, never a pass.
+pub fn skipped_outcome(id: &RecordId, standard: &Standard, reason: &str) -> GateOutcome {
+    GateOutcome::new(id, standard).unknown(reason)
+}
+
 pub fn run_gate(context: &GateContext<'_>, id: &RecordId, standard: &Standard) -> GateOutcome {
     let outcome = GateOutcome::new(id, standard);
     match &standard.enforcement {
@@ -942,6 +951,22 @@ fn run_drive_gate(
         .unwrap_or_default();
     if result.timed_out {
         outcome = outcome.unknown("The drive timed out; a timeout is not a result.");
+    } else if reported == "unreachable" {
+        let prerequisite = report
+            .as_ref()
+            .and_then(|report| report.get("prerequisite"))
+            .and_then(Value::as_str)
+            .unwrap_or("unstated");
+        let detail = report
+            .as_ref()
+            .and_then(|report| report.get("detail"))
+            .and_then(Value::as_str)
+            .unwrap_or("a prerequisite is not met");
+        outcome = outcome.unknown(format!("{UNREACHABLE_PREFIX}{prerequisite} ({detail})"));
+        outcome.failures = vec![ArtifactFailure {
+            location: format!("prerequisite {prerequisite}"),
+            message: detail.to_string(),
+        }];
     } else if reported == "pass" && result.status.success() {
         if produced.is_empty() {
             outcome = outcome.unknown(

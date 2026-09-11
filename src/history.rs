@@ -13,7 +13,7 @@ use crate::domain::{
     AgreementRecord, ContentDigest, DecisionVerdict, PrincipalRef, ProposalState,
     ProvenanceAuthority, RecordBody, RecordId, RecordRef,
 };
-use crate::storage::{DoltRepository, ProjectLayout, StoreKind};
+use crate::storage::{ProjectLayout, RecordStore, StoreKind};
 
 pub const ACCEPTED_LEAN_BASELINE: &str = "2c3f0a3bb66d2ffa89c7b2f300b864a3ee8fea48";
 const SNAPSHOT_SCHEMA_VERSION: u16 = 1;
@@ -201,18 +201,24 @@ pub struct HistoryInspectionService {
 
 impl HistoryInspectionService {
     pub fn open(layout: &ProjectLayout) -> Result<Self, HistoryError> {
-        let private = DoltRepository::open_existing(
-            &layout.store_path(StoreKind::Private),
-            StoreKind::Private,
-        )
-        .map_err(|error| HistoryError::Storage(error.to_string()))?;
-        let shareable_path = layout.store_path(StoreKind::Shareable);
-        if !shareable_path.exists() {
+        let private = RecordStore::open_existing(&layout.private_store(), StoreKind::Private)
+            .map_err(|error| HistoryError::Storage(error.to_string()))?;
+        let Some(shared_path) = layout.shared_store() else {
             return Self::from_private_repository(&private);
-        }
-        let shareable = DoltRepository::open_existing(&shareable_path, StoreKind::Shareable)
+        };
+        let shareable = RecordStore::open_existing(&shared_path, StoreKind::Shareable)
             .map_err(|error| HistoryError::Storage(error.to_string()))?;
         Self::from_repositories(&private, &shareable)
+    }
+
+    /// Build from records already read from both stores.
+    pub fn from_records(
+        private: Vec<AgreementRecord>,
+        shared: Vec<AgreementRecord>,
+    ) -> Result<Self, HistoryError> {
+        Ok(Self {
+            index: HistoryIndex::from_records(private, shared)?,
+        })
     }
 
     /// Build from records already read from the private store, avoiding a
@@ -231,7 +237,7 @@ impl HistoryInspectionService {
         })
     }
 
-    fn from_private_repository(private: &DoltRepository) -> Result<Self, HistoryError> {
+    fn from_private_repository(private: &RecordStore) -> Result<Self, HistoryError> {
         if private.kind() != StoreKind::Private {
             return Err(HistoryError::InvalidStoreBoundary);
         }
@@ -250,8 +256,8 @@ impl HistoryInspectionService {
     }
 
     pub fn from_repositories(
-        private: &DoltRepository,
-        shareable: &DoltRepository,
+        private: &RecordStore,
+        shareable: &RecordStore,
     ) -> Result<Self, HistoryError> {
         Ok(Self {
             index: HistoryIndex::from_repositories(private, shareable)?,
@@ -332,8 +338,8 @@ impl HistoryIndex {
     /// Dolt repositories. A record already present in the shareable store is
     /// rendered as team-visible rather than duplicated as private ancestry.
     pub fn from_repositories(
-        private: &DoltRepository,
-        shareable: &DoltRepository,
+        private: &RecordStore,
+        shareable: &RecordStore,
     ) -> Result<Self, HistoryError> {
         if private.kind() != StoreKind::Private || shareable.kind() != StoreKind::Shareable {
             return Err(HistoryError::InvalidStoreBoundary);
@@ -341,6 +347,19 @@ impl HistoryIndex {
         let shared = shareable
             .all_records()
             .map_err(|error| HistoryError::Storage(error.to_string()))?;
+        let private = private
+            .all_records()
+            .map_err(|error| HistoryError::Storage(error.to_string()))?;
+        Self::from_records(private, shared)
+    }
+
+    /// The read model over records already read from both stores. A record
+    /// present in the shared store is team-visible, never duplicated as
+    /// private ancestry.
+    pub fn from_records(
+        private: Vec<AgreementRecord>,
+        shared: Vec<AgreementRecord>,
+    ) -> Result<Self, HistoryError> {
         let shared_refs = shared
             .iter()
             .map(AgreementRecord::reference)
@@ -353,10 +372,7 @@ impl HistoryIndex {
                 record,
             })
             .collect::<Vec<_>>();
-        for record in private
-            .all_records()
-            .map_err(|error| HistoryError::Storage(error.to_string()))?
-        {
+        for record in private {
             let reference = record.reference().map_err(HistoryError::Domain)?;
             if !shared_refs.contains(&reference) {
                 records.push(HistoryRecord {
@@ -628,15 +644,12 @@ impl HistoryIndex {
                 RecordBody::Retirement(retirement) => {
                     if transition.provenance.authority != ProvenanceAuthority::IndependentlyApproved
                     {
-                        // A solo retirement of a private record is a local
-                        // transition: it takes the record out of the owner's
-                        // local force (see AgreementState) but can never change
-                        // team-active context. Only a team-visible retirement
-                        // must carry independent approval.
-                        if self.by_ref[reference].visibility == HistoryVisibility::Private {
-                            continue;
-                        }
-                        return Err(HistoryError::UnauthoritativeTransition(reference.clone()));
+                        // A solo retirement (private, or pushed for the team
+                        // to see) takes the record out of its author's local
+                        // force (see AgreementState) but never changes
+                        // team-active context, which only an independently
+                        // approved transition can.
+                        continue;
                     }
                     let target = self.by_ref.get(&retirement.target).ok_or_else(|| {
                         HistoryError::UnknownActiveReference(retirement.target.clone())

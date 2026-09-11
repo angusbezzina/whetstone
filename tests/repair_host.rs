@@ -19,7 +19,7 @@ use whetstone::service::{
     CheckRequest, CommandService, InitAction, InitRequest, ServiceRequest, ServiceResponse,
     ServiceState, RESPONSE_SCHEMA,
 };
-use whetstone::storage::{DoltRepository, ProjectLayout, StorageError, StoreKind};
+use whetstone::storage::{ProjectLayout, RecordStore, StorageError, StoreKind};
 
 const NOW: &str = "2026-09-09T12:00:00Z";
 const LATER: &str = "2026-09-09T13:00:00Z";
@@ -390,7 +390,7 @@ rules:
     );
     let layout = ProjectLayout::resolve(&project, None).expect("layout");
     if initialize_store {
-        DoltRepository::initialize(&layout.store_path(StoreKind::Private), StoreKind::Private)
+        RecordStore::initialize(&layout.private_store(), StoreKind::Private)
             .expect("private repair store");
     }
     Fixture {
@@ -484,31 +484,25 @@ fn finalize(session: &str, request_id: &str, revision: u64) -> FinalizeRepairReq
 }
 
 fn current_handoff(fixture: &Fixture, session: &str) -> whetstone::domain::RecordRef {
-    DoltRepository::open_existing(
-        &fixture.layout.store_path(StoreKind::Private),
-        StoreKind::Private,
-    )
-    .expect("open repair store")
-    .all_records()
-    .expect("records")
-    .into_iter()
-    .filter(|record| matches!(record.body, RecordBody::RepairHandoff(_)))
-    .filter(|record| record.id.as_str().contains(session))
-    .max_by_key(|record| record.revision)
-    .expect("handoff exists")
-    .reference()
-    .expect("handoff ref")
+    RecordStore::open_existing(&fixture.layout.private_store(), StoreKind::Private)
+        .expect("open repair store")
+        .all_records()
+        .expect("records")
+        .into_iter()
+        .filter(|record| matches!(record.body, RecordBody::RepairHandoff(_)))
+        .filter(|record| record.id.as_str().contains(session))
+        .max_by_key(|record| record.revision)
+        .expect("handoff exists")
+        .reference()
+        .expect("handoff ref")
 }
 
 fn session_record(fixture: &Fixture, session: &str) -> whetstone::domain::AgreementRecord {
-    DoltRepository::open_existing(
-        &fixture.layout.store_path(StoreKind::Private),
-        StoreKind::Private,
-    )
-    .expect("open repair store")
-    .latest(&RecordId::new(format!("repair.session.{session}")).expect("session id"))
-    .expect("load session")
-    .expect("session exists")
+    RecordStore::open_existing(&fixture.layout.private_store(), StoreKind::Private)
+        .expect("open repair store")
+        .latest(&RecordId::new(format!("repair.session.{session}")).expect("session id"))
+        .expect("load session")
+        .expect("session exists")
 }
 
 fn install_owner_agreement(fixture: &Fixture) -> whetstone::domain::RecordRef {
@@ -860,13 +854,11 @@ fn humans_get_the_same_actionable_check_without_implicitly_authorizing_an_agent(
         .permitted_actions
         .iter()
         .any(|action| action.contains("repair within the current task scope")));
-    let before_authority = DoltRepository::open_existing(
-        &fixture.layout.store_path(StoreKind::Private),
-        StoreKind::Private,
-    )
-    .expect("store")
-    .all_records()
-    .expect("records");
+    let before_authority =
+        RecordStore::open_existing(&fixture.layout.private_store(), StoreKind::Private)
+            .expect("store")
+            .all_records()
+            .expect("records");
     assert!(!before_authority
         .iter()
         .any(|record| matches!(record.body, RecordBody::RepairSession(_))));
@@ -924,7 +916,7 @@ fn missing_or_expanded_authority_stops_before_work_or_storage_creation() {
     )
     .expect_err("missing authority must fail");
     assert!(matches!(error, RepairHostError::MissingAuthority));
-    assert!(!missing.layout.store_path(StoreKind::Private).exists());
+    assert!(!missing.layout.private_store().exists());
 
     let expanded = project("def ReadConfig():\n    pass\n", true, true);
     let error = RepairHost::new(FixtureHostAdapter {
@@ -936,14 +928,13 @@ fn missing_or_expanded_authority_stops_before_work_or_storage_creation() {
     )
     .expect_err("ordinary repair cannot carry policy capability");
     assert!(matches!(error, RepairHostError::ForbiddenCapability));
-    assert!(DoltRepository::open_existing(
-        &expanded.layout.store_path(StoreKind::Private),
-        StoreKind::Private
-    )
-    .expect("store")
-    .all_records()
-    .expect("records")
-    .is_empty());
+    assert!(
+        RecordStore::open_existing(&expanded.layout.private_store(), StoreKind::Private)
+            .expect("store")
+            .all_records()
+            .expect("records")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -973,13 +964,10 @@ fn unavailable_checker_hands_back_one_exact_resumable_decision() {
             "unavailable-handoff-check",
         )
         .expect("exact handoff target");
-    let records = DoltRepository::open_existing(
-        &fixture.layout.store_path(StoreKind::Private),
-        StoreKind::Private,
-    )
-    .expect("store")
-    .all_records()
-    .expect("records");
+    let records = RecordStore::open_existing(&fixture.layout.private_store(), StoreKind::Private)
+        .expect("store")
+        .all_records()
+        .expect("records");
     let handoffs = records
         .iter()
         .filter(|record| matches!(record.body, RecordBody::RepairHandoff(_)))
@@ -2111,13 +2099,10 @@ fn concurrent_begins_atomically_reserve_one_task_authority_budget() {
             .count(),
         1
     );
-    let records = DoltRepository::open_existing(
-        &fixture.layout.store_path(StoreKind::Private),
-        StoreKind::Private,
-    )
-    .expect("store")
-    .all_records()
-    .expect("records");
+    let records = RecordStore::open_existing(&fixture.layout.private_store(), StoreKind::Private)
+        .expect("store")
+        .all_records()
+        .expect("records");
     assert_eq!(
         records
             .iter()
@@ -2242,13 +2227,10 @@ fn concurrent_checkpoints_execute_under_one_durable_operation_claim() {
         1,
         "an exact replay may return stored feedback but must not rerun the checker"
     );
-    let records = DoltRepository::open_existing(
-        &fixture.layout.store_path(StoreKind::Private),
-        StoreKind::Private,
-    )
-    .expect("store")
-    .all_records()
-    .expect("records");
+    let records = RecordStore::open_existing(&fixture.layout.private_store(), StoreKind::Private)
+        .expect("store")
+        .all_records()
+        .expect("records");
     assert_eq!(
         records
             .iter()
@@ -2529,14 +2511,13 @@ fn begin_stops_before_reservation_when_authority_expires_during_first_exchange()
         )
         .expect_err("expired first authority exchange must not reserve or check");
     assert!(matches!(error, RepairHostError::AuthorityExpired));
-    assert!(DoltRepository::open_existing(
-        &fixture.layout.store_path(StoreKind::Private),
-        StoreKind::Private,
-    )
-    .expect("private store")
-    .all_records()
-    .expect("records")
-    .is_empty());
+    assert!(
+        RecordStore::open_existing(&fixture.layout.private_store(), StoreKind::Private,)
+            .expect("private store")
+            .all_records()
+            .expect("records")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -2692,18 +2673,13 @@ fn private_repair_context_cannot_enter_the_shareable_store() {
             begin_request("private-session", "private-session-begin", context()),
         )
         .expect("private repair session");
-    let private = DoltRepository::open_existing(
-        &fixture.layout.store_path(StoreKind::Private),
-        StoreKind::Private,
-    )
-    .expect("private store");
-    let shareable = DoltRepository::initialize(
-        &fixture.layout.store_path(StoreKind::Shareable),
-        StoreKind::Shareable,
-    )
-    .expect("shareable store");
+    let private = RecordStore::open_existing(&fixture.layout.private_store(), StoreKind::Private)
+        .expect("private store");
+    let shared_dir = fixture.project.join("shared-beads");
+    let shareable =
+        RecordStore::initialize(&shared_dir, StoreKind::Shareable).expect("shareable store");
     assert!(matches!(
-        private.project_selected(&shareable, &[feedback.session], &[]),
+        private.copy_to(&shareable, &[feedback.session], &[]),
         Err(StorageError::InvalidProjectionBoundary)
     ));
     assert!(shareable

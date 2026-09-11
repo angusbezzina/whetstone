@@ -18,8 +18,8 @@ use crate::repair_host::{
 #[cfg(unix)]
 use crate::repair_transport::HostSocketAuthorityVerifier;
 use crate::service::{
-    BasicRequest, ChangeDefinition, ChangeKind, ChangeRequest, CheckRequest, CommandService,
-    DashRequest, GateMode, InitAction, InitRequest, ReviewRequest, ServiceRequest, ServiceResponse,
+    ChangeDefinition, ChangeKind, ChangeRequest, CheckRequest, CommandService, DashRequest,
+    GateMode, InitAction, InitRequest, ReviewRequest, ServiceRequest, ServiceResponse,
     ServiceState,
 };
 use crate::storage::ProjectLayout;
@@ -201,6 +201,12 @@ enum Command {
         /// Show which gates and exact commands would run; execute nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Record pstack's maintain-verification-skill outcome as a receipt.
+        #[arg(long, value_enum, conflicts_with_all = ["paths", "rules", "features", "changed", "sweep", "dry_run"])]
+        maintain_outcome: Option<MaintainOutcomeArg>,
+        /// The maintain run's notes file (repository path) or PR URL.
+        #[arg(long, requires = "maintain_outcome")]
+        maintain_evidence: Option<String>,
         /// Checkpoint an existing host-authorized repair session.
         #[arg(long, conflicts_with_all = ["paths", "language", "rules", "features", "changed", "sweep"])]
         repair_session: Option<String>,
@@ -225,20 +231,40 @@ enum Command {
         finalize_with: Option<String>,
     },
 
-    /// Receive approved team agreement changes when team sync is configured.
+    /// Receive shared records from the team's Beads remote. Nothing received
+    /// is executed, activated or accepted; local drafts stay as they are.
     Pull {
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
         #[arg(long)]
         request_id: Option<String>,
+        /// Report the remote that would be pulled; receive nothing.
+        #[arg(long)]
+        dry_run: bool,
     },
 
-    /// Submit selected local proposals for team review when sync is configured.
+    /// Share an exact, confirmed package of accepted records with the team:
+    /// run once to review the package, then again with --confirm <token>.
     Push {
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
         #[arg(long)]
         request_id: Option<String>,
+        /// Record id to share (repeatable); default: every accepted record not yet shared.
+        #[arg(long = "select")]
+        select: Vec<String>,
+        /// Also share this record's draft or withdrawn revisions (repeatable).
+        #[arg(long = "include-ancestry")]
+        include_ancestry: Vec<String>,
+        /// Text that must never leave this machine; any match blocks the push.
+        #[arg(long = "canary")]
+        canaries: Vec<String>,
+        /// The token from the reviewed package; any change invalidates it.
+        #[arg(long)]
+        confirm: Option<String>,
+        /// Show the exact package, destination and base; share nothing.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Internal schema gate retained for repository maintenance.
@@ -294,6 +320,13 @@ impl From<InitActionArg> for InitAction {
             InitActionArg::Import => Self::Import,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum MaintainOutcomeArg {
+    Clean,
+    Changed,
+    Blocked,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -489,6 +522,8 @@ pub fn run() -> i32 {
             sweep,
             timeout,
             dry_run,
+            maintain_outcome,
+            maintain_evidence,
             repair_session,
             repair_revision,
             authority_evidence,
@@ -525,21 +560,39 @@ pub fn run() -> i32 {
                 },
                 timeout_seconds: timeout,
                 dry_run,
+                maintain_outcome: maintain_outcome.map(|outcome| match outcome {
+                    MaintainOutcomeArg::Clean => crate::service::MaintainOutcome::Clean,
+                    MaintainOutcomeArg::Changed => crate::service::MaintainOutcome::Changed,
+                    MaintainOutcomeArg::Blocked => crate::service::MaintainOutcome::Blocked,
+                }),
+                maintain_evidence,
             }))
         }
         Some(Command::Pull {
             project_dir,
             request_id,
-        }) => service.execute(ServiceRequest::Pull(BasicRequest {
+            dry_run,
+        }) => service.execute(ServiceRequest::Pull(crate::sync::PullRequest {
             project_dir,
             request_id,
+            dry_run,
         })),
         Some(Command::Push {
             project_dir,
             request_id,
-        }) => service.execute(ServiceRequest::Push(BasicRequest {
+            select,
+            include_ancestry,
+            canaries,
+            confirm,
+            dry_run,
+        }) => service.execute(ServiceRequest::Push(crate::sync::PushRequest {
             project_dir,
             request_id,
+            select,
+            include_ancestry,
+            canaries,
+            confirm,
+            dry_run,
         })),
         Some(Command::Validate { project_dir }) => return validate(&project_dir, machine),
         Some(Command::Eval { project_dir, lang }) => {

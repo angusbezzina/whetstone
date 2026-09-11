@@ -31,6 +31,17 @@ instead of one transaction, integrity by digest and history rather than
 database permissions, and a pinned minimum `bd` version. The original text
 follows unchanged.
 
+Implementation note (2026-09-10, `whetstone-k5r.17`): records are one bead per
+record revision rather than one per record id, because `bd history --json`
+omits metadata (older revisions would be unreadable), an accepted revision and
+a pending draft need separate lifecycle labels, and per-revision beads never
+become Dolt cell conflicts on pull. The typed body is stored as an
+ASCII-escaped canonical JSON string (a raw U+2028 in metadata breaks every
+later `bd` read of the database). The private database is initialized and used
+with `GIT_CEILING_DIRECTORIES` set above it and verified remote-free, because
+`bd init` inside a repository whose origin carries `refs/dolt/data` clones the
+team's data and wires the team remote.
+
 ## Decision (superseded)
 
 Whetstone will own its records in direct Dolt repositories behind a small typed `StorageRepository` interface. Beads remains the project's issue tracker and optional future event source; Whetstone will not read or write Beads' private tables, store policy as issues or memories, or depend on Beads retention and compaction behavior.

@@ -74,20 +74,29 @@ resolution, typed rule validation, tree-sitter checks, golden-example
 evaluation, bounded gate execution with per-gate receipts and evidence, and a
 generated verification skill, feature map and driver (`wh init --action wire`).
 
-Today's build still stores records in Whetstone-owned Dolt repositories under
-`.git/whetstone/` and needs a `dolt` binary. That is changing: the owner
-decided on 2026-09-10 that Beads (`bd`, embedded Dolt) is the record store.
-Records become `record` beads with the typed body in JSON metadata, drafts live
-in a private Beads database, and `wh push`/`wh pull` wrap `bd dolt push` and
-`bd dolt pull`. When `whetstone-k5r.17` lands, the install requirements are the
-`wh` binary, `bd`, Node 22 for the driver and a browser for web surfaces.
+Records live in Beads (`bd` 1.1.2 or later, embedded Dolt; no `dolt` binary).
+Each record revision is a bead whose metadata carries the typed body, digest,
+supersedes reference and idempotency key; lifecycle is a `wh:lifecycle:*`
+label. Drafts, receipts and personal experiments stay in a private Beads
+database under `.git/whetstone/` that never has a remote. `wh push` shares an
+exact, confirmed package of accepted records into the repository's shared
+Beads database and runs `bd dolt push`; `wh pull` runs `bd dolt pull` and never
+executes, activates or accepts what arrives. Nothing about policy is committed
+to the code branch: the team remote carries Beads data in `refs/dolt/data`, and
+a fresh clone reaches it with `bd bootstrap` and `wh dash`.
 
-The generated `verify-<app>` skill is designed to be a valid
+Install requirements: the `wh` binary, `bd` 1.1.2 or later, Node 22 for the
+verification driver, and Chrome or Chromium for web surfaces.
+
+The generated `verify-<app>` skill is a valid
 [pstack](https://github.com/cursor/plugins/tree/main/pstack) verification
 skill: the same four sections per feature file and README shape, so pstack's
-`maintain-verification-skill` runs on it unchanged and a pstack-generated skill
-can be imported. Whetstone adds the versioned "why" behind each feature and the
-receipts that prove it; pstack supplies the judgment playbooks.
+`maintain-verification-skill` runs on it unchanged, and
+`wh init --action import --from <dir>` reads a pstack-generated skill (or a
+maintained one) back as reviewable drafts. Whetstone adds the versioned "why"
+behind each feature and the receipts that prove it; pstack supplies the
+judgment playbooks. `wh dash --trail` exports the decision history as a
+show-me-your-work TSV.
 
 ## Target product
 

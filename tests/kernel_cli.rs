@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use whetstone::domain::{AuthorizationAxis, RecordBody, RecordId, VerificationAxis};
-use whetstone::storage::{DoltRepository, ProjectLayout, StoreKind};
+use whetstone::storage::{ProjectLayout, RecordStore, StoreKind};
 
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_whetstone"))
@@ -142,15 +142,33 @@ fn retired_commands_cannot_execute() {
 
 #[test]
 fn sync_is_honestly_unavailable_and_dashboard_inspects() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for workflow in ["pull", "push"] {
-        let output = run(&[workflow, "--json", "--request-id", "probe-1"], root);
-        assert_eq!(output.status.code(), Some(4));
-        let value = json(&output);
-        assert_eq!(value["schema"], "whetstone.command-response.v1");
-        assert_eq!(value["state"], "unavailable");
-        assert_eq!(value["request_id"], "probe-1");
-    }
+    // A throwaway repository: never this repository's real .beads.
+    let temp = tempfile::tempdir().expect("temp");
+    let root = temp.path();
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(root)
+        .status()
+        .expect("git")
+        .success());
+    let pull = run(&["pull", "--json", "--request-id", "probe-1"], root);
+    assert_eq!(pull.status.code(), Some(4));
+    let value = json(&pull);
+    assert_eq!(value["schema"], "whetstone.command-response.v1");
+    assert_eq!(value["state"], "unavailable");
+    assert_eq!(value["request_id"], "probe-1");
+    assert!(value["summary"]
+        .as_str()
+        .expect("summary")
+        .contains("no shared Beads database"));
+    let push = run(&["push", "--json", "--request-id", "probe-1"], root);
+    assert_eq!(push.status.code(), Some(6));
+    let value = json(&push);
+    assert_eq!(value["state"], "needs_input");
+    assert!(value["summary"]
+        .as_str()
+        .expect("summary")
+        .contains("nothing was published"));
     let output = run(&["dash", "--json", "--request-id", "probe-1"], root);
     assert_eq!(output.status.code(), Some(0));
     let value = json(&output);
@@ -252,7 +270,7 @@ fn init_is_resumable_and_duplicate_requests_are_idempotent() {
         "proposed"
     );
     let layout = ProjectLayout::resolve(temp.path(), None).expect("project layout");
-    assert!(!layout.store_path(StoreKind::Shareable).exists());
+    assert!(layout.shared_store().is_none());
     assert!(git_status(temp.path()).is_empty());
 
     let established = run(
@@ -466,11 +484,10 @@ fn init_requires_every_owner_decision_and_never_accepts_proposed_defaults() {
     assert_eq!(incomplete.status.code(), Some(6));
     assert_eq!(json(&incomplete)["state"], "needs_input");
     let layout = ProjectLayout::resolve(temp.path(), None).expect("project layout");
-    let repository =
-        DoltRepository::open_existing(&layout.store_path(StoreKind::Private), StoreKind::Private)
-            .expect("private store exists only after explicit agreement attempt");
+    let repository = RecordStore::open_existing(&layout.private_store(), StoreKind::Private)
+        .expect("private store exists only after explicit agreement attempt");
     assert!(repository.all_records().expect("records").is_empty());
-    assert!(!layout.store_path(StoreKind::Shareable).exists());
+    assert!(layout.shared_store().is_none());
 }
 
 #[test]
@@ -529,9 +546,8 @@ fn init_repairs_only_missing_established_agreement_fields_and_replays_exactly() 
     assert_eq!(accepted.status.code(), Some(6));
 
     let layout = ProjectLayout::resolve(temp.path(), None).expect("layout");
-    let private =
-        DoltRepository::open_existing(&layout.store_path(StoreKind::Private), StoreKind::Private)
-            .expect("private store");
+    let private = RecordStore::open_existing(&layout.private_store(), StoreKind::Private)
+        .expect("private store");
     let mission_id = RecordId::new("mission.project").expect("mission ID");
     let mut incomplete = private
         .latest(&mission_id)
@@ -640,7 +656,7 @@ fn init_agree_resumes_after_interruption_between_dolt_bootstrap_and_migration() 
         .to_string();
     let token = handoff["resume_token"].as_str().expect("token");
     let layout = ProjectLayout::resolve(temp.path(), None).expect("layout");
-    let private_root = layout.store_path(StoreKind::Private);
+    let private_root = layout.private_store();
     std::fs::create_dir_all(&private_root).expect("create private root");
     let interrupted = Command::new("dolt")
         .current_dir(&private_root)
@@ -730,7 +746,7 @@ fn init_agree_resumes_after_interruption_between_dolt_bootstrap_and_migration() 
     assert_eq!(resumed.status.code(), Some(6));
     assert_eq!(json(&resumed)["data"]["progress"]["agreement"], "approved");
     assert_eq!(
-        DoltRepository::open_existing(&private_root, StoreKind::Private)
+        RecordStore::open_existing(&private_root, StoreKind::Private)
             .expect("recovered store")
             .all_records()
             .expect("records")
@@ -1366,7 +1382,7 @@ fn check_persists_one_idempotent_private_receipt_when_storage_exists() {
     write_rule_project(temp.path(), "def read_config():\n    pass\n");
     let project = temp.path().to_string_lossy();
     let layout = ProjectLayout::resolve(temp.path(), None).expect("resolve receipt fixture");
-    DoltRepository::initialize(&layout.store_path(StoreKind::Private), StoreKind::Private)
+    RecordStore::initialize(&layout.private_store(), StoreKind::Private)
         .expect("initialize receipt store explicitly");
 
     let args = [
@@ -1390,9 +1406,8 @@ fn check_persists_one_idempotent_private_receipt_when_storage_exists() {
         second["data"]["receipt_record"]
     );
 
-    let private =
-        DoltRepository::initialize(&layout.store_path(StoreKind::Private), StoreKind::Private)
-            .expect("open private store");
+    let private = RecordStore::initialize(&layout.private_store(), StoreKind::Private)
+        .expect("open private store");
     let receipts = private
         .all_records()
         .expect("read private records")

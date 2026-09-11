@@ -15,13 +15,14 @@ Two owner decisions from 2026-09-10 shape all remaining work (read the epic's
 "Beads storage and pstack interop" section before planning):
 
 - **Beads is the record store.** Whetstone's own Dolt repository and the `dolt`
-  binary are being removed (`whetstone-k5r.17`). Records become `record` beads
-  with the typed body in JSON metadata and lifecycle as a label; drafts live in
-  a private Beads database under `.git/whetstone/private`; `wh push` and
-  `wh pull` wrap `bd dolt push` and `bd dolt pull`. Until `.17` lands the code
-  still uses `src/storage.rs`; do not extend that module beyond what an
-  in-flight task needs, and keep the domain and agreement layers
-  storage-agnostic.
+  binary are gone (`whetstone-k5r.17`). `src/beads.rs` is the typed layer over
+  `bd --json`: one bead per record revision, the typed body as ASCII-escaped
+  canonical JSON in metadata (digest verified on every read), lifecycle as a
+  label. Drafts and receipts live in a private Beads database under
+  `.git/whetstone/` that is initialized and used with Git discovery fenced off
+  and must never have a remote; `wh push` and `wh pull` wrap `bd dolt push`
+  and `bd dolt pull` on the repository's shared database. Keep the domain and
+  agreement layers storage-agnostic.
 - **pstack interop, not imitation.** The generated `verify-<app>` skill must be
   a valid pstack verification skill (`cursor/plugins/pstack`, skills
   `create-verification-skill` and `maintain-verification-skill`): frontmatter
@@ -99,10 +100,16 @@ Use current Dolt-native collaboration, never legacy `bd sync` or a
 `beads-sync` branch. If local state is broken or another machine cannot see
 issues, use `./scripts/beads-repair.sh`.
 
-Beads is also becoming Whetstone's own record store (see the current boundary).
-Whetstone records in Beads are `record`, `decision` and `receipt` beads whose
-JSON metadata is validated on every read; never hand-edit their metadata with
-`bd update`, and never prune, compact or delete them to tidy the tracker.
+Beads is also Whetstone's record store (see the current boundary). Whetstone
+records in Beads are `record`, `decision` and `receipt` beads labelled
+`whetstone` whose JSON metadata is validated on every read; never hand-edit
+their metadata with `bd update`, and never prune, compact or delete them to
+tidy the tracker. Tests use throwaway `bd init` databases only; never point a
+test or experiment at this repository's `.beads`.
+
+Install requirements for Whetstone itself: the `wh` binary, `bd` 1.1.2 or
+later, Node 22 for the verification driver, and Chrome or Chromium for web
+surfaces. No `dolt` binary.
 
 ## Design work
 

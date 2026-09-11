@@ -24,7 +24,7 @@ use crate::history::{
 };
 use crate::onboarding;
 use crate::projection;
-use crate::storage::{AppendRequest, DoltRepository, ProjectLayout, StorageError, StoreKind};
+use crate::storage::{AppendRequest, ProjectLayout, RecordStore, StorageError, StoreKind};
 use crate::verification::{
     self, AttestationState, EvidencePointer, Finding, RequirementKind, SnapshotBinding,
     TrustedEvidenceSet, VerificationEvidence, VerificationPlan, VerificationReport,
@@ -40,14 +40,8 @@ pub enum ServiceRequest {
     Dash(DashRequest),
     Change(ChangeRequest),
     Check(CheckRequest),
-    Pull(BasicRequest),
-    Push(BasicRequest),
-}
-
-#[derive(Debug, Clone)]
-pub struct BasicRequest {
-    pub project_dir: PathBuf,
-    pub request_id: Option<String>,
+    Pull(crate::sync::PullRequest),
+    Push(crate::sync::PushRequest),
 }
 
 #[derive(Debug, Clone)]
@@ -276,6 +270,19 @@ pub struct CheckRequest {
     pub timeout_seconds: Option<u64>,
     /// Report the selection and exact commands without executing anything.
     pub dry_run: bool,
+    /// Record the outcome of pstack's maintain pass (clean, changed, blocked)
+    /// as a receipt instead of running gates.
+    pub maintain_outcome: Option<MaintainOutcome>,
+    /// The maintain run's notes or PR: a repository path or a URL.
+    pub maintain_evidence: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaintainOutcome {
+    Clean,
+    Changed,
+    Blocked,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -391,6 +398,80 @@ impl ServiceResponse {
     }
 }
 
+/// Records from the private store and the repository's shared store.
+#[derive(Debug, Clone, Default)]
+pub struct LoadedRecords {
+    pub private: Option<Vec<AgreementRecord>>,
+    pub shared: Option<Vec<AgreementRecord>>,
+}
+
+/// A private revision that collides with a different shared revision.
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncConflict {
+    pub record: String,
+    pub revision: u64,
+    pub private_digest: String,
+    pub shared_digest: String,
+}
+
+impl LoadedRecords {
+    pub fn exists(&self) -> bool {
+        self.private.is_some()
+            || self
+                .shared
+                .as_ref()
+                .is_some_and(|shared| !shared.is_empty())
+    }
+
+    /// Shared and private records as one agreement. The same revision in
+    /// both stores is one record; a private revision that collides with a
+    /// different shared revision is left out and reported, never merged.
+    pub fn union(&self) -> (Vec<AgreementRecord>, Vec<SyncConflict>) {
+        let shared = self.shared.clone().unwrap_or_default();
+        let mut by_slot = std::collections::BTreeMap::new();
+        for record in &shared {
+            if let Ok(reference) = record.reference() {
+                by_slot.insert((record.id.clone(), record.revision), reference.digest);
+            }
+        }
+        let mut records = shared;
+        let mut conflicts = Vec::new();
+        for record in self.private.clone().unwrap_or_default() {
+            let Ok(reference) = record.reference() else {
+                continue;
+            };
+            match by_slot.get(&(record.id.clone(), record.revision)) {
+                Some(digest) if *digest == reference.digest => {}
+                Some(digest) => conflicts.push(SyncConflict {
+                    record: record.id.as_str().into(),
+                    revision: record.revision,
+                    private_digest: reference.digest.as_str().into(),
+                    shared_digest: digest.as_str().into(),
+                }),
+                None => records.push(record),
+            }
+        }
+        (records, conflicts)
+    }
+}
+
+/// Read both stores without creating either.
+pub fn load_records(layout: &ProjectLayout) -> Result<LoadedRecords, StorageError> {
+    let private = if layout.private_store_exists() {
+        Some(
+            RecordStore::open_existing(&layout.private_store(), StoreKind::Private)?
+                .all_records()?,
+        )
+    } else {
+        None
+    };
+    let shared = match layout.shared_store() {
+        Some(dir) => Some(RecordStore::open_existing(&dir, StoreKind::Shareable)?.all_records()?),
+        None => None,
+    };
+    Ok(LoadedRecords { private, shared })
+}
+
 #[derive(Debug, Default)]
 pub struct CommandService;
 
@@ -402,18 +483,8 @@ impl CommandService {
             ServiceRequest::Dash(request) => self.dash(request),
             ServiceRequest::Change(request) => self.change(request),
             ServiceRequest::Check(request) => self.check(request),
-            ServiceRequest::Pull(request) => unavailable(
-                request,
-                "pull",
-                "Team synchronization is not implemented yet; no remote data was read.",
-                "Continue locally or complete M2.1 with an authenticated team remote.",
-            ),
-            ServiceRequest::Push(request) => unavailable(
-                request,
-                "push",
-                "Team synchronization is not implemented yet; nothing was published.",
-                "Keep the draft local or complete M2.1 and independent approval wiring.",
-            ),
+            ServiceRequest::Pull(request) => crate::sync::pull(request),
+            ServiceRequest::Push(request) => crate::sync::push(request),
         }
     }
 
@@ -434,8 +505,8 @@ impl CommandService {
         ];
         response.data = json!({
             "workflows": ["init", "dash", "change", "check", "pull", "push"],
-            "available_now": ["init", "dash", "change", "check"],
-            "unavailable_until_milestone": {"pull": "M2.1", "push": "M2.1"},
+            "available_now": ["init", "dash", "change", "check", "pull", "push"],
+            "requires": {"pull": "a shared Beads database with a remote", "push": "a shared Beads database (bd init) and, to transmit, a remote"},
             "read_only": true,
             "lean_baseline_revision": "2c3f0a3bb66d2ffa89c7b2f300b864a3ee8fea48",
         });
@@ -466,25 +537,29 @@ impl CommandService {
         };
         let as_of = request.as_of.unwrap_or_else(utc_now);
         let page_size = request.page_size.clamp(1, 200);
-        let private_store_exists = layout.store_path(StoreKind::Private).exists();
-        // One read of the private store serves progress, projection and history.
-        let private_records = (private_store_exists
-            && layout.store_path(StoreKind::Private).join(".dolt").is_dir())
-        .then(|| {
-            DoltRepository::open_existing(
-                &layout.store_path(StoreKind::Private),
-                StoreKind::Private,
-            )
-            .and_then(|repository| repository.all_records())
-        });
-        let history_service = match (
-            &private_records,
-            layout.store_path(StoreKind::Shareable).exists(),
-        ) {
-            (Some(Ok(records)), false) => {
-                HistoryInspectionService::from_private_records(records.clone())
+        // One read of each store serves progress, projection and history.
+        let loaded = load_records(&layout);
+        let private_store_exists = loaded.as_ref().is_ok_and(LoadedRecords::exists);
+        let (private_records, sync_conflicts) = match &loaded {
+            Ok(loaded) if loaded.exists() => {
+                let (records, conflicts) = loaded.union();
+                (Some(Ok(records)), conflicts)
             }
-            _ => HistoryInspectionService::open(&layout),
+            Ok(_) => (None, Vec::new()),
+            Err(error) => (
+                Some(Err(StorageError::UnexpectedData(error.to_string()))),
+                Vec::new(),
+            ),
+        };
+        let history_service = match &loaded {
+            Ok(loaded) if loaded.exists() => HistoryInspectionService::from_records(
+                loaded.private.clone().unwrap_or_default(),
+                loaded.shared.clone().unwrap_or_default(),
+            ),
+            Ok(_) => Err(HistoryError::Storage(
+                "no private or shared records exist yet".into(),
+            )),
+            Err(error) => Err(HistoryError::Storage(error.to_string())),
         };
         let history = history_service.and_then(|service| {
             service.inspect(&HistoryInspectionRequest {
@@ -552,6 +627,11 @@ impl CommandService {
                         driver_path: crate::gates::driver_path(layout.project_root()),
                         skill: crate::skill::read_manifest(&layout),
                         changes: projection::changes_for(&state, layout.project_root()),
+                        hygiene: crate::hygiene::check(
+                            &state,
+                            layout.project_root(),
+                            crate::skill::read_manifest(&layout).as_ref(),
+                        ),
                     },
                 );
                 let journal = projection::journal(&state, history.as_ref());
@@ -582,7 +662,7 @@ impl CommandService {
                         .into();
                 response.evidence.push(ServiceEvidence {
                     kind: "current_projection_unavailable".into(),
-                    locator: layout.store_path(StoreKind::Private).display().to_string(),
+                    locator: layout.private_store().display().to_string(),
                     digest: None,
                 });
                 (None, Vec::new(), None)
@@ -596,6 +676,13 @@ impl CommandService {
                 .collect();
         }
         let changelog = journal;
+        let shared_exists = matches!(&loaded, Ok(loaded) if loaded.shared.is_some());
+        let sync = json!({
+            "private_store": loaded.as_ref().is_ok_and(|loaded| loaded.private.is_some()),
+            "shared_store": layout.shared_store().map(|dir| dir.display().to_string()),
+            "shared_records": loaded.as_ref().ok().and_then(|loaded| loaded.shared.as_ref()).map_or(0, Vec::len),
+            "conflicts": sync_conflicts,
+        });
         response.data = json!({
             "setup": setup,
             "progress": progress,
@@ -611,10 +698,11 @@ impl CommandService {
                 {"name": "dash", "state": "available", "effect": "inspect local system and history"},
                 {"name": "change", "state": "available", "effect": "propose a bounded local change"},
                 {"name": "check", "state": "available", "effect": "verify and return repair feedback"},
-                {"name": "pull", "state": "unavailable", "effect": "no remote changes are received"},
-                {"name": "push", "state": "unavailable", "effect": "nothing is published"}
+                {"name": "pull", "state": if shared_exists { "available" } else { "unavailable" }, "effect": "receive shared records; nothing runs or activates"},
+                {"name": "push", "state": if shared_exists { "available" } else { "unavailable" }, "effect": "share an exact, confirmed package of accepted records"}
             ],
             "lean_baseline_revision": LEAN_BASELINE_REVISION,
+            "sync": sync,
             "read_only": true
         });
         if request.trail {
@@ -657,10 +745,14 @@ impl CommandService {
             return crate::skill::import(&layout, request_id, &request);
         }
         let private = if request.action == InitAction::Agree && !request.dry_run {
-            match DoltRepository::initialize(
-                &layout.store_path(StoreKind::Private),
-                StoreKind::Private,
-            ) {
+            // Register Whetstone's bead types in the team's shared database
+            // too (idempotent), so every clone can hold shared records.
+            if let Some(shared) = layout.shared_store() {
+                if let Err(error) = RecordStore::initialize(&shared, StoreKind::Shareable) {
+                    return storage_error("init", request_id, error);
+                }
+            }
+            match RecordStore::initialize(&layout.private_store(), StoreKind::Private) {
                 Ok(repository) => Some(repository),
                 Err(error) => return storage_error("init", request_id, error),
             }
@@ -714,11 +806,7 @@ impl CommandService {
             return onboarding_inspection_response(request_id, resume, setup, progress);
         }
         let private = private.or_else(|| {
-            DoltRepository::open_existing(
-                &layout.store_path(StoreKind::Private),
-                StoreKind::Private,
-            )
-            .ok()
+            RecordStore::open_existing(&layout.private_store(), StoreKind::Private).ok()
         });
         let existing_records = match private
             .as_ref()
@@ -766,11 +854,7 @@ impl CommandService {
                 "The onboarding answer does not target the current project revision.",
             );
         }
-        let stored_records = match private
-            .as_ref()
-            .map(DoltRepository::all_records)
-            .transpose()
-        {
+        let stored_records = match private.as_ref().map(RecordStore::all_records).transpose() {
             Ok(records) => records.unwrap_or_default(),
             Err(error) => return storage_error("init", request_id, error),
         };
@@ -1066,7 +1150,7 @@ impl CommandService {
                 "dry_run": true,
                 "records": records,
                 "effects": {
-                    "private_store_would_be_created": !layout.store_path(StoreKind::Private).exists(),
+                    "private_store_would_be_created": !layout.private_store().exists(),
                     "private_record_write_on_confirm": true,
                     "team_share": false,
                     "platform_configuration_writes": [],
@@ -1138,10 +1222,7 @@ impl CommandService {
                 return unknown_response("change", "invalid-request-id".into(), summary)
             }
         };
-        let private = match DoltRepository::initialize(
-            &layout.store_path(StoreKind::Private),
-            StoreKind::Private,
-        ) {
+        let private = match RecordStore::initialize(&layout.private_store(), StoreKind::Private) {
             Ok(repository) => repository,
             Err(error) => return storage_error("change", request_id, error),
         };
@@ -1466,18 +1547,19 @@ impl CommandService {
             Err(summary) => return unknown_response("check", "invalid-request-id".into(), summary),
         };
         let layout = ProjectLayout::resolve(&project, None).ok();
-        let agreement = match layout.as_ref() {
-            Some(layout) if layout.store_path(StoreKind::Private).join(".dolt").is_dir() => {
-                match DoltRepository::open_existing(
-                    &layout.store_path(StoreKind::Private),
-                    StoreKind::Private,
-                )
-                .and_then(|repository| repository.all_records())
-                {
-                    Ok(records) => Some(AgreementState::from_records(records)),
-                    Err(error) => return storage_error("check", request_id, error),
-                }
+        if let (Some(outcome), Some(layout)) = (request.maintain_outcome, layout.as_ref()) {
+            return record_maintain_outcome(
+                layout,
+                request_id,
+                outcome,
+                request.maintain_evidence.as_deref(),
+            );
+        }
+        let agreement = match layout.as_ref().map(load_records) {
+            Some(Ok(loaded)) if loaded.exists() => {
+                Some(AgreementState::from_records(loaded.union().0))
             }
+            Some(Err(error)) => return storage_error("check", request_id, error),
             _ => None,
         };
         let selection = match select_gates(agreement.as_ref(), &project, &request) {
@@ -1682,19 +1764,50 @@ impl CommandService {
             {
                 doctor = Some(crate::gates::run_doctor(&project, &run_dir));
             }
-            let context = crate::gates::GateContext {
-                project_root: &project,
-                run_dir: &run_dir,
-                run_id: &run_id,
-                features: &selection.features,
-                doctor: doctor.as_ref(),
-                timeout: request.timeout_seconds.map_or(
-                    crate::gates::DEFAULT_GATE_TIMEOUT,
-                    std::time::Duration::from_secs,
-                ),
-            };
+            let timeout = request.timeout_seconds.map_or(
+                crate::gates::DEFAULT_GATE_TIMEOUT,
+                std::time::Duration::from_secs,
+            );
+            // Doctor runs before the first drive and again after any failed
+            // drive; once it fails, the remaining drives are skipped, never
+            // run against an instance nobody checked.
+            let mut halted: Option<String> = None;
             for gate in &selection.gates {
-                let outcome = crate::gates::run_gate(&context, &gate.id, &gate.standard);
+                let is_drive = matches!(gate.standard.enforcement, Enforcement::Drive { .. });
+                let outcome = match (&halted, is_drive) {
+                    (Some(reason), true) => {
+                        crate::gates::skipped_outcome(&gate.id, &gate.standard, reason)
+                    }
+                    _ => {
+                        let context = crate::gates::GateContext {
+                            project_root: &project,
+                            run_dir: &run_dir,
+                            run_id: &run_id,
+                            features: &selection.features,
+                            doctor: doctor.as_ref(),
+                            timeout,
+                        };
+                        crate::gates::run_gate(&context, &gate.id, &gate.standard)
+                    }
+                };
+                if is_drive
+                    && halted.is_none()
+                    && outcome.state != VerificationAxis::Pass
+                    && !outcome
+                        .summary
+                        .starts_with(crate::gates::UNREACHABLE_PREFIX)
+                    && doctor.as_ref().is_some_and(|result| result.ok)
+                {
+                    let again = crate::gates::run_doctor(&project, &run_dir);
+                    if !again.ok {
+                        halted = Some(format!(
+                            "Skipped: doctor failed after {} ({}); fix the instance and sweep again.",
+                            gate.id.as_str(),
+                            again.detail
+                        ));
+                    }
+                    doctor = Some(again);
+                }
                 let state = match outcome.state {
                     VerificationAxis::Pass => AttestationState::Success,
                     VerificationAxis::Fail => AttestationState::Violated,
@@ -1742,6 +1855,8 @@ impl CommandService {
                 outcomes.push(outcome);
             }
         }
+        let sweep = (request.gate_mode == GateMode::Sweep)
+            .then(|| sweep_report(agreement.as_ref(), &selection, &outcomes, layout.as_ref()));
         if requirements.is_empty() {
             let summary = if selection.skipped_drafts.is_empty() {
                 "Nothing ran: no scanner rule or in-force gate applies, which is unknown, not a pass.".to_string()
@@ -1760,6 +1875,7 @@ impl CommandService {
             };
             response.data = json!({
                 "gates": [],
+                "sweep": sweep,
                 "selection": {
                     "mode": format!("{:?}", request.gate_mode).to_ascii_lowercase(),
                     "gates": [],
@@ -1832,8 +1948,24 @@ impl CommandService {
             }
             None => (None, Vec::new()),
         };
-        let state = service_state(report.state);
-        let mut response = ServiceResponse::new(request_id, "check", state, report.human_summary());
+        let mut state = service_state(report.state);
+        let mut summary = report.human_summary();
+        if let Some(sweep) = &sweep {
+            let proven = sweep["tally"]["proven"].as_u64().unwrap_or(0);
+            let total = sweep["features"].as_array().map_or(0, Vec::len) as u64;
+            if state == ServiceState::Success && proven < total {
+                // A sweep promises every mapped feature; anything short of
+                // proven leaves the sweep unknown, not green.
+                state = ServiceState::Unknown;
+            }
+            summary = format!(
+                "Sweep: {proven} of {total} feature(s) proven, {} failed, {} unreachable, {} skipped. {summary}",
+                sweep["tally"]["failed"],
+                sweep["tally"]["unreachable"],
+                sweep["tally"]["skipped"],
+            );
+        }
+        let mut response = ServiceResponse::new(request_id, "check", state, summary);
         response.required_snapshot = Some(RequiredSnapshot {
             code_digest: Some(report.snapshot.code_tree.as_str().into()),
             policy_digest: Some(report.snapshot.policy.as_str().into()),
@@ -1886,6 +2018,7 @@ impl CommandService {
             "run_id": if selection.gates.is_empty() { None } else { Some(run_id) },
             "evidence_root": layout.as_ref().map(|layout| crate::gates::evidence_root(layout).display().to_string()),
             "doctor": doctor,
+            "sweep": sweep,
             "selection": {
                 "mode": format!("{:?}", request.gate_mode).to_ascii_lowercase(),
                 "gates": selection.gates.iter().map(|gate| gate.id.as_str()).collect::<Vec<_>>(),
@@ -1898,9 +2031,282 @@ impl CommandService {
     }
 }
 
+/// Record a maintain pass's reported outcome as a receipt. Clean and changed
+/// need evidence (the run notes or the PR); without it the receipt is
+/// unknown. Blocked is always unknown: coverage did not finish.
+fn record_maintain_outcome(
+    layout: &ProjectLayout,
+    request_id: String,
+    outcome: MaintainOutcome,
+    evidence: Option<&str>,
+) -> ServiceResponse {
+    let loaded = match load_records(layout) {
+        Ok(loaded) => loaded,
+        Err(error) => return storage_error("check", request_id, error),
+    };
+    let state = AgreementState::from_records(loaded.union().0);
+    let related = state
+        .in_force_matching(|body| {
+            matches!(
+                body,
+                RecordBody::Feature(_) | RecordBody::VerificationMap(_)
+            )
+        })
+        .into_iter()
+        .filter_map(|record| record.reference().ok())
+        .collect::<Vec<_>>();
+    let evidence_ref = evidence.map(|locator| {
+        let local = layout.project_root().join(locator);
+        let digest = (!locator.contains("://"))
+            .then(|| fs::read(&local).ok())
+            .flatten()
+            .map(|bytes| digest_bytes(&bytes));
+        EvidenceRef {
+            system: "maintain_run".into(),
+            locator: locator.chars().take(500).collect(),
+            digest,
+        }
+    });
+    let local_missing = evidence.is_some_and(|locator| {
+        !locator.contains("://") && !layout.project_root().join(locator).is_file()
+    });
+    let verification = match (outcome, &evidence_ref, local_missing) {
+        (MaintainOutcome::Blocked, _, _) | (_, None, _) | (_, _, true) => VerificationAxis::Unknown,
+        _ => VerificationAxis::Pass,
+    };
+    let checked_at = utc_now();
+    // One receipt per reported pass: the default request id is per project,
+    // so the outcome, evidence and time distinguish reports.
+    let key = format!(
+        "maintain:{request_id}:{outcome:?}:{}:{checked_at}",
+        evidence
+            .unwrap_or("none")
+            .chars()
+            .take(80)
+            .collect::<String>()
+    );
+    let key_digest = digest_bytes(key.as_bytes());
+    let suffix = &key_digest.as_str()["sha256:".len()..][..24];
+    let principal = PrincipalRef {
+        kind: PrincipalKind::LocalUser,
+        stable_id: "whetstone:maintain-report".into(),
+        display_name: None,
+    };
+    let record = AgreementRecord {
+        schema_version: SCHEMA_VERSION_V1,
+        id: match RecordId::new(format!("verification.maintain_{suffix}")) {
+            Ok(id) => id,
+            Err(error) => return domain_response("check", request_id, error),
+        },
+        revision: 1,
+        scope: Scope {
+            organization: None,
+            project: format!("project-{}", &layout.project_id()[..12]),
+            component: None,
+            environment: None,
+        },
+        owner: principal.clone(),
+        provenance: Provenance {
+            kind: ProvenanceKind::ExternalObservation,
+            recorded_by: principal,
+            recorded_at: checked_at.clone(),
+            sources: vec![EvidenceRef {
+                system: "pstack".into(),
+                locator: "maintain-verification-skill".into(),
+                digest: None,
+            }],
+            authority: ProvenanceAuthority::CandidateOnly,
+        },
+        supersedes: None,
+        idempotency_key: key,
+        body: RecordBody::VerificationReceipt(VerificationReceipt {
+            subject: ExternalRef {
+                system: ExternalSystem::Custom,
+                stable_id: MAINTAIN_SUBJECT.into(),
+                revision: Some(
+                    match outcome {
+                        MaintainOutcome::Clean => "clean",
+                        MaintainOutcome::Changed => "changed",
+                        MaintainOutcome::Blocked => "blocked",
+                    }
+                    .into(),
+                ),
+            },
+            code_digest: digest_bytes(
+                crate::gates::workspace_fingerprint(layout.project_root())
+                    .unwrap_or_default()
+                    .as_bytes(),
+            ),
+            policy_state: PolicyStateSnapshot {
+                accepted: None,
+                required: None,
+                installed: None,
+                experimental: None,
+            },
+            verification,
+            authorization: AuthorizationAxis::Unknown,
+            freshness: Freshness::Fresh,
+            checked_at,
+            related_records: related,
+            evidence: evidence_ref.into_iter().collect(),
+        }),
+    };
+    let store = match RecordStore::initialize(&layout.private_store(), StoreKind::Private) {
+        Ok(store) => store,
+        Err(error) => return storage_error("check", request_id, error),
+    };
+    let reference = match store.append(&record, None) {
+        Ok(reference) => reference,
+        Err(error) => return storage_error("check", request_id, error),
+    };
+    let mut response = ServiceResponse::new(
+        request_id,
+        "check",
+        if verification == VerificationAxis::Pass {
+            ServiceState::Success
+        } else {
+            ServiceState::Unknown
+        },
+        match (outcome, verification) {
+            (MaintainOutcome::Blocked, _) => "The maintain pass was recorded as blocked; coverage did not finish, so the map is not verified.".to_string(),
+            (_, VerificationAxis::Pass) => "The maintain pass outcome and its evidence were recorded.".to_string(),
+            _ => "The maintain pass outcome was recorded without usable evidence, so it counts as unknown; pass --maintain-evidence <notes or PR>.".to_string(),
+        },
+    );
+    response.permitted_actions = vec!["wh dash".into()];
+    response.data = json!({"receipt": reference, "outcome": outcome, "verification": verification});
+    response
+}
+
+pub const MAINTAIN_SUBJECT: &str = "maintain:verification-skill";
+
+/// Whether an area is the closing multi-surface journeys group.
+fn is_journey(area: &str) -> bool {
+    area.to_ascii_lowercase().contains("journey")
+}
+
+/// Per-feature sweep outcomes in feature-map order (journeys last): proven,
+/// failed at a named step, unreachable with its prerequisite, or skipped
+/// with the reason. Map hygiene findings travel with it.
+fn sweep_report(
+    agreement: Option<&AgreementState>,
+    selection: &GateSelection,
+    outcomes: &[crate::gates::GateOutcome],
+    layout: Option<&ProjectLayout>,
+) -> Value {
+    let mut features = selection.features.iter().collect::<Vec<_>>();
+    features.sort_by(|left, right| {
+        (
+            is_journey(&left.1.area),
+            left.1.area.as_str(),
+            left.1.sweep_order,
+            left.1.name.as_str(),
+        )
+            .cmp(&(
+                is_journey(&right.1.area),
+                right.1.area.as_str(),
+                right.1.sweep_order,
+                right.1.name.as_str(),
+            ))
+    });
+    let mut tally = std::collections::BTreeMap::from([
+        ("proven", 0_u64),
+        ("failed", 0),
+        ("unreachable", 0),
+        ("skipped", 0),
+        ("unknown", 0),
+    ]);
+    let mut rows = Vec::new();
+    for (id, feature) in features {
+        let ran = selection
+            .gates
+            .iter()
+            .zip(outcomes)
+            .find(|(gate, _)| matches!(&gate.standard.enforcement, Enforcement::Drive { feature } if feature == id));
+        let (outcome, detail, step, gate, evidence) = match ran {
+            Some((gate, outcome)) => {
+                let evidence = outcome
+                    .evidence
+                    .iter()
+                    .map(|evidence| evidence.locator.clone())
+                    .collect::<Vec<_>>();
+                let first = outcome.failures.first();
+                let (kind, detail, step) = match outcome.state {
+                    VerificationAxis::Pass => ("proven", outcome.summary.clone(), None),
+                    VerificationAxis::Fail => (
+                        "failed",
+                        first.map_or_else(
+                            || outcome.summary.clone(),
+                            |failure| failure.message.clone(),
+                        ),
+                        first.map(|failure| failure.location.clone()),
+                    ),
+                    VerificationAxis::Unknown => {
+                        if let Some(rest) = outcome
+                            .summary
+                            .strip_prefix(crate::gates::UNREACHABLE_PREFIX)
+                        {
+                            ("unreachable", rest.to_string(), None)
+                        } else if outcome.summary.starts_with("Skipped:") {
+                            ("skipped", outcome.summary.clone(), None)
+                        } else {
+                            ("unknown", outcome.summary.clone(), None)
+                        }
+                    }
+                };
+                (
+                    kind,
+                    detail,
+                    step,
+                    Some(gate.id.as_str().to_string()),
+                    evidence,
+                )
+            }
+            None => (
+                "skipped",
+                if feature.drive_steps.is_empty() {
+                    "no drive steps are recorded, so it cannot be driven".to_string()
+                } else {
+                    "no accepted drive gate proves it".to_string()
+                },
+                None,
+                None,
+                Vec::new(),
+            ),
+        };
+        *tally.entry(outcome).or_insert(0) += 1;
+        rows.push(json!({
+            "feature": id.as_str(),
+            "name": feature.name,
+            "area": feature.area,
+            "outcome": outcome,
+            "detail": detail,
+            "step": step,
+            "gate": gate,
+            "evidence": evidence,
+        }));
+    }
+    let hygiene = match (agreement, layout) {
+        (Some(state), Some(layout)) => crate::hygiene::check(
+            state,
+            layout.project_root(),
+            crate::skill::read_manifest(layout).as_ref(),
+        ),
+        _ => Vec::new(),
+    };
+    json!({
+        "order": rows.iter().map(|row| row["feature"].clone()).collect::<Vec<_>>(),
+        "features": rows,
+        "tally": tally,
+        "hygiene": hygiene,
+        "edits_product_code": false,
+        "edits_map_or_driver": false,
+    })
+}
+
 fn review_draft(
     layout: &ProjectLayout,
-    private: &DoltRepository,
+    private: &RecordStore,
     request_id: String,
     review: &ReviewRequest,
     request: &ChangeRequest,
@@ -2087,7 +2493,7 @@ fn review_draft(
 /// stays in history.
 fn retire_record(
     layout: &ProjectLayout,
-    private: &DoltRepository,
+    private: &RecordStore,
     request_id: String,
     target: &str,
     request: &ChangeRequest,
@@ -2240,7 +2646,7 @@ fn retire_record(
 }
 
 fn init_idempotent_records(
-    repository: &DoltRepository,
+    repository: &RecordStore,
     request_id: &str,
 ) -> Result<Vec<AgreementRecord>, StorageError> {
     let prefix = format!("{request_id}:base-");
@@ -2300,11 +2706,11 @@ struct OnboardingProgress {
 }
 
 fn onboarding_progress(layout: &ProjectLayout) -> Result<OnboardingProgress, StorageError> {
-    let store_path = layout.store_path(StoreKind::Private);
+    let store_path = layout.private_store();
     if !store_path.is_dir() {
         return onboarding_progress_from_records(layout, None);
     }
-    let repository = DoltRepository::open_existing(&store_path, StoreKind::Private)?;
+    let repository = RecordStore::open_existing(&store_path, StoreKind::Private)?;
     let records = repository.all_records()?;
     onboarding_progress_from_records(layout, Some(&records))
 }
@@ -2620,7 +3026,7 @@ fn bounded_list(
 }
 
 pub(crate) fn ensure_local_change_proposal(
-    repository: &DoltRepository,
+    repository: &RecordStore,
     candidate: &AgreementRecord,
     candidate_reference: &crate::domain::RecordRef,
     narrative: &ChangeNarrative,
@@ -2902,30 +3308,6 @@ fn preserve_agreement_companions(
     }
 }
 
-fn unavailable(
-    request: BasicRequest,
-    workflow: &str,
-    summary: &str,
-    next: &str,
-) -> ServiceResponse {
-    let request_id = match bounded_request_id(
-        request.request_id,
-        format!(
-            "{workflow}-{:x}",
-            Sha256::digest(request.project_dir.to_string_lossy().as_bytes())
-        )[..22]
-            .to_string(),
-    ) {
-        Ok(request_id) => request_id,
-        Err(summary) => return unknown_response(workflow, "invalid-request-id".into(), summary),
-    };
-    let mut response =
-        ServiceResponse::new(request_id, workflow, ServiceState::Unavailable, summary);
-    response.blocking_questions = vec![next.into()];
-    response.permitted_actions = vec!["inspect local state".into()];
-    response
-}
-
 pub(crate) fn agreement_record(
     layout: &ProjectLayout,
     id: &str,
@@ -3087,9 +3469,10 @@ pub(crate) fn storage_error(
     let state = match error {
         StorageError::StaleRevision { .. } => ServiceState::Stale,
         StorageError::IdempotencyConflict(_) => ServiceState::Conflict,
-        StorageError::DoltMissing | StorageError::UnsupportedDoltVersion { .. } => {
+        StorageError::BeadsMissing | StorageError::UnsupportedBeadsVersion { .. } => {
             ServiceState::Unavailable
         }
+        StorageError::ConflictingRevision { .. } => ServiceState::Conflict,
         _ => ServiceState::Unknown,
     };
     let mut response = ServiceResponse::new(
@@ -3381,11 +3764,11 @@ fn persist_verification_receipt(
     report: &VerificationReport,
     checked_at: &str,
 ) -> Result<Option<crate::domain::RecordRef>, StorageError> {
-    let store_path = layout.store_path(StoreKind::Private);
-    if !store_path.join(".dolt").is_dir() {
+    let store_path = layout.private_store();
+    if !crate::beads::is_initialized(&store_path) {
         return Ok(None);
     }
-    let repository = DoltRepository::initialize(&store_path, StoreKind::Private)?;
+    let repository = RecordStore::initialize(&store_path, StoreKind::Private)?;
     let identity = digest_bytes(
         format!(
             "{request_id}\0{}\0{}\0{}\0{}\0{}\0{}",
@@ -3787,11 +4170,11 @@ fn persist_gate_receipt(
     checked_at: &str,
     binding: &DriveBinding<'_>,
 ) -> Result<Option<crate::domain::RecordRef>, StorageError> {
-    let store_path = layout.store_path(StoreKind::Private);
-    if !store_path.join(".dolt").is_dir() {
+    let store_path = layout.private_store();
+    if !crate::beads::is_initialized(&store_path) {
         return Ok(None);
     }
-    let repository = DoltRepository::initialize(&store_path, StoreKind::Private)?;
+    let repository = RecordStore::initialize(&store_path, StoreKind::Private)?;
     let idempotency_key = format!("gate:{run_id}:{}", gate.id.as_str());
     if let Some(existing) = repository.by_idempotency_key(&idempotency_key)? {
         return existing.reference().map(Some).map_err(StorageError::Domain);
@@ -3951,12 +4334,20 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_sync_never_claims_an_effect() {
-        let response = CommandService.execute(ServiceRequest::Push(BasicRequest {
-            project_dir: PathBuf::from("."),
+    fn push_without_an_agreement_never_claims_an_effect() {
+        let temp = tempfile::tempdir().expect("temp");
+        assert!(Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(temp.path())
+            .status()
+            .expect("git")
+            .success());
+        let response = CommandService.execute(ServiceRequest::Push(crate::sync::PushRequest {
+            project_dir: temp.path().to_path_buf(),
             request_id: Some("push-1".into()),
+            ..Default::default()
         }));
-        assert_eq!(response.state, ServiceState::Unavailable);
+        assert_eq!(response.state, ServiceState::NeedsInput);
         assert!(response.summary.contains("nothing was published"));
         assert_eq!(response.data, json!({}));
     }

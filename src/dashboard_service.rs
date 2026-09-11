@@ -336,6 +336,8 @@ impl DashboardCommand {
                 },
                 timeout_seconds: None,
                 dry_run: false,
+                maintain_outcome: None,
+                maintain_evidence: None,
             }),
         }
     }

@@ -24,7 +24,7 @@ use crate::domain::{
     RepairSnapshotRecord, RepairWorkspaceFileRecord, Scope, SCHEMA_VERSION_V1,
 };
 use crate::service::{CheckRequest, CommandService, ServiceRequest, ServiceResponse, ServiceState};
-use crate::storage::{AppendRequest, DoltRepository, ProjectLayout, StorageError, StoreKind};
+use crate::storage::{AppendRequest, ProjectLayout, RecordStore, StorageError, StoreKind};
 use crate::verification::{CheckState, VerificationReport, LEAN_BASELINE_REVISION};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -330,10 +330,7 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
         for path in context.check_paths.iter().chain(&context.final_check_paths) {
             validate_project_path(layout.project_root(), path)?;
         }
-        let repository = DoltRepository::open_existing(
-            &layout.store_path(StoreKind::Private),
-            StoreKind::Private,
-        )?;
+        let repository = RecordStore::open_existing(&layout.private_store(), StoreKind::Private)?;
         let id = session_record_id(&request.session_id)?;
         if let Some(replayed) = repository.by_idempotency_key(&request.request_id)? {
             if replayed.id != id || replayed.revision != 1 {
@@ -669,10 +666,7 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
     ) -> Result<RepairFeedback, RepairHostError> {
         validate_external_request_id(&request.request_id)?;
         let layout = ProjectLayout::resolve(project_dir, None)?;
-        let repository = DoltRepository::open_existing(
-            &layout.store_path(StoreKind::Private),
-            StoreKind::Private,
-        )?;
+        let repository = RecordStore::open_existing(&layout.private_store(), StoreKind::Private)?;
         let id = session_record_id(&request.session_id)?;
         let current = repository
             .latest(&id)?
@@ -947,10 +941,7 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
     ) -> Result<RepairFeedback, RepairHostError> {
         validate_external_request_id(&request.request_id)?;
         let layout = ProjectLayout::resolve(project_dir, None)?;
-        let repository = DoltRepository::open_existing(
-            &layout.store_path(StoreKind::Private),
-            StoreKind::Private,
-        )?;
+        let repository = RecordStore::open_existing(&layout.private_store(), StoreKind::Private)?;
         let id = session_record_id(&request.session_id)?;
         let current = repository
             .latest(&id)?
@@ -1199,10 +1190,7 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
     ) -> Result<RecordRef, RepairHostError> {
         validate_external_request_id(&request_id)?;
         let layout = ProjectLayout::resolve(project_dir, None)?;
-        let repository = DoltRepository::open_existing(
-            &layout.store_path(StoreKind::Private),
-            StoreKind::Private,
-        )?;
+        let repository = RecordStore::open_existing(&layout.private_store(), StoreKind::Private)?;
         let id = session_record_id(session_id)?;
         let current = repository
             .latest(&id)?
@@ -1289,10 +1277,7 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
     ) -> Result<(), RepairHostError> {
         validate_external_request_id(request_id)?;
         let layout = ProjectLayout::resolve(project_dir, None)?;
-        let repository = DoltRepository::open_existing(
-            &layout.store_path(StoreKind::Private),
-            StoreKind::Private,
-        )?;
+        let repository = RecordStore::open_existing(&layout.private_store(), StoreKind::Private)?;
         let handoff = repository
             .get(handoff_ref)?
             .ok_or(RepairHostError::SessionMissing)?;
@@ -1384,7 +1369,7 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
     fn stop_for_budget(
         &self,
         layout: &ProjectLayout,
-        repository: &DoltRepository,
+        repository: &RecordStore,
         current: AgreementRecord,
         mut session: Box<RepairSessionRecord>,
         request_id: String,
@@ -1472,7 +1457,7 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
     fn replay_feedback(
         &self,
         project_dir: &Path,
-        repository: &DoltRepository,
+        repository: &RecordStore,
         record: AgreementRecord,
         checkpoint: HostCheckpointKind,
     ) -> Result<RepairFeedback, RepairHostError> {
@@ -1555,6 +1540,8 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
             gate_mode: crate::service::GateMode::None,
             timeout_seconds: None,
             dry_run: false,
+            maintain_outcome: None,
+            maintain_evidence: None,
         })
     }
 
@@ -1562,7 +1549,7 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
     fn claim_operation(
         &self,
         layout: &ProjectLayout,
-        repository: &DoltRepository,
+        repository: &RecordStore,
         session_record: &AgreementRecord,
         request_id: &str,
         phase: RepairCheckPhaseRecord,
@@ -1618,7 +1605,7 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
     fn append_transition(
         &self,
         layout: &ProjectLayout,
-        repository: &DoltRepository,
+        repository: &RecordStore,
         session_record: &AgreementRecord,
         expected_revision: Option<u64>,
         handoff_reason: Option<&str>,
@@ -1805,7 +1792,7 @@ fn state_from_check(state: ServiceState) -> RepairSessionStateRecord {
 }
 
 fn feedback(
-    repository: &DoltRepository,
+    repository: &RecordStore,
     reference: RecordRef,
     state: RepairSessionStateRecord,
     checkpoint: HostCheckpointKind,
