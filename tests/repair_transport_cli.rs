@@ -43,6 +43,7 @@ fn host_socket_returns_post_edit_feedback_and_explicit_final_checkpoint() {
         .current_dir(&fixture.project)
         .env(AUTHORITY_SOCKET_ENV, &begin_socket)
         .env(AUTHORITY_SECRET_ENV, SECRET)
+        .env("WHETSTONE_REPAIR_TRANSPORT_DEBUG", "1")
         .env(REPAIR_LAUNCH_ENV, launch)
         .args([
             "--json",
@@ -130,6 +131,7 @@ fn host_socket_returns_post_edit_feedback_and_explicit_final_checkpoint() {
         .current_dir(fixture.socket_dir.path())
         .env(AUTHORITY_SOCKET_ENV, &checkpoint_socket)
         .env(AUTHORITY_SECRET_ENV, SECRET)
+        .env("WHETSTONE_REPAIR_TRANSPORT_DEBUG", "1")
         .args([
             "--json",
             "check",
@@ -176,6 +178,7 @@ fn host_socket_returns_post_edit_feedback_and_explicit_final_checkpoint() {
         .current_dir(&fixture.project)
         .env(AUTHORITY_SOCKET_ENV, &final_socket)
         .env(AUTHORITY_SECRET_ENV, SECRET)
+        .env("WHETSTONE_REPAIR_TRANSPORT_DEBUG", "1")
         .args([
             "--json",
             "check",
@@ -256,6 +259,7 @@ fn project_local_socket_is_rejected_when_project_dir_is_a_subdirectory() {
         .current_dir(&project_subdir)
         .env(AUTHORITY_SOCKET_ENV, &socket)
         .env(AUTHORITY_SECRET_ENV, SECRET)
+        .env("WHETSTONE_REPAIR_TRANSPORT_DEBUG", "1")
         .env(REPAIR_LAUNCH_ENV, launch)
         .args([
             "--json",

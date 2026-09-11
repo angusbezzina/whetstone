@@ -115,7 +115,10 @@ mod unix {
             evidence: &RepairAuthorityEvidence,
             target: &RepairAuthorityTarget,
         ) -> Result<VerifiedRepairAuthority, RepairHostError> {
-            validate_socket(&self.socket_path, &self.project_root)?;
+            traced(
+                "validate socket",
+                validate_socket(&self.socket_path, &self.project_root),
+            )?;
             let request_id = request_id(&self.secret, evidence, target);
             let request = AuthorityRequest {
                 schema: REQUEST_SCHEMA,
@@ -165,7 +168,10 @@ mod unix {
             evidence: &RepairCompletionEvidence,
             target: &RepairCompletionTarget,
         ) -> Result<VerifiedRepairCompletion, RepairHostError> {
-            validate_socket(&self.socket_path, &self.project_root)?;
+            traced(
+                "validate socket",
+                validate_socket(&self.socket_path, &self.project_root),
+            )?;
             let request_id = completion_request_id(&self.secret, evidence, target);
             let request = CompletionRequest {
                 schema: COMPLETION_REQUEST_SCHEMA,
@@ -417,25 +423,50 @@ mod unix {
         }
         encoded.push(b'\n');
         let deadline = Instant::now() + IO_TIMEOUT;
-        let mut stream = connect_before(socket_path, deadline)?;
-        write_before(&mut stream, &encoded, deadline)?;
+        let mut stream = traced("connect", connect_before(socket_path, deadline))?;
+        traced("write", write_before(&mut stream, &encoded, deadline))?;
         let mut response_bytes = Vec::new();
-        read_frame_before(&mut stream, &mut response_bytes, deadline)?;
+        traced(
+            "read",
+            read_frame_before(&mut stream, &mut response_bytes, deadline),
+        )?;
         if response_bytes.is_empty()
             || response_bytes.len() as u64 >= MAX_RESPONSE_BYTES
             || !response_bytes.ends_with(b"\n")
         {
-            return Err(RepairHostError::MissingAuthority);
+            return traced("frame", Err(RepairHostError::MissingAuthority));
         }
-        let value: serde_json::Value = serde_json::from_slice(&response_bytes)
-            .map_err(|_| RepairHostError::MissingAuthority)?;
+        let value: serde_json::Value = traced(
+            "parse",
+            serde_json::from_slice(&response_bytes).map_err(|_| RepairHostError::MissingAuthority),
+        )?;
         if value.get("schema").and_then(serde_json::Value::as_str) != Some(expected_schema)
             || value.get("request_id").and_then(serde_json::Value::as_str)
                 != Some(expected_request_id)
         {
-            return Err(RepairHostError::MissingAuthority);
+            return traced(
+                "schema or request id",
+                Err(RepairHostError::MissingAuthority),
+            );
         }
-        serde_json::from_value(value).map_err(|_| RepairHostError::MissingAuthority)
+        traced(
+            "decode",
+            serde_json::from_value(value).map_err(|_| RepairHostError::MissingAuthority),
+        )
+    }
+
+    /// With WHETSTONE_REPAIR_TRANSPORT_DEBUG set, name the stage an exchange
+    /// failed at on stderr (never the secret or the payload).
+    fn traced<T>(stage: &str, result: Result<T, RepairHostError>) -> Result<T, RepairHostError> {
+        if let Err(error) = &result {
+            if env::var_os("WHETSTONE_REPAIR_TRANSPORT_DEBUG").is_some() {
+                eprintln!(
+                    "whetstone repair transport: {stage} failed ({error:?}; {})",
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+        result
     }
 
     fn remaining(deadline: Instant) -> Result<Duration, RepairHostError> {
