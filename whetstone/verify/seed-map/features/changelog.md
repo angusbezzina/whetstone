@@ -4,7 +4,7 @@ area: "Dashboard"
 sweep_order: 4
 serves: ["mission.project"]
 proven_by: ["standard.changelog"]
-entry_points: ["assets/dashboard/views.js", "src/history.rs", "src/projection.rs"]
+entry_points: ["assets/dashboard/views.js", "src/history.rs", "src/projection.rs", "assets/dashboard/index.html", "assets/dashboard/app.js"]
 drive_steps: ["open /", "click #tab-changelog", "expect .entry", "expect text=Foundations established", "expect #cl-q", "expect #changelog a.export", "screenshot changelog"]
 ---
 
@@ -21,6 +21,7 @@ The changelog is the project journal, newest first: every accepted change and ev
 ## How to get to it (user POV)
 
 - Choose the `Changelog` tab.
+- Choose `Latest change` at the foot of the Dashboard; it opens the Changelog.
 - Run `wh dash --trail` for the same trail as TSV.
 
 ## Driving it with drive.mjs

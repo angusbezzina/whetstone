@@ -338,7 +338,7 @@ fn skill_markdown(
     let _ = writeln!(out, "## Maintenance\n");
     let _ = writeln!(
         out,
-        "Run pstack's `/maintain-verification-skill` on this directory as the periodic pass. Its edit scope is this skill directory only (SKILL.md and `features/`); it never edits product code. Classify each difference as doc drift, harness gap or product gap:\n\n- doc drift and map corrections: edit the feature files here, then return them through Whetstone with `wh init --action import --from <this directory>`, which records each edited feature as a private draft with an exact before/after for the owner to accept (`wh change --accept <proposal>`). Regenerate with `wh init --action wire` afterwards; hand edits are otherwise overwritten.\n- harness gaps: fix `whetstone/verify/drive.mjs` or `driver.json` (team-owned) and re-drive.\n- product gaps: file them in the tracker (Beads) with the evidence paths; never paper over them in the map.\n\nThe deterministic half runs with `wh check --sweep`: one receipt per feature (proven, failed with the step, unreachable with the prerequisite, or skipped with the reason) plus hygiene findings. Report the pass outcome (clean, changed or blocked) with `wh check --maintain-outcome <clean|changed|blocked> --json` so it is recorded as a receipt.\n"
+        "Run pstack's `/maintain-verification-skill` on this directory as the periodic pass. Its edit scope is this skill directory only (SKILL.md and `features/`); it never edits product code. Classify each difference as doc drift, harness gap or product gap:\n\n- doc drift and map corrections: edit the feature files here, then return them through Whetstone with `wh init --action import --from <this directory>`, which records each edited feature as a private draft with an exact before/after for the owner to accept (`wh change --accept <proposal>`). Regenerate with `wh init --action wire` afterwards (it rewires the hosts wired before); hand edits are otherwise overwritten.\n- harness gaps: fix `whetstone/verify/drive.mjs` or `driver.json` (team-owned) and re-drive.\n- product gaps: file them in the tracker (Beads) with the evidence paths; never paper over them in the map.\n\nThe deterministic half runs with `wh check --sweep`: one receipt per feature (proven, failed with the step, unreachable with the prerequisite, or skipped with the reason) plus hygiene findings. Report the pass outcome (clean, changed or blocked) with `wh check --maintain-outcome <clean|changed|blocked> --maintain-evidence <run notes file or PR URL> --json`; without the evidence the outcome is recorded as unknown.\n"
     );
     if !map.skill_notes.is_empty() {
         let _ = writeln!(out, "## Imported notes\n");
@@ -600,6 +600,17 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
                     format!("Unknown agent host {host}; choose claude, cursor or agents."),
                 )
             }
+        }
+    }
+    if hosts.is_empty() {
+        // Regenerate exactly the hosts that were wired before; a host
+        // directory that merely exists (another tool's skills) is no request.
+        if let Some(previous) = read_manifest(layout) {
+            hosts = HOSTS
+                .iter()
+                .copied()
+                .filter(|(name, _)| previous.hosts.iter().any(|host| host == name))
+                .collect();
         }
     }
     if hosts.is_empty() {

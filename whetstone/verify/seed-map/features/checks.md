@@ -4,7 +4,7 @@ area: "Dashboard"
 sweep_order: 3
 serves: ["mission.project"]
 proven_by: ["standard.checks"]
-entry_points: ["assets/dashboard/views.js", "src/gates.rs", "src/service.rs"]
+entry_points: ["assets/dashboard/views.js", "src/gates.rs", "src/service.rs", "assets/dashboard/index.html", "assets/dashboard/app.js", "src/projection.rs"]
 drive_steps: ["open /", "click #tab-checks", "expect #checks .board", "expect #checks .brow", "screenshot checks", "click #checks [aria-controls^=det-][aria-expanded=false]", "expect #checks .bdetail.open", "screenshot checks-detail"]
 ---
 
@@ -14,13 +14,13 @@ Checks shows the last run of every gate, what failed and where, the exact rechec
 
 ## Sub-features
 
-- `checks-board` lists every gate with mechanism, scope, last run and result.
-- `checks-detail` opens a gate's failures, recheck command and repair brief.
+- `checks-board` lists every gate with its strength, mechanism and command, last run and result.
+- `checks-detail` opens a gate's result or failures, recheck command and, for a failing gate, the repair brief.
 
 ## How to get to it (user POV)
 
 - Choose the `Checks` tab.
-- Choose `Open checks` on a gate item under Needs attention on the Dashboard; it opens the Checks board.
+- Choose `Open checks` on a never-run or stale gate item under Needs attention on the Dashboard; it opens the Checks board at that gate. A failing gate's item says `Open the failing gate` instead.
 
 ## Driving it with drive.mjs
 

@@ -17,6 +17,7 @@ The default view shows the project's mission as the headline, the one thing that
 - `home-mission` shows the mission statement as the headline.
 - `home-attention` lists what needs attention with exactly one primary action.
 - `home-metrics` shows key metrics and gates with honest states.
+- `home-latest` shows the latest change; choosing it opens the Changelog.
 
 ## How to get to it (user POV)
 
@@ -38,3 +39,4 @@ Preconditions:
 
 - Before `wh init` the dashboard shows only onboarding; `#mission-line` does not exist then.
 - Metric and gate states are honest: "not observed" and "not run" are expected on a new agreement, never green.
+- With nothing needing attention the panel reads "Nothing needs you right now." and has no primary action.

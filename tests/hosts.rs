@@ -175,6 +175,18 @@ fn two_hosts_get_one_truth_and_feedback_reaches_the_working_agent() {
         .join(".cursor/skills")
         .join(claude.file_name().expect("name"));
     assert_eq!(files(&claude), files(&cursor), "byte-identical projections");
+    // A bare wire regenerates the hosts wired before; another tool's
+    // directory is not a request to project the skill there.
+    fs::create_dir_all(root.join(".agents/skills/some-other-skill")).expect("other tool");
+    let rewired = json(&run(&["init", "--json", "--action", "wire"], root));
+    assert_eq!(rewired["state"], "success", "{rewired}");
+    assert!(
+        !fs::read_dir(root.join(".agents/skills"))
+            .expect("agents skills")
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().starts_with("verify-")),
+        "no verify skill was projected into .agents"
+    );
     let settings: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(root.join(".claude/settings.json")).expect("settings"),
     )

@@ -37,6 +37,6 @@ Keep implementation details out of the map. Name only user paths, stable handles
 ## Features
 
 - [Dashboard home](./dashboard-home.md) covers the mission headline, what needs attention, key metrics and gates.
-- [Foundations](./foundations.md) covers the five stages from mission to gates.
+- [Foundations](./foundations.md) covers the five stages from mission to gates, then the feature list.
 - [Checks](./checks.md) covers the gate board and the last run per gate.
 - [Changelog](./changelog.md) covers the journal, search and the decision trail export.
