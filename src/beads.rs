@@ -223,12 +223,15 @@ struct Cached {
     fingerprint: String,
 }
 
+/// The listing cache every handle on one store directory shares.
+type SharedCache = Arc<Mutex<Option<Cached>>>;
+
 #[derive(Debug, Clone)]
 pub struct RecordStore {
     dir: PathBuf,
     kind: StoreKind,
     write_guard: Arc<Mutex<()>>,
-    cache: Arc<Mutex<Option<Cached>>>,
+    cache: SharedCache,
     /// The private store proved remote-free in this process (before writes).
     remote_free: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -341,11 +344,12 @@ impl RecordStore {
     }
 
     fn new(dir: &Path, kind: StoreKind) -> Result<Self, StorageError> {
+        let dir = dir.canonicalize().map_err(StorageError::Io)?;
         Ok(Self {
-            dir: dir.canonicalize().map_err(StorageError::Io)?,
+            cache: shared_cache(&dir)?,
+            dir,
             kind,
             write_guard: Arc::new(Mutex::new(())),
-            cache: Arc::new(Mutex::new(None)),
             remote_free: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
@@ -485,28 +489,49 @@ impl RecordStore {
 
     /// A cheap fingerprint of the embedded Dolt files: any write by any
     /// process changes it, so a cached listing is never served stale.
+    ///
+    /// Every commit appends to Dolt's chunk journal (its size grows) and a
+    /// garbage collection rewrites the manifest, so file sizes plus the
+    /// manifest bytes identify a database state. Modification times are
+    /// deliberately left out: every bd invocation, reads included, touches
+    /// them, which would make every cached listing look stale.
     fn fingerprint(&self) -> String {
+        fn walk(dir: &Path, prefix: &str, depth: usize, parts: &mut Vec<String>) {
+            let Ok(entries) = fs::read_dir(dir) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name == "LOCK" {
+                    continue;
+                }
+                let path = entry.path();
+                let Ok(metadata) = entry.metadata() else {
+                    continue;
+                };
+                if metadata.is_dir() {
+                    if depth < 2 {
+                        walk(&path, &format!("{prefix}{name}/"), depth + 1, parts);
+                    }
+                } else if name == "manifest" {
+                    let content = fs::read(&path).unwrap_or_default();
+                    parts.push(format!("{prefix}{name}:{:x}", Sha256::digest(&content)));
+                } else {
+                    parts.push(format!("{prefix}{name}:{}", metadata.len()));
+                }
+            }
+        }
         let mut parts = Vec::new();
         let root = self.dir.join(".beads").join("embeddeddolt");
         if let Ok(databases) = fs::read_dir(&root) {
             for database in databases.flatten() {
-                let noms = database.path().join(".dolt").join("noms");
-                if let Ok(files) = fs::read_dir(&noms) {
-                    for file in files.flatten() {
-                        let name = file.file_name().to_string_lossy().to_string();
-                        if name == "LOCK" {
-                            continue;
-                        }
-                        if let Ok(metadata) = file.metadata() {
-                            let modified = metadata
-                                .modified()
-                                .ok()
-                                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                                .map_or(0, |duration| duration.as_nanos());
-                            parts.push(format!("{name}:{}:{modified}", metadata.len()));
-                        }
-                    }
-                }
+                let name = database.file_name().to_string_lossy().to_string();
+                walk(
+                    &database.path().join(".dolt").join("noms"),
+                    &format!("{name}/"),
+                    0,
+                    &mut parts,
+                );
             }
         }
         parts.sort();
@@ -773,7 +798,9 @@ impl RecordStore {
             .lock()
             .map_err(|_| StorageError::LockPoisoned)?;
         let _lock = self.write_lock()?;
-        let beads = self.refresh()?;
+        // Under the write lock no other writer can move the fingerprint, so a
+        // snapshot that still matches it is exactly what bd would list.
+        let beads = self.snapshot()?;
         self.insert_checked(
             &beads,
             record,
@@ -1479,6 +1506,22 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), StorageError> {
         }
     }
     Ok(())
+}
+
+/// One listing cache per store directory for the whole process, so every
+/// handle on the same database reuses a listing whose fingerprint still
+/// matches instead of asking bd again (each `bd list` costs ~0.3s).
+fn shared_cache(dir: &Path) -> Result<SharedCache, StorageError> {
+    static CACHES: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, SharedCache>>> =
+        std::sync::OnceLock::new();
+    let mut caches = CACHES
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| StorageError::LockPoisoned)?;
+    Ok(caches
+        .entry(dir.to_path_buf())
+        .or_insert_with(|| Arc::new(Mutex::new(None)))
+        .clone())
 }
 
 fn lock_file(path: &Path) -> Result<File, StorageError> {
