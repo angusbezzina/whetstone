@@ -1046,6 +1046,7 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
             ));
         }
         let candidate_workspace = workspace_digest(&workspace_files)?;
+        let mut attestation_error = None;
         let completion = if check.state == ServiceState::Success && findings.is_empty() {
             self.verifier
                 .verify_completion(
@@ -1059,6 +1060,7 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
                         check_snapshot: snapshot.clone(),
                     },
                 )
+                .map_err(|error| attestation_error = Some(format!("{error:?}")))
                 .ok()
         } else {
             None
@@ -1119,6 +1121,10 @@ impl<V: RepairAuthorityVerifier, C: RepairClock, E: RepairCheckExecutor> RepairH
                 "authority:expired-or-revoked-during-completion".into()
             } else if !within_budget {
                 "budget:exhausted-during-final-verification".into()
+            } else if let Some(error) = &attestation_error {
+                // The host could not attest completion at all; that is not a
+                // judgment that acceptance or review failed.
+                format!("completion:attestation-unavailable:{error}")
             } else {
                 "completion:task-acceptance-or-review".into()
             });

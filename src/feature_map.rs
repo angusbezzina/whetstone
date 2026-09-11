@@ -173,7 +173,7 @@ pub fn default_map(app: &str, surface: &str) -> VerificationMap {
     let launch = format!("Launch {app} with `{DRIVER_COMMAND} launch`; it starts an isolated instance (checkout-derived port and data directory) and waits until it is ready.");
     VerificationMap {
         title: format!("{app} verification map"),
-        intro: format!("This directory is the maintained source for verifying the user-facing behavior of {app}. Read the index before driving the app, then use the matching feature file as the recipe. Whetstone generates it from accepted records; change a feature with `wh change`, never by hand."),
+        intro: format!("This directory is the maintained source for verifying the user-facing behavior of {app}. Read the index before driving the app, then use the matching feature file as the recipe. Whetstone generates it from accepted records; to correct a feature, edit its file and return it with `wh init --action import`, or use `wh change`."),
         baseline_preconditions: vec![
             launch,
             format!("Run `{DRIVER_COMMAND} doctor --json` and require `\"ok\": true`; a stale build or unhealthy instance is not worth driving."),

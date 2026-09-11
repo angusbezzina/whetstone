@@ -283,7 +283,7 @@ fn skill_markdown(
     let _ = writeln!(out, "## Helpers\n");
     let _ = writeln!(
         out,
-        "- `{driver}` is executable with Node 22 and has no dependencies; `{driver} help` documents every command.\n- `wh check --feature <id>` proves one feature through its accepted drive steps and records a receipt. To prove what your change does, add change-specific assertions: `wh check --feature <id> --step \"expect text=<new behaviour>\" --step \"screenshot after-change\"`; they run after the accepted steps in the same session and the receipt records them with their evidence.\n- `wh check --changed` proves the features whose entry points your uncommitted changes touch; for committed work add `--base <revision>` (for example `--base origin/main`). `wh check --sweep` drives every feature in the order below.\n- `wh check --dry-run` shows exactly which gates and commands would run; it exits 5 (needs decision) because nothing ran.\n- A change can move behaviour that several feature files describe. `wh check --changed --dry-run` (with `--base` for committed work) lists every affected feature in `selection.features_affected`; read each of those files, and search `features/` for the old wording before you call the map current.\n- Before handing off, run `wh check --changed --host <this host>` (claude, cursor or agents): it proves what the change touched and records which revision of this skill you used. With Claude Code hooks installed this runs at every stop, covering what you committed since the session began, and returns failures to you.\n"
+        "- `wh` is the Whetstone CLI (the `whetstone` binary). If neither name is on PATH, stop and ask the owner where it is installed; never substitute another tool for a gate.\n- `{driver}` is executable with Node 22 and has no dependencies; `{driver} help` documents every command. `wh check` launches its own isolated instance, so an instance you launched for exploring can keep running.\n- `wh check --feature <id>` proves one feature through its accepted drive steps and records a receipt. To prove what your change does, add change-specific assertions: `wh check --feature <id> --step \"expect text=<new behaviour>\" --step \"screenshot after-change\"`; they run after the accepted steps in the same session and the receipt records them with their evidence.\n- `wh check --changed` proves the features whose entry points your uncommitted changes touch; for committed work add `--base <revision>` (for example `--base origin/main`). `wh check --sweep` drives every feature in the order below.\n- Exit codes (the JSON `state`): 0 success, 1 violated, 3 unknown, 4 unavailable, 5 needs decision, 6 needs input, 7 stale (resume with the returned revision and token), 8 conflict. A dry run exits 5 because nothing ran, and so does recording a draft, because the owner decides next.\n- `wh check --json` lists what it recorded: `data.gate_receipts` (one per gate, bound to its evidence under `data.evidence_root`/`data.run_id`) and `data.receipt_record` (the repository scan, when it ran).\n- A change can move behaviour that several feature files describe. `wh check --changed --dry-run` (with `--base` for committed work) lists every feature whose entry points the change touches in `selection.features_affected`; a shared file flags every feature that lists it, so read each one and keep those whose behaviour moved. Search `features/` for the old wording (the change's diff shows it) before you call the map current.\n- Change-specific `--step` assertions prove the change once. Assertions that must keep holding belong in the feature's drive steps: propose them as a map correction, and until the owner accepts it, prove them with `--feature <id> --step ...` before handing off.\n- Before handing off, run `wh check --changed --host <this host>` (claude, cursor or agents): it proves what the change touched and records which revision of this skill you used. With Claude Code hooks installed this runs at every stop, covering what you committed since the session began, and returns failures to you.\n"
     );
     let _ = writeln!(out, "## Gates\n");
     let gates = state.in_force_matching(|body| matches!(body, RecordBody::Standard(_)));
@@ -328,7 +328,7 @@ fn skill_markdown(
     let _ = writeln!(out, "## Feature map\n");
     let _ = writeln!(
         out,
-        "[`features/README.md`](features/README.md) lists every mapped feature in sweep order. Each feature file follows pstack's entry contract (four sections: Sub-features; How to get to it (user POV); Driving it with <harness>; Gotchas) and carries its record id, why it exists, links, proving gates and drift in frontmatter.\n\nWhen behaviour moves, correct the map in the same change. Edit the affected feature files in this directory, then run `wh init --action import --from <this skill directory>`: each edited feature becomes a private draft with an exact before/after, and accepting it (`wh change --accept <proposal>`) is the owner's call. `wh init --action wire` regenerates this directory from accepted records and overwrites edits that were not returned.\n\nThe same draft from the command line: `wh change --json --request-id <id> --kind feature --record-id <feature id> --content \"<feature name>\" --definition '{{\"type\":\"feature\",\"summary\":\"...\",\"area\":\"...\",\"user_path\":\"...\",\"proof\":\"...\",\"drive_steps\":[...],\"gotchas\":[...],\"entry_points\":[...]}}' --rationale \"<why>\"` answers with `expected_revision` and `resume_token`; repeat the identical command with `--expected-revision <n> --resume <token>` to record the draft (`--preview` shows the exact before/after first). The definition replaces the whole feature, so start from the `current_record` the first response returns; editing the file and importing avoids this.\n"
+        "[`features/README.md`](features/README.md) lists every mapped feature in sweep order. Each feature file follows pstack's entry contract (four sections: Sub-features; How to get to it (user POV); Driving it with <harness>; Gotchas) and carries its record id, why it exists, links, proving gates and drift in frontmatter.\n\nWhen behaviour moves, correct the map in the same change. Edit the affected feature files in this directory, then run `wh init --action import --from <this skill directory>`: each edited feature becomes a private draft with an exact before/after, and accepting it (`wh change --accept <proposal>`) is the owner's call. `wh init --action wire` regenerates this directory from accepted records, so after an import it shows the accepted version again: the correction is not lost, it waits as a draft (`wh dash` lists it) until the owner accepts it.\n\nThe same draft from the command line: `wh change --json --request-id <id> --kind feature --record-id <feature id> --content \"<feature name>\" --definition '{{\"type\":\"feature\",\"summary\":\"...\",\"area\":\"...\",\"user_path\":\"...\",\"proof\":\"...\",\"drive_steps\":[...],\"gotchas\":[...],\"entry_points\":[...]}}' --rationale \"<why>\"` answers with `expected_revision` and `resume_token`; repeat the identical command with `--expected-revision <n> --resume <token>` to record the draft (`--preview` shows the exact before/after first). The definition replaces the whole feature, so start from the `current_record` the first response returns; editing the file and importing avoids this.\n"
     );
     let _ = writeln!(out, "## Judgment skills\n");
     let _ = writeln!(
@@ -439,7 +439,7 @@ fn feature_markdown(
         ("agreement", json!(agreement_digest)),
         (
             "generated_by",
-            json!("Whetstone; change with `wh change --kind feature`, never by hand"),
+            json!("Whetstone; edit here and return with `wh init --action import`, or use `wh change --kind feature`"),
         ),
     ] {
         frontmatter.push_str(&feature_map::frontmatter_line(key, &value));
@@ -623,7 +623,17 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
     let existing_config = fs::read_to_string(&config_path)
         .ok()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
-    let interviewed = interview(root);
+    let interviewed = match existing_config.as_ref() {
+        // The team's configuration is the answer; the interview only
+        // describes a fresh scaffold.
+        Some(existing) => json!({
+            "interview": format!(
+                "Using the team's {DRIVER_CONFIG_RELATIVE} (surface: {}); edit it to change how the app launches.",
+                existing.get("surface").and_then(serde_json::Value::as_str).unwrap_or("unset")
+            ),
+        }),
+        None => interview(root),
+    };
     let config = existing_config
         .clone()
         .unwrap_or_else(|| interviewed.clone());
