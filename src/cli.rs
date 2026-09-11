@@ -212,6 +212,14 @@ enum Command {
         /// Run the gates of features whose entry points cover changed files.
         #[arg(long, conflicts_with = "sweep")]
         changed: bool,
+        /// With --changed: include paths changed since this revision (e.g.
+        /// origin/main), so a committed change selects its features too.
+        #[arg(long, requires = "changed")]
+        base: Option<String>,
+        /// With one --feature: a change-specific drive step, run after the
+        /// feature's accepted steps and recorded in the receipt (repeatable).
+        #[arg(long = "step", requires = "features")]
+        steps: Vec<String>,
         /// Drive every mapped feature in sweep order.
         #[arg(long)]
         sweep: bool,
@@ -485,6 +493,7 @@ pub fn run() -> i32 {
             host,
         }) => {
             if matches!(hook, Some(DashHookArg::SessionStart)) {
+                remember_session_base(&project_dir);
                 let response = service.execute(ServiceRequest::Dash(DashRequest::basic(
                     project_dir,
                     request_id,
@@ -584,6 +593,8 @@ pub fn run() -> i32 {
             rules,
             features,
             changed,
+            base,
+            steps,
             sweep,
             timeout,
             dry_run,
@@ -636,6 +647,8 @@ pub fn run() -> i32 {
                 maintain_evidence,
                 required,
                 host: host.or_else(|| hook.map(|_| "claude".to_string())),
+                base,
+                steps,
             };
             if matches!(hook, Some(CheckHookArg::Stop)) {
                 return run_stop_hook(&service, request);
@@ -700,16 +713,19 @@ pub fn run() -> i32 {
 /// Claude Code `Stop` hook: run the change-scoped check and hand violations
 /// back to the same session (exit 2, brief on stderr). Bounded: after three
 /// consecutive returns the agent is told to stop and hand back to the owner.
-fn run_stop_hook(service: &CommandService, request: CheckRequest) -> i32 {
+/// The hook's JSON payload from stdin (bounded; empty when interactive).
+fn hook_input() -> serde_json::Value {
     use std::io::{IsTerminal, Read};
     let mut input = String::new();
     if !std::io::stdin().is_terminal() {
         let _ = std::io::stdin().take(64 * 1024).read_to_string(&mut input);
     }
-    let hook = serde_json::from_str::<serde_json::Value>(&input).unwrap_or(json!({}));
-    let continuing = hook["stop_hook_active"].as_bool().unwrap_or(false);
-    let session = hook["session_id"].as_str().unwrap_or("default").to_string();
-    let counter = ProjectLayout::resolve(&request.project_dir, None)
+    serde_json::from_str::<serde_json::Value>(&input).unwrap_or(json!({}))
+}
+
+/// Per-session hook state under the private state root.
+fn session_file(project_dir: &Path, session: &str, kind: &str) -> Option<PathBuf> {
+    ProjectLayout::resolve(project_dir, None)
         .ok()
         .map(|layout| {
             let digest = format!(
@@ -719,8 +735,53 @@ fn run_stop_hook(service: &CommandService, request: CheckRequest) -> i32 {
             layout
                 .state_root()
                 .join("hooks")
-                .join(format!("stop-{}.count", &digest[..16]))
-        });
+                .join(format!("{kind}-{}", &digest[..16]))
+        })
+}
+
+/// SessionStart: remember the commit the session began at, so the Stop hook
+/// also proves work the agent committed during the session.
+fn remember_session_base(project_dir: &Path) {
+    let hook = hook_input();
+    let Some(session) = hook["session_id"].as_str() else {
+        return;
+    };
+    let Ok(output) = std::process::Command::new("git")
+        .arg("-C")
+        .arg(project_dir)
+        .args(["rev-parse", "--verify", "--quiet", "HEAD"])
+        .output()
+    else {
+        return;
+    };
+    let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !output.status.success() || !is_commit_id(&head) {
+        return;
+    }
+    if let Some(path) = session_file(project_dir, session, "session-base") {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(path, head);
+    }
+}
+
+fn is_commit_id(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.chars().all(|character| character.is_ascii_hexdigit())
+}
+
+fn run_stop_hook(service: &CommandService, mut request: CheckRequest) -> i32 {
+    let hook = hook_input();
+    let continuing = hook["stop_hook_active"].as_bool().unwrap_or(false);
+    let session = hook["session_id"].as_str().unwrap_or("default").to_string();
+    if request.base.is_none() {
+        request.base = session_file(&request.project_dir, &session, "session-base")
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .map(|text| text.trim().to_string())
+            .filter(|head| is_commit_id(head));
+    }
+    let counter = session_file(&request.project_dir, &session, "stop")
+        .map(|path| path.with_extension("count"));
     let read_count = || {
         counter
             .as_ref()

@@ -390,6 +390,8 @@ impl DashboardCommand {
                 maintain_evidence: None,
                 required: false,
                 host: None,
+                base: None,
+                steps: Vec::new(),
             }),
         }
     }

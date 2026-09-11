@@ -356,6 +356,42 @@ fn two_hosts_get_one_truth_and_feedback_reaches_the_working_agent() {
         String::from_utf8_lossy(&repaired.stderr)
     );
 
+    // A session remembers the commit it began at, so the Stop hook also
+    // proves work committed during the session (wh check --changed --base).
+    git(root, &["add", "-A"]);
+    git(
+        root,
+        &[
+            "-c",
+            "user.name=Owner",
+            "-c",
+            "user.email=owner@example.invalid",
+            "commit",
+            "-qm",
+            "baseline",
+        ],
+    );
+    let started = run_with_stdin(
+        &["dash", "--hook", "session-start", "--host", "claude"],
+        root,
+        r#"{"session_id":"s3","hook_event_name":"SessionStart"}"#,
+    );
+    assert!(started.status.success());
+    let head = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root)
+        .output()
+        .expect("head");
+    let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    let remembered = walkdir(&root.join(".git/whetstone"))
+        .into_iter()
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("session-base-"))
+        })
+        .expect("session base recorded");
+    assert_eq!(fs::read_to_string(remembered).expect("base").trim(), head);
+
     // Required checks: team-active policy only, and none exists here.
     let required = json(&run(&["check", "--json", "--required"], root));
     assert_eq!(required["state"], "unknown", "{required}");

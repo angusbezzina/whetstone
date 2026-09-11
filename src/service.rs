@@ -292,6 +292,12 @@ pub struct CheckRequest {
     /// Record an explicit host checkpoint: which skill revision this agent
     /// host has on disk right now.
     pub host: Option<String>,
+    /// With `--changed`: also count paths changed since this revision (a
+    /// committed change), not only the working tree.
+    pub base: Option<String>,
+    /// With exactly one `--feature`: change-specific drive steps run after
+    /// the accepted ones in the same session and recorded in the receipt.
+    pub steps: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1379,13 +1385,14 @@ impl CommandService {
             && (request.expected_revision != Some(current_revision)
                 || request.resume_token.as_deref() != Some(resume.as_str()))
         {
-            return stale_response(
-                "change",
-                request_id,
-                current_revision,
-                resume,
-                "The change targets a stale agreement revision.",
-            );
+            let summary = if request.expected_revision == Some(current_revision) {
+                "The revision is current, but this exact change has not been confirmed: repeat the same command (same --request-id and content) with the returned --resume token."
+            } else if request.expected_revision.is_none() {
+                "Confirm this exact change: repeat the same command (same --request-id and content) with --expected-revision and --resume from this response."
+            } else {
+                "The change targets a stale agreement revision."
+            };
+            return stale_response("change", request_id, current_revision, resume, summary);
         }
         if request.preview {
             if existing.is_some() {
@@ -1580,6 +1587,20 @@ impl CommandService {
                 "A check input exceeds its bound or contains an invalid language, rule, feature or timeout.".into(),
             );
         }
+        if !request.steps.is_empty()
+            && (request.features.len() != 1
+                || request.steps.len() > 32
+                || request
+                    .steps
+                    .iter()
+                    .any(|step| step.trim().is_empty() || step.len() > 1_000))
+        {
+            return unknown_response(
+                "check",
+                "invalid-request".into(),
+                "Change-specific steps need exactly one --feature, at most 32 steps, each 1 to 1000 characters.".into(),
+            );
+        }
         let project = match request.project_dir.canonicalize() {
             Ok(project) => project,
             Err(error) => {
@@ -1663,7 +1684,9 @@ impl CommandService {
                     "mode": format!("{:?}", request.gate_mode).to_ascii_lowercase(),
                     "skipped_drafts": selection.skipped_drafts,
                     "changed_paths": selection.changed_paths,
+                    "base": request.base,
                     "features_affected": selection.features_affected,
+                    "change_steps": request.steps,
                 },
             });
             return response;
@@ -1716,7 +1739,18 @@ impl CommandService {
         let configuration_issues = count(&result, "config_issues_count");
         let rules_applied = count(&result, "rules_applied");
         let files_scanned = count(&result, "files_scanned");
-        let skipped = array_len(&result, "skipped");
+        let delegated = result
+            .get("skipped")
+            .and_then(Value::as_array)
+            .map_or(0, |items| {
+                items
+                    .iter()
+                    .filter(|item| item.get("delegated_to").is_some())
+                    .count() as u64
+            });
+        // A rule delegated to the linter's verified configuration is enforced
+        // there, not missing here; any other skip is incomplete evidence.
+        let skipped = array_len(&result, "skipped") - delegated;
         let warnings = array_len(&result, "warnings");
         let native_state = if violations > 0 {
             AttestationState::Violated
@@ -1734,10 +1768,16 @@ impl CommandService {
         // this check rather than an unknown requirement.
         // Required checks enforce activated team policy only; the
         // repository's own scanner rules are contributor-controlled.
+        // A feature proof is about that feature; the repository-wide scan
+        // joins a plain or path-scoped check, not `--feature`.
         let include_native = !request.required
             && !rules_only_name_gates
+            && request.features.is_empty()
             && (selection.gates.is_empty() || rules_applied > 0 || violations > 0);
         let native_summary = match native_state {
+            AttestationState::Success if delegated > 0 => format!(
+                "The compiled-in scanner applied {rules_applied} rules to {files_scanned} files without violations; {delegated} rule signals are delegated to the linter configuration (binding verified, enforced by the linter, not run here)."
+            ),
             AttestationState::Success => format!(
                 "The compiled-in scanner applied {rules_applied} rules to {files_scanned} files without violations."
             ),
@@ -1799,7 +1839,8 @@ impl CommandService {
         let run_id = {
             let digest = digest_bytes(
                 format!(
-                    "{request_id}\0{fingerprint}\0{}",
+                    "{request_id}\0{fingerprint}\0{}\0{}",
+                    request.steps.join("\n"),
                     selection
                         .gates
                         .iter()
@@ -1810,6 +1851,27 @@ impl CommandService {
                 .as_bytes(),
             );
             digest.as_str()["sha256:".len().."sha256:".len() + 16].to_string()
+        };
+        // Change-specific steps extend exactly one feature's drive, and only
+        // when a drive gate for that feature is about to run.
+        let change_steps = match request.features.as_slice() {
+            [feature] if !request.steps.is_empty() => {
+                let drives_it = selection.gates.iter().any(|gate| {
+                    matches!(&gate.standard.enforcement, Enforcement::Drive { feature: driven } if driven.as_str() == feature)
+                });
+                if !drives_it {
+                    return unknown_response(
+                        "check",
+                        request_id,
+                        format!("No accepted drive gate proves {feature}, so change-specific steps have nothing to extend; record one with wh change --kind standard."),
+                    );
+                }
+                match RecordId::new(feature.clone()) {
+                    Ok(id) => Some((id, request.steps.clone())),
+                    Err(error) => return unknown_response("check", request_id, error.to_string()),
+                }
+            }
+            _ => None,
         };
         let mut outcomes = Vec::new();
         let mut doctor = None;
@@ -1855,6 +1917,9 @@ impl CommandService {
                             features: &selection.features,
                             doctor: doctor.as_ref(),
                             timeout,
+                            change_steps: change_steps
+                                .as_ref()
+                                .map(|(id, steps)| (id, steps.as_slice())),
                         };
                         crate::gates::run_gate(&context, &gate.id, &gate.standard)
                     }
@@ -2124,7 +2189,9 @@ impl CommandService {
                 "gates": selection.gates.iter().map(|gate| gate.id.as_str()).collect::<Vec<_>>(),
                 "skipped_drafts": selection.skipped_drafts,
                 "changed_paths": selection.changed_paths,
+                "base": request.base,
                 "features_affected": selection.features_affected,
+                "change_steps": request.steps,
             },
         });
         response
@@ -3953,9 +4020,18 @@ fn persist_verification_receipt(
         return Ok(None);
     }
     let repository = RecordStore::initialize(&store_path, StoreKind::Private)?;
+    // Two checks of one snapshot that ran different gates are different
+    // receipts; only an exact replay (same request, snapshot and results)
+    // returns the existing one.
+    let selection = report
+        .results
+        .iter()
+        .map(|result| format!("{}={:?}", result.requirement_id, result.state))
+        .collect::<Vec<_>>()
+        .join(",");
     let identity = digest_bytes(
         format!(
-            "{request_id}\0{}\0{}\0{}\0{}\0{}\0{}",
+            "{request_id}\0{selection}\0{}\0{}\0{}\0{}\0{}\0{}",
             report.snapshot.code_tree.as_str(),
             report.snapshot.policy.as_str(),
             report.snapshot.checker_bundle.as_str(),
@@ -4343,7 +4419,7 @@ fn select_gates(
         (!named.is_empty()).then_some(named);
     let mut feature_filter = request.features.clone();
     if request.gate_mode == GateMode::Changed {
-        let changed = crate::gates::changed_paths(project)?;
+        let changed = crate::gates::changed_paths_since(project, request.base.as_deref())?;
         for (id, feature) in &selection.features {
             let touched = changed
                 .iter()

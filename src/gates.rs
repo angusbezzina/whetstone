@@ -149,6 +149,68 @@ pub fn changed_since(project_root: &Path, since: &str) -> Result<Vec<String>, St
         .collect())
 }
 
+/// Paths changed in the working tree plus, with `base`, every path that
+/// differs between the merge base of `base` and HEAD (a committed change).
+pub fn changed_paths_since(project_root: &Path, base: Option<&str>) -> Result<Vec<String>, String> {
+    let mut paths = changed_paths(project_root)?;
+    let Some(base) = base else {
+        return Ok(paths);
+    };
+    if base.is_empty()
+        || base.len() > 200
+        || base.starts_with('-')
+        || !base
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "/._-~^@{}".contains(character))
+    {
+        return Err(format!("{base} is not a revision name."));
+    }
+    let git = |args: &[&str]| -> Result<Vec<u8>, String> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(project_root)
+            .args(args)
+            .output()
+            .map_err(|error| format!("git is unavailable: {error}"))?;
+        if output.status.success() {
+            Ok(output.stdout)
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
+    };
+    let revision = format!("{base}^{{commit}}");
+    git(&[
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "--end-of-options",
+        &revision,
+    ])
+    .map_err(|_| format!("{base} is not a commit in this repository."))?;
+    let merge_base =
+        String::from_utf8_lossy(&git(&["merge-base", "--end-of-options", base, "HEAD"])?)
+            .trim()
+            .to_string();
+    let listed = git(&[
+        "diff",
+        "--name-only",
+        "--no-renames",
+        "-z",
+        &merge_base,
+        "HEAD",
+        "--",
+    ])?;
+    paths.extend(
+        listed
+            .split(|byte| *byte == 0)
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| String::from_utf8_lossy(entry).to_string()),
+    );
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
 /// Repository-relative paths changed against HEAD, including untracked files.
 pub fn changed_paths(project_root: &Path) -> Result<Vec<String>, String> {
     let output = Command::new("git")
@@ -341,6 +403,8 @@ pub struct GateContext<'a> {
     pub features: &'a BTreeMap<RecordId, Feature>,
     pub doctor: Option<&'a DoctorResult>,
     pub timeout: Duration,
+    /// Change-specific steps for one feature, appended to its accepted steps.
+    pub change_steps: Option<(&'a RecordId, &'a [String])>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -848,7 +912,17 @@ fn run_drive_gate(
     }
     let slug = slug(&outcome.id);
     let steps_file = format!("{slug}.steps.json");
-    let steps = json!({"feature": feature_id.as_str(), "name": feature.name, "steps": feature.drive_steps, "proof": feature.proof});
+    let change_steps = context
+        .change_steps
+        .filter(|(id, _)| *id == feature_id)
+        .map_or(&[][..], |(_, steps)| steps);
+    let all_steps = feature
+        .drive_steps
+        .iter()
+        .chain(change_steps)
+        .cloned()
+        .collect::<Vec<_>>();
+    let steps = json!({"feature": feature_id.as_str(), "name": feature.name, "steps": all_steps, "accepted_steps": feature.drive_steps.len(), "change_steps": change_steps, "proof": feature.proof});
     if let Err(error) = serde_json::to_vec_pretty(&steps)
         .map_err(|error| error.to_string())
         .and_then(|bytes| write_evidence(context, &steps_file, &bytes))
@@ -974,11 +1048,21 @@ fn run_drive_gate(
             );
         } else {
             outcome.state = VerificationAxis::Pass;
-            outcome.summary = format!(
-                "Drove {} step(s); proof: {}",
-                feature.drive_steps.len(),
-                feature.proof
-            );
+            outcome.summary = if change_steps.is_empty() {
+                format!(
+                    "Drove {} step(s); proof: {}",
+                    feature.drive_steps.len(),
+                    feature.proof
+                )
+            } else {
+                format!(
+                    "Drove {} accepted and {} change-specific step(s) ({}); proof: {}",
+                    feature.drive_steps.len(),
+                    change_steps.len(),
+                    change_steps.join("; "),
+                    feature.proof
+                )
+            };
         }
     } else if reported == "fail" {
         outcome.state = VerificationAxis::Fail;

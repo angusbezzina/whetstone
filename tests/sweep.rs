@@ -149,14 +149,7 @@ fn drive_gate(root: &Path, feature: &str) {
     assert_eq!(recorded["state"], "success", "{recorded}");
 }
 
-#[test]
-fn the_sweep_reports_every_feature_honestly_and_hygiene_names_the_feature() {
-    if !node_available() {
-        eprintln!("SKIP: node is required for the driver");
-        return;
-    }
-    let temp = tempfile::tempdir().expect("temp");
-    let root = temp.path();
+fn establish(root: &Path) {
     git(root, &["init", "-q"]);
     fs::write(
         root.join("check.sh"),
@@ -212,6 +205,17 @@ fn the_sweep_reports_every_feature_honestly_and_hygiene_names_the_feature() {
         Some(5),
         "{agreed}"
     );
+}
+
+#[test]
+fn the_sweep_reports_every_feature_honestly_and_hygiene_names_the_feature() {
+    if !node_available() {
+        eprintln!("SKIP: node is required for the driver");
+        return;
+    }
+    let temp = tempfile::tempdir().expect("temp");
+    let root = temp.path();
+    establish(root);
 
     let ok = ["run ./check.sh", "expect-output all good", "expect-exit 0"];
     feature(
@@ -421,4 +425,171 @@ fn the_sweep_reports_every_feature_honestly_and_hygiene_names_the_feature() {
         trail.contains("\tmaintain\tRecorded the maintain pass outcome: changed\t"),
         "{trail}"
     );
+}
+
+fn install_cli_driver(root: &Path) {
+    fs::create_dir_all(root.join("whetstone/verify")).expect("verify");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/verify/drive.mjs"),
+        root.join("whetstone/verify/drive.mjs"),
+    )
+    .expect("driver");
+    fs::write(
+        root.join("whetstone/verify/driver.json"),
+        r#"{"surface":"cli"}"#,
+    )
+    .expect("config");
+}
+
+/// A change is proven with its own assertions on top of the accepted drive,
+/// every distinct check is its own receipt, and a committed change selects
+/// the features it touched once a base revision is named.
+#[test]
+fn a_change_is_proven_with_its_own_steps_and_committed_work_selects_its_features() {
+    if !node_available() {
+        eprintln!("SKIP: node is required for the driver");
+        return;
+    }
+    let temp = tempfile::tempdir().expect("temp");
+    let root = temp.path();
+    establish(root);
+    let ok = ["run ./check.sh", "expect-output all good", "expect-exit 0"];
+    feature(root, "feature.alpha", "App", 1, &ok, serde_json::json!({}));
+    drive_gate(root, "feature.alpha");
+    accept_all(root);
+    install_cli_driver(root);
+
+    let accepted_only = json(&run(
+        &["check", "--json", "--feature", "feature.alpha"],
+        root,
+    ));
+    assert_eq!(accepted_only["state"], "success", "{accepted_only}");
+    assert_eq!(
+        accepted_only["data"]["scanner_included"], false,
+        "a feature proof is about the feature"
+    );
+    let initial = json(&run(
+        &["check", "--json", "--rule", "standard.initial-gate"],
+        root,
+    ));
+    assert_eq!(initial["state"], "success", "{initial}");
+    assert_ne!(
+        initial["data"]["gate_receipts"], accepted_only["data"]["gate_receipts"],
+        "two checks of one snapshot that ran different gates are two receipts"
+    );
+
+    let with_change = json(&run(
+        &[
+            "check",
+            "--json",
+            "--feature",
+            "feature.alpha",
+            "--step",
+            "run ./check.sh --verbose",
+            "--step",
+            "expect-output all good",
+        ],
+        root,
+    ));
+    assert_eq!(with_change["state"], "success", "{with_change}");
+    assert!(
+        with_change["summary"]
+            .to_string()
+            .contains("change-specific")
+            || with_change["data"]
+                .to_string()
+                .contains("2 change-specific step(s)"),
+        "the receipt names the change steps: {with_change}"
+    );
+    assert_ne!(
+        with_change["data"]["gate_receipts"], accepted_only["data"]["gate_receipts"],
+        "the change-specific run is its own receipt"
+    );
+    let run_id = with_change["data"]["run_id"].as_str().expect("run id");
+    let evidence_root = PathBuf::from(with_change["data"]["evidence_root"].as_str().expect("root"));
+    let steps: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(evidence_root.join(run_id).join("standard_alpha.steps.json"))
+            .expect("steps evidence"),
+    )
+    .expect("steps json");
+    assert_eq!(steps["accepted_steps"], 3);
+    assert_eq!(steps["change_steps"][1], "expect-output all good");
+
+    let regressed = json(&run(
+        &[
+            "check",
+            "--json",
+            "--feature",
+            "feature.alpha",
+            "--step",
+            "expect-output all bad",
+        ],
+        root,
+    ));
+    assert_eq!(regressed["state"], "violated", "{regressed}");
+    assert!(
+        regressed["data"].to_string().contains("step 4"),
+        "the failing change step is named: {regressed}"
+    );
+    let orphan = json(&run(
+        &[
+            "check",
+            "--json",
+            "--feature",
+            "feature.alpha",
+            "--feature",
+            "feature.none",
+            "--step",
+            "expect-output all good",
+        ],
+        root,
+    ));
+    assert_eq!(orphan["state"], "unknown", "{orphan}");
+
+    // Committed work: invisible to the working tree, selected with --base.
+    let identity = [
+        "-c",
+        "user.name=Owner",
+        "-c",
+        "user.email=owner@example.invalid",
+    ];
+    git(root, &["add", "-A"]);
+    git(root, &[&identity[..], &["commit", "-qm", "base"]].concat());
+    fs::write(
+        root.join("check.sh"),
+        "#!/bin/sh\n# quieter\necho \"all good\"\nexit 0\n",
+    )
+    .expect("edit");
+    git(
+        root,
+        &[&identity[..], &["commit", "-qam", "change"]].concat(),
+    );
+    let affected = |value: &serde_json::Value| {
+        value["data"]["selection"]["features_affected"]
+            .as_array()
+            .map(|rows| rows.iter().any(|row| row["feature"] == "feature.alpha"))
+            .unwrap_or(false)
+    };
+    let working = json(&run(&["check", "--json", "--changed", "--dry-run"], root));
+    assert!(!affected(&working), "{working}");
+    let committed = json(&run(
+        &[
+            "check",
+            "--json",
+            "--changed",
+            "--base",
+            "HEAD~1",
+            "--dry-run",
+        ],
+        root,
+    ));
+    assert!(affected(&committed), "{committed}");
+    assert!(committed["data"]["selection"]["changed_paths"]
+        .to_string()
+        .contains("check.sh"));
+    let unknown_base = json(&run(
+        &["check", "--json", "--changed", "--base", "no-such-branch"],
+        root,
+    ));
+    assert_eq!(unknown_base["state"], "unknown", "{unknown_base}");
 }

@@ -25,6 +25,8 @@ wh init --action import --from path/to/verify-app           # pstack skill -> dr
 wh change --json --record-id guidance.example               # bind an exact base
 wh change --retire feature.old --rationale "replaced"       # reviewed archival
 wh check --json --changed                   # prove what the change touched
+wh check --changed --base origin/main       # ...including committed work
+wh check --feature <id> --step "expect text=New label"   # prove the change itself
 wh check --sweep                            # drive every mapped feature
 wh check --required                         # team-active policy only (CI)
 wh dash --json                              # inspect; editing needs explicit edit mode

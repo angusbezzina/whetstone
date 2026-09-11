@@ -201,10 +201,11 @@ The same skill and map are written byte-identically into every selected host
 (`.claude/skills`, `.cursor/skills`, `.agents/skills`), stamped with the
 agreement digest. Claude Code is hook-capable: `wh init --action wire --hooks`
 adds a `SessionStart` hook (`wh dash --hook session-start`) that prints the
-canonical context or says the skill is stale and must not be relied on, and a
-`Stop` hook (`wh check --hook stop`) that returns violations to the same
-session for repair, bounded to three returns before handing back to the
-owner. Cursor and other hosts use explicit checkpoints
+canonical context or says the skill is stale and must not be relied on (and
+remembers the commit the session began at), and a `Stop` hook
+(`wh check --hook stop`) that proves what changed since then, committed or
+not, and returns violations to the same session for repair, bounded to three
+returns before handing back to the owner. Cursor and other hosts use explicit checkpoints
 (`wh check --changed --host <name>`). Each checkpoint records the skill
 revision the host actually has; no checkpoint means not acknowledged, and a
 projection that is stale, missing or hand-edited is reported per host, never
@@ -227,11 +228,20 @@ survives cleanup.
 
 ## Checking and maintenance
 
-`wh check` runs every in-force gate. `--feature <id>` proves one feature,
-`--changed` runs the gates of features whose entry points cover changed
-files and reports which map entries may need review, and `--sweep` drives
+`wh check` runs every in-force gate. `--feature <id>` proves one feature
+through its accepted drive steps; `--step <step>` (repeatable, one feature)
+adds change-specific assertions that run after the accepted steps in the same
+session, so a change is proven by what it changed and the receipt records
+which steps were accepted and which were the change's own. The accepted steps
+always run first; a change step can add to the proof, never replace it.
+`--changed` runs the gates of features whose entry points cover changed files
+(the working tree, plus everything since `--base <revision>` for committed
+work) and reports which map entries may need review, and `--sweep` drives
 every mapped feature in sweep order. `--dry-run` shows the selection and exact
-commands without executing anything.
+commands without executing anything. Scanner rules delegated to a verified
+linter binding (`lint_proxy`) are named in the scan summary as enforced by the
+linter, not counted as missing evidence; any other skipped rule leaves the
+scan unknown.
 
 The map stays honest in two tiers. Incrementally, behaviour changes and their
 feature edits ride the same change, and `wh check` reports drift when mapped

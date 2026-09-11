@@ -99,7 +99,12 @@ pub fn run(opts: CheckOptions<'_>) -> Value {
 
     for crule in &compiled {
         for note in &crule.notes {
-            skipped.push(json!({"rule_id": crule.rule.id, "reason": note}));
+            // Notes are lint_proxy signals: their binding is verified against
+            // the linter configuration (a missing binding is a config issue),
+            // and the linter itself enforces them.
+            skipped.push(
+                json!({"rule_id": crule.rule.id, "reason": note, "delegated_to": "linter_config"}),
+            );
         }
     }
 

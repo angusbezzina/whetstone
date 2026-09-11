@@ -73,6 +73,8 @@ Steps (web surface):
   screenshot <name>
   settle                     Wait until the page stops changing (500ms quiet).
   eval <js>                  Assert a JavaScript expression is truthy.
+  inspect [name]             Record the current state (after clicks) as JSON
+                             evidence: title, headings, landmarks, controls, text.
 Any surface:          require <env:NAME|program:NAME|file:path|os:darwin|linux>
                       stops with an "unreachable" verdict naming the unmet
                       prerequisite instead of failing the feature.
@@ -484,6 +486,11 @@ async function webStep(session, base, step, directory, index) {
     case "eval":
       if (!(await cdp.evaluate(rest))) throw new Error(`expression was falsy: ${rest}`);
       return "expression held";
+    case "inspect": {
+      const state = await cdp.evaluate(INSPECT);
+      writeFileSync(join(directory, `${String(index).padStart(2, "0")}-${(rest || "inspect").replace(/[^a-z0-9._-]+/gi, "-")}.json`), JSON.stringify(state, null, 2));
+      return `inspected ${state.url}: ${state.headings.map((heading) => heading.text).slice(0, 6).join(" / ")}`;
+    }
     default:
       throw new Error(`unknown web step "${verb}"; run help for the step list`);
   }
@@ -760,7 +767,7 @@ async function main() {
     case "launch": {
       const { config, error } = loadConfig();
       if (error) return fail(error);
-      if (dryRun) return emit({ ok: true, dry_run: true, would_run: config.launch?.command ?? null, base_url: config.base_url ?? null });
+      if (dryRun) return emit({ ok: true, dry_run: true, would_run: config.launch?.command?.map((part) => String(part).replaceAll("{root}", ROOT)) ?? null, base_url: config.base_url ?? (config.launch?.command ? "assigned at launch: a loopback port of its own ({port})" : null) });
       try {
         const app = await launch(config);
         return emit({ ok: true, url: app.url, pid: app.pid, stop_with: "node whetstone/verify/drive.mjs cleanup" });

@@ -273,13 +273,22 @@ impl VerificationReport {
             state_name(self.state)
         )];
         for result in &self.results {
-            lines.push(format!(
-                "{} {}: {} — next: {}",
-                check_state_name(result.state),
-                result.requirement_id,
-                result.summary,
-                result.permitted_next_action
-            ));
+            if result.state == CheckState::Success {
+                lines.push(format!(
+                    "{} {}: {}",
+                    check_state_name(result.state),
+                    result.requirement_id,
+                    result.summary
+                ));
+            } else {
+                lines.push(format!(
+                    "{} {}: {} — next: {}",
+                    check_state_name(result.state),
+                    result.requirement_id,
+                    result.summary,
+                    result.permitted_next_action
+                ));
+            }
         }
         lines.join("\n")
     }
