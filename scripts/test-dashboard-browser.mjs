@@ -269,6 +269,9 @@ try {
   await click("#cl-more");
   check(await count(".entry") === 130 && !(await cdp.evaluate("Boolean(document.querySelector('#cl-more'))")), "Load more appends the older entries");
   check(commands.length === before, "Load more pages locally without a new command");
+  await cdp.evaluate("(() => { const q = document.querySelector('#cl-q'); q.focus(); q.value = 'abc'; q.dispatchEvent(new Event('input', { bubbles: true })); q.setSelectionRange(0, 3); return true; })()");
+  await cdp.evaluate("new Promise((done) => setTimeout(done, 700))");
+  check(await cdp.evaluate("(() => { const q = document.querySelector('#cl-q'); return document.activeElement === q && q.value === 'abc' && q.selectionStart === 0 && q.selectionEnd === 3; })()"), "a search re-render keeps the field's focus and selection");
 
   // Inspection failure: no health claim.
   mode = "error";
