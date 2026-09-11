@@ -63,8 +63,12 @@ launch command as {port} and {data_dir} and as PORT and WH_DATA_DIR.
 Steps (web surface):
   open <path|url>            Navigate, relative to the launched base URL.
   click <selector>           Click a CSS selector, or text=<visible text>.
-  type <selector> <text>     Focus and type.
-  press <key>                Enter, Escape, Tab, ArrowRight, ...
+  type <selector> <text>     Focus and set the value (input and change events);
+                             date/time inputs take ISO values (2026-09-10T12:00).
+  clear <selector>           Empty a field the same way.
+  press <key>                A character or Enter, Escape, Tab, Backspace, Delete,
+                             Space, Home, End, PageUp, PageDown, Arrow*; with
+                             modifiers as Meta+A, Control+A, Shift+Tab.
   wait <selector>            Wait for a selector or text=<text> (10s).
   expect <selector>          Assert it is present and visible (text=<text> works).
   expect-not <selector>      Assert it is absent or hidden.
@@ -415,6 +419,29 @@ async function screenshot(cdp, directory, name) {
   return file;
 }
 
+const KEYS = { Enter: 13, Escape: 27, Tab: 9, Backspace: 8, Delete: 46, Space: 32, Home: 36, End: 35, PageUp: 33, PageDown: 34, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 };
+const MODIFIERS = { Alt: 1, Control: 2, Ctrl: 2, Meta: 4, Cmd: 4, Shift: 8 };
+
+// "Enter", "Backspace", "a", "Meta+A", "Shift+Tab": one CDP key event.
+// Select-all is sent as an editing command so it behaves the same on every OS.
+function keyEvent(combo) {
+  const parts = combo.split("+");
+  const name = parts.pop();
+  let modifiers = 0;
+  for (const part of parts) {
+    if (!(part in MODIFIERS)) throw new Error(`unknown modifier "${part}"; use Alt, Control, Meta or Shift`);
+    modifiers |= MODIFIERS[part];
+  }
+  const single = name.length === 1;
+  if (!single && !(name in KEYS)) throw new Error(`unknown key "${name}"; use a character or one of ${Object.keys(KEYS).join(", ")}`);
+  const key = name === "Space" ? " " : name;
+  const code = single ? (/[a-z]/i.test(name) ? `Key${name.toUpperCase()}` : name) : name;
+  const event = { key, code, modifiers, windowsVirtualKeyCode: single ? name.toUpperCase().charCodeAt(0) : KEYS[name] };
+  if ((modifiers & (MODIFIERS.Control | MODIFIERS.Meta)) && name.toLowerCase() === "a") event.commands = ["selectAll"];
+  else if ((single || name === "Space" || name === "Enter") && !(modifiers & ~MODIFIERS.Shift)) event.text = name === "Enter" ? "\r" : key;
+  return event;
+}
+
 function splitStep(step) {
   const space = step.indexOf(" ");
   return space === -1 ? [step, ""] : [step.slice(0, space), step.slice(space + 1).trim()];
@@ -438,17 +465,22 @@ async function webStep(session, base, step, directory, index) {
       await delay(250);
       return `clicked ${rest}`;
     }
-    case "type": {
-      const [selector, ...words] = rest.split(" ");
+    case "type":
+    case "clear": {
+      const [selector, ...words] = verb === "clear" ? [rest] : rest.split(" ");
+      const text = words.join(" ");
       const expression = selectorExpression(selector);
       if (!(await waitFor(cdp, visible(expression)))) throw new Error(`${selector} is not visible`);
-      await cdp.evaluate(`(() => { const node = ${expression}; node.focus(); node.value = ${JSON.stringify(words.join(" "))}; node.dispatchEvent(new Event("input", { bubbles: true })); node.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`);
-      return `typed into ${selector}`;
+      // The value is set directly (with input and change events), so date and
+      // time inputs take their ISO form (2026-09-10, 2026-09-10T12:00).
+      const taken = await cdp.evaluate(`(() => { const node = ${expression}; node.focus(); node.value = ${JSON.stringify(text)}; node.dispatchEvent(new Event("input", { bubbles: true })); node.dispatchEvent(new Event("change", { bubbles: true })); return node.value; })()`);
+      if (taken !== text) throw new Error(`${selector} did not accept ${JSON.stringify(text)} (it holds ${JSON.stringify(taken)}); date and time inputs take ISO values such as 2026-09-10T12:00`);
+      return verb === "clear" ? `cleared ${selector}` : `typed into ${selector}`;
     }
     case "press": {
-      for (const type of ["keyDown", "keyUp"]) {
-        await cdp.send("Input.dispatchKeyEvent", { type, key: rest, code: rest, windowsVirtualKeyCode: { Enter: 13, Escape: 27, Tab: 9, ArrowRight: 39, ArrowLeft: 37, ArrowDown: 40, ArrowUp: 38 }[rest] ?? 0 });
-      }
+      const event = keyEvent(rest);
+      await cdp.send("Input.dispatchKeyEvent", { ...event, type: event.text ? "keyDown" : "rawKeyDown" });
+      await cdp.send("Input.dispatchKeyEvent", { ...event, type: "keyUp", text: undefined, commands: undefined });
       await delay(150);
       return `pressed ${rest}`;
     }

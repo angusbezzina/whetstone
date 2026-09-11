@@ -265,6 +265,70 @@ fn the_web_driver_proves_a_dashboard_feature_with_screenshots_and_locates_failur
         assert!(bytes.starts_with(b"\x89PNG"), "{locator} is a PNG");
     }
 
+    // Change-specific steps extend the accepted drive in the same session,
+    // including keyboard editing, and a value a field rejects fails loudly.
+    let edited = json(&run(
+        &[
+            "check",
+            "--json",
+            "--feature",
+            "feature.dashboard-home",
+            "--timeout",
+            "120",
+            "--step",
+            "click #tab-changelog",
+            "--step",
+            "type #cl-q zzz",
+            "--step",
+            "press Backspace",
+            "--step",
+            "eval document.querySelector('#cl-q').value === 'zz'",
+            "--step",
+            "press Meta+A",
+            "--step",
+            "press Backspace",
+            "--step",
+            "eval document.querySelector('#cl-q').value === ''",
+            "--step",
+            "type #cl-q abc",
+            "--step",
+            "clear #cl-q",
+            "--step",
+            "eval document.querySelector('#cl-q').value === ''",
+            "--step",
+            "inspect changelog",
+        ],
+        root,
+    ));
+    assert_eq!(edited["state"], "success", "{edited}");
+    assert!(edited["data"]["gates"][0]["summary"]
+        .as_str()
+        .expect("summary")
+        .contains("11 change-specific step(s)"));
+    let rejected = json(&run(
+        &[
+            "check",
+            "--json",
+            "--feature",
+            "feature.dashboard-home",
+            "--timeout",
+            "120",
+            "--step",
+            "click #tab-changelog",
+            "--step",
+            "type #cl-asof 010120001200A",
+        ],
+        root,
+    ));
+    assert_eq!(rejected["state"], "violated", "{rejected}");
+    assert!(
+        rejected["data"]["gates"][0]["failures"][0]["message"]
+            .as_str()
+            .expect("message")
+            .contains("ISO"),
+        "{rejected}"
+    );
+
     // A proof that cannot be reached fails at the exact step.
     map_feature(
         root,

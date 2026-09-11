@@ -193,7 +193,9 @@ fn host_socket_returns_post_edit_feedback_and_explicit_final_checkpoint() {
     final_host.join().expect("final host");
     assert!(
         final_check.status.success(),
-        "final checkpoint failed: {}",
+        "final checkpoint failed; status={:?}; stdout={}; stderr={}",
+        final_check.status.code(),
+        String::from_utf8_lossy(&final_check.stdout),
         String::from_utf8_lossy(&final_check.stderr)
     );
     let final_json: Value = serde_json::from_slice(&final_check.stdout).expect("final JSON");
@@ -289,7 +291,8 @@ fn serve_host(socket_path: PathBuf, requests: usize) -> thread::JoinHandle<()> {
         .set_nonblocking(true)
         .expect("nonblocking host socket");
     thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(15);
+        // Generous: under load a full check runs between the authentications.
+        let deadline = Instant::now() + Duration::from_secs(60);
         let mut handled = 0;
         while handled < requests && Instant::now() < deadline {
             let mut stream = match listener.accept() {
