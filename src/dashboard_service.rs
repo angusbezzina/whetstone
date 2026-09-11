@@ -67,6 +67,52 @@ impl DashboardBackend for CommandDashboardBackend {
         })))
     }
 
+    fn evidence(&self, locator: &str) -> BackendResponse {
+        let not_found = || BackendResponse {
+            status: 404,
+            content_type: "text/plain; charset=utf-8",
+            body: b"not_found".to_vec(),
+        };
+        let safe = !locator.is_empty()
+            && locator.len() <= 300
+            && !locator.starts_with('/')
+            && !locator.contains("..")
+            && locator.split('/').count() <= 4
+            && locator
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "._-/".contains(character));
+        if !safe {
+            return not_found();
+        }
+        let content_type = match locator.rsplit('.').next() {
+            Some("png") => "image/png",
+            Some("json") => "application/json; charset=utf-8",
+            Some("log" | "txt") => "text/plain; charset=utf-8",
+            _ => return not_found(),
+        };
+        let Ok(layout) = crate::storage::ProjectLayout::resolve(&self.project_dir, None) else {
+            return not_found();
+        };
+        let root = crate::gates::evidence_root(&layout);
+        let path = root.join(locator);
+        let (Ok(root), Ok(real)) = (root.canonicalize(), path.canonicalize()) else {
+            return not_found();
+        };
+        let is_file = std::fs::symlink_metadata(&path)
+            .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= 8 * 1024 * 1024);
+        if !real.starts_with(&root) || !is_file {
+            return not_found();
+        }
+        match std::fs::read(&real) {
+            Ok(body) => BackendResponse {
+                status: 200,
+                content_type,
+                body,
+            },
+            Err(_) => not_found(),
+        }
+    }
+
     fn trail(&self) -> BackendResponse {
         let mut request =
             DashRequest::basic(self.project_dir.clone(), self.inspect_request_id.clone());

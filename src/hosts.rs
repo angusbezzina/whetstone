@@ -133,6 +133,13 @@ pub fn session_context(dash: &Value, host: &str) -> String {
         )),
         None => lines.push("No verify skill is installed for this host; `wh init --action wire --host <host>` generates it. Use `wh dash --json` for the accepted records.".into()),
     }
+    if let Some(regression) = current["skill"]["acknowledged"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["host"] == host))
+        .and_then(|row| row["regression"].as_str())
+    {
+        lines.push(regression.to_string());
+    }
     let gates = current["checks"]["gates"]
         .as_array()
         .map(|gates| {

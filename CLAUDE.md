@@ -12,8 +12,9 @@ or compatibility paths for convenience. The last old-product revision is
 `1b7fd8c341b8a5aaea742c564092fbcca26b51bb` and may be inspected read-only.
 Preserve all project data under `whetstone/`, `.beads/`, and `.git/info/exclude`.
 
-The target public surface is `wh init`, `wh dash`, `wh change`, `wh check`,
-`wh pull`, and `wh push`; none exists until its Beads acceptance criteria pass.
+The public surface is `wh init`, `wh dash`, `wh change`, `wh check`,
+`wh pull`, and `wh push`; all are implemented, and milestone acceptance
+(owner walkthroughs, a live two-person activation) is tracked in Beads.
 Current hidden developer gates are `validate`, `eval`, and `scan`.
 
 Use `planning/direction-demo/index.html` for behavior,

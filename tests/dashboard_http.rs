@@ -1005,3 +1005,39 @@ fn dashboard_change_check_conflict_and_permission_paths_preserve_service_semanti
         "the persisted receipt must use the content-derived verification identity"
     );
 }
+
+#[test]
+fn evidence_is_served_only_from_inside_the_evidence_root() {
+    let temp = tempfile::tempdir().expect("temp project");
+    init_git(temp.path());
+    let layout = ProjectLayout::resolve(temp.path(), None).expect("layout");
+    let root = whetstone::gates::evidence_root(&layout);
+    std::fs::create_dir_all(root.join("run1")).expect("run dir");
+    std::fs::write(root.join("run1/shot.png"), b"\x89PNG proof").expect("shot");
+    std::fs::write(root.join("run1/gate.log"), b"passed").expect("log");
+    std::fs::write(root.join("run1/tool.sh"), b"#!/bin/sh").expect("script");
+    let outside = temp.path().join("secret.png");
+    std::fs::write(&outside, b"private").expect("outside");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, root.join("run1/link.png")).expect("symlink");
+    let backend = CommandDashboardBackend::new(temp.path().to_path_buf(), None);
+    let shot = backend.evidence("run1/shot.png");
+    assert_eq!((shot.status, shot.content_type), (200, "image/png"));
+    assert_eq!(shot.body, b"\x89PNG proof");
+    assert_eq!(backend.evidence("run1/gate.log").status, 200);
+    for refused in [
+        "run1/tool.sh",
+        "../secret.png",
+        "run1/../../secret.png",
+        "/etc/passwd.txt",
+        "run1/link.png",
+        "run1/missing.png",
+        "run1/%2e%2e/secret.png",
+    ] {
+        assert_eq!(
+            backend.evidence(refused).status,
+            404,
+            "{refused} was served"
+        );
+    }
+}

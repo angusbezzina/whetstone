@@ -40,10 +40,12 @@ compatibility aliases, Python runtime, fixtures, or packaging as shortcuts. Do
 not alter existing project data under `whetstone/`, `.beads/`, or
 `.git/info/exclude` during R0.
 
-The target public workflow families are exactly `wh init`, `wh dash`,
-`wh change`, `wh check`, `wh pull`, and `wh push`. They are unavailable until
-their Beads acceptance criteria pass. Bare `wh` is honest read-only orientation.
-The current hidden developer gates are `validate`, `eval`, and `scan`.
+The public workflow families are exactly `wh init`, `wh dash`, `wh change`,
+`wh check`, `wh pull`, and `wh push`, all implemented against the Beads store.
+Milestone acceptance still needs the owner's walkthroughs and a live
+two-person GitHub activation (see `whetstone-k5r.20`); do not describe the
+product as accepted until those are recorded. Bare `wh` is honest read-only
+orientation. The hidden developer gates are `validate`, `eval`, and `scan`.
 
 Authoritative references:
 

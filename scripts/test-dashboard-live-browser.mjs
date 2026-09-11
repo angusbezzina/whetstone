@@ -78,6 +78,15 @@ try {
   await click("#tab-checks");
   await cdp.waitFor("document.querySelector('#gate-standard\\\\.initial-gate')", "checks did not reload");
   check(await cdp.evaluate("document.querySelector('#gate-standard\\\\.initial-gate .state').textContent === 'pass'"), "the gate result persists");
+  check(
+    await cdp.evaluate(`(async () => {
+      const link = document.querySelector('#det-standard\\\\.initial-gate .evid a');
+      if (!link) return false;
+      const response = await fetch(link.getAttribute('href'));
+      return response.ok && (await response.text()).length > 0;
+    })()`),
+    "the gate's evidence opens from Checks",
+  );
 
   for (const width of [320, 390, 768, 1024]) {
     await cdp.viewport(width);

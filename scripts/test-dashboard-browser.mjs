@@ -76,7 +76,7 @@ function view(mode) {
     checks: {
       last_complete: established ? { at: "2026-09-10T10:05:00Z", tally: { pass: 0, fail: 1, unknown: 1 } } : null,
       gates: established ? [
-        { id: "standard.journey", name: "The dashboard journey is proven", strength: "must", mechanism: "Drive", command: "prove feature.dashboard", eligible: true, result: label("fail", "fail · 2"), last_run: "2026-09-10T10:05:00Z", current: true, summary: "Driving did not reach the proof.", failures: [{ location: "step 2: expect #mission-line", message: XSS + "missing" }, { location: "page", message: "page errors" }], recheck: "wh check --rule standard.journey", brief, evidence: [], feature: null },
+        { id: "standard.journey", name: "The dashboard journey is proven", strength: "must", mechanism: "Drive", command: "prove feature.dashboard", eligible: true, result: label("fail", "fail · 2"), last_run: "2026-09-10T10:05:00Z", current: true, summary: "Driving did not reach the proof.", failures: [{ location: "step 2: expect #mission-line", message: XSS + "missing" }, { location: "page", message: "page errors" }], recheck: "wh check --rule standard.journey", brief, evidence: [{ kind: "whetstone_evidence", locator: "run1/standard_journey.drive/01-home.png", digest: null }, { kind: "whetstone_evidence", locator: "run1/standard_journey.log", digest: null }], feature: null },
         { id: "standard.tests", name: "Rust tests pass", strength: "must", mechanism: "Test", command: "cargo test", eligible: true, result: label("warn", "pass · stale"), last_run: "2026-09-09T10:05:00Z", current: false, summary: "Passed in 3.0s.", failures: [], recheck: "wh check --rule standard.tests", brief: null, evidence: [], feature: null },
         { id: "standard.draft", name: "No raw regex as enforcement", strength: "should", mechanism: "AST query", command: "no-regex", eligible: false, result: label("draft", "draft · not run"), last_run: null, current: false, summary: null, failures: [], recheck: "wh check --rule standard.draft", brief: null, evidence: [], feature: null },
       ] : [],
@@ -113,6 +113,9 @@ const server = createServer((request, response) => {
       response.end(typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body));
     };
     if (request.method === "GET" && assets[request.url]) return send(200, assets[request.url][1], assets[request.url][0]);
+    if (request.method === "GET" && request.url.startsWith("/api/evidence/")) {
+      return send(200, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64"), "image/png");
+    }
     if (request.url === "/session/bootstrap") return send(200, { csrf_token: "csrf-1" });
     if (request.url === "/session/edit") return send(200, { mode: "edit" });
     if (request.url === "/api/inspect") {
@@ -188,6 +191,7 @@ try {
   await cdp.waitFor("!document.querySelector('#checks').hidden && document.querySelector('#det-standard\\\\.journey.open')", "attention did not open the failing gate");
   check(await cdp.evaluate("document.activeElement?.dataset.id === 'standard.journey'"), "focus moves to the failing gate");
   check(await cdp.evaluate("document.querySelector('#det-standard\\\\.journey pre.brief').textContent.includes('recheck')"), "the repair brief is shown");
+  check(await cdp.evaluate("document.querySelector('#det-standard\\\\.journey .evid img')?.getAttribute('src') === '/api/evidence/run1/standard_journey.drive/01-home.png' && document.querySelector('#det-standard\\\\.journey .evid a[href$=\\'.log\\']') !== null"), "driven proofs are inspectable with their artifacts");
   check(await cdp.evaluate("document.querySelector('#checks').textContent.includes('Team policy') && document.querySelector('#checks').textContent.includes('required check not installed')"), "team activation state is shown");
   check(await cdp.evaluate("!globalThis.whetstoneXss"), "failure messages render as text");
   check(await cdp.evaluate("document.querySelector('#gate-standard\\\\.draft small').textContent.includes('not eligible')"), "draft gates are marked not eligible");

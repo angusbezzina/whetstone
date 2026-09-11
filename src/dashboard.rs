@@ -35,6 +35,15 @@ pub trait DashboardBackend: Send + Sync + 'static {
     /// Read-only query body. An empty body requests the default project view.
     fn inspect(&self, request_body: &[u8]) -> BackendResponse;
     fn mutate(&self, request_body: &[u8]) -> BackendResponse;
+    /// One evidence file (screenshot, log, gate artifact) from the private
+    /// evidence directory; read-only and path-checked.
+    fn evidence(&self, _locator: &str) -> BackendResponse {
+        BackendResponse {
+            status: 404,
+            content_type: "text/plain; charset=utf-8",
+            body: b"not_found".to_vec(),
+        }
+    }
     /// The decision trail as show-me-your-work TSV; read-only.
     fn trail(&self) -> BackendResponse {
         BackendResponse {
@@ -382,6 +391,9 @@ fn handle_connection(
         // loopback-only, exact-host checked, and cannot mutate state. Hosted
         // inspection passed the authenticated proxy checks above.
         ("GET", "/api/inspect") => backend.inspect(&[]),
+        ("GET", path) if path.starts_with("/api/evidence/") => {
+            backend.evidence(&path["/api/evidence/".len()..])
+        }
         ("GET", "/api/trail.tsv") => {
             extra_headers.push((
                 "Content-Disposition",
