@@ -505,9 +505,9 @@ mod unix {
             }
             bytes = &bytes[written..];
         }
-        stream
-            .set_write_timeout(Some(remaining(deadline)?))
-            .map_err(|_| RepairHostError::MissingAuthority)?;
+        // Unix stream writes are unbuffered, so everything is sent. No
+        // further timeout is set here: a fast host may already have answered
+        // and closed, and macOS rejects socket options (EINVAL) after that.
         stream
             .flush()
             .map_err(|_| RepairHostError::MissingAuthority)
@@ -520,9 +520,15 @@ mod unix {
     ) -> Result<(), RepairHostError> {
         let mut buffer = [0_u8; 8 * 1024];
         while response.len() < MAX_RESPONSE_BYTES as usize {
-            stream
-                .set_read_timeout(Some(remaining(deadline)?))
-                .map_err(|_| RepairHostError::MissingAuthority)?;
+            // macOS refuses socket timeouts (EINVAL) once the host has
+            // answered and closed. The answer is then already buffered, so
+            // read it without blocking rather than discard it.
+            let bounded = stream.set_read_timeout(Some(remaining(deadline)?)).is_ok();
+            if !bounded {
+                stream
+                    .set_nonblocking(true)
+                    .map_err(|_| RepairHostError::MissingAuthority)?;
+            }
             let read = stream
                 .read(&mut buffer)
                 .map_err(|_| RepairHostError::MissingAuthority)?;
@@ -538,6 +544,44 @@ mod unix {
             }
         }
         Err(RepairHostError::MissingAuthority)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// A host that answers and closes before the client reads (fast
+        /// hosts do): the buffered answer is read, not discarded, even
+        /// where the platform refuses socket timeouts after the close.
+        #[test]
+        fn an_answer_sent_before_the_host_closes_is_read() {
+            let (mut client, mut host) = UnixStream::pair().expect("pair");
+            host.write_all(b"{\"state\":\"granted\"}\n")
+                .expect("answer");
+            drop(host);
+            let mut response = Vec::new();
+            read_frame_before(
+                &mut client,
+                &mut response,
+                Instant::now() + Duration::from_secs(5),
+            )
+            .expect("buffered answer");
+            assert_eq!(response, b"{\"state\":\"granted\"}\n");
+        }
+
+        /// A host that closes without answering is still missing authority.
+        #[test]
+        fn a_host_that_closes_without_answering_is_missing_authority() {
+            let (mut client, host) = UnixStream::pair().expect("pair");
+            drop(host);
+            let mut response = Vec::new();
+            assert!(read_frame_before(
+                &mut client,
+                &mut response,
+                Instant::now() + Duration::from_secs(5),
+            )
+            .is_err());
+        }
     }
 }
 
