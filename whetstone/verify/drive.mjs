@@ -345,7 +345,17 @@ class Cdp {
   }
 }
 
+// One bad Chrome start (no page target) is retried once, cleanly.
 async function browser(config) {
+  try {
+    return await browserOnce(config);
+  } catch (error) {
+    if (!/page target/.test(String(error.message))) throw error;
+    return await browserOnce(config);
+  }
+}
+
+async function browserOnce(config) {
   const chrome = chromePath(config);
   if (!chrome) throw new Error("Chrome or Chromium is not installed (set CHROME_BIN).");
   const profile = mkdtempSync(join(tmpdir(), "wh-driver-profile-"));
@@ -354,16 +364,20 @@ async function browser(config) {
     "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars",
     "--disable-background-networking", "about:blank",
   ], { stdio: ["ignore", "ignore", "pipe"] });
+  let chromeErrors = "";
+  child.stderr?.on("data", (chunk) => { chromeErrors = (chromeErrors + chunk).slice(-800); });
   const portFile = join(profile, "DevToolsActivePort");
   for (let attempt = 0; attempt < 400 && !existsSync(portFile); attempt += 1) await delay(25);
   if (!existsSync(portFile)) throw new Error("Chrome did not expose a debugging port.");
   const port = readFileSync(portFile, "utf8").split("\n")[0];
   let page;
+  let lastTargets = "unreachable";
   // Headless Chrome occasionally starts without its initial tab; after a
   // second with no page target, ask for one instead of waiting it out.
   for (let attempt = 0; attempt < 800 && !page; attempt += 1) {
     try {
       const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json());
+      lastTargets = targets.map((target) => target.type).join(",") || "none";
       page = targets.find((target) => target.type === "page" && !target.url.startsWith("chrome-extension:"));
       if (!page && attempt > 0 && attempt % 40 === 0) {
         const created = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" }).then((response) => response.json());
@@ -372,7 +386,10 @@ async function browser(config) {
     } catch {}
     if (!page) await delay(25);
   }
-  if (!page) throw new Error("Chrome did not expose a page target.");
+  if (!page) {
+    try { child.kill("SIGKILL"); } catch {}
+    throw new Error(`Chrome did not expose a page target. after 20s (exit code ${child.exitCode}, last targets ${lastTargets}, port ${port}); chrome said: ${chromeErrors.trim() || "nothing"}`);
+  }
   const cdp = new Cdp(page.webSocketDebuggerUrl);
   await cdp.open();
   await cdp.send("Page.enable");
