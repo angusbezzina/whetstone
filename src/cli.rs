@@ -1330,7 +1330,70 @@ fn emit_response(response: &ServiceResponse, machine: bool) {
     print!("{}", format_human_response(response));
 }
 
+/// One line of plain guidance per owner decision, matching the dashboard's
+/// First agreement form.
+fn decision_hint(decision: &str) -> &'static str {
+    match decision {
+        "mission" => "what this project exists to do",
+        "desired outcome" => "how you will know it is working",
+        "core values" => "what guides choices when they conflict",
+        "implementation philosophy" => "how work gets done here",
+        "accountable owner" => "who answers for this project",
+        "one initial safeguard" => "the first thing that must hold, e.g. tests pass before handoff",
+        "initial safeguard scope" => "where it applies, e.g. src",
+        "revision triggers" => {
+            "what should make you revisit this, e.g. a gate fails twice in a week"
+        }
+        _ => "",
+    }
+}
+
+/// `wh init` read by a person: what is missing, what each decision means, and
+/// the two ways to record it. The JSON envelope is unchanged.
+fn format_init_walkthrough(response: &ServiceResponse) -> Option<String> {
+    let progress = response.data.get("progress")?;
+    let missing = progress
+        .get("missing_decisions")?
+        .as_array()?
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "Whetstone · init · no agreement here yet\n\nAn agreement is {} decisions you make once. Nothing is shared, published or\ncommitted: recording it writes private state inside this repository's Git\ndirectory, and no working-tree files.\n",
+        missing.len()
+    );
+    for (index, decision) in missing.iter().enumerate() {
+        let hint = decision_hint(decision);
+        if hint.is_empty() {
+            let _ = writeln!(out, "  {}. {decision}", index + 1);
+        } else {
+            let _ = writeln!(out, "  {}. {decision} — {hint}", index + 1);
+        }
+    }
+    let _ = writeln!(
+        out,
+        "\nAnswer them either way:\n\n  wh dash        opens the dashboard and walks you through a form, shows the\n                 exact records before saving, then records them.\n\n  wh init --action agree --expected-revision {} --resume <token> \\\n    --mission \"…\" --desired-outcome \"…\" --values \"…\" --philosophy \"…\" \\\n    --owner \"…\" --initial-safeguard \"…\" --safeguard-scope \"…\" \\\n    --revision-triggers \"…\" [--gate-command \"…\"]\n                 records the same thing without the dashboard. Add --dry-run to\n                 see the exact records first.",
+        response.expected_revision.unwrap_or(0)
+    );
+    if let Some(token) = &response.resume_token {
+        let _ = writeln!(out, "\nToken for this inspection: {token}");
+    }
+    Some(out)
+}
+
 fn format_human_response(response: &ServiceResponse) -> String {
+    if response.workflow == "init"
+        && response.data.get("read_only") == Some(&serde_json::Value::Bool(true))
+    {
+        if let Some(walkthrough) = format_init_walkthrough(response) {
+            return walkthrough;
+        }
+    }
     let mut rendered = String::new();
     let _ = writeln!(
         rendered,
@@ -1571,6 +1634,48 @@ mod tests {
     fn repair_receipt_clock_is_stable_utc() {
         assert_eq!(utc_timestamp(0), "1970-01-01T00:00:00Z");
         assert_eq!(utc_timestamp(951_827_696), "2000-02-29T12:34:56Z");
+    }
+
+    #[test]
+    fn human_init_output_walks_the_owner_through_the_decisions() {
+        let response = ServiceResponse {
+            schema: crate::service::RESPONSE_SCHEMA.into(),
+            schema_version: 1,
+            request_id: "init-walkthrough".into(),
+            workflow: "init".into(),
+            state: ServiceState::NeedsInput,
+            summary: "Inspection is complete and read-only.".into(),
+            expected_revision: Some(0),
+            resume_token: Some("resume-v1:abc".into()),
+            required_snapshot: None,
+            evidence: Vec::new(),
+            blocking_questions: vec!["Provide mission.".into()],
+            permitted_actions: vec!["wh init --action agree".into()],
+            data: json!({
+                "read_only": true,
+                "progress": {"missing_decisions": ["mission", "accountable owner"]},
+            }),
+        };
+        let rendered = format_human_response(&response);
+        assert!(rendered.contains("no agreement here yet"), "{rendered}");
+        assert!(
+            rendered.contains("1. mission — what this project exists to do"),
+            "each decision is explained: {rendered}"
+        );
+        assert!(
+            rendered.contains("2. accountable owner — who answers for this project"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("wh dash") && rendered.contains("--action agree"),
+            "both routes are offered: {rendered}"
+        );
+        assert!(
+            rendered.contains("Nothing is shared, published or"),
+            "the footprint is stated: {rendered}"
+        );
+        assert!(rendered.contains("resume-v1:abc"), "{rendered}");
+        assert!(!rendered.contains("Needs: Provide mission."), "{rendered}");
     }
 
     #[test]

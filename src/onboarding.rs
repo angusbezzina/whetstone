@@ -146,7 +146,7 @@ pub fn inspect(root: &Path) -> Result<SetupPlan, DiscoveryError> {
         facts,
         inferences,
         proposed_writes: vec![
-            "private Dolt agreement state under the Git common directory; no working-tree files"
+            "private Beads agreement state under the Git common directory; no working-tree files"
                 .into(),
         ],
         executable_access: vec!["none until a checker manifest is explicitly trusted".into()],
