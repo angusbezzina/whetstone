@@ -1,67 +1,99 @@
 {
   "name": "Whetstone",
-  "description": "A quiet engineering journal where the project's records are entries on ruled paper, in light or dark, and colour is spent only on state.",
+  "description": "A struck cathode gauze; every record present as a quiet ghost on an unframed plane, and the one live thing struck forward in orange.",
   "colors": {
-    "paper": "#fafaf8",
-    "well": "#f0f0ec",
-    "rule": "#e2e1dc",
-    "rule-strong": "#bfbeb8",
-    "ink": "#1e1d1b",
-    "ink-soft": "#5e5c57",
-    "ink-faint": "#6a6963",
-    "accent": "#2b5797",
-    "selection": "#d5e1f4",
-    "pass": "#2e7a3f",
-    "warn": "#8a5a00",
-    "fail": "#b3261e",
-    "dark-paper": "#181817",
-    "dark-well": "#212120",
-    "dark-rule": "#2d2d2b",
-    "dark-rule-strong": "#484742",
-    "dark-ink": "#e8e6e1",
-    "dark-ink-soft": "#a9a69f",
-    "dark-ink-faint": "#96938c",
-    "dark-accent": "#8db2ea",
-    "dark-selection": "#2b3f5f",
-    "dark-pass": "#74c682",
-    "dark-warn": "#d9a94f",
-    "dark-fail": "#f0837b"
+    "background": "#fff",
+    "foreground": "#0a0a0a",
+    "card": "#f4f3ef",
+    "muted": "#efeeea",
+    "muted-foreground": "#616161",
+    "ghost": "#666",
+    "border": "#e2e1dc",
+    "input": "#efeeea",
+    "primary": "#e66c3a",
+    "primary-foreground": "#0a0a0a",
+    "primary-hover": "#d95f2d",
+    "struck": "#c2410c",
+    "ring": "#e66c3a",
+    "halo": "transparent",
+    "destructive": "#c2410c",
+    "pass": "#0a0a0a",
+    "warn": "#616161",
+    "fail": "#c2410c",
+    "dark-background": "#0a0b0e",
+    "dark-foreground": "#eae6dd",
+    "dark-card": "#141619",
+    "dark-muted": "#15171c",
+    "dark-muted-foreground": "#a19d94",
+    "dark-ghost": "#8a867d",
+    "dark-border": "#23262d",
+    "dark-input": "#15171c",
+    "dark-primary": "#e66c3a",
+    "dark-primary-foreground": "#0a0b0e",
+    "dark-primary-hover": "#ef7d4e",
+    "dark-struck": "#e66c3a",
+    "dark-ring": "#e66c3a",
+    "dark-halo": "rgba(230,108,58,.45)",
+    "dark-destructive": "#e66c3a",
+    "dark-pass": "#eae6dd",
+    "dark-warn": "#a19d94",
+    "dark-fail": "#e66c3a",
+    "dark-mesh-line": "#c98a4a",
+    "mark-stone-top": "#e66c3a",
+    "mark-stone-left": "#c2410c",
+    "mark-stone-right": "#d95f2d"
   },
   "typography": {
-    "headline": {
-      "fontFamily": "ui-serif, 'New York', 'Iowan Old Style', Georgia, 'Times New Roman', serif",
-      "fontSize": "27px",
-      "fontWeight": 400,
-      "lineHeight": 1.25,
-      "letterSpacing": "-0.005em"
-    },
     "title": {
-      "fontFamily": "ui-serif, 'New York', 'Iowan Old Style', Georgia, 'Times New Roman', serif",
-      "fontSize": "19px",
-      "fontWeight": 400,
-      "lineHeight": 1.4,
-      "letterSpacing": "-0.005em"
+      "fontFamily": "'Avenir Next Condensed', 'Bahnschrift SemiCondensed', 'Arial Narrow', 'Liberation Sans Narrow', 'DejaVu Sans Condensed', system-ui, sans-serif",
+      "fontSize": "30px",
+      "fontWeight": 600,
+      "lineHeight": 1.15,
+      "letterSpacing": "0"
     },
-    "wordmark": {
-      "fontFamily": "ui-serif, 'New York', 'Iowan Old Style', Georgia, 'Times New Roman', serif",
-      "fontSize": "18px",
-      "fontWeight": 400,
-      "lineHeight": 1.4,
-      "letterSpacing": "-0.005em"
+    "title-narrow": {
+      "fontFamily": "'Avenir Next Condensed', 'Bahnschrift SemiCondensed', 'Arial Narrow', 'Liberation Sans Narrow', 'DejaVu Sans Condensed', system-ui, sans-serif",
+      "fontSize": "25px",
+      "fontWeight": 600,
+      "lineHeight": 1.15,
+      "letterSpacing": "0"
     },
-    "day": {
-      "fontFamily": "ui-serif, 'New York', 'Iowan Old Style', Georgia, 'Times New Roman', serif",
-      "fontSize": "17px",
-      "fontWeight": 400,
-      "lineHeight": 1.4,
-      "letterSpacing": "-0.005em"
+    "headline": {
+      "fontFamily": "'Avenir Next Condensed', 'Bahnschrift SemiCondensed', 'Arial Narrow', 'Liberation Sans Narrow', 'DejaVu Sans Condensed', system-ui, sans-serif",
+      "fontSize": "24px",
+      "fontWeight": 600,
+      "letterSpacing": "0"
     },
     "item": {
-      "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-      "fontSize": "17px",
-      "fontWeight": 500,
-      "lineHeight": 1.4,
-      "letterSpacing": "-0.005em"
+      "fontFamily": "'Avenir Next Condensed', 'Bahnschrift SemiCondensed', 'Arial Narrow', 'Liberation Sans Narrow', 'DejaVu Sans Condensed', system-ui, sans-serif",
+      "fontSize": "22px",
+      "fontWeight": 600,
+      "lineHeight": 1.25,
+      "letterSpacing": "0"
+    },
+    "day": {
+      "fontFamily": "'Avenir Next Condensed', 'Bahnschrift SemiCondensed', 'Arial Narrow', 'Liberation Sans Narrow', 'DejaVu Sans Condensed', system-ui, sans-serif",
+      "fontSize": "18px",
+      "fontWeight": 600,
+      "letterSpacing": "0"
+    },
+    "count": {
+      "fontFamily": "'Avenir Next Condensed', 'Bahnschrift SemiCondensed', 'Arial Narrow', 'Liberation Sans Narrow', 'DejaVu Sans Condensed', system-ui, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": 600,
+      "letterSpacing": "0"
+    },
+    "figure": {
+      "fontFamily": "'Avenir Next Condensed', 'Bahnschrift SemiCondensed', 'Arial Narrow', 'Liberation Sans Narrow', 'DejaVu Sans Condensed', system-ui, sans-serif",
+      "fontSize": "15px",
+      "fontWeight": 600,
+      "letterSpacing": "0"
+    },
+    "wordmark": {
+      "fontFamily": "'Avenir Next Condensed', 'Bahnschrift SemiCondensed', 'Arial Narrow', 'Liberation Sans Narrow', 'DejaVu Sans Condensed', system-ui, sans-serif",
+      "fontSize": "15px",
+      "fontWeight": 600,
+      "letterSpacing": "0.24em"
     },
     "body": {
       "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
@@ -70,7 +102,7 @@
       "lineHeight": 1.6,
       "letterSpacing": "normal"
     },
-    "body-name": {
+    "name": {
       "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
       "fontSize": "15px",
       "fontWeight": 500,
@@ -84,10 +116,24 @@
       "lineHeight": 1.6,
       "letterSpacing": "normal"
     },
+    "nav-struck": {
+      "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      "fontSize": "14.5px",
+      "fontWeight": 600,
+      "lineHeight": 1.6,
+      "letterSpacing": "normal"
+    },
     "control": {
       "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
       "fontSize": "14px",
       "fontWeight": 400,
+      "lineHeight": 1.3,
+      "letterSpacing": "normal"
+    },
+    "control-primary": {
+      "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      "fontSize": "14px",
+      "fontWeight": 600,
       "lineHeight": 1.3,
       "letterSpacing": "normal"
     },
@@ -112,8 +158,15 @@
       "lineHeight": 1.6,
       "letterSpacing": "normal"
     },
-    "figure": {
+    "note": {
       "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      "fontSize": "12.5px",
+      "fontWeight": 400,
+      "lineHeight": 1.6,
+      "letterSpacing": "normal"
+    },
+    "command": {
+      "fontFamily": "ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
       "fontSize": "13px",
       "fontWeight": 400,
       "lineHeight": 1.6,
@@ -133,165 +186,245 @@
       "lineHeight": 1.55,
       "letterSpacing": "normal"
     },
-    "note": {
-      "fontFamily": "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+    "record": {
+      "fontFamily": "ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
       "fontSize": "12.5px",
       "fontWeight": 400,
-      "lineHeight": 1.6,
+      "lineHeight": 1.5,
       "letterSpacing": "normal"
-    },
-    "mono-small": {
-      "fontFamily": "ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace",
-      "fontSize": "12px",
-      "fontWeight": 400,
-      "lineHeight": 1.6,
-      "letterSpacing": "normal"
-    },
-    "headline-narrow": {
-      "fontFamily": "ui-serif, 'New York', 'Iowan Old Style', Georgia, 'Times New Roman', serif",
-      "fontSize": "23px",
-      "fontWeight": 400,
-      "lineHeight": 1.25,
-      "letterSpacing": "-0.005em"
     }
   },
   "rounded": {
-    "r": "4px",
-    "well": "6px",
-    "inner": "3px",
-    "dot": "50%"
+    "radius": "6px",
+    "icon": "4px",
+    "dot": "50%",
+    "cross": "0"
   },
   "spacing": {
-    "hair": "1px",
-    "xs": "4px",
-    "sm": "8px",
-    "row-y": "0.7rem",
-    "md": "16px",
-    "well": "1rem 1.1rem",
-    "lg": "24px",
-    "section": "2.25rem",
+    "page-max": "48rem",
     "page-x": "1.5rem",
-    "page-max": "48rem"
+    "page-x-768": "1.1rem",
+    "page-x-390": "1rem",
+    "page-bottom": "4rem",
+    "header-top": "1.4rem",
+    "tabs-top": "1.2rem",
+    "tabs-gap": "1.6rem",
+    "main-top": "1.9rem",
+    "viewhead": "1.75rem",
+    "section": "2.5rem",
+    "day": "2.25rem",
+    "heading-foot": "0.35rem",
+    "row-y": "0.6rem",
+    "record-y": "0.75rem",
+    "entry-y": "0.8rem",
+    "gate-y": "0.7rem",
+    "attention-y": "0.9rem 0 1.1rem",
+    "plane": "1rem 1.1rem",
+    "gap": "1rem",
+    "colophon-top": "4rem"
   },
   "components": {
     "button": {
-      "backgroundColor": "transparent",
-      "textColor": "{colors.ink}",
+      "backgroundColor": "{colors.muted}",
+      "textColor": "{colors.foreground}",
       "typography": "{typography.control}",
-      "rounded": "{rounded.r}",
-      "padding": "0.4rem 0.85rem"
+      "rounded": "{rounded.radius}",
+      "padding": "0.45rem 0.9rem"
     },
     "button-hover": {
-      "backgroundColor": "{colors.well}",
-      "textColor": "{colors.ink}"
+      "backgroundColor": "{colors.border}",
+      "textColor": "{colors.foreground}"
+    },
+    "button-active": {
+      "backgroundColor": "{colors.ghost}",
+      "textColor": "{colors.background}"
     },
     "button-primary": {
-      "backgroundColor": "{colors.ink}",
-      "textColor": "{colors.paper}",
-      "typography": "{typography.control}",
-      "rounded": "{rounded.r}",
-      "padding": "0.4rem 0.85rem"
+      "backgroundColor": "{colors.primary}",
+      "textColor": "{colors.primary-foreground}",
+      "typography": "{typography.control-primary}",
+      "rounded": "{rounded.radius}",
+      "padding": "0.45rem 0.9rem"
     },
     "button-primary-hover": {
-      "backgroundColor": "{colors.ink-soft}",
-      "textColor": "{colors.paper}"
+      "backgroundColor": "{colors.primary-hover}",
+      "textColor": "{colors.primary-foreground}"
     },
     "button-quiet": {
       "backgroundColor": "transparent",
-      "textColor": "{colors.ink-soft}",
+      "textColor": "{colors.muted-foreground}",
       "typography": "{typography.control}",
-      "rounded": "{rounded.r}",
-      "padding": "0.4rem 0.85rem"
+      "rounded": "{rounded.radius}",
+      "padding": "0.45rem 0.9rem"
     },
     "button-quiet-hover": {
-      "backgroundColor": "{colors.well}",
-      "textColor": "{colors.ink}"
+      "backgroundColor": "{colors.muted}",
+      "textColor": "{colors.foreground}"
     },
     "button-danger": {
       "backgroundColor": "transparent",
-      "textColor": "{colors.fail}",
+      "textColor": "{colors.struck}",
       "typography": "{typography.control}",
-      "rounded": "{rounded.r}",
-      "padding": "0.4rem 0.85rem"
+      "rounded": "{rounded.radius}",
+      "padding": "0.45rem 0.9rem"
+    },
+    "button-danger-hover": {
+      "backgroundColor": "{colors.muted}",
+      "textColor": "{colors.struck}"
     },
     "input": {
-      "backgroundColor": "{colors.paper}",
-      "textColor": "{colors.ink}",
+      "backgroundColor": "{colors.input}",
+      "textColor": "{colors.foreground}",
       "typography": "{typography.body}",
-      "rounded": "{rounded.r}",
-      "padding": "0.45rem 0.6rem"
-    },
-    "section-heading": {
-      "backgroundColor": "{colors.paper}",
-      "textColor": "{colors.ink}",
-      "typography": "{typography.title}",
-      "padding": "0 0 0.4rem"
-    },
-    "row": {
-      "backgroundColor": "{colors.paper}",
-      "textColor": "{colors.ink}",
-      "typography": "{typography.body-name}",
-      "padding": "0.7rem 0"
-    },
-    "well": {
-      "backgroundColor": "{colors.well}",
-      "textColor": "{colors.ink}",
-      "rounded": "{rounded.well}",
-      "padding": "1rem 1.1rem"
+      "rounded": "{rounded.radius}",
+      "padding": "0.5rem 0.65rem"
     },
     "tab": {
       "backgroundColor": "transparent",
-      "textColor": "{colors.ink-soft}",
+      "textColor": "{colors.muted-foreground}",
       "typography": "{typography.nav}",
-      "padding": "0.6rem 0 0.65rem"
+      "padding": "0.6rem 0 0.7rem"
     },
     "tab-selected": {
       "backgroundColor": "transparent",
-      "textColor": "{colors.ink}"
+      "textColor": "{colors.struck}",
+      "typography": "{typography.nav-struck}",
+      "padding": "0.6rem 0 0.7rem"
     },
-    "tab-disabled": {
+    "tab-gated": {
       "backgroundColor": "transparent",
-      "textColor": "{colors.ink-faint}"
+      "textColor": "{colors.ghost}",
+      "typography": "{typography.nav}",
+      "padding": "0.6rem 0 0.7rem"
     },
     "theme-toggle": {
       "backgroundColor": "transparent",
-      "textColor": "{colors.ink-faint}",
-      "rounded": "{rounded.inner}",
-      "padding": "0.1rem"
+      "textColor": "{colors.ghost}",
+      "rounded": "{rounded.icon}",
+      "size": "1.6rem"
+    },
+    "theme-toggle-pressed": {
+      "backgroundColor": "transparent",
+      "textColor": "{colors.struck}"
+    },
+    "wordmark": {
+      "backgroundColor": "{colors.background}",
+      "textColor": "{colors.struck}",
+      "typography": "{typography.wordmark}"
+    },
+    "view-title": {
+      "backgroundColor": "{colors.background}",
+      "textColor": "{colors.foreground}",
+      "typography": "{typography.title}"
+    },
+    "section-heading": {
+      "backgroundColor": "{colors.background}",
+      "textColor": "{colors.foreground}",
+      "typography": "{typography.headline}",
+      "padding": "0 0 0.35rem"
+    },
+    "section-count": {
+      "backgroundColor": "{colors.background}",
+      "textColor": "{colors.ghost}",
+      "typography": "{typography.count}"
+    },
+    "attention-primary-title": {
+      "backgroundColor": "{colors.background}",
+      "textColor": "{colors.struck}",
+      "typography": "{typography.item}"
+    },
+    "row": {
+      "backgroundColor": "{colors.background}",
+      "textColor": "{colors.foreground}",
+      "typography": "{typography.name}",
+      "padding": "0.6rem 0"
+    },
+    "record": {
+      "backgroundColor": "{colors.background}",
+      "textColor": "{colors.foreground}",
+      "typography": "{typography.name}",
+      "padding": "0.75rem 0"
+    },
+    "plane": {
+      "backgroundColor": "{colors.card}",
+      "textColor": "{colors.foreground}",
+      "rounded": "{rounded.radius}",
+      "padding": "1rem 1.1rem"
+    },
+    "board-header": {
+      "backgroundColor": "{colors.muted}",
+      "textColor": "{colors.ghost}",
+      "typography": "{typography.label}",
+      "rounded": "{rounded.radius}",
+      "padding": "0.4rem 0.6rem"
+    },
+    "command-chip": {
+      "backgroundColor": "{colors.muted}",
+      "textColor": "{colors.foreground}",
+      "typography": "{typography.command}",
+      "rounded": "{rounded.radius}",
+      "padding": "0.15rem 0.5rem"
+    },
+    "brief-block": {
+      "backgroundColor": "{colors.background}",
+      "textColor": "{colors.foreground}",
+      "typography": "{typography.brief}",
+      "rounded": "{rounded.radius}",
+      "padding": "0.7rem 0.8rem"
+    },
+    "diff-cell": {
+      "backgroundColor": "{colors.background}",
+      "textColor": "{colors.foreground}",
+      "typography": "{typography.summary}",
+      "rounded": "{rounded.radius}",
+      "padding": "0.6rem 0.75rem"
+    },
+    "notice": {
+      "backgroundColor": "{colors.card}",
+      "textColor": "{colors.muted-foreground}",
+      "typography": "{typography.meta}",
+      "rounded": "{rounded.radius}",
+      "padding": "0.6rem 0.8rem"
     },
     "state-pass": {
       "textColor": "{colors.pass}",
-      "typography": "{typography.figure}"
-    },
-    "state-warn": {
-      "textColor": "{colors.warn}",
-      "typography": "{typography.figure}"
+      "typography": "{typography.label}"
     },
     "state-fail": {
       "textColor": "{colors.fail}",
-      "typography": "{typography.figure}"
+      "typography": "{typography.label}"
+    },
+    "state-warn": {
+      "textColor": "{colors.warn}",
+      "typography": "{typography.label}"
     },
     "state-muted": {
-      "textColor": "{colors.ink-soft}",
-      "typography": "{typography.figure}"
+      "textColor": "{colors.ghost}",
+      "typography": "{typography.label}"
     },
     "state-draft": {
-      "textColor": "{colors.ink-soft}",
+      "textColor": "{colors.ghost}",
+      "typography": "{typography.label}"
+    },
+    "tally": {
+      "textColor": "{colors.foreground}",
       "typography": "{typography.figure}"
     },
-    "command-chip": {
-      "backgroundColor": "{colors.well}",
-      "textColor": "{colors.ink}",
-      "typography": "{typography.code}",
-      "rounded": "{rounded.r}",
-      "padding": "0.12rem 0.45rem"
+    "filter-word": {
+      "backgroundColor": "transparent",
+      "textColor": "{colors.muted-foreground}",
+      "typography": "{typography.meta}",
+      "padding": "0.25rem 0"
     },
-    "brief-block": {
-      "backgroundColor": "{colors.paper}",
-      "textColor": "{colors.ink}",
-      "typography": "{typography.brief}",
-      "rounded": "{rounded.r}",
-      "padding": "0.7rem 0.8rem"
+    "filter-word-selected": {
+      "backgroundColor": "transparent",
+      "textColor": "{colors.struck}"
+    },
+    "latest-change": {
+      "backgroundColor": "transparent",
+      "textColor": "{colors.foreground}",
+      "typography": "{typography.name}",
+      "padding": "0.8rem 0"
     }
   }
 }

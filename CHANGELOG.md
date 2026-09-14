@@ -57,6 +57,13 @@ agent can use. Nothing here has been released yet.
   never passing.
 - **Maintenance.** Map drift and hygiene show up as attention items, and
   `wh check --maintain-outcome` records the result of a maintain pass.
+- **A design system.** The dashboard follows the Whetstone logo: black and
+  orange, white and orange in light mode, with ShadCN token names
+  (`--background`, `--foreground`, `--muted`, `--primary`, `--ring`, ...) in
+  the dashboard's own CSS. Every option is present as a quiet ghost and the
+  one live thing is struck in orange; states are marks, not hues (a lit disc
+  for pass, an orange cross for fail, a ring for unknown or stale, a dashed
+  ring for draft). No boxes or rules; the tokens and rules are in `DESIGN.md`.
 
 ### Changed
 

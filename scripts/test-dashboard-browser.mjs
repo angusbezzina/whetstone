@@ -29,6 +29,7 @@ const entry = (id, kind, title, extra = {}) => ({
   ...extra,
 });
 
+const HINTS = {"mission": "what this project exists to do", "desired outcome": "how you will know it is working", "core values": "what guides choices when they conflict", "implementation philosophy": "how work gets done here", "accountable owner": "who decides consequential changes", "initial safeguard": "one deterministic check you already trust", "initial safeguard scope": "where that check applies", "revision triggers": "when to revisit all of this"};
 function view(mode) {
   const established = mode !== "fresh";
   const gates = [
@@ -58,7 +59,7 @@ function view(mode) {
     header: { project: "browser-fixture", agreement: established ? "owner approved" : "not initialised", visibility: "private", drafts: established ? 1 : 0, team: "not configured" },
     onboarding: {
       decisions: [["mission", "Mission"], ["desired outcome", "Desired outcome"], ["core values", "Core values"], ["implementation philosophy", "Engineering philosophy"], ["accountable owner", "Accountable owner"], ["initial safeguard", "First gate"], ["initial safeguard scope", "Gate scope"], ["revision triggers", "Review triggers"]]
-        .map(([key, text]) => ({ key, label: text, hint: "decide it", done: false })),
+        .map(([key, text]) => ({ key, label: text, hint: HINTS[key] || "", done: false })),
       missing: [], command: "wh init",
     },
     mission: established ? entry("mission.project", "mission", XSS + "Own the outer loop", { outcomes: ["Routine drift is repaired"] }) : null,

@@ -94,9 +94,15 @@ local draft, accepted, superseded, owner.
 
 ## Brand commitments
 
-None recorded. The prior look (warm cream paper, Georgia headings, forest
-green accent) is evidence of the subject, not a commitment; the owner asked
-for a complete rework. [Inferred from the 2026-09-10 brief.]
+Owner-pinned 2026-09-14: the Whetstone logo (a flat isometric orange stone
+on a black base; the wordmark set wide and tracked in caps, WHET in black
+and STONE in orange). Core colours are black and orange; light mode is white
+and orange. The design system uses ShadCN's token vocabulary (background,
+foreground, card, muted, border, input, ring, primary, destructive, radius)
+implemented in the dashboard's own dependency-free CSS; ShadCN's React
+components are not adopted. The feel is a minimal personal journal. The
+visual world chosen on 2026-09-14 is recorded in the surface brief and
+DESIGN.md.
 
 ## Open decisions
 
