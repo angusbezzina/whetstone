@@ -20,7 +20,10 @@ agent can use. Nothing here has been released yet.
 - **A private project agreement.** `wh init` records the owner's eight
   decisions (mission, desired outcome, values, philosophy, owner, first
   safeguard and its scope, revision triggers, first gate) in a private store
-  under `.git/whetstone/`. Nothing is committed or shared.
+  under `.git/whetstone/`. Nothing is committed or shared. Run by a person
+  before any agreement exists, it opens the dashboard's guided onboarding and
+  logs each recorded step to the terminal; `--no-open` prints the decisions
+  and the exact command instead. Machine callers always get the JSON envelope.
 - **A verification skill for any agent.** `wh init --action wire` generates a
   skill, feature map and driver from the accepted records and writes the same
   bytes into `.claude/skills`, `.cursor/skills` or `.agents/skills`. Feature

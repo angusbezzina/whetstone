@@ -54,9 +54,14 @@ those records atomically without editing project files or creating shared
 state. Setup remains incomplete until the bounded repair loop has a current
 known-bad to known-good proof for the exact code snapshot.
 
-Interactive `wh dash` serves a dependency-free local UI with four views.
-Dashboard shows mission-linked metrics, gate status, what needs attention and
-the latest change, or only the onboarding path before `wh init`. Foundations is
+Interactive `wh dash` serves a dependency-free local UI with four views. A
+person's first `wh init` opens the same UI on its onboarding path and keeps
+serving: each step the dashboard records (the agreement, drafts, checks) is
+printed to the terminal, so leaving and coming back shows where things stand.
+`wh init --no-open` lists the decisions and the exact `--action agree` command
+instead. Dashboard shows mission-linked metrics, gate status, what needs
+attention and the latest change, or only the onboarding path before `wh init`.
+Foundations is
 an editable, versioned flow from mission and values to key metrics, rules and
 guidelines, and gates; edits become governed local drafts with exact
 before/after review. Checks shows the last run per gate, failures, the exact

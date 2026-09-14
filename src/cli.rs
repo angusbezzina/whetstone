@@ -3,9 +3,9 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::json;
@@ -77,6 +77,10 @@ enum Command {
         /// Show the exact records or files that would be written, and write nothing.
         #[arg(long)]
         dry_run: bool,
+        /// List the decisions and the exact command in the terminal instead of
+        /// opening the dashboard's guided onboarding (inspect, before an agreement).
+        #[arg(long)]
+        no_open: bool,
         /// Agent host to receive the verification skill: claude, cursor or agents (wire).
         #[arg(long = "host")]
         hosts: Vec<String>,
@@ -450,35 +454,55 @@ pub fn run() -> i32 {
             revision_triggers,
             gate_command,
             dry_run,
+            no_open,
             hosts,
             regenerate_driver,
             import_from,
             hooks,
             ci,
             reviewers,
-        }) => service.execute(ServiceRequest::Init(InitRequest {
-            project_dir,
-            request_id,
-            action: action.into(),
-            expected_revision,
-            resume_token,
-            mission,
-            desired_outcome,
-            values,
-            philosophy,
-            owner,
-            initial_safeguard,
-            safeguard_scope,
-            revision_triggers,
-            gate_command,
-            dry_run,
-            hosts,
-            regenerate_driver,
-            import_from,
-            hooks,
-            ci,
-            reviewers,
-        })),
+        }) => {
+            // A person inspecting a project with no agreement is walked through
+            // it in the dashboard. Machine callers always get the envelope.
+            let guided =
+                !machine && !no_open && !dry_run && matches!(action, InitActionArg::Inspect);
+            let dashboard_dir = project_dir.clone();
+            let dashboard_request_id = request_id.clone();
+            let response = service.execute(ServiceRequest::Init(InitRequest {
+                project_dir,
+                request_id,
+                action: action.into(),
+                expected_revision,
+                resume_token,
+                mission,
+                desired_outcome,
+                values,
+                philosophy,
+                owner,
+                initial_safeguard,
+                safeguard_scope,
+                revision_triggers,
+                gate_command,
+                dry_run,
+                hosts,
+                regenerate_driver,
+                import_from,
+                hooks,
+                ci,
+                reviewers,
+            }));
+            if guided && needs_onboarding(&response) {
+                return run_dashboard(
+                    dashboard_dir,
+                    dashboard_request_id,
+                    false,
+                    false,
+                    None,
+                    Some(&response),
+                );
+            }
+            response
+        }
         Some(Command::Dash {
             project_dir,
             request_id,
@@ -526,7 +550,14 @@ pub fn run() -> i32 {
                 }
                 response
             } else {
-                return run_dashboard(project_dir, request_id, read_only, no_open, bootstrap_file);
+                return run_dashboard(
+                    project_dir,
+                    request_id,
+                    read_only,
+                    no_open,
+                    bootstrap_file,
+                    None,
+                );
             }
         }
         Some(Command::Change {
@@ -1187,17 +1218,29 @@ fn utc_timestamp(unix_seconds: u64) -> String {
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
+/// Serve the dashboard in the foreground and narrate what it records.
+///
+/// With `onboarding`, the process was started by a person's `wh init` before
+/// any agreement existed: the intro explains the guided route and the
+/// terminal alternative, and the browser opens on the onboarding page.
 fn run_dashboard(
     project_dir: PathBuf,
     request_id: Option<String>,
     read_only: bool,
     no_open: bool,
     bootstrap_file: Option<PathBuf>,
+    onboarding: Option<&ServiceResponse>,
 ) -> i32 {
-    let backend = Arc::new(dashboard_service::CommandDashboardBackend::new(
-        project_dir,
-        request_id,
-    ));
+    let (progress, recorded) = mpsc::channel::<String>();
+    let backend = Arc::new(
+        dashboard_service::CommandDashboardBackend::new(project_dir, request_id).observed(
+            Arc::new(move |response: &ServiceResponse| {
+                if let Some(line) = progress_line(response) {
+                    let _ = progress.send(line);
+                }
+            }),
+        ),
+    );
     let handle = match dashboard::DashboardHandle::start(
         dashboard::DashboardMode::Local {
             allow_mutations: !read_only,
@@ -1230,7 +1273,10 @@ fn run_dashboard(
             }
         }
     }
-    println!("Whetstone dashboard: {}", handle.public_url());
+    match onboarding {
+        Some(response) => print!("{}", format_onboarding_intro(response, handle.public_url())),
+        None => println!("Whetstone dashboard: {}", handle.public_url()),
+    }
     if !no_open {
         let launch_url = if read_only {
             handle.public_url().to_string()
@@ -1245,12 +1291,142 @@ fn run_dashboard(
             );
         }
     }
-    println!("Serving in the foreground. Press Ctrl-C to stop.");
+    if onboarding.is_none() {
+        println!("Serving in the foreground. Press Ctrl-C to stop.");
+    }
 
     // The foreground process owns the listener. Normal return and unwinding
     // drop the handle; process termination closes only this process's socket.
+    // Meanwhile every step the dashboard records is written here, so an
+    // owner who comes back to the terminal sees where they are.
+    let started = Instant::now();
     loop {
-        thread::park_timeout(Duration::from_secs(60));
+        match recorded.recv_timeout(Duration::from_secs(60)) {
+            Ok(line) => {
+                let stamp = elapsed_stamp(started.elapsed());
+                let mut lines = line.lines();
+                if let Some(first) = lines.next() {
+                    println!("{stamp}  {first}");
+                }
+                for rest in lines {
+                    println!("{:width$}  {rest}", "", width = stamp.len());
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                thread::park_timeout(Duration::from_secs(60));
+            }
+        }
+    }
+}
+
+/// `+1m40s`: time since the dashboard started, for the progress lines.
+fn elapsed_stamp(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+    if seconds >= 3600 {
+        format!("+{}h{:02}m", seconds / 3600, (seconds % 3600) / 60)
+    } else {
+        format!("+{}m{:02}s", seconds / 60, seconds % 60)
+    }
+}
+
+/// A person ran `wh init` and there is no agreement yet.
+fn needs_onboarding(response: &ServiceResponse) -> bool {
+    response.workflow == "init"
+        && response.data.get("read_only") == Some(&serde_json::Value::Bool(true))
+        && response
+            .data
+            .pointer("/progress/missing_decisions")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|missing| !missing.is_empty())
+}
+
+/// What `wh init` prints before serving the guided onboarding.
+fn format_onboarding_intro(response: &ServiceResponse, url: &str) -> String {
+    let count = response
+        .data
+        .pointer("/progress/missing_decisions")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    format!(
+        "Whetstone · init · no agreement here yet\n\n\
+         An agreement is {count} decisions you make once. Nothing is shared, published or\n\
+         committed: recording it writes private state inside this repository's Git\n\
+         directory, and no working-tree files.\n\n\
+         The dashboard walks you through them, then stays open as your project view:\n\
+         \x20 {url}\n\n\
+         Prefer the terminal? Press Ctrl-C, then:\n\
+         \x20 wh init --no-open            lists each decision and the exact command\n\
+         \x20 wh init --action agree ...   records them without the dashboard (--dry-run previews)\n\n\
+         This terminal logs each step the dashboard records. Press Ctrl-C when you are done.\n"
+    )
+}
+
+/// One terminal line (plus an optional `Next:` line) for a dashboard mutation
+/// that changed something. Previews, dry runs and inspections print nothing.
+fn progress_line(response: &ServiceResponse) -> Option<String> {
+    let flag = |key: &str| response.data.get(key) == Some(&serde_json::Value::Bool(true));
+    if flag("dry_run") || flag("preview_only") || flag("read_only") {
+        return None;
+    }
+    let first_sentence = |text: &str| {
+        let line = text.lines().next().unwrap_or_default().trim();
+        line.split_once(". ")
+            .map_or(line, |(sentence, _)| sentence)
+            .trim_end_matches('.')
+            .to_string()
+    };
+    match response.workflow.as_str() {
+        "init" => {
+            let complete = response.data.pointer("/progress/agreement_complete")
+                == Some(&serde_json::Value::Bool(true));
+            let wrote = response
+                .data
+                .get("records")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|records| !records.is_empty());
+            if complete && wrote {
+                let revision = response.expected_revision.unwrap_or(1);
+                Some(format!(
+                    "Agreement recorded · revision {revision} · private, unshared. The dashboard now shows your project.\n\
+                     Next: wh init --action wire --host claude (or cursor, agents) writes the verification skill for your agent; wh check runs the first gate."
+                ))
+            } else if response.state == ServiceState::Success {
+                Some(first_sentence(&response.summary))
+            } else {
+                None
+            }
+        }
+        "change" => {
+            if response.state != ServiceState::Success {
+                return None;
+            }
+            let record_id = response
+                .data
+                .pointer("/record/id")
+                .or_else(|| response.data.get("record_id"))
+                .and_then(serde_json::Value::as_str);
+            Some(match record_id {
+                Some(id) => format!("{id}: {}", first_sentence(&response.summary)),
+                None => first_sentence(&response.summary),
+            })
+        }
+        "check" => {
+            let summary = response.summary.lines().next().unwrap_or_default();
+            let summary = summary
+                .split_once(":check: ")
+                .map_or(summary, |(_, rest)| rest);
+            let state = format!("{:?}", response.state).to_lowercase();
+            let summary = summary
+                .strip_suffix(&format!(" ({state})"))
+                .unwrap_or(summary);
+            let mut line = format!("Check · {state}: {summary}");
+            if let Some(next) = response.permitted_actions.first() {
+                let _ = write!(line, "\nNext: {next}");
+            }
+            Some(line)
+        }
+        _ => (response.state == ServiceState::Success).then(|| first_sentence(&response.summary)),
     }
 }
 
@@ -1377,7 +1553,7 @@ fn format_init_walkthrough(response: &ServiceResponse) -> Option<String> {
     }
     let _ = writeln!(
         out,
-        "\nAnswer them either way:\n\n  wh dash        opens the dashboard and walks you through a form, shows the\n                 exact records before saving, then records them.\n\n  wh init --action agree --expected-revision {} --resume <token> \\\n    --mission \"…\" --desired-outcome \"…\" --values \"…\" --philosophy \"…\" \\\n    --owner \"…\" --initial-safeguard \"…\" --safeguard-scope \"…\" \\\n    --revision-triggers \"…\" [--gate-command \"…\"]\n                 records the same thing without the dashboard. Add --dry-run to\n                 see the exact records first.",
+        "\nAnswer them either way:\n\n  wh init        opens the dashboard (so does wh dash), walks you through a\n                 form, shows the exact records before saving, then records them.\n\n  wh init --action agree --expected-revision {} --resume <token> \\\n    --mission \"…\" --desired-outcome \"…\" --values \"…\" --philosophy \"…\" \\\n    --owner \"…\" --initial-safeguard \"…\" --safeguard-scope \"…\" \\\n    --revision-triggers \"…\" [--gate-command \"…\"]\n                 records the same thing without the dashboard. Add --dry-run to\n                 see the exact records first.",
         response.expected_revision.unwrap_or(0)
     );
     if let Some(token) = &response.resume_token {
@@ -1676,6 +1852,125 @@ mod tests {
         );
         assert!(rendered.contains("resume-v1:abc"), "{rendered}");
         assert!(!rendered.contains("Needs: Provide mission."), "{rendered}");
+    }
+
+    fn envelope(
+        workflow: &str,
+        state: ServiceState,
+        summary: &str,
+        data: serde_json::Value,
+    ) -> ServiceResponse {
+        ServiceResponse {
+            schema: crate::service::RESPONSE_SCHEMA.into(),
+            schema_version: 1,
+            request_id: "progress".into(),
+            workflow: workflow.into(),
+            state,
+            summary: summary.into(),
+            expected_revision: Some(1),
+            resume_token: None,
+            required_snapshot: None,
+            evidence: Vec::new(),
+            blocking_questions: Vec::new(),
+            permitted_actions: vec!["wh check".into()],
+            data,
+        }
+    }
+
+    #[test]
+    fn a_person_without_an_agreement_is_taken_to_the_guided_onboarding() {
+        let fresh = envelope(
+            "init",
+            ServiceState::NeedsInput,
+            "Inspection is complete and read-only.",
+            json!({"read_only": true, "progress": {"missing_decisions": ["mission"]}}),
+        );
+        assert!(needs_onboarding(&fresh));
+        let intro = format_onboarding_intro(&fresh, "http://127.0.0.1:4242");
+        assert!(intro.contains("http://127.0.0.1:4242"), "{intro}");
+        assert!(
+            intro.contains("wh init --no-open") && intro.contains("--action agree"),
+            "the terminal route stays available: {intro}"
+        );
+        assert!(intro.contains("Nothing is shared, published or"), "{intro}");
+        assert!(intro.contains("Ctrl-C"), "{intro}");
+
+        let established = envelope(
+            "init",
+            ServiceState::NeedsInput,
+            "The agreement is installed locally.",
+            json!({"read_only": true, "progress": {"missing_decisions": []}}),
+        );
+        assert!(!needs_onboarding(&established));
+        let mut other = fresh.clone();
+        other.workflow = "dash".into();
+        assert!(!needs_onboarding(&other));
+    }
+
+    #[test]
+    fn progress_lines_report_what_the_dashboard_recorded_and_nothing_else() {
+        let agreed = envelope(
+            "init",
+            ServiceState::NeedsInput,
+            "The private project agreement is approved and installed; setup remains incomplete.",
+            json!({"progress": {"agreement_complete": true}, "records": [{"id": "mission.project"}]}),
+        );
+        let line = progress_line(&agreed).expect("the agreement is reported");
+        assert!(
+            line.starts_with("Agreement recorded · revision 1"),
+            "{line}"
+        );
+        assert!(line.contains("Next: wh init --action wire"), "{line}");
+
+        let mut dry = agreed.clone();
+        dry.data["dry_run"] = json!(true);
+        assert_eq!(progress_line(&dry), None, "dry runs print nothing");
+        let inspected = envelope(
+            "init",
+            ServiceState::NeedsInput,
+            "Inspection is complete and read-only.",
+            json!({"read_only": true, "progress": {"missing_decisions": ["mission"]}}),
+        );
+        assert_eq!(progress_line(&inspected), None, "inspections print nothing");
+
+        let draft = envelope(
+            "change",
+            ServiceState::Success,
+            "The private draft was recorded. It is not in force until you accept it; nothing was shared.",
+            json!({"recorded": true, "record": {"id": "guidance.review"}}),
+        );
+        assert_eq!(
+            progress_line(&draft).as_deref(),
+            Some("guidance.review: The private draft was recorded")
+        );
+        let preview = envelope(
+            "change",
+            ServiceState::NeedsDecision,
+            "Review the exact local proposal.",
+            json!({"preview_only": true}),
+        );
+        assert_eq!(progress_line(&preview), None, "previews print nothing");
+        let probe = envelope(
+            "change",
+            ServiceState::NeedsInput,
+            "More owner input is required; no agreement change was recorded.",
+            json!({"effects": {}}),
+        );
+        assert_eq!(progress_line(&probe), None, "probes print nothing");
+
+        let check = envelope(
+            "check",
+            ServiceState::Unknown,
+            "project:abc:check: Required evidence is missing. (unknown)\nUNKNOWN whetstone.native-scan: …",
+            json!({}),
+        );
+        assert_eq!(
+            progress_line(&check).as_deref(),
+            Some("Check · unknown: Required evidence is missing.\nNext: wh check")
+        );
+
+        assert_eq!(elapsed_stamp(Duration::from_secs(100)), "+1m40s");
+        assert_eq!(elapsed_stamp(Duration::from_secs(3_725)), "+1h02m");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Typed dashboard adapter over the same command service used by the CLI.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::Deserialize;
 
@@ -17,11 +18,28 @@ use crate::service::{
 /// Request bodies deliberately have no `project_dir` field. This prevents an
 /// authenticated browser session from turning the dashboard into an arbitrary
 /// filesystem reader or writer.
-#[derive(Debug)]
 pub struct CommandDashboardBackend {
     project_dir: PathBuf,
     inspect_request_id: Option<String>,
     service: CommandService,
+    /// Sees every mutation response after the service has answered it, so
+    /// the foreground process can narrate what the dashboard recorded.
+    /// Inspections are never reported.
+    observer: Option<MutationObserver>,
+}
+
+/// Called with each mutation response; must not block the request thread.
+pub type MutationObserver = Arc<dyn Fn(&ServiceResponse) + Send + Sync>;
+
+impl std::fmt::Debug for CommandDashboardBackend {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CommandDashboardBackend")
+            .field("project_dir", &self.project_dir)
+            .field("inspect_request_id", &self.inspect_request_id)
+            .field("observer", &self.observer.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl CommandDashboardBackend {
@@ -30,7 +48,14 @@ impl CommandDashboardBackend {
             project_dir,
             inspect_request_id,
             service: CommandService,
+            observer: None,
         }
+    }
+
+    /// Report each mutation response to `observer`.
+    pub fn observed(mut self, observer: MutationObserver) -> Self {
+        self.observer = Some(observer);
+        self
     }
 
     fn response(response: ServiceResponse) -> BackendResponse {
@@ -138,7 +163,11 @@ impl DashboardBackend for CommandDashboardBackend {
             Ok(request) => request.into_service_request(self.project_dir.clone()),
             Err(error) => return invalid_request(format!("invalid dashboard command: {error}")),
         };
-        Self::response(self.service.execute(request))
+        let response = self.service.execute(request);
+        if let Some(observer) = &self.observer {
+            observer(&response);
+        }
+        Self::response(response)
     }
 }
 
@@ -459,4 +488,41 @@ fn invalid_request(summary: String) -> BackendResponse {
             "data": {},
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    fn observed_backend() -> (CommandDashboardBackend, Arc<Mutex<Vec<String>>>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        let backend = CommandDashboardBackend::new(std::env::temp_dir(), None).observed(Arc::new(
+            move |response: &ServiceResponse| {
+                sink.lock()
+                    .expect("observer lock")
+                    .push(response.workflow.clone());
+            },
+        ));
+        (backend, seen)
+    }
+
+    #[test]
+    fn the_observer_sees_mutations_but_not_inspections_or_rejected_bodies() {
+        let (backend, seen) = observed_backend();
+        backend.inspect(b"");
+        assert!(
+            seen.lock().expect("observer lock").is_empty(),
+            "inspections are not reported"
+        );
+        let rejected = backend.mutate(b"{\"workflow\":\"nope\"}");
+        assert_eq!(rejected.status, 400);
+        assert!(
+            seen.lock().expect("observer lock").is_empty(),
+            "rejected bodies never reach the service"
+        );
+        backend.mutate(b"{\"workflow\":\"init\",\"action\":\"inspect\"}");
+        assert_eq!(seen.lock().expect("observer lock").as_slice(), ["init"]);
+    }
 }
