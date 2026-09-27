@@ -2,9 +2,17 @@
 
 Open [index.html](index.html) directly in a browser. It is a self-contained HTML
 artefact: no build, server, network requests, account, or runtime dependencies.
-It is the behavioural and visual reference for the `wh dash` local UI; the
-implementation lives in `assets/dashboard/` and is tracked in Beads epic
-`whetstone-k5r` (see `whetstone-k5r.15` and its children).
+It is the visual reference for the `wh dash` local UI; the implementation
+lives in `assets/dashboard/`.
+
+> **Status (2026-09-27).** The visual world is current. The content predates
+> the delegation plan (`planning/direction.md`): the eight owner decisions,
+> key metrics, and the five Foundations stages. Beads task
+> `whetstone-ppq.1.3` replaces that content with onboarding (mission,
+> principles, exemplar codebases, accepting proposed rules), Rules (grouped
+> by strength with enforcer, shadow status and false-flag rate), Checks,
+> Changelog and Requests. `whetstone-ppq.3.8` then builds it. Until then, the
+> views below describe the reference as it stands.
 
 All sample data (project name, records, dates, checks, receipts) is fictional.
 Nothing in the file runs a check, saves a record, or contacts a service. The
@@ -43,18 +51,11 @@ header that stays at the top while the page scrolls and wraps under 390 px.
 
 ## Visual world
 
-The Notebook world pinned by the owner on 2026-09-10, replacing the earlier
-Graphite Console; the durable decisions are recorded in `DESIGN.md` and the
-surface brief under `.impeccable/surfaces/`. In short: one calm column of
-paper with generous margins, every section a serif heading on a rule and every
-record an entry on a ruled line, no boxes, panels or shadows; light and dark
-from one token set, following the system or pinned by a small toggle in the
-header, with every text pair verified at 4.5:1 or better in both; system faces
-only (a book serif for headings, the system sans for everything else, mono only
-for commands and exact records); the primary action in ink; and colour spent
-only on state by law: green for a fresh real pass or an accepted record, ochre
-for unknown, stale or not run, red for fail or off target, dashed rules and
-rings for drafts and anything not yet in force.
+Struck Cathode Gauze, chosen by the owner on 2026-09-14: the logo's black and
+orange (white and orange in light mode) in ShadCN token names. Every option
+sits as a quiet ghost, and the one live thing is struck orange. There are no
+boxes or rules, and states are marks rather than hues. The binding decisions
+are in `DESIGN.md` and the surface brief under `.impeccable/surfaces/`.
 
 ## Smoke test
 
@@ -74,7 +75,7 @@ product.
 
 ## Related planning material
 
+- `planning/direction.md`: the current plan and fixed decisions.
 - `planning/skill-cli-boundary.md`: judgment versus deterministic work.
-- `prune-inventory.md`: the R0 allowlist and recovery record.
-- `storage-spike.md` and `trust-boundary.md`: M0 decisions.
-- Older direction material lives in `planning/archive/`.
+- `planning/archive/`: superseded material, including the R0 prune
+  inventory and the storage and trust-boundary ADRs.

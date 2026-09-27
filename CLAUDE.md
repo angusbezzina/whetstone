@@ -1,11 +1,24 @@
 # Claude Code instructions for Whetstone
 
-Follow [AGENTS.md](AGENTS.md) completely. Whetstone is in the M1/M2
-implementation of the `whetstone-k5r` epic; the old product is not a template
-for the new one. Two 2026-09-10 owner decisions govern remaining work: Beads
-replaces Whetstone's own Dolt store (`whetstone-k5r.17`), and the generated
-verification skill must be pstack-compatible (`whetstone-k5r.38`). Read the
-epic's "Beads storage and pstack interop" section before planning.
+Follow [AGENTS.md](AGENTS.md) completely. The plan of record is the Beads epic
+`whetstone-ppq` (the delegation plan, adopted 2026-09-27), which supersedes
+`whetstone-k5r`. Read [planning/direction.md](planning/direction.md) and the
+epic description before planning.
+
+In short:
+
+- Rules have one strength (must, should or advisory) and one enforcer:
+  mechanical first, then a Jev question, then review.
+- Jev runs in the driver. It never passes a must rule and starts in shadow
+  mode.
+- Checks run at pre-commit, at pre-push and as a required CI status. The Stop
+  hook is only the repair loop.
+- Whetstone uses pstack's judgment skills and never reimplements them.
+- Beads is the only record store.
+
+Do not extend the removed direction: the eight-decision onboarding, values and
+metrics, exceptions, scopes, PR-manifest activation, repair-host sockets and
+mandates. Their code is scheduled for deletion in `whetstone-ppq.2`.
 
 Do not restore removed modules, commands, packs, generated artifacts, fixtures,
 or compatibility paths for convenience. The last old-product revision is
@@ -13,13 +26,10 @@ or compatibility paths for convenience. The last old-product revision is
 Preserve all project data under `whetstone/`, `.beads/`, and `.git/info/exclude`.
 
 The public surface is `wh init`, `wh dash`, `wh change`, `wh check`,
-`wh pull`, and `wh push`; all are implemented, and milestone acceptance
-(owner walkthroughs, a live two-person activation) is tracked in Beads.
-Current hidden developer gates are `validate`, `eval`, and `scan`.
+`wh pull`, and `wh push`. The hidden developer gates are `validate`, `eval`,
+and `scan`. Milestone acceptance is tracked by the exits in `whetstone-ppq.10`.
 
-Use `planning/direction-demo/index.html` for behavior,
-`planning/skill-cli-boundary.md` for the skill, driver, kernel and storage
-boundary and the pstack interop contract, and
-`planning/direction-demo/prune-inventory.md` for the R0 allowlist and recovery
-record. Use Beads for every implementation task and run all eight gates before
-every push.
+Use `planning/skill-cli-boundary.md` for the skill, driver, kernel and storage
+boundary and the pstack interop contract. Use
+`planning/direction-demo/index.html` for the dashboard's visual world. Use Beads
+for every implementation task and run all eight gates before every push.

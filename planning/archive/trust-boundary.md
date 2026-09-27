@@ -1,5 +1,7 @@
 # ADR-0002: GitHub-governed shared authority with fail-closed local enforcement
 
+> **Superseded (2026-09-27).** The delegation plan (`planning/direction.md`, Beads `whetstone-ppq`) drops the PR-manifest activation model, `authority.json` and environment protection described here. Team review now uses the platform's own branch protection plus a required `wh check` status (`whetstone-ppq.6.3`); the activation code is removed by `whetstone-ppq.2.1`. The privacy and dashboard-boundary sections informed the current design. Kept as history.
+
 - Status: accepted for M1 implementation
 - Date: 2026-09-09
 - Accepted lean baseline: `2c3f0a3bb66d2ffa89c7b2f300b864a3ee8fea48`

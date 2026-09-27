@@ -1,5 +1,7 @@
 # Whetstone R0 prune inventory
 
+> **Archived (2026-09-27).** This is the R0 allowlist and recovery record of the superseded epic `whetstone-k5r`. The current removal plan is `whetstone-ppq.2` (see `planning/direction.md`). Kept as history; the recovery revision it records remains valid.
+
 This is implementation evidence for `whetstone-k5r.1`, not a second backlog. It fixes the exact prune boundary before the new product foundations begin.
 
 ## Baseline and recovery

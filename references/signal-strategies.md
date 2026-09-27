@@ -1,8 +1,9 @@
 # Deterministic signal strategies
 
-This is the temporary R0 kernel contract. It preserves a real safety bar while
-Direction 05's typed agreement records are built. The full judgment boundary is
-in `planning/skill-cli-boundary.md`.
+This is how a rule's mechanical enforcer is chosen, the first rung of the
+enforcement ladder in `planning/direction.md`. Rules that fail every bucket
+below become a literal Jev question or a review, never a weak mechanical check.
+The full boundary is in `planning/skill-cli-boundary.md`.
 
 ## Three-bucket audit
 

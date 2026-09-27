@@ -369,6 +369,17 @@ components:
 
 <!-- Recorded from assets/dashboard/app.css, views.css and index.html on 2026-09-14 after the owner chose the Struck Cathode Gauze world (surface brief: .impeccable/surfaces/planning-direction-demo-index-html.md, catalog id operate-b-struck-cathode-gauze) and the finish review shipped. It replaces the Engineering Journal (ruled paper, blue accent) recorded on 2026-09-10; nothing from that world survives. Token names are the ShadCN vocabulary declared on :root (--background, --foreground, --card, --muted, --muted-foreground, --border, --input, --ring, --primary, --primary-foreground, --primary-hover, --destructive, --radius) plus the product's extensions (--ghost, --struck, --halo, --pass, --warn, --fail, --mesh, --display, --sans, --mono). The light values are canonical; the dark-* keys are the same tokens as redefined under prefers-color-scheme: dark (guarded :root:not([data-theme="light"])) and again under :root[data-theme="dark"]. The build has no transitions, so no easing or duration token exists; --destructive is declared for vocabulary parity and the danger button reads --struck instead. -->
 
+> **Content note (2026-09-27).** The tokens, marks, type, spacing and component
+> rules below remain binding. Where this document names sections, it describes
+> the dashboard as shipped: the eight onboarding decisions, Key metrics, and
+> the Foundations stages of values, metrics and gates. The delegation plan
+> (`planning/direction.md`) replaces that content. The new sections are
+> onboarding with mission, principles, exemplars and proposed rules; Rules,
+> grouped by strength with enforcer, shadow status and false-flag rate; and
+> Requests for raised hands. That work is tracked as Beads
+> `whetstone-ppq.1.3` and `whetstone-ppq.3.8`. Apply the same visual rules to
+> the new sections, and update this document when they ship.
+
 ## Overview
 
 **Creative North Star: "The Struck Cathode Gauze"**

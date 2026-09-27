@@ -7,6 +7,8 @@ related_targets: ["assets/dashboard/index.html"]
 
 # Surface brief: Whetstone dashboard direction reference
 
+> **Content note (2026-09-27).** The direction contract (form, marks, type, motion) below stays binding. The task and content lines describe the reference before the delegation plan (`planning/direction.md`). Beads `whetstone-ppq.1.3` replaces the eight decisions, Key metrics and the five Foundations stages with onboarding (mission, principles, exemplar codebases, accepting proposed rules), Rules (by strength, with enforcer, shadow status and false-flag rate), Checks, Changelog and Requests. Update this brief as part of that task.
+
 Scope: `planning/direction-demo/index.html`, the self-contained behavioural and visual reference for the `wh dash` local UI (implemented in `assets/dashboard/`). Visitor mode: Operate.
 
 Audience and job: the accountable engineer or team lead opening `wh dash` beside their editor. In under a minute: are the mission's measures moving, are the gates holding, what is the one thing to decide or hand to the coding agent. Coding agents read the same records through `--json`.

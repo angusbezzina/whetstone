@@ -16,59 +16,76 @@ self-contained static HTML file under `planning/direction-demo/`.
 
 ## What Whetstone is
 
-Whetstone is a local-first tool that turns a project's agreed intent into
-enforced engineering standards and a tight correction loop. A project owner
-records a mission, core values, key metrics, rules and guidelines, and
-deterministic validation gates as versioned records. Existing coding agents
-and humans get the applicable rules; `wh check` runs the deterministic gates
-and returns failures to the same worker for bounded repair and recheck. Every
-consequential change is an append-only, inspectable decision.
+Whetstone lets people delegate more to coding agents and trust the result. The
+owner's mission, the pstack principles they pick and the codebases they admire
+become a short list of agreed rules. Every rule has one strength (must, should
+or advisory) and exactly one enforcer, chosen in this order: a mechanical
+check, a literal yes/no Jev question (TypeSafe System One), or a review by
+pstack's `/interrogate` or a person. Agents and people in any tool are briefed
+on the rules before building, checked at pre-commit, pre-push and CI, and
+told when to raise a hand. Every consequential change is an append-only,
+inspectable decision. The direction is in `planning/direction.md` and Beads
+epic `whetstone-ppq`.
 
-Mechanism that makes it different: judgment (interpreting intent, proposing
-rules) stays with the skill/agent; deterministic, replayable work (schemas,
-state transitions, check execution, receipts) stays in typed services. Unknown,
-stale, skipped or unavailable evidence is never reported as success. Team
-policy needs independent review; local drafts stay private until pushed.
+Mechanism that makes it different:
+- Judgment (interpreting intent, proposing rules, briefing) stays with the
+  skill and pstack's skills.
+- Network calls and driving stay in the driver.
+- Deterministic, replayable work (schemas, state transitions, check
+  execution, receipts) stays in typed services.
+- A Jev answer can raise a flag but never pass a must rule.
+- Unknown, stale, skipped or unavailable evidence is never reported as
+  success.
+- Rule changes, including demotions and promotions, are drafts a person
+  accepts.
+- Local drafts stay private until pushed.
 
-Outputs for agents (2026-09-10): a generated, pstack-compatible verification
-skill with a feature map (one file per user-facing feature: sub-features, how
-a user reaches it, how to drive it, gotchas, plus the versioned "why" in
-frontmatter) and a small team-owned driver script. Records live in Beads
-(`bd`), not in a Whetstone-owned database and not in Git commits.
+Outputs for agents: a generated, pstack-compatible verification skill with a
+feature map (one file per user-facing feature: sub-features, how a user
+reaches it, how to drive it, gotchas, plus the versioned "why" in frontmatter)
+and a small team-owned driver script. Records live in Beads (`bd`), not in a
+Whetstone-owned database and not in Git commits.
 
 ## Users and job
 
 Primary user: a software engineer or small engineering team lead who lives in
 the terminal and an editor, and opens `wh dash` in a browser tab beside them.
 They are also the accountable project owner. In under a minute they want to
-know: is the project on track against its own measures, are the safeguards
-holding, and what is the one thing they must decide or hand to an agent.
+know:
+- whether the rules are holding;
+- which flags or raised hands need them;
+- whether any rule is getting noisy.
 
 Coding agents use the same typed services through `--json`; the dashboard is
 the human view of the same records. The dashboard is not a task tracker, fleet
 console, or CI replacement.
 
-## Surfaces (confirmed 2026-09-10 with the owner)
+## Surfaces
 
-Four views, in this order:
+The four views confirmed on 2026-09-10 are being reshaped for the delegation
+plan (Beads `whetstone-ppq.1.3` updates the reference, and `whetstone-ppq.3.8`
+builds it):
 
-1. **Dashboard** (default): mission-linked key metrics, gate status, and the
-   items needing attention, with one primary action. Before `wh init` has
-   established the foundations, the dashboard shows only an onboarding path;
-   no empty metric or gate panels.
-2. **Foundations**: an editable, versioned flow in exactly five stages:
-   Mission (desired outcomes shown inside it) -> Core values -> Key metrics ->
-   Rules & guidelines (engineering philosophy and advisory guidance) -> Gates
-   (deterministic standards; the initial safeguard is simply the first gate).
-   Editing creates a local draft with exact before/after review; it never
-   silently overwrites active policy.
-3. **Checks** (replaces "Enforcement"): execution only. Last run per gate
-   (pass / fail / unknown / not checked / stale), what failed, the exact
-   recheck route, and the bounded repair brief to hand to the current coding
-   agent. Definitions live in Foundations.
-4. **Changelog** (replaces "Decisions"): newest-first, grouped by day and by
-   atomic operation, human-readable titles, status, owner, area, search and
-   "as of" inspection. Exact records only behind disclosure.
+1. **Dashboard** (default): what needs the owner (raised hands, flags to
+   accept or dismiss, drafts), rule health, and one primary action. Before
+   `wh init`, it shows only onboarding: mission, principles, exemplar
+   codebases, then accepting each proposed rule with its examples, strength
+   and enforcer.
+2. **Rules** (replaces the five-stage Foundations): mission and principles,
+   then rules grouped by strength, each showing its enforcer, shadow status
+   and false-flag rate. Editing creates a local draft with exact before/after
+   review; it never silently overwrites an accepted rule.
+3. **Checks**: execution only. It shows:
+   - the last run per rule (pass, flag, fail, unknown, not checked, stale);
+   - what failed;
+   - the exact recheck route;
+   - the repair brief to hand to the current agent.
+4. **Changelog**: the decision log, newest first, grouped by day. It includes
+   raised hands and answers, accepted and dismissed flags, strength changes
+   and redactions. Exact records sit behind disclosure.
+
+Until that work lands, the shipped dashboard still shows the earlier
+eight-decision onboarding and five Foundations stages.
 
 ## Durable constraints
 
@@ -86,11 +103,11 @@ Four views, in this order:
 
 ## Terminology
 
-Mission, desired outcome, core value, key metric (definition vs observation),
-rule/guideline (advisory; engineering philosophy and guidance records), gate
-(deterministic standard with strength must/should/may and a mechanism: test,
-validator, lint proxy, formatter, AST query), check (a run of gates), receipt,
-local draft, accepted, superseded, owner.
+Mission, principle (a pstack principle or the owner's own), exemplar codebase,
+rule (one strength must/should/advisory and one enforcer: mechanical check,
+Jev question or review), shadow mode, flag (accepted or dismissed), raised
+hand, brief, check (a run of rules), receipt, local draft, accepted,
+superseded, owner.
 
 ## Brand commitments
 
@@ -106,5 +123,5 @@ DESIGN.md.
 
 ## Open decisions
 
-- Whether team sharing (`wh push`/`wh pull`) appears in the UI before M2; the
-  epic says only when the integration is real.
+- Whether team sharing (`wh push`/`wh pull`) appears in the UI before the
+  team-and-tools milestone (`whetstone-ppq.10.7`).

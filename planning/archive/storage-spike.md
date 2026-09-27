@@ -1,5 +1,7 @@
 # ADR-0001: direct Dolt storage with physically separate private and shareable histories
 
+> **Archived (2026-09-27).** Superseded twice: by the Beads decision recorded below (2026-09-10) and by the delegation plan (`planning/direction.md`), which keeps Beads as the only record store. Kept as history.
+
 - Status: superseded on 2026-09-10 (see below); kept as the M1 record
 - Date: 2026-09-09
 - Accepted baseline: `2c3f0a3bb66d2ffa89c7b2f300b864a3ee8fea48`

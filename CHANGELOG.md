@@ -12,6 +12,22 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 Whetstone is rebuilt around six workflows and a verification skill that any
 agent can use. Nothing here has been released yet.
 
+**Direction change (2026-09-27).** The owner adopted the delegation plan
+(`planning/direction.md`, Beads epic `whetstone-ppq`, which supersedes
+`whetstone-k5r`). Rules get one strength and one enforcer: a mechanical check,
+then a Jev question, then review. Checks move to git pre-commit, pre-push and
+a required CI status, and onboarding becomes mission, pstack principles and
+exemplar codebases. Several entries below describe code this plan removes:
+the eight-decision agreement, key metrics, team activation through pull
+requests, and gate exceptions. They stay here as a record of what was built.
+
+### Documentation
+
+- README, AGENTS, CLAUDE, PRODUCT, SKILL and the planning docs now describe
+  the delegation plan, and separate what exists today from what is planned.
+  The storage and trust-boundary ADRs and the R0 prune inventory moved to
+  `planning/archive/` with superseded notes.
+
 ### Added
 
 - **Six workflows** with one JSON envelope (`whetstone.command-response.v1`):

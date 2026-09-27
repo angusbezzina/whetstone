@@ -1,21 +1,35 @@
 # Agent instructions for Whetstone
 
-Whetstone is being rebuilt as a lightweight, local-first system that turns a
-project's mission, values, engineering philosophy, and decisions into relevant
-agent guidance, deterministic safeguards, repair feedback, and durable history.
+Whetstone helps people delegate more to coding agents. It turns a project's
+mission, the pstack principles the owner picks and exemplar codebases into a
+short list of agreed rules; every agent and person, in any tool, is briefed on
+them, checked against them, and told when to stop and ask.
 
-## Current boundary
+## Current direction
 
-The repository is past the R0 prune of Beads epic `whetstone-k5r` and inside
-its M1/M2 implementation. The legacy dependency-extraction product was removed.
-Its last complete revision is `1b7fd8c341b8a5aaea742c564092fbcca26b51bb`; use
-that revision only for read-only archaeology or recovery.
+The owner adopted the delegation plan on 2026-09-27. Beads epic
+`whetstone-ppq` is the plan of record and supersedes `whetstone-k5r`. Read
+`planning/direction.md` and the epic description before planning any work.
 
-Two owner decisions from 2026-09-10 shape all remaining work (read the epic's
-"Beads storage and pstack interop" section before planning):
+- **One strength, one enforcer per rule.** Strength is must, should or
+  advisory. The enforcer is, in order of preference, a mechanical check, a
+  literal yes/no Jev question (TypeSafe System One) or a review
+  (`/interrogate` or a named person).
+- **Jev lives in the driver, never the kernel.** It can flag but never pass a
+  must rule. It reports `unavailable` without a network or `TYPESAFE_API_KEY`.
+  Receipts pin the model and carry question and input digests. New Jev rules
+  run in shadow mode until `wh eval` measures their precision. Rule and diff
+  text may go to TypeSafe (owner decision 2026-09-27), with optional redaction
+  and local-only rules. Keys never enter records, receipts or logs.
+- **Gate where every tool passes.** Checks run at git pre-commit (fast,
+  staged, mechanical), at pre-push (full `wh check`) and as a required CI
+  status. The Claude Code Stop hook is only the fast repair loop.
+- **Nothing learns on its own.** Demotions, promotions, hardening and imported
+  `/reflect` edits are drafts the owner accepts.
 
-- **Beads is the record store.** Whetstone's own Dolt repository and the `dolt`
-  binary are gone (`whetstone-k5r.17`). `src/beads.rs` is the typed layer over
+Two 2026-09-10 decisions still stand:
+
+- **Beads is the record store.** `src/beads.rs` is the typed layer over
   `bd --json`: one bead per record revision, the typed body as ASCII-escaped
   canonical JSON in metadata (digest verified on every read), lifecycle as a
   label. Drafts and receipts live in a private Beads database under
@@ -23,54 +37,68 @@ Two owner decisions from 2026-09-10 shape all remaining work (read the epic's
   and must never have a remote; `wh push` and `wh pull` wrap `bd dolt push`
   and `bd dolt pull` on the repository's shared database. Keep the domain and
   agreement layers storage-agnostic.
-- **pstack interop, not imitation.** The generated `verify-<app>` skill must be
-  a valid pstack verification skill (`cursor/plugins/pstack`, skills
-  `create-verification-skill` and `maintain-verification-skill`): frontmatter
-  plus exactly four H2s per feature file, a pstack-shaped `features/README.md`,
-  `wh init --action import`, control-adapter driver vocabulary and a
-  show-me-your-work TSV export (`whetstone-k5r.38`). Whetstone keeps the
-  deterministic sweep and hygiene; the judgment pass is pstack's skill. Do not
-  write new judgment skills or reimplement pstack playbooks.
+- **pstack interop, not imitation.** Whetstone uses pstack's `how`, `why`,
+  `blast-radius`, `interrogate`, `reflect` and `maintain-verification-skill`
+  and never reimplements them. The generated `verify-<app>` skill stays a
+  valid pstack verification skill (frontmatter plus exactly four H2s per
+  feature file, a pstack-shaped `features/README.md`, `wh init --action
+  import`, control-adapter driver vocabulary, show-me-your-work TSV).
+  Whetstone owns the format, and pstack's layout is its projection.
 
-M2 exit (`whetstone-k5r.20`) ends the epic's active scope; the former M3/M4
-children are deferred, not prerequisites.
+Removed from direction, with code scheduled for deletion in `whetstone-ppq`:
 
-Do not restore old modules, commands, TUI, packs, generators, hooks, MCP server,
-compatibility aliases, Python runtime, fixtures, or packaging as shortcuts. Do
-not alter existing project data under `whetstone/`, `.beads/`, or
-`.git/info/exclude` during R0.
+- the eight-decision onboarding;
+- values, key metrics and outcome observations;
+- policy exceptions;
+- scopes and environments;
+- PR-manifest activation (`wh push --propose`, `wh change --activate`,
+  `wh init --ci --reviewer`, `authority.json`);
+- the repair-host socket protocol and `wh check` repair-session flags;
+- mandates.
+
+Do not extend these, and do not build new work on them.
+
+The legacy dependency-extraction product was removed. Its last complete
+revision is `1b7fd8c341b8a5aaea742c564092fbcca26b51bb`; use it only for
+read-only archaeology or recovery. Do not restore old modules, commands, TUI,
+packs, generators, MCP server, compatibility aliases, Python runtime,
+fixtures, or packaging as shortcuts. Preserve project data under `whetstone/`,
+`.beads/` and `.git/info/exclude`. Deleting legacy files under `whetstone/`
+needs the owner's explicit yes on task `whetstone-ppq.2.6`.
 
 The public workflow families are exactly `wh init`, `wh dash`, `wh change`,
 `wh check`, `wh pull`, and `wh push`, all implemented against the Beads store.
-Milestone acceptance still needs the owner's walkthroughs and a live
-two-person GitHub activation (see `whetstone-k5r.20`); do not describe the
-product as accepted until those are recorded. Bare `wh` is honest read-only
-orientation. The hidden developer gates are `validate`, `eval`, and `scan`.
+New behaviour goes into these families, never new top-level commands. Do not
+describe the product as accepted until the milestone exits in `whetstone-ppq`
+are recorded. Bare `wh` is honest read-only orientation. The hidden developer
+gates are `validate`, `eval`, and `scan`.
 
 Authoritative references:
 
-- `planning/direction-demo/index.html`: the dashboard direction reference
-  (behaviour and visual world); `planning/direction-demo/smoke.mjs` validates it.
-- `PRODUCT.md` and `DESIGN.md`: product truth and the design tokens/rules the
-  dashboard implements; `.impeccable/surfaces/` holds the surface brief.
+- `planning/direction.md`: the plan, fixed decisions and evidence targets.
 - `planning/skill-cli-boundary.md`: skill, driver and kernel boundary, storage
   and the pstack interop contract.
-- `planning/direction-demo/storage-spike.md`: ADR-0001 (direct Dolt), now
-  superseded by the Beads decision recorded at its head; kept as history.
-- `planning/direction-demo/prune-inventory.md`: R0 allowlist and recovery record.
-- `references/rule-schema.yaml`: temporary retained rule schema.
-- `references/signal-strategies.md`: deterministic signal constraints.
+- `planning/direction-demo/index.html`: the dashboard reference (visual world
+  current; onboarding and Foundations content are replaced by
+  `whetstone-ppq.1.3`); `planning/direction-demo/smoke.mjs` validates it.
+- `PRODUCT.md` and `DESIGN.md`: product truth and the design tokens/rules the
+  dashboard implements; `.impeccable/surfaces/` holds the surface brief.
+- `references/signal-strategies.md`: how to choose a mechanical signal.
+- `planning/archive/`: superseded ADRs (direct Dolt, PR-manifest trust
+  boundary) and the R0 prune inventory, kept as history.
 
 ## Product invariants
 
 - The skill owns judgment; typed services own deterministic, replayable work.
 - Stable JSON and human views describe the same source records.
 - Guidance, checks, evidence, and accountable verdicts remain distinct.
+- Every rule has exactly one strength and one enforcer; a judgment answer never passes a must rule.
 - Failures return to the same worker for repair and recheck.
 - Unknown, stale, skipped, or unavailable required evidence is never success.
 - Local and private records stay private until explicitly selected for sharing.
-- Proposal, acceptance, activation, installation, check receipt, and verdict are separate events.
-- Team policy needs independent review and protected activation.
+- Proposal, acceptance, check receipt, and verdict are separate events.
+- Rule changes, including demotions and promotions, are drafts a person accepts.
+- Team review uses the platform's branch protection and a required `wh check` status.
 - Consequential decisions are append-only and inspectable from project start.
 - Existing trackers and native repository controls remain authoritative.
 
@@ -131,8 +159,8 @@ use, and explicitly flag stale material.
 
 ## Rules and source changes
 
-During R0, do not hand-edit `whetstone/rules/**`; those files are preserved user
-data. The retained verifier must fail closed for malformed project rules,
+Do not hand-edit `whetstone/rules/**`; those files are preserved user data until
+task `whetstone-ppq.2.6` migrates them into Beads rules. The retained verifier must fail closed for malformed project rules,
 missing AST queries, unsafe validator paths, unavailable required tooling, and
 non-vacuous gate failures.
 
