@@ -1,0 +1,467 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/angusbezzina/whetstone/references/rule-v2.schema.json",
+  "title": "Whetstone rule v2 (whetstone.rule.v2)",
+  "description": "One statement, one strength, exactly one enforcer (mechanical, a literal Jev question, or a review), labelled examples, a source, hand-raise triggers and privacy.",
+  "$ref": "#/$defs/rule",
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "statement",
+        "rationale",
+        "strength",
+        "enforcer",
+        "source"
+      ],
+      "properties": {
+        "schema": {
+          "const": "whetstone.rule.v2"
+        },
+        "statement": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "rationale": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "strength": {
+          "$ref": "#/$defs/strength"
+        },
+        "enforcer": {
+          "$ref": "#/$defs/enforcer"
+        },
+        "examples": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/rule_example"
+          }
+        },
+        "source": {
+          "$ref": "#/$defs/rule_source"
+        },
+        "paths": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "hand_raise": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "flag",
+              "low_confidence",
+              "unavailable"
+            ]
+          }
+        },
+        "privacy": {
+          "$ref": "#/$defs/privacy"
+        }
+      }
+    },
+    "strength": {
+      "enum": [
+        "must",
+        "should",
+        "advisory"
+      ]
+    },
+    "enforcer": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "query"
+          ],
+          "properties": {
+            "kind": {
+              "const": "ast"
+            },
+            "query": {
+              "$ref": "#/$defs/nonempty"
+            },
+            "language": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "tool",
+            "code"
+          ],
+          "properties": {
+            "kind": {
+              "const": "lint"
+            },
+            "tool": {
+              "$ref": "#/$defs/nonempty"
+            },
+            "code": {
+              "$ref": "#/$defs/nonempty"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "tool"
+          ],
+          "properties": {
+            "kind": {
+              "const": "formatter"
+            },
+            "tool": {
+              "$ref": "#/$defs/nonempty"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "command"
+          ],
+          "properties": {
+            "kind": {
+              "const": "test"
+            },
+            "command": {
+              "$ref": "#/$defs/nonempty"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "command"
+          ],
+          "properties": {
+            "kind": {
+              "const": "validator"
+            },
+            "command": {
+              "$ref": "#/$defs/nonempty"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "feature"
+          ],
+          "properties": {
+            "kind": {
+              "const": "drive"
+            },
+            "feature": {
+              "$ref": "#/$defs/record_id"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "tokens"
+          ],
+          "properties": {
+            "kind": {
+              "const": "design_tokens"
+            },
+            "tokens": {
+              "$ref": "#/$defs/nonempty"
+            },
+            "stylesheets": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "sizes": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "public_surface"
+            },
+            "surfaces": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "exports",
+                  "cli",
+                  "json"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "brief"
+            },
+            "skills": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "question"
+          ],
+          "properties": {
+            "kind": {
+              "const": "question"
+            },
+            "question": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "yes_means": {
+              "$ref": "#/$defs/nonempty"
+            },
+            "no_means": {
+              "$ref": "#/$defs/nonempty"
+            },
+            "unit": {
+              "enum": [
+                "hunk",
+                "file",
+                "added_file",
+                "commit"
+              ]
+            },
+            "model": {
+              "$ref": "#/$defs/nonempty"
+            },
+            "shadow": {
+              "type": "boolean"
+            },
+            "threshold_bp": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            },
+            "confidence_bar_bp": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "promote_after": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "precision_bar_bp": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "reviewer"
+          ],
+          "properties": {
+            "kind": {
+              "const": "review"
+            },
+            "reviewer": {
+              "$ref": "#/$defs/reviewer"
+            }
+          }
+        }
+      ]
+    },
+    "reviewer": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "by"
+          ],
+          "properties": {
+            "by": {
+              "const": "interrogate"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "by",
+            "name"
+          ],
+          "properties": {
+            "by": {
+              "const": "person"
+            },
+            "name": {
+              "$ref": "#/$defs/nonempty"
+            }
+          }
+        }
+      ]
+    },
+    "rule_example": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "expected",
+        "reason"
+      ],
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "expected": {
+          "enum": [
+            "pass",
+            "flag"
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "rule_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "mission",
+            "principle",
+            "exemplar",
+            "owner",
+            "starter",
+            "hardening",
+            "migration"
+          ]
+        },
+        "reference": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "provenance": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "redact_globs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "redact_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "local_only": {
+          "type": "boolean"
+        }
+      }
+    },
+    "evidence_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "locator"
+      ],
+      "properties": {
+        "system": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "locator": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "nonempty": {
+      "type": "string",
+      "minLength": 1
+    },
+    "record_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-fA-F]{64}$"
+    }
+  }
+}

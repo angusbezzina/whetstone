@@ -11,6 +11,7 @@ SCRIPT = ROOT / "scripts" / "test-dashboard-browser.mjs"
 
 def test_dashboard_in_a_real_browser():
     if shutil.which("node") is None:
+        assert not os.environ.get("CI"), "Node.js is missing in CI"
         pytest.skip("Node.js is unavailable for the dependency-free CDP harness")
     chrome = os.environ.get("CHROME_BIN") or next(
         (
@@ -35,6 +36,12 @@ def test_dashboard_in_a_real_browser():
         check=False,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=90,
     )
+    if result.returncode == 77:
+        assert not os.environ.get("CI"), (
+            "the browser could not start in CI: " + result.stdout
+        )
+        pytest.skip(result.stdout.strip() or "Chrome/Chromium could not start")
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "PASS synthetic dashboard" in result.stdout, result.stdout

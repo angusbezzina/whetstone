@@ -1,0 +1,56 @@
+# Whetstone required check, scaffolded by `wh init --action wire --ci`.
+# The team owns this file. Make `whetstone/policy` a required status check on
+# the default branch and protect this file with CODEOWNERS: a pull request that
+# deletes or weakens it then needs the same review as any other rule change,
+# and a required check that never reports blocks the merge.
+#
+# The check runs the full `wh check` for the pull request's commits against
+# the rules the team accepted and shared (`wh push`), never against a
+# contributor's private drafts. Jev questions run when the repository has a
+# TYPESAFE_API_KEY secret; without it they report unavailable, and a must rule
+# never passes on an unavailable answer.
+name: whetstone
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    name: whetstone/policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install pinned bd and wh
+        shell: bash
+        env:
+          BD_VERSION: "__BD_VERSION__"
+          WHETSTONE_VERSION: "__WHETSTONE_VERSION__"
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/bd.tar.gz"
+          curl -fsSL -o "$archive" "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION}/beads_${BD_VERSION}_linux_amd64.tar.gz"
+          mkdir -p "$RUNNER_TEMP/bin" && tar -xzf "$archive" -C "$RUNNER_TEMP/bin" bd
+          curl -fsSL "https://raw.githubusercontent.com/angusbezzina/whetstone/v${WHETSTONE_VERSION}/install.sh" \
+            | INSTALL_DIR="$RUNNER_TEMP/bin" sh -s -- --version "v${WHETSTONE_VERSION}"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Receive the team's shared rules (read-only)
+        run: bd bootstrap --yes
+      - name: whetstone/policy
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          wh check --ci --base "$BASE_REF" --json > whetstone-policy.json || { cat whetstone-policy.json; exit 1; }
+          cat whetstone-policy.json

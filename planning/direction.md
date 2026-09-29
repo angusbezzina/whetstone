@@ -105,8 +105,9 @@ queue a Beads task that any agent can pick up.
 
 ## Removed from direction
 
-The following are removed from direction, and their code is scheduled for
-removal in `whetstone-ppq`:
+The following are removed from direction, and their code was removed in
+`whetstone-ppq.2` (stored records of these kinds are read as retired and can
+never be written):
 
 - the eight-decision onboarding interview;
 - values, key metrics and outcome observations as record kinds;

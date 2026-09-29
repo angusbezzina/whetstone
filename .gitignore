@@ -57,3 +57,6 @@ whetstone/.last-run
 
 # Third-party agent skills installed by `npx skills add` (tracked by skills-lock.json; reinstall with `npx skills add pbakaus/impeccable -y`)
 .agents/skills/
+
+# Beads gate lock (machine-local)
+.beads.gate.lock

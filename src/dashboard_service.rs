@@ -7,7 +7,6 @@ use serde::Deserialize;
 
 use crate::dashboard::{BackendResponse, DashboardBackend};
 use crate::domain::ContentDigest;
-use crate::history::HistoryCursor;
 use crate::service::{
     ChangeDefinition, ChangeKind, ChangeRequest, CheckRequest, CommandService, DashRequest,
     InitAction, InitRequest, ServiceRequest, ServiceResponse,
@@ -85,7 +84,6 @@ impl DashboardBackend for CommandDashboardBackend {
             request_id: self.inspect_request_id.clone(),
             search: query.search,
             as_of: query.as_of,
-            history_after: query.history_after,
             page_size: query.page_size,
             expected_snapshot: query.expected_snapshot,
             trail: false,
@@ -115,7 +113,7 @@ impl DashboardBackend for CommandDashboardBackend {
             Some("log" | "txt") => "text/plain; charset=utf-8",
             _ => return not_found(),
         };
-        let Ok(layout) = crate::storage::ProjectLayout::resolve(&self.project_dir, None) else {
+        let Ok(layout) = crate::storage::ProjectLayout::resolve(&self.project_dir) else {
             return not_found();
         };
         let root = crate::gates::evidence_root(&layout);
@@ -159,11 +157,16 @@ impl DashboardBackend for CommandDashboardBackend {
     }
 
     fn mutate(&self, request_body: &[u8]) -> BackendResponse {
-        let request = match serde_json::from_slice::<DashboardCommand>(request_body) {
-            Ok(request) => request.into_service_request(self.project_dir.clone()),
+        let mutation = match serde_json::from_slice::<DashboardCommand>(request_body) {
+            Ok(request) => request.into_mutation(self.project_dir.clone()),
             Err(error) => return invalid_request(format!("invalid dashboard command: {error}")),
         };
-        let response = self.service.execute(request);
+        let response = match mutation {
+            Mutation::Service(request) => self.service.execute(*request),
+            Mutation::Task { title, description } => {
+                queue_task(&self.project_dir, &title, &description)
+            }
+        };
         if let Some(observer) = &self.observer {
             observer(&response);
         }
@@ -176,7 +179,6 @@ impl DashboardBackend for CommandDashboardBackend {
 struct DashboardInspectRequest {
     search: Option<String>,
     as_of: Option<String>,
-    history_after: Option<HistoryCursor>,
     page_size: usize,
     expected_snapshot: Option<ContentDigest>,
 }
@@ -186,7 +188,6 @@ impl Default for DashboardInspectRequest {
         Self {
             search: None,
             as_of: None,
-            history_after: None,
             page_size: 100,
             expected_snapshot: None,
         }
@@ -195,6 +196,7 @@ impl Default for DashboardInspectRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "workflow", rename_all = "snake_case", deny_unknown_fields)]
+#[allow(clippy::large_enum_variant)]
 enum DashboardCommand {
     Init {
         #[serde(default)]
@@ -207,21 +209,14 @@ enum DashboardCommand {
         #[serde(default)]
         mission: Option<String>,
         #[serde(default)]
-        desired_outcome: Option<String>,
+        principles: Vec<String>,
         #[serde(default)]
-        values: Option<String>,
+        custom_principles: Vec<String>,
         #[serde(default)]
-        philosophy: Option<String>,
+        starters: Vec<String>,
+        /// A local path or Git URL of an exemplar codebase (action exemplar).
         #[serde(default)]
-        owner: Option<String>,
-        #[serde(default)]
-        initial_safeguard: Option<String>,
-        #[serde(default)]
-        safeguard_scope: Option<String>,
-        #[serde(default)]
-        revision_triggers: Option<String>,
-        #[serde(default)]
-        gate_command: Option<String>,
+        exemplar: Option<String>,
         #[serde(default)]
         dry_run: bool,
     },
@@ -236,10 +231,6 @@ enum DashboardCommand {
         content: Option<String>,
         #[serde(default)]
         definition: Option<Box<ChangeDefinition>>,
-        #[serde(default)]
-        desired_outcome: Option<String>,
-        #[serde(default)]
-        review_triggers: Option<String>,
         #[serde(default)]
         new_owner: Option<String>,
         #[serde(default)]
@@ -264,6 +255,14 @@ enum DashboardCommand {
         review: Option<DashboardReview>,
         #[serde(default)]
         retire: Option<String>,
+        #[serde(default)]
+        flag: Option<DashboardFlag>,
+        #[serde(default)]
+        answer: Option<String>,
+        #[serde(default)]
+        migrate: bool,
+        #[serde(default)]
+        tune: bool,
     },
     Check {
         #[serde(default)]
@@ -279,6 +278,8 @@ enum DashboardCommand {
         #[serde(default)]
         mode: DashboardCheckMode,
     },
+    /// Queue work for any agent as a Beads task (Grok Bot is optional).
+    Task { title: String, description: String },
 }
 
 #[derive(Debug, Deserialize)]
@@ -295,16 +296,44 @@ enum DashboardVerdict {
     Withdraw,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DashboardFlag {
+    receipt: String,
+    verdict: DashboardFlagVerdict,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DashboardFlagVerdict {
+    Accept,
+    Dismiss,
+}
+
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum DashboardCheckMode {
     #[default]
     All,
     Changed,
+    Staged,
     Sweep,
 }
 
+/// A mutation is a service request, or a Beads task the dashboard queues.
+enum Mutation {
+    Service(Box<ServiceRequest>),
+    Task { title: String, description: String },
+}
+
 impl DashboardCommand {
+    fn into_mutation(self, project_dir: PathBuf) -> Mutation {
+        match self {
+            Self::Task { title, description } => Mutation::Task { title, description },
+            other => Mutation::Service(Box::new(other.into_service_request(project_dir))),
+        }
+    }
+
     fn into_service_request(self, project_dir: PathBuf) -> ServiceRequest {
         match self {
             Self::Init {
@@ -313,46 +342,45 @@ impl DashboardCommand {
                 expected_revision,
                 resume_token,
                 mission,
-                desired_outcome,
-                values,
-                philosophy,
-                owner,
-                initial_safeguard,
-                safeguard_scope,
-                revision_triggers,
-                gate_command,
+                principles,
+                custom_principles,
+                starters,
+                exemplar,
                 dry_run,
-            } => ServiceRequest::Init(InitRequest {
-                project_dir,
-                request_id,
-                action: action.into(),
-                expected_revision,
-                resume_token,
-                mission,
-                desired_outcome,
-                values,
-                philosophy,
-                owner,
-                initial_safeguard,
-                safeguard_scope,
-                revision_triggers,
-                gate_command,
-                dry_run,
-                hosts: Vec::new(),
-                regenerate_driver: false,
-                import_from: None,
-                hooks: false,
-                ci: false,
-                reviewers: Vec::new(),
-            }),
+            } => {
+                let (import_from, exemplar_url) = match exemplar {
+                    Some(locator)
+                        if locator.starts_with("https://")
+                            || locator.starts_with("git@")
+                            || locator.ends_with(".git") =>
+                    {
+                        (None, Some(locator))
+                    }
+                    Some(locator) => (Some(PathBuf::from(locator)), None),
+                    None => (None, None),
+                };
+                ServiceRequest::Init(InitRequest {
+                    project_dir,
+                    request_id,
+                    action: action.into(),
+                    expected_revision,
+                    resume_token,
+                    mission,
+                    principles,
+                    custom_principles,
+                    starters,
+                    dry_run,
+                    import_from,
+                    exemplar_url,
+                    ..InitRequest::default()
+                })
+            }
             Self::Change {
                 request_id,
                 kind,
                 record_id,
                 content,
                 definition,
-                desired_outcome,
-                review_triggers,
                 new_owner,
                 rationale,
                 source,
@@ -365,6 +393,10 @@ impl DashboardCommand {
                 preview,
                 review,
                 retire,
+                flag,
+                answer,
+                migrate,
+                tune,
             } => ServiceRequest::Change(ChangeRequest {
                 project_dir,
                 request_id,
@@ -372,8 +404,6 @@ impl DashboardCommand {
                 record_id,
                 content,
                 definition,
-                desired_outcome,
-                review_triggers,
                 new_owner,
                 rationale,
                 source,
@@ -392,7 +422,17 @@ impl DashboardCommand {
                     },
                 }),
                 retire,
-                activate: None,
+                flag: flag.map(|flag| crate::service::FlagRequest {
+                    receipt: flag.receipt,
+                    verdict: match flag.verdict {
+                        DashboardFlagVerdict::Accept => crate::domain::FlagVerdict::Accept,
+                        DashboardFlagVerdict::Dismiss => crate::domain::FlagVerdict::Dismiss,
+                    },
+                }),
+                answer,
+                migrate,
+                tune,
+                hardens: None,
             }),
             Self::Check {
                 request_id,
@@ -411,17 +451,12 @@ impl DashboardCommand {
                 gate_mode: match mode {
                     DashboardCheckMode::All => crate::service::GateMode::All,
                     DashboardCheckMode::Changed => crate::service::GateMode::Changed,
+                    DashboardCheckMode::Staged => crate::service::GateMode::Staged,
                     DashboardCheckMode::Sweep => crate::service::GateMode::Sweep,
                 },
-                timeout_seconds: None,
-                dry_run: false,
-                maintain_outcome: None,
-                maintain_evidence: None,
-                required: false,
-                host: None,
-                base: None,
-                steps: Vec::new(),
+                ..CheckRequest::default()
             }),
+            Self::Task { .. } => ServiceRequest::Orientation,
         }
     }
 }
@@ -432,6 +467,7 @@ enum DashboardInitAction {
     Inspect,
     Agree,
     Cancel,
+    Exemplar,
 }
 
 impl From<DashboardInitAction> for InitAction {
@@ -440,6 +476,7 @@ impl From<DashboardInitAction> for InitAction {
             DashboardInitAction::Inspect => Self::Inspect,
             DashboardInitAction::Agree => Self::Agree,
             DashboardInitAction::Cancel => Self::Cancel,
+            DashboardInitAction::Exemplar => Self::Exemplar,
         }
     }
 }
@@ -448,11 +485,8 @@ impl From<DashboardInitAction> for InitAction {
 #[serde(rename_all = "snake_case")]
 enum DashboardChangeKind {
     Mission,
-    Value,
-    Philosophy,
-    Metric,
-    Guidance,
-    Standard,
+    Principle,
+    Rule,
     Feature,
     Map,
 }
@@ -461,14 +495,46 @@ impl From<DashboardChangeKind> for ChangeKind {
     fn from(value: DashboardChangeKind) -> Self {
         match value {
             DashboardChangeKind::Mission => Self::Mission,
-            DashboardChangeKind::Value => Self::Value,
-            DashboardChangeKind::Philosophy => Self::Philosophy,
-            DashboardChangeKind::Metric => Self::Metric,
-            DashboardChangeKind::Guidance => Self::Guidance,
-            DashboardChangeKind::Standard => Self::Standard,
+            DashboardChangeKind::Principle => Self::Principle,
+            DashboardChangeKind::Rule => Self::Rule,
             DashboardChangeKind::Feature => Self::Feature,
             DashboardChangeKind::Map => Self::Map,
         }
+    }
+}
+
+/// A dashboard button without a bot: queue the work as a Beads task any
+/// agent can pick up (`bd ready`).
+fn queue_task(project_dir: &std::path::Path, title: &str, description: &str) -> ServiceResponse {
+    let root = crate::storage::ProjectLayout::resolve(project_dir)
+        .map(|layout| layout.project_root().to_path_buf())
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let title = title.trim();
+    if title.is_empty() || title.len() > 200 || description.len() > 8_000 {
+        return ServiceResponse::new_public(
+            "dashboard-task".into(),
+            "dash",
+            crate::service::ServiceState::NeedsInput,
+            "A task needs a title under 200 bytes and a description under 8000 bytes.",
+        );
+    }
+    match crate::hands::file_task(&root, title, description) {
+        Ok(issue) => {
+            let mut response = ServiceResponse::new_public(
+                "dashboard-task".into(),
+                "dash",
+                crate::service::ServiceState::Success,
+                format!("Queued {issue} for any agent (bd ready shows it)."),
+            );
+            response.data = serde_json::json!({"issue": issue});
+            response
+        }
+        Err(error) => ServiceResponse::new_public(
+            "dashboard-task".into(),
+            "dash",
+            crate::service::ServiceState::Unavailable,
+            format!("The task could not be queued in Beads: {error}"),
+        ),
     }
 }
 

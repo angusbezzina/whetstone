@@ -1,9 +1,13 @@
 //! Snapshot-bound aggregation of trusted verification evidence.
 //!
 //! This module never runs a checker, repairs source, changes policy, or grants
-//! authority. It converts already-trusted execution/attestation observations
-//! into a compact, deterministic receipt and rejects replay against a changed
-//! or stale snapshot.
+//! authority. It converts already-trusted observations (mechanical runs, Jev
+//! judgments, review attestations) into a compact, deterministic receipt and
+//! rejects replay against a changed or stale snapshot.
+//!
+//! A judgment can flag a rule but never pass a must rule: a clear Jev answer
+//! on a required requirement aggregates to unknown. Only a mechanical pass or
+//! a review attestation turns a must rule green.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -14,11 +18,10 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::domain::{ContentDigest, RecordRef};
+use crate::domain::{ContentDigest, JudgmentOutcome, RecordRef};
 use crate::execution::{ExecutionReceipt, ExecutionState, RECEIPT_SCHEMA as EXECUTION_SCHEMA};
 
 pub const VERIFICATION_SCHEMA: &str = "whetstone.verification-receipt.v1";
-pub const LEAN_BASELINE_REVISION: &str = "2c3f0a3bb66d2ffa89c7b2f300b864a3ee8fea48";
 const MAX_REQUIREMENTS: usize = 256;
 const MAX_FINDINGS: usize = 256;
 const MAX_TEXT_BYTES: usize = 2_048;
@@ -52,10 +55,12 @@ pub struct SnapshotBinding {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequirementKind {
+    /// A mechanical check: scanner, command, drive, tokens, surface, brief.
     NativeCheck,
-    TaskAcceptance,
-    RequiredReview,
-    StageSafeguard,
+    /// A Jev question; a review attestation may also answer it.
+    Judgment,
+    /// A review by `/interrogate` or a named person.
+    Review,
     AdvisoryGuidance,
 }
 
@@ -172,6 +177,16 @@ pub(crate) enum VerificationEvidence {
         findings: Vec<Finding>,
     },
     Attestation(VerifiedAttestation),
+    /// Jev's answers about the units a question rule asked about.
+    Judgment {
+        requirement_id: String,
+        snapshot: SnapshotBinding,
+        outcome: JudgmentOutcome,
+        evidence: EvidencePointer,
+        observed_at_unix: u64,
+        summary: String,
+        findings: Vec<Finding>,
+    },
     Skipped {
         requirement_id: String,
         reason: String,
@@ -200,7 +215,6 @@ pub enum VerificationState {
     Violated,
     Unknown,
     Unavailable,
-    NeedsExecutionApproval,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,7 +224,6 @@ pub enum CheckState {
     Violated,
     Unknown,
     Unavailable,
-    NeedsExecutionApproval,
     Stale,
     Skipped,
     Advisory,
@@ -254,7 +267,6 @@ pub struct CheckResult {
 pub struct VerificationReport {
     pub schema: String,
     pub receipt_id: ContentDigest,
-    pub lean_baseline_revision: String,
     pub subject: String,
     pub snapshot: SnapshotBinding,
     pub evaluated_at_unix: u64,
@@ -266,12 +278,7 @@ pub struct VerificationReport {
 
 impl VerificationReport {
     pub fn human_summary(&self) -> String {
-        let mut lines = vec![format!(
-            "{}: {} ({})",
-            self.subject,
-            self.summary,
-            state_name(self.state)
-        )];
+        let mut lines = vec![format!("{} ({})", self.summary, state_name(self.state))];
         for result in &self.results {
             if result.state == CheckState::Success {
                 lines.push(format!(
@@ -361,18 +368,11 @@ pub fn aggregate(
 
     let state = aggregate_state(&results);
     let summary = match state {
-        VerificationState::Success => {
-            "All applicable required checks, acceptance, and reviews are fresh and successful."
-        }
-        VerificationState::Violated => {
-            "One or more required checks or attestations reported a violation."
-        }
-        VerificationState::NeedsExecutionApproval => {
-            "A required checker is not approved for this exact execution snapshot."
-        }
-        VerificationState::Unavailable => "A required checker or authority source is unavailable.",
+        VerificationState::Success => "Every applicable must rule holds on fresh evidence.",
+        VerificationState::Violated => "A must rule is broken.",
+        VerificationState::Unavailable => "A must rule's enforcer is unavailable.",
         VerificationState::Unknown => {
-            "Required evidence is missing, stale, skipped, ambiguous, or untrusted."
+            "A must rule's evidence is missing, stale, skipped, ambiguous or untrusted, which is not a pass."
         }
     };
     let mut next_actions: Vec<String> = results
@@ -385,7 +385,6 @@ pub fn aggregate(
     let mut report = VerificationReport {
         schema: VERIFICATION_SCHEMA.into(),
         receipt_id: empty_digest()?,
-        lean_baseline_revision: LEAN_BASELINE_REVISION.into(),
         subject: bounded(&plan.subject, redactions),
         snapshot: plan.snapshot.clone(),
         evaluated_at_unix,
@@ -403,9 +402,7 @@ pub fn replay(
     current_snapshot: &SnapshotBinding,
     now_unix: u64,
 ) -> Result<VerificationState, VerificationError> {
-    if report.schema != VERIFICATION_SCHEMA
-        || report.lean_baseline_revision != LEAN_BASELINE_REVISION
-    {
+    if report.schema != VERIFICATION_SCHEMA {
         return Err(VerificationError::UnsupportedSchema);
     }
     if report_digest(report)? != report.receipt_id {
@@ -551,7 +548,7 @@ fn resolve_observation(
                     CheckState::Unknown,
                     EvidenceFreshness::Missing,
                     "evidence_kind_mismatch",
-                    "Compiled-in native check evidence cannot substitute for acceptance, review, safeguards, or advisory guidance.",
+                    "Mechanical evidence cannot substitute for a question, a review or advisory guidance.",
                 ));
             }
             let (state, reason) = match state {
@@ -559,6 +556,48 @@ fn resolve_observation(
                 AttestationState::Violated => (CheckState::Violated, "check_violated"),
                 AttestationState::Unknown => (CheckState::Unknown, "checker_unknown"),
                 AttestationState::Unavailable => (CheckState::Unavailable, "checker_unavailable"),
+            };
+            observed_result(
+                requirement,
+                expected,
+                snapshot,
+                state,
+                reason,
+                summary,
+                evidence,
+                *observed_at_unix,
+                findings,
+                evaluated_at_unix,
+                redactions,
+            )
+        }
+        VerificationEvidence::Judgment {
+            snapshot,
+            outcome,
+            evidence,
+            observed_at_unix,
+            summary,
+            findings,
+            ..
+        } => {
+            if requirement.kind != RequirementKind::Judgment {
+                return Ok(failed_result(
+                    requirement,
+                    CheckState::Unknown,
+                    EvidenceFreshness::Missing,
+                    "evidence_kind_mismatch",
+                    "A Jev answer cannot substitute for a mechanical check, a review or advisory guidance.",
+                ));
+            }
+            let (state, reason) = match outcome {
+                JudgmentOutcome::Flag => (CheckState::Violated, "judgment_flagged"),
+                JudgmentOutcome::LowConfidence => (CheckState::Unknown, "judgment_low_confidence"),
+                JudgmentOutcome::Unavailable => (CheckState::Unavailable, "judgment_unavailable"),
+                // A judgment can flag but never pass a must rule.
+                JudgmentOutcome::Clear if requirement.required => {
+                    (CheckState::Unknown, "judgment_cannot_pass_must")
+                }
+                JudgmentOutcome::Clear => (CheckState::Success, "judgment_clear"),
             };
             observed_result(
                 requirement,
@@ -590,7 +629,7 @@ fn resolve_observation(
                     CheckState::Unknown,
                     EvidenceFreshness::Missing,
                     "evidence_kind_mismatch",
-                    "Advisory evidence cannot satisfy a required check, acceptance, review, or safeguard.",
+                    "Advisory evidence cannot satisfy a required check, question or review.",
                 ));
             }
             let mut result = failed_result(
@@ -606,16 +645,14 @@ fn resolve_observation(
         VerificationEvidence::Attestation(attestation) => {
             if !matches!(
                 requirement.kind,
-                RequirementKind::TaskAcceptance
-                    | RequirementKind::RequiredReview
-                    | RequirementKind::StageSafeguard
+                RequirementKind::Review | RequirementKind::Judgment
             ) {
                 return Ok(failed_result(
                     requirement,
                     CheckState::Unknown,
                     EvidenceFreshness::Missing,
                     "evidence_kind_mismatch",
-                    "An authenticated attestation cannot substitute for native checker execution or advisory guidance.",
+                    "A review attestation cannot substitute for a mechanical check or advisory guidance.",
                 ));
             }
             let (state, reason) = match attestation.state {
@@ -654,7 +691,7 @@ fn resolve_observation(
                     CheckState::Unknown,
                     EvidenceFreshness::Missing,
                     "evidence_kind_mismatch",
-                    "Native execution evidence cannot substitute for task acceptance, required review, stage safeguards, or advisory guidance.",
+                    "Execution evidence cannot substitute for a question, a review or advisory guidance.",
                 ));
             }
             let expected_manifest = requirement.checker_manifest.as_ref();
@@ -674,11 +711,6 @@ fn resolve_observation(
                 ExecutionState::Violated if trusted_success => {
                     (CheckState::Violated, "check_violated", receipt.summary.as_str())
                 }
-                ExecutionState::NeedsExecutionApproval => (
-                    CheckState::NeedsExecutionApproval,
-                    "execution_approval_required",
-                    receipt.summary.as_str(),
-                ),
                 ExecutionState::Unavailable => (
                     CheckState::Unavailable,
                     "checker_unavailable",
@@ -802,11 +834,6 @@ fn aggregate_state(results: &[CheckResult]) -> VerificationState {
         VerificationState::Violated
     } else if required
         .iter()
-        .any(|result| result.state == CheckState::NeedsExecutionApproval)
-    {
-        VerificationState::NeedsExecutionApproval
-    } else if required
-        .iter()
         .any(|result| result.state == CheckState::Unavailable)
     {
         VerificationState::Unavailable
@@ -859,15 +886,8 @@ fn validate_plan(plan: &VerificationPlan) -> Result<(), VerificationError> {
             )));
         }
     }
-    if !plan
-        .requirements
-        .iter()
-        .any(|requirement| requirement.required)
-    {
-        return Err(VerificationError::InvalidPlan(
-            "at least one required verification is necessary".into(),
-        ));
-    }
+    // A plan with no required step is valid (a check of should rules only);
+    // its aggregate is never success (see `aggregate_state`).
     Ok(())
 }
 
@@ -875,6 +895,7 @@ fn evidence_id(evidence: &VerificationEvidence) -> &str {
     match evidence {
         VerificationEvidence::NativeCheck { requirement_id, .. }
         | VerificationEvidence::Execution { requirement_id, .. }
+        | VerificationEvidence::Judgment { requirement_id, .. }
         | VerificationEvidence::Skipped { requirement_id, .. }
         | VerificationEvidence::Advisory { requirement_id, .. } => requirement_id,
         VerificationEvidence::Attestation(attestation) => &attestation.requirement_id,
@@ -988,7 +1009,6 @@ fn state_name(state: VerificationState) -> &'static str {
         VerificationState::Violated => "violated",
         VerificationState::Unknown => "unknown",
         VerificationState::Unavailable => "unavailable",
-        VerificationState::NeedsExecutionApproval => "needs_execution_approval",
     }
 }
 
@@ -998,7 +1018,6 @@ fn check_state_name(state: CheckState) -> &'static str {
         CheckState::Violated => "FAIL",
         CheckState::Unknown => "UNKNOWN",
         CheckState::Unavailable => "UNAVAILABLE",
-        CheckState::NeedsExecutionApproval => "NEEDS_APPROVAL",
         CheckState::Stale => "STALE",
         CheckState::Skipped => "SKIPPED",
         CheckState::Advisory => "ADVISORY",
@@ -1104,8 +1123,8 @@ mod tests {
             snapshot: snapshot(),
             requirements: vec![
                 requirement("native", RequirementKind::NativeCheck, true),
-                requirement("acceptance", RequirementKind::TaskAcceptance, true),
-                requirement("review", RequirementKind::RequiredReview, true),
+                requirement("acceptance", RequirementKind::Review, true),
+                requirement("review", RequirementKind::Review, true),
                 requirement("advice", RequirementKind::AdvisoryGuidance, false),
             ],
         }
@@ -1204,7 +1223,6 @@ mod tests {
         let report = aggregate(&plan(), &complete_evidence(), 120, &[]).expect("complete report");
         assert_eq!(report.state, VerificationState::Success);
         assert_eq!(report.schema, VERIFICATION_SCHEMA);
-        assert_eq!(report.lean_baseline_revision, LEAN_BASELINE_REVISION);
         assert_eq!(report.results.len(), 4);
         assert_eq!(report.results[0].state, CheckState::Success);
         assert_eq!(report.results[1].state, CheckState::Advisory);
@@ -1280,7 +1298,7 @@ mod tests {
     }
 
     #[test]
-    fn skipped_unknown_unavailable_and_execution_approval_never_pass() {
+    fn skipped_unknown_and_unavailable_never_pass() {
         let cases = [
             (
                 VerificationEvidence::Skipped {
@@ -1299,11 +1317,6 @@ mod tests {
                 native(ExecutionState::Unavailable, false),
                 VerificationState::Unavailable,
                 CheckState::Unavailable,
-            ),
-            (
-                native(ExecutionState::NeedsExecutionApproval, false),
-                VerificationState::NeedsExecutionApproval,
-                CheckState::NeedsExecutionApproval,
             ),
         ];
         for (native_evidence, expected_report, expected_check) in cases {
@@ -1488,6 +1501,100 @@ mod tests {
             replay(&tampered, &snapshot(), 120),
             Err(VerificationError::ReceiptTampered)
         ));
+    }
+
+    fn judgment(id: &str, outcome: JudgmentOutcome) -> VerificationEvidence {
+        VerificationEvidence::Judgment {
+            requirement_id: id.into(),
+            snapshot: snapshot(),
+            outcome,
+            evidence: pointer(id),
+            observed_at_unix: 100,
+            summary: format!("Jev answered {}", outcome.label()),
+            findings: Vec::new(),
+        }
+    }
+
+    fn judgment_plan(required: bool) -> VerificationPlan {
+        VerificationPlan {
+            subject: "question rule".into(),
+            snapshot: snapshot(),
+            requirements: vec![
+                requirement("anchor", RequirementKind::Review, true),
+                requirement("question", RequirementKind::Judgment, required),
+            ],
+        }
+    }
+
+    #[test]
+    fn no_combination_of_jev_answers_turns_a_must_rule_green_but_a_review_can() {
+        let outcomes = [
+            JudgmentOutcome::Flag,
+            JudgmentOutcome::Clear,
+            JudgmentOutcome::LowConfidence,
+            JudgmentOutcome::Unavailable,
+        ];
+        // Every answer, and every pair of answers for the same requirement
+        // (duplicates are ambiguous), leaves a must question short of green.
+        let mut cases = outcomes
+            .iter()
+            .map(|outcome| vec![judgment("question", *outcome)])
+            .collect::<Vec<_>>();
+        for left in outcomes {
+            for right in outcomes {
+                cases.push(vec![
+                    judgment("question", left),
+                    judgment("question", right),
+                ]);
+            }
+        }
+        for answers in cases {
+            let mut evidence = vec![attestation("anchor", AttestationState::Success)];
+            evidence.extend(answers.clone());
+            let report = aggregate(&judgment_plan(true), &evidence, 120, &[]).expect("report");
+            let question = report
+                .results
+                .iter()
+                .find(|result| result.requirement_id == "question")
+                .expect("question result");
+            assert_ne!(question.state, CheckState::Success, "{answers:?}");
+            assert_ne!(report.state, VerificationState::Success, "{answers:?}");
+        }
+        // A review attestation is the accountable verdict and can pass it.
+        let reviewed = aggregate(
+            &judgment_plan(true),
+            &[
+                attestation("anchor", AttestationState::Success),
+                attestation("question", AttestationState::Success),
+            ],
+            120,
+            &[],
+        )
+        .expect("report");
+        assert_eq!(reviewed.state, VerificationState::Success);
+        // A should rule may pass on a clear answer; a flag still fails it.
+        let should_clear = aggregate(
+            &judgment_plan(false),
+            &[
+                attestation("anchor", AttestationState::Success),
+                judgment("question", JudgmentOutcome::Clear),
+            ],
+            120,
+            &[],
+        )
+        .expect("report");
+        assert_eq!(should_clear.state, VerificationState::Success);
+        let must_flag = aggregate(
+            &judgment_plan(true),
+            &[
+                attestation("anchor", AttestationState::Success),
+                judgment("question", JudgmentOutcome::Flag),
+            ],
+            120,
+            &[],
+        )
+        .expect("report");
+        assert_eq!(must_flag.state, VerificationState::Violated);
     }
 
     #[test]

@@ -87,70 +87,113 @@ try {
     const result = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true, clip: { x: 0, y: 0, width, height: Math.min(contentSize.height, 5000), scale: 1 } });
     writeFileSync(join(output, `${name}.png`), Buffer.from(result.data, "base64"));
   };
-  const demo = (state) => cdp.evaluate(`document.querySelector('input[name=demo][value=${state}]').click(); true`);
   const open = (tab) => cdp.evaluate(`document.querySelector("#tab-${tab}").click(); true`);
+  const until = async (expression, message, timeout = 4000) => { for (let t = 0; t < timeout; t += 50) { if (await cdp.evaluate(expression)) return; await delay(50); } throw new Error(message); };
+  // Switching reloads the page; wait for the new page's first render, not a fixed time.
+  const demo = async (state) => { await cdp.evaluate(`document.querySelector('input[name=demo][value=${state}]').click(); true`); await delay(300); await until(`document.readyState === 'complete' && document.querySelector('input[name=demo][value=${state}]')?.checked && !!document.querySelector(${state === 'fresh' ? "'#onboard h1'" : "'#mission-line'"})`, `the ${state} demo did not render`, 8000); };
+  const fill = (form, values) => cdp.evaluate(`(() => { const f = document.querySelector(${JSON.stringify(form)}); for (const [k, v] of Object.entries(${JSON.stringify(values)})) { const n = f.querySelector('[name="' + k + '"]'); n.value = v; n.dispatchEvent(new Event("change")); } f.requestSubmit(); return true; })()`);
 
   // Fresh project: onboarding only, later views gated.
-  await demo("fresh"); await delay(150);
-  check(await cdp.evaluate(`document.querySelectorAll('#dashboard .panel').length === 1`), "fresh dashboard holds one onboarding panel");
-  check(await cdp.evaluate(`!document.querySelector('#dashboard #h-metrics') && !document.querySelector('#dashboard #h-gates')`), "fresh dashboard shows no metric or gate panels");
-  check(await cdp.evaluate(`document.querySelector('#tab-checks').getAttribute('aria-disabled') === 'true' && document.querySelector('#tab-changelog').getAttribute('aria-disabled') === 'true'`), "checks and changelog are gated before init");
+  await demo("fresh");
+  check(await cdp.evaluate(`!!document.querySelector('#onboard h1') && document.querySelectorAll('#home .panel').length === 0`), "fresh home holds the onboarding only");
+  check(await cdp.evaluate(`[...document.querySelectorAll('#onboard .steps li')].map(l => l.dataset.step).join() === 'tools,mission,principles,exemplars,rules,gates'`), "onboarding lists tools, mission, principles, exemplars, rules and gates");
+  check(await cdp.evaluate(`['checks','changelog','requests'].every(t => document.querySelector('#tab-' + t).getAttribute('aria-disabled') === 'true')`), "checks, changelog and requests are gated before init");
   check(await cdp.evaluate(`document.querySelector('#agreement-state').textContent === 'not initialised'`), "top bar says not initialised");
-  await open("checks"); check(await cdp.evaluate(`document.querySelector('#dashboard').hidden === false`), "gated view is not opened");
-  await open("foundations"); check(await cdp.evaluate(`!!document.querySelector('#foundations #init-form')`), "fresh foundations show the first-agreement form");
+  check(await cdp.evaluate(`!/eight decisions|core values|key metrics|foundations/i.test(document.body.innerText)`), "no removed decision, value, metric or foundations language");
+  await open("checks"); check(await cdp.evaluate(`document.querySelector('#home').hidden === false`), "a gated view is not opened");
+  await shot("onboarding", 1280);
+  await cdp.evaluate(`document.querySelector('#start-onboarding').click(); true`);
+  await until(`document.querySelector('#init-form')`, "the onboarding form did not open");
+  check(await cdp.evaluate(`document.querySelectorAll('#ob-principles input[name=principle]').length === 8 && document.querySelectorAll('#ob-starters input:checked').length === 3`), "the pstack catalogue and three starter rules are offered");
+  await cdp.evaluate(`document.querySelector('#ob-principles input[value="prove-it-works"]').checked = true; true`);
+  await shot("onboarding-form", 1280);
+  for (const width of [320, 390]) {
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: true });
+    await delay(80);
+    const overflow = await cdp.evaluate(`document.documentElement.scrollWidth - window.innerWidth`);
+    check(overflow <= 1, `the onboarding form fits at ${width}px (overflow ${overflow}px)`);
+    await shot(`onboarding-form-${width}`, width);
+  }
+  await cdp.send("Emulation.clearDeviceMetricsOverride");
+  await fill("#init-form", { mission: "Invoices that reconcile to the cent.", custom_principles: "Money is integers." });
+  await until(`document.querySelector('#confirm-init')`, "the agreement review did not render");
+  check(await cdp.evaluate(`document.querySelectorAll('#onboard .review .row').length === 6`), "the review lists mission, two principles and three rules");
+  await cdp.evaluate(`document.querySelector('#confirm-init').click(); true`);
+  await until(`document.querySelector('#mission-line')?.textContent === 'Invoices that reconcile to the cent.'`, "the agreement did not establish the project");
+  check(await cdp.evaluate(`document.querySelector('#tab-checks').getAttribute('aria-disabled') === 'false'`), "checks open once agreed");
 
-  // Established project: five stages, honest states, one primary action.
-  await demo("established"); await delay(150);
-  check(await cdp.evaluate(`document.querySelectorAll('#foundations .stage').length === 5`), "foundations render exactly five stages");
-  check(await cdp.evaluate(`[...document.querySelectorAll('#foundations .stage .ph h2')].map(h=>h.firstChild.textContent.trim()).join('|') === 'Mission|Core values|Key metrics|Rules & guidelines|Gates'`), "stages are in the agreed order");
-  check(await cdp.evaluate(`document.querySelectorAll('#dashboard .attn .btn.primary').length === 1`), "dashboard has exactly one primary action");
-  check(await cdp.evaluate(`[...document.querySelectorAll('#dashboard .state.pass')].every(s => !/unknown|not/.test(s.textContent))`), "unknown states are never green");
-  check(await cdp.evaluate(`!!document.querySelector('#dashboard .state.warn')`), "not-observed and stale states are shown as amber");
+  // Established project: one primary action, honest states, rules by strength.
+  await demo("established");
+  check(await cdp.evaluate(`document.querySelectorAll('#home .btn.primary').length === 1`), "home has exactly one primary action");
+  check(await cdp.evaluate(`/An agent asks/.test(document.querySelector('#attention-primary h3').textContent)`), "a raised hand leads the attention list");
+  check(await cdp.evaluate(`[...document.querySelectorAll('#home .state.pass')].every(s => !/unknown|not|shadow|draft|stale/.test(s.textContent))`), "unknown, shadow and draft states are never green");
+  check(await cdp.evaluate(`document.querySelector('#req-count').textContent === '1'`), "the open request is counted on its tab");
+  await open("rules"); await delay(150);
+  check(await cdp.evaluate(`[...document.querySelectorAll('#rules .panel .ph h2')].map(h => h.firstChild.textContent).join('|') === 'Mission|Principles|Must|Should|Advisory|Suggestions|Features'`), "rules are grouped mission, principles, must, should, advisory, then suggestions");
+  check(await cdp.evaluate(`document.querySelector('[data-id="rule.tests-only-when-asked"] .badge').textContent === 'shadow'`), "the Jev rule shows its shadow status");
+  check(await cdp.evaluate(`/false-flag rate 62.5%/.test(document.querySelector('[data-id="rule.design-tokens"] .stats').textContent)`), "a rule shows its false-flag rate");
+  check(await cdp.evaluate(`/mechanical/.test(document.querySelector('[data-id="rule.money-integers"] .fam').textContent) && /pre-commit/.test(document.querySelector('[data-id="rule.money-integers"]').textContent)`), "a rule names its one enforcer family and where it runs");
+  check(await cdp.evaluate(`/draft v2 pending/.test(document.querySelector('[data-id="rule.ask-before-public-api"] .ver').textContent)`), "a pending draft is labelled beside the rule in force");
 
-  // Edit → review → draft keeps the accepted record in force.
-  await open("foundations");
-  await cdp.evaluate(`document.querySelector('[data-edit="standard.browser"]').click(); true`); await delay(250);
-  check(await cdp.evaluate(`document.querySelector('.editor.open form') !== null`), "edit opens inline, not in a modal");
-  await cdp.evaluate(`(() => { const f=document.querySelector('form[data-form]'); f.querySelector('[name=content]').value='Browser acceptance journey incl. retry'; f.querySelector('[name=rationale]').value='Retry regressions escaped review'; f.querySelector('[name=effect]').value='Retry path is gated'; f.requestSubmit(); return true; })()`); await delay(250);
-  check(await cdp.evaluate(`document.querySelector('.review .diff .after') !== null && /shared/.test(document.querySelector('.review .effects').textContent)`), "review shows before/after and effects");
-  await shot("review", 1440);
-  await cdp.evaluate(`document.querySelector('[data-confirm]').click(); true`); await delay(250);
-  check(await cdp.evaluate(`document.querySelector('#draft-count').textContent === '2'`), "draft count increments");
-  check(await cdp.evaluate(`/draft v4 pending/.test(document.querySelector('[data-rec="standard.browser"] .ver').textContent)`), "accepted record shows the pending draft");
-  check(await cdp.evaluate(`document.querySelector('[data-rec="standard.browser"] .c').textContent === 'Browser acceptance journey'`), "accepted content stays in force");
-  await open("checks");
-  check(await cdp.evaluate(`document.querySelector('#gate-standard\\\\.browser .state').classList.contains('fail')`), "checks still show the accepted gate's live failure");
-  check(await cdp.evaluate(`document.querySelector('#det-standard\\\\.browser pre.brief') !== null`), "failing gate carries a repair brief");
+  // Edit → review → draft keeps the accepted rule in force.
+  await cdp.evaluate(`document.querySelector('[data-id="rule.money-integers"] .e button').click(); true`); await delay(300);
+  check(await cdp.evaluate(`document.querySelector('.editor.open form [name=enforcer]').value === 'ast'`), "edit opens inline with the rule's enforcer");
+  await fill(".editor.open form", { content: "Money is never a float, in any path.", rationale: "Tax code escaped the path glob" });
+  await until(`document.querySelector('#record-draft')`, "the review did not render");
+  check(await cdp.evaluate(`document.querySelector('.review .diff .after').textContent.includes('in any path') && /shared/.test(document.querySelector('.review .effects').textContent)`), "review shows before/after and effects");
+  await shot("review", 1280);
+  await cdp.evaluate(`document.querySelector('#record-draft').click(); true`);
+  await until(`document.querySelector('#draft-count').textContent === '2'`, "the draft count did not increment");
+  check(await cdp.evaluate(`document.querySelector('[data-id="rule.money-integers"] .c').textContent === 'Money is never stored in a float.'`), "accepted content stays in force");
 
-  // Run checks updates rows in place.
-  await cdp.evaluate(`document.querySelector('#run-form').requestSubmit(); true`); await delay(150);
+  // Checks: failure, brief, run, flags.
+  await open("checks"); await delay(150);
+  check(await cdp.evaluate(`document.querySelector('#gate-rule\\\\.money-integers .state').classList.contains('fail') && document.querySelector('#det-rule\\\\.money-integers pre.brief') !== null`), "a failing rule carries its repair brief");
+  check(await cdp.evaluate(`document.querySelector('#gate-rule\\\\.tests-only-when-asked .badge').textContent === 'shadow'`), "shadow rules are marked on the board");
+  check(await cdp.evaluate(`document.querySelectorAll('#flags .row.flag').length === 2`), "unlabelled flags wait for a label");
+  await cdp.evaluate(`document.querySelector('#flags [data-id="verification.gate_77d"] .btn.quiet').click(); true`); await delay(150);
+  await fill("#flags .editor.open form", { rationale: "The colour is in an SVG asset." });
+  await until(`document.querySelectorAll('#flags .row.flag').length === 1`, "the flag was not labelled");
+  await cdp.evaluate(`document.querySelector('#run-btn').click(); true`); await delay(150);
   check(await cdp.evaluate(`document.querySelector('#run-btn').classList.contains('busy')`), "run shows a busy state");
-  await delay(1100);
-  check(await cdp.evaluate(`!document.querySelector('.state.warn') || [...document.querySelectorAll('#checks .brow .state')].every(s => !/stale/.test(s.textContent))`), "stale results become current after a run");
-  check(await cdp.evaluate(`document.querySelector('#gate-standard\\\\.regex .state').classList.contains('draft')`), "draft gates are not run");
+  await until(`document.querySelector('#checks .board.landed')`, "the run did not land");
+  check(await cdp.evaluate(`[...document.querySelectorAll('#checks .brow .state')].every(s => !/not run/.test(s.textContent) || s.closest('.brow').id.includes('draft'))`), "results are current after a run");
 
-  // Changelog: newest first, search, as-of.
-  await open("changelog");
-  check(await cdp.evaluate(`document.querySelector('.entry .t').textContent.startsWith('Gate revised')`), "changelog is newest first and includes the new draft");
-  await cdp.evaluate(`(() => { const i=document.querySelector('#cl-q'); i.value='metric'; i.dispatchEvent(new Event('input')); return true; })()`); await delay(100);
+  // Requests: answer the raised hand.
+  await open("requests"); await delay(150);
+  check(await cdp.evaluate(`!document.querySelector('#requests .req').classList.contains('done')`), "open requests come first");
+  await fill("#requests .req form", { content: "Yes, parse to integer cents at the webhook." });
+  await until(`document.querySelectorAll('#requests .req.done').length === 2`, "the answer was not recorded");
+
+  // Changelog: newest first, accept a draft, search, as-of.
+  await open("changelog"); await delay(150);
+  check(await cdp.evaluate(`/Answered ledger-7kq/.test(document.querySelector('.entry .t').textContent)`), "the changelog is newest first");
+  await cdp.evaluate(`[...document.querySelectorAll('.entry .act .btn')].find(b => b.textContent === 'Accept').click(); true`);
+  await until(`document.querySelector('#confirm-review')`, "accept did not show its review");
+  await cdp.evaluate(`document.querySelector('#confirm-review').click(); true`);
+  await until(`document.querySelector('#draft-count').textContent === '1'`, "the draft was not accepted");
+  await cdp.evaluate(`(() => { const i=document.querySelector('#cl-q'); i.value='exemplar'; i.dispatchEvent(new Event('input')); return true; })()`); await delay(500);
   check(await cdp.evaluate(`document.querySelectorAll('.entry').length === 1`), "search filters entries");
-  await cdp.evaluate(`(() => { const i=document.querySelector('#cl-q'); i.value=''; i.dispatchEvent(new Event('input')); return true; })()`); await delay(100);
-  await cdp.evaluate(`(() => { const a=document.querySelector('#cl-asof'); a.value='2026-09-03T12:00'; a.dispatchEvent(new Event('change')); return true; })()`); await delay(100);
-  check(await cdp.evaluate(`document.querySelectorAll('.entry.future').length === 4 && document.querySelectorAll('.entry:not(.future)').length === 3`), "as-of dims later entries and keeps earlier ones");
+  await cdp.evaluate(`(() => { const i=document.querySelector('#cl-q'); i.value=''; i.dispatchEvent(new Event('input')); return true; })()`); await delay(500);
+  await cdp.evaluate(`(() => { const a=document.querySelector('#cl-asof'); a.value='2026-09-23T12:00'; a.dispatchEvent(new Event('change')); return true; })()`); await delay(300);
+  check(await cdp.evaluate(`document.querySelectorAll('.entry').length === 3 && /as of/.test(document.querySelector('.asof-note').textContent)`), "as-of shows the trail as it stood");
   check(await cdp.evaluate(`document.querySelector('.entry details pre') !== null`), "exact records sit behind disclosure");
 
-  // Keyboard: rail is a tablist with arrow navigation.
-  await cdp.evaluate(`document.querySelector('#tab-dashboard').focus(); document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true})); true`);
-  check(await cdp.evaluate(`document.activeElement.id === 'tab-foundations'`), "arrow keys move between views");
+  // Keyboard: the rail is a tablist with arrow navigation.
+  await cdp.evaluate(`document.querySelector('#tab-home').focus(); document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true})); true`); await delay(100);
+  check(await cdp.evaluate(`document.activeElement.id === 'tab-rules'`), "arrow keys move between views");
 
-  // Widths: no horizontal overflow at any agreed width.
-  for (const width of [320, 390, 768, 1024, 1440]) {
-    await cdp.send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 768 });
-    for (const tab of ["dashboard", "foundations", "checks", "changelog"]) {
-      await open(tab); await delay(80);
-      const overflow = await cdp.evaluate(`document.documentElement.scrollWidth - window.innerWidth`);
-      check(overflow <= 1, `${tab} fits at ${width}px (overflow ${overflow}px)`);
-      if (width === 390 || width === 1440) await shot(`${tab}-${width}`, width);
+  // Widths: no horizontal overflow at any agreed width, in both themes.
+  for (const theme of ["dark", "light"]) {
+    await cdp.evaluate(`document.querySelector('.theme button[data-theme=${theme}]').click(); true`);
+    for (const width of [320, 390, 768, 1280]) {
+      await cdp.send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 768 });
+      for (const tab of ["home", "rules", "checks", "changelog", "requests"]) {
+        await open(tab); await delay(80);
+        const overflow = await cdp.evaluate(`document.documentElement.scrollWidth - window.innerWidth`);
+        check(overflow <= 1, `${tab} fits at ${width}px in ${theme} (overflow ${overflow}px)`);
+        if (width === 390 || width === 1280) await shot(`${tab}-${width}-${theme}`, width);
+      }
     }
   }
   check(cdp.errors.length === 0, `no page errors: ${cdp.errors.join("\n")}`);

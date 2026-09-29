@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -14,13 +15,14 @@ BIN = ROOT / "target" / "release" / "whetstone"
 
 @pytest.fixture(scope="session", autouse=True)
 def release_binary() -> None:
-    if not BIN.exists():
-        subprocess.run(
-            ["cargo", "build", "--quiet", "--release"],
-            cwd=ROOT,
-            check=True,
-            timeout=180,
-        )
+    # Always build: cargo is a no-op when the binary is current, and a stale
+    # binary would test a surface that no longer exists.
+    subprocess.run(
+        ["cargo", "build", "--quiet", "--release", "--bin", "whetstone"],
+        cwd=ROOT,
+        check=True,
+        timeout=900,
+    )
 
 
 def run(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
@@ -29,9 +31,19 @@ def run(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
         cwd=cwd,
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
         check=False,
+        env={**os.environ, "WHETSTONE_JEV_OFFLINE": "1"},
     )
+
+
+def git_repo(path: Path) -> Path:
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test Owner"], cwd=path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "owner@example.invalid"], cwd=path, check=True
+    )
+    return path
 
 
 def parsed(result: subprocess.CompletedProcess[str]) -> dict:
@@ -60,9 +72,66 @@ def test_legacy_command_is_not_dispatchable() -> None:
     assert "unrecognized subcommand" in result.stderr
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("init", "--action", "agree", "--desired-outcome", "x"),
+        ("init", "--action", "agree", "--values", "x"),
+        ("change", "--kind", "value"),
+        ("change", "--kind", "exception"),
+        ("change", "--activate", "proposal.x"),
+        ("check", "--repair-session", "x"),
+    ],
+)
+def test_removed_flags_are_rejected(args: tuple[str, ...], tmp_path: Path) -> None:
+    result = run(*args, cwd=git_repo(tmp_path))
+    assert result.returncode == 2, result.stdout
+    assert not (tmp_path / ".git" / "whetstone").exists()
+
+
+def test_init_inspects_read_only_then_agrees(tmp_path: Path) -> None:
+    repo = git_repo(tmp_path)
+    inspect = run("init", "--json", "--request-id", "py-1", cwd=repo)
+    assert inspect.returncode == 6, inspect.stderr
+    handoff = json.loads(inspect.stdout)
+    assert handoff["state"] == "needs_input"
+    assert handoff["data"]["inspection_writes"] == []
+    assert handoff["data"]["progress"]["missing_decisions"] == ["mission", "rules"]
+    assert not (repo / ".git" / "whetstone").exists()
+
+    agreed = run(
+        "init",
+        "--json",
+        "--action",
+        "agree",
+        "--request-id",
+        "py-1",
+        "--expected-revision",
+        str(handoff["expected_revision"]),
+        "--resume",
+        handoff["resume_token"],
+        "--mission",
+        "Keep project work aligned.",
+        "--principle",
+        "prove-it-works",
+        "--starter",
+        "ask-before-public-api",
+        cwd=repo,
+    )
+    assert agreed.returncode == 6, agreed.stderr
+    response = json.loads(agreed.stdout)
+    assert response["data"]["progress"]["agreement_complete"] is True
+    assert sorted(record["id"] for record in response["data"]["records"]) == [
+        "mission.project",
+        "principle.prove-it-works",
+        "rule.ask-before-public-api",
+    ]
+    assert response["data"]["shared"] is False
+
+
 def test_sync_without_a_shared_database_changes_nothing(tmp_path: Path) -> None:
     # A throwaway repository: never this repository's real .beads.
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    git_repo(tmp_path)
     pull = run("pull", "--json", "--request-id", "python-client", cwd=tmp_path)
     assert pull.returncode == 4
     response = json.loads(pull.stdout)
@@ -85,6 +154,8 @@ def test_validation_and_eval_do_real_work() -> None:
     assert evaluation["ok"] is True
     assert evaluation["rules_evaluated"] > 0
     assert sum(card["golden_checked"] for card in evaluation["scorecards"]) > 0
+    assert evaluation["rule_eval"]["ok"] is True
+    assert evaluation["rule_eval"]["pstack_roundtrip"]["ok"] is True
 
 
 def test_scan_reports_a_known_bad_file(tmp_path: Path) -> None:

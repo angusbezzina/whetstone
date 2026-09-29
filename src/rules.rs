@@ -1038,6 +1038,118 @@ pub fn load_approved_rules(
     (approved, warnings)
 }
 
+/// Approved rules in `whetstone/rules` as v2 rule drafts: AST signals become
+/// AST enforcers, lint proxies become lint enforcers, and golden examples
+/// become labelled examples. Rules no v2 enforcer can hold are skipped with
+/// the reason. The rule files themselves are never touched.
+pub fn legacy_rules_as_v2(
+    project: &Path,
+) -> (Vec<(String, crate::domain::Rule, String)>, Vec<String>) {
+    use crate::domain::{
+        Enforcer, ExampleVerdict, Privacy, RuleExample, RuleSource, RuleSourceKind, Strength,
+        RULE_SCHEMA_V2,
+    };
+    let rules_dir = project.join("whetstone").join("rules");
+    let (rules, _) = load_approved_rules(&rules_dir, None);
+    let mut seen = std::collections::BTreeSet::new();
+    let mut converted = Vec::new();
+    let mut skipped = Vec::new();
+    for rule in rules {
+        if !seen.insert(rule.id.clone()) {
+            continue;
+        }
+        let extension = match rule.language.as_str() {
+            "python" => "py",
+            "typescript" => "ts",
+            "javascript" => "js",
+            _ => "rs",
+        };
+        let enforcer = rule
+            .signals
+            .iter()
+            .find_map(|signal| match signal.strategy.as_str() {
+                "ast" => signal.ast_query.as_ref().map(|query| Enforcer::Ast {
+                    query: query.clone(),
+                    language: Some(rule.language.clone()),
+                }),
+                "lint_proxy" => signal.lint.as_ref().map(|lint| Enforcer::Lint {
+                    tool: match lint.tool.as_str() {
+                        "clippy" => "cargo clippy --all-targets -- -D warnings".into(),
+                        "ruff" => "ruff check .".into(),
+                        "biome" => "npx biome lint .".into(),
+                        "eslint" => "npx eslint .".into(),
+                        other => other.into(),
+                    },
+                    code: lint.code.clone(),
+                }),
+                _ => None,
+            });
+        let Some(enforcer) = enforcer else {
+            skipped.push(format!(
+                "{}: no AST query or lint binding a v2 enforcer can hold",
+                rule.id
+            ));
+            continue;
+        };
+        let examples = rule
+            .golden_examples
+            .iter()
+            .filter(|example| !example.code.trim().is_empty())
+            .map(|example| RuleExample {
+                input: example.code.clone(),
+                expected: if example.verdict.eq_ignore_ascii_case("fail") {
+                    ExampleVerdict::Flag
+                } else {
+                    ExampleVerdict::Pass
+                },
+                reason: format!("golden {} example", example.verdict.to_ascii_lowercase()),
+                path: Some(format!("example.{extension}")),
+            })
+            .collect();
+        let converted_rule = crate::domain::Rule {
+            schema: RULE_SCHEMA_V2.into(),
+            statement: rule
+                .description
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+            rationale: if rule.source_url.is_empty() {
+                format!("Migrated from whetstone/rules ({}).", rule.source_name)
+            } else {
+                format!(
+                    "Migrated from whetstone/rules; source: {}.",
+                    rule.source_url
+                )
+            },
+            strength: match rule.severity.as_str() {
+                "must" => Strength::Must,
+                "should" => Strength::Should,
+                _ => Strength::Advisory,
+            },
+            enforcer,
+            examples,
+            source: RuleSource {
+                kind: RuleSourceKind::Migration,
+                reference: Some(format!("whetstone/rules#{}", rule.id)),
+                provenance: Vec::new(),
+            },
+            paths: Vec::new(),
+            hand_raise: Vec::new(),
+            privacy: Privacy::default(),
+        };
+        if let Err(error) = converted_rule.validate() {
+            skipped.push(format!("{}: {error}", rule.id));
+            continue;
+        }
+        converted.push((
+            format!("rule.migrated-{}", rule.id.replace(['.', '_'], "-")),
+            converted_rule,
+            format!("whetstone/rules ({})", rule.source_name),
+        ));
+    }
+    (converted, skipped)
+}
+
 fn resolved_rule_languages(rule: &Rule, inferred_language: Option<&str>) -> Vec<String> {
     if !rule.languages.is_empty() {
         return rule.languages.clone();

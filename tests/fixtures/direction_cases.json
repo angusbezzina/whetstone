@@ -1,18 +1,432 @@
 {
-  "schema_version": 1,
-  "source": "planning/direction-demo/index.html Direction 05",
+  "schema_version": 2,
+  "source": "planning/direction.md (delegation plan, whetstone-ppq): rule v2, receipts, and retired kinds",
+  "expectations": {
+    "valid": "parses, validates, appends once, and its canonical bytes are a fixed point of parse and serialize",
+    "parse_error": "the record body does not deserialize",
+    "invalid": "the record body deserializes but validation refuses it",
+    "retired": "read exactly as stored as a retired kind; appending it is refused"
+  },
   "cases": [
-    { "id": "T-042", "name": "routine feedback repair", "required_records": ["mandate", "verification_receipt"] },
-    { "id": "T-043", "name": "architectural boundary escalation", "required_records": ["proposal", "verification_receipt", "decision"] },
-    { "id": "T-044", "name": "missing checker remains unknown", "required_records": ["verification_receipt"] },
-    { "id": "T-045", "name": "owner redirect and rework", "required_records": ["proposal", "verification_receipt", "decision"] },
-    { "id": "T-046", "name": "accepted change with adverse outcome", "required_records": ["proposal", "verification_receipt", "decision", "observation_receipt"] },
-    { "id": "T-047", "name": "trusted observation starts bounded work", "required_records": ["mandate", "observation_receipt", "verification_receipt"] },
-    { "id": "P-048", "name": "personal experiment proposed then activated", "required_records": ["standard", "proposal", "decision", "activation"] },
-    { "id": "C-049", "name": "stale context archived with history", "required_records": ["source_snapshot", "proposal", "decision", "retirement"] },
-    { "id": "X-050", "name": "contradictory local standard", "expected_error": "contradictory_standard" },
-    { "id": "X-051", "name": "missing observation", "expected_axes": { "freshness": "missing", "outcome": "unknown" } },
-    { "id": "X-052", "name": "declined proposal", "proposal_state": "declined", "decision_verdict": "decline" },
-    { "id": "X-053", "name": "superseded proposal", "proposal_state": "superseded", "required_records": ["proposal"] }
+    {
+      "id": "R-001",
+      "name": "must rule held by one test enforcer",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Prove it works before claiming it does.",
+        "rationale": "Evidence before assertion.",
+        "strength": "must",
+        "enforcer": { "kind": "test", "command": "cargo test" },
+        "source": { "kind": "starter", "reference": "pstack:prove-it-works" }
+      },
+      "expect": "valid",
+      "family": "mechanical"
+    },
+    {
+      "id": "R-002",
+      "name": "a rule never carries two enforcers",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Prove it works.",
+        "rationale": "Evidence.",
+        "strength": "must",
+        "enforcer": { "kind": "test", "command": "cargo test" },
+        "enforcers": [{ "kind": "review", "reviewer": { "by": "interrogate" } }],
+        "source": { "kind": "owner" }
+      },
+      "expect": "parse_error"
+    },
+    {
+      "id": "R-003",
+      "name": "one enforcer cannot mix a question with a command",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Tests only when asked.",
+        "rationale": "Scope.",
+        "strength": "should",
+        "enforcer": { "kind": "question", "question": "Does this change add tests nobody asked for?", "command": "cargo test" },
+        "source": { "kind": "owner" }
+      },
+      "expect": "parse_error"
+    },
+    {
+      "id": "R-004",
+      "name": "a question starts in shadow with the pinned model and default bars",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Add tests only when the task asks for them.",
+        "rationale": "Unrequested tests widen the change.",
+        "strength": "should",
+        "enforcer": { "kind": "question", "question": "Does this change add tests the task did not ask for?" },
+        "source": { "kind": "starter", "reference": "pstack:laziness-protocol" }
+      },
+      "expect": "valid",
+      "family": "question",
+      "shadow": true,
+      "serializes_enforcer_as": {
+        "kind": "question",
+        "question": "Does this change add tests the task did not ask for?",
+        "unit": "hunk",
+        "model": "jev-1.13.0",
+        "shadow": true,
+        "threshold_bp": 5000,
+        "confidence_bar_bp": 4000,
+        "promote_after": 50,
+        "precision_bar_bp": 9000
+      }
+    },
+    {
+      "id": "R-005",
+      "name": "a promoted question is enforced only when shadow is explicitly false",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Add tests only when asked.",
+        "rationale": "Scope.",
+        "strength": "should",
+        "enforcer": { "kind": "question", "question": "Does this change add unrequested tests?", "shadow": false },
+        "source": { "kind": "owner" }
+      },
+      "expect": "valid",
+      "family": "question",
+      "shadow": false
+    },
+    {
+      "id": "R-006",
+      "name": "strength is must, should or advisory only",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Keep diffs small.",
+        "rationale": "Review cost.",
+        "strength": "may",
+        "enforcer": { "kind": "review", "reviewer": { "by": "interrogate" } },
+        "source": { "kind": "owner" }
+      },
+      "expect": "parse_error"
+    },
+    {
+      "id": "R-007",
+      "name": "a local-only question keeps its privacy and redactions",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Never log customer email addresses.",
+        "rationale": "Privacy.",
+        "strength": "should",
+        "enforcer": { "kind": "question", "question": "Does this change log an email address?" },
+        "source": { "kind": "owner" },
+        "paths": ["src/**"],
+        "hand_raise": ["low_confidence", "unavailable"],
+        "privacy": { "redact_globs": ["secrets/**"], "redact_patterns": ["[a-z]+@example\\.com"], "local_only": true }
+      },
+      "expect": "valid",
+      "family": "question",
+      "shadow": true,
+      "local_only": true
+    },
+    {
+      "id": "R-008",
+      "name": "labelled examples define the rule",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "No unwrap in library code.",
+        "rationale": "Panics are not errors.",
+        "strength": "should",
+        "enforcer": { "kind": "ast", "query": "(call_expression) @call", "language": "rust" },
+        "examples": [
+          { "input": "let x = y.unwrap();", "expected": "flag", "reason": "unwrap panics", "path": "src/lib.rs" },
+          { "input": "let x = y?;", "expected": "pass", "reason": "propagates the error" }
+        ],
+        "source": { "kind": "exemplar", "reference": "https://example.test/repo", "provenance": [{ "system": "git", "locator": "src/lib.rs" }] }
+      },
+      "expect": "valid",
+      "family": "mechanical"
+    },
+    {
+      "id": "R-009",
+      "name": "example paths stay inside the repository",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "No unwrap.",
+        "rationale": "Panics.",
+        "strength": "should",
+        "enforcer": { "kind": "lint", "tool": "clippy", "code": "clippy::unwrap_used" },
+        "examples": [{ "input": "y.unwrap()", "expected": "flag", "reason": "panics", "path": "../outside.rs" }],
+        "source": { "kind": "owner" }
+      },
+      "expect": "invalid"
+    },
+    {
+      "id": "R-010",
+      "name": "only rule schema v2 is written",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v1",
+        "statement": "Prove it works.",
+        "rationale": "Evidence.",
+        "strength": "must",
+        "enforcer": { "kind": "test", "command": "cargo test" },
+        "source": { "kind": "owner" }
+      },
+      "expect": "invalid"
+    },
+    {
+      "id": "R-011",
+      "name": "a question threshold is one to ten thousand basis points",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Ask first.",
+        "rationale": "Scope.",
+        "strength": "advisory",
+        "enforcer": { "kind": "question", "question": "Is this public?", "threshold_bp": 0 },
+        "source": { "kind": "owner" }
+      },
+      "expect": "invalid"
+    },
+    {
+      "id": "R-012",
+      "name": "a redaction pattern must be a regular expression",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Never log secrets.",
+        "rationale": "Privacy.",
+        "strength": "should",
+        "enforcer": { "kind": "question", "question": "Does this log a secret?" },
+        "source": { "kind": "owner" },
+        "privacy": { "redact_patterns": ["(unclosed"] }
+      },
+      "expect": "invalid"
+    },
+    {
+      "id": "R-013",
+      "name": "public surfaces are exports, cli or json",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Ask before changing the public API.",
+        "rationale": "Owners decide the surface.",
+        "strength": "must",
+        "enforcer": { "kind": "public_surface", "surfaces": ["http"] },
+        "source": { "kind": "starter" }
+      },
+      "expect": "invalid"
+    },
+    {
+      "id": "R-014",
+      "name": "the design token file is repository-relative",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Use design tokens.",
+        "rationale": "One visual system.",
+        "strength": "should",
+        "enforcer": { "kind": "design_tokens", "tokens": "/etc/tokens.css" },
+        "source": { "kind": "owner" }
+      },
+      "expect": "invalid"
+    },
+    {
+      "id": "R-015",
+      "name": "a named reviewer has a name",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Architecture changes are reviewed.",
+        "rationale": "Boundaries.",
+        "strength": "must",
+        "enforcer": { "kind": "review", "reviewer": { "by": "person", "name": " " } },
+        "source": { "kind": "owner" }
+      },
+      "expect": "invalid"
+    },
+    {
+      "id": "R-016",
+      "name": "a public-surface rule raises a hand on any flag",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Ask before changing the public API.",
+        "rationale": "Owners decide the surface.",
+        "strength": "must",
+        "enforcer": { "kind": "public_surface", "surfaces": ["exports", "cli", "json"] },
+        "source": { "kind": "starter", "reference": "pstack:boundary-discipline" },
+        "hand_raise": ["flag"]
+      },
+      "expect": "valid",
+      "family": "mechanical"
+    },
+    {
+      "id": "P-020",
+      "name": "a pstack principle is pinned to its id and version",
+      "record_type": "principle",
+      "record": { "statement": "Verify against the real artifact.", "source": { "kind": "pstack", "id": "prove-it-works", "version": "0.15.5" } },
+      "expect": "valid"
+    },
+    {
+      "id": "P-021",
+      "name": "a pstack principle id is a lowercase slug",
+      "record_type": "principle",
+      "record": { "statement": "Verify.", "source": { "kind": "pstack", "id": "Prove It Works", "version": "0.15.5" } },
+      "expect": "invalid"
+    },
+    {
+      "id": "P-022",
+      "name": "the owner's own principle",
+      "record_type": "principle",
+      "record": { "statement": "Prefer deletion to addition.", "source": { "kind": "custom" }, "rationale": "Less to maintain." },
+      "expect": "valid"
+    },
+    {
+      "id": "E-030",
+      "name": "an unavailable Jev answer has no probability",
+      "record_type": "judgment",
+      "record": {
+        "rule": { "id": "rule.tests-only-when-asked", "revision": 1, "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        "model": "jev-1.13.0",
+        "question_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "input_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "unit": "tests/a.rs",
+        "outcome": "unavailable",
+        "probability_bp": 5100,
+        "shadow": true,
+        "detail": "offline",
+        "answered_at": "2026-09-10T12:00:00Z"
+      },
+      "expect": "invalid"
+    },
+    {
+      "id": "E-031",
+      "name": "an honest unavailable Jev answer",
+      "record_type": "judgment",
+      "record": {
+        "rule": { "id": "rule.tests-only-when-asked", "revision": 1, "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        "model": "jev-1.13.0",
+        "question_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "input_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "unit": "tests/a.rs",
+        "outcome": "unavailable",
+        "shadow": true,
+        "detail": "WHETSTONE_JEV_OFFLINE is set",
+        "answered_at": "2026-09-10T12:00:00Z"
+      },
+      "expect": "valid"
+    },
+    {
+      "id": "E-032",
+      "name": "an attestation names a full commit",
+      "record_type": "attestation",
+      "record": {
+        "rule": { "id": "rule.review", "revision": 1, "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        "commit": "abc123",
+        "reviewer": { "by": "interrogate" },
+        "verdict": "pass",
+        "notes": "Reviewed.",
+        "attested_at": "2026-09-10T12:00:00Z"
+      },
+      "expect": "invalid"
+    },
+    {
+      "id": "E-033",
+      "name": "a brief names the skills it ran",
+      "record_type": "brief",
+      "record": { "area": "src/**", "skills": [], "notes": "Nothing ran.", "recorded_at": "2026-09-10T12:00:00Z" },
+      "expect": "invalid"
+    },
+    {
+      "id": "E-034",
+      "name": "a raised hand carries its Beads issue, what was tried and a recommendation",
+      "record_type": "hand_raise",
+      "record": {
+        "issue": "whetstone-42",
+        "trigger": "second_failed_repair",
+        "rule": "rule.prove-it-works",
+        "question": "The flaky test fails twice; skip it or fix the clock?",
+        "tried": "Two repairs of the clock mock.",
+        "recommendation": "Fix the clock injection.",
+        "raised_at": "2026-09-10T12:00:00Z"
+      },
+      "expect": "valid"
+    },
+    {
+      "id": "E-035",
+      "name": "a flag decision labels one receipt",
+      "record_type": "flag_decision",
+      "record": {
+        "receipt": { "id": "judgment.fixture", "revision": 1, "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
+        "rule": "rule.tests-only-when-asked",
+        "verdict": "dismiss",
+        "reason": "The task asked for tests.",
+        "decided_by": "Owner",
+        "decided_at": "2026-09-10T12:00:00Z"
+      },
+      "expect": "valid"
+    },
+    {
+      "id": "M-040",
+      "name": "an earlier may-standard is enforced as an advisory rule",
+      "record_type": "standard",
+      "record": {
+        "statement": "Run the tests.",
+        "rationale": "Evidence.",
+        "strength": "may",
+        "enforcement": { "enforcement": "test", "command_ref": "cargo test" }
+      },
+      "expect": "valid",
+      "family": "mechanical",
+      "rule_view_strength": "advisory"
+    },
+    {
+      "id": "M-041",
+      "name": "earlier guidance is an advisory rule reviewed by interrogate",
+      "record_type": "guidance",
+      "record": { "statement": "Prefer small diffs.", "rationale": "Review cost." },
+      "expect": "valid",
+      "family": "review",
+      "rule_view_strength": "advisory"
+    },
+    {
+      "id": "X-050",
+      "name": "a core value is read, never written",
+      "record_type": "core_value",
+      "record": { "name": "Core values", "description": "Small, honest changes." },
+      "expect": "retired"
+    },
+    {
+      "id": "X-051",
+      "name": "a team decision is read, never written",
+      "record_type": "decision",
+      "record": { "proposal": { "id": "proposal.one", "revision": 1, "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }, "verdict": "decline", "unexpected": true },
+      "expect": "retired"
+    },
+    {
+      "id": "X-052",
+      "name": "a policy exception is read, never written",
+      "record_type": "policy_exception",
+      "record": { "rule": "team.rule", "expires_at": "2026-10-01T00:00:00Z" },
+      "expect": "retired"
+    },
+    {
+      "id": "X-053",
+      "name": "a mandate is read, never written",
+      "record_type": "mandate",
+      "record": { "objective": "Clean up." },
+      "expect": "retired"
+    },
+    {
+      "id": "X-054",
+      "name": "an unknown record type is neither current nor retired",
+      "record_type": "exception",
+      "record": { "rule": "team.rule" },
+      "expect": "parse_error"
+    }
   ]
 }

@@ -9,8 +9,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::domain::{
-    AgreementRecord, DecisionVerdict, LocalReviewVerdict, ProposalState, ProvenanceAuthority,
-    RecordBody, RecordId, RecordRef,
+    AgreementRecord, LocalReviewVerdict, ProposalState, ProvenanceAuthority, RecordBody, RecordId,
+    RecordRef,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -57,15 +57,31 @@ pub fn is_agreement_body(body: &RecordBody) -> bool {
     matches!(
         body,
         RecordBody::Mission(_)
-            | RecordBody::CoreValue(_)
-            | RecordBody::ImplementationPhilosophy(_)
+            | RecordBody::Principle(_)
+            | RecordBody::Rule(_)
             | RecordBody::Standard(_)
             | RecordBody::Guidance(_)
-            | RecordBody::MetricDefinition(_)
             | RecordBody::Feature(_)
             | RecordBody::VerificationMap(_)
-            | RecordBody::PolicyException(_)
     )
+}
+
+/// An earlier team decision (a retired kind) still decides the proposal it
+/// named, so history keeps its meaning.
+fn retired_decision(body: &RecordBody) -> Option<(RecordRef, Lifecycle)> {
+    let RecordBody::Retired(retired) = body else {
+        return None;
+    };
+    if retired.record_type != "decision" {
+        return None;
+    }
+    let proposal =
+        serde_json::from_value::<RecordRef>(retired.record.get("proposal")?.clone()).ok()?;
+    let outcome = match retired.record.get("verdict")?.as_str()? {
+        "accept" | "approve_archive" => Lifecycle::Accepted,
+        _ => Lifecycle::Withdrawn,
+    };
+    Some((proposal, outcome))
 }
 
 impl AgreementState {
@@ -87,18 +103,11 @@ impl AgreementState {
                     };
                     verdicts.insert(review.proposal.clone(), outcome);
                 }
-                RecordBody::Decision(decision) => {
-                    let outcome = match decision.verdict {
-                        DecisionVerdict::Accept | DecisionVerdict::ApproveArchive => {
-                            Lifecycle::Accepted
-                        }
-                        DecisionVerdict::Decline | DecisionVerdict::Redirect => {
-                            Lifecycle::Withdrawn
-                        }
-                    };
-                    verdicts.insert(decision.proposal.clone(), outcome);
+                body => {
+                    if let Some((proposal, outcome)) = retired_decision(body) {
+                        verdicts.insert(proposal, outcome);
+                    }
                 }
-                _ => {}
             }
         }
         // The latest revision of each proposal decides its candidates.
@@ -340,8 +349,8 @@ impl AgreementState {
 mod tests {
     use super::*;
     use crate::domain::{
-        CoreValue, EvidenceRef, LocalReview, PrincipalKind, PrincipalRef, Proposal, Provenance,
-        ProvenanceKind, Scope, LOCAL_REVIEW_ASSURANCE, SCHEMA_VERSION_V1,
+        EvidenceRef, LocalReview, PrincipalKind, PrincipalRef, Principle, PrincipleSource,
+        Proposal, Provenance, ProvenanceKind, Scope, LOCAL_REVIEW_ASSURANCE, SCHEMA_VERSION_V1,
     };
 
     fn owner() -> PrincipalRef {
@@ -382,9 +391,10 @@ mod tests {
     }
 
     fn value(text: &str) -> RecordBody {
-        RecordBody::CoreValue(CoreValue {
-            name: "value".into(),
-            description: text.into(),
+        RecordBody::Principle(Principle {
+            statement: text.into(),
+            source: PrincipleSource::Custom,
+            rationale: None,
         })
     }
 
@@ -426,12 +436,17 @@ mod tests {
 
     #[test]
     fn a_draft_revision_never_displaces_the_accepted_one() {
-        let v1 = record("value.evidence", 1, "init", value("Evidence first"));
-        let mut v2 = record("value.evidence", 2, "change-1", value("Evidence always"));
+        let v1 = record("principle.evidence", 1, "init", value("Evidence first"));
+        let mut v2 = record(
+            "principle.evidence",
+            2,
+            "change-1",
+            value("Evidence always"),
+        );
         v2.supersedes = Some(v1.reference().expect("ref"));
         let p = proposal("proposal.a", &v2);
         let state = AgreementState::from_records(vec![v1.clone(), v2.clone(), p]);
-        let id = RecordId::new("value.evidence").expect("id");
+        let id = RecordId::new("principle.evidence").expect("id");
         assert_eq!(state.in_force(&id).map(|r| r.revision), Some(1));
         assert_eq!(state.pending(&id).map(|r| r.revision), Some(2));
         assert_eq!(state.latest(&id).map(|r| r.revision), Some(2));
@@ -440,8 +455,13 @@ mod tests {
 
     #[test]
     fn accept_promotes_and_withdraw_retires_a_draft() {
-        let v1 = record("value.evidence", 1, "init", value("Evidence first"));
-        let mut v2 = record("value.evidence", 2, "change-1", value("Evidence always"));
+        let v1 = record("principle.evidence", 1, "init", value("Evidence first"));
+        let mut v2 = record(
+            "principle.evidence",
+            2,
+            "change-1",
+            value("Evidence always"),
+        );
         v2.supersedes = Some(v1.reference().expect("ref"));
         let p = proposal("proposal.a", &v2);
         let accepted = AgreementState::from_records(vec![
@@ -450,7 +470,7 @@ mod tests {
             p.clone(),
             review("review.a", &p, LocalReviewVerdict::Accept),
         ]);
-        let id = RecordId::new("value.evidence").expect("id");
+        let id = RecordId::new("principle.evidence").expect("id");
         assert_eq!(accepted.in_force(&id).map(|r| r.revision), Some(2));
         assert!(accepted.pending(&id).is_none());
         assert!(accepted.pending_proposals().is_empty());
@@ -468,10 +488,10 @@ mod tests {
 
     #[test]
     fn a_new_record_that_is_only_drafted_is_not_in_force() {
-        let v1 = record("value.new", 1, "change-new", value("New"));
+        let v1 = record("principle.new", 1, "change-new", value("New"));
         let p = proposal("proposal.new", &v1);
         let state = AgreementState::from_records(vec![v1.clone(), p]);
-        let id = RecordId::new("value.new").expect("id");
+        let id = RecordId::new("principle.new").expect("id");
         assert!(state.in_force(&id).is_none());
         assert_eq!(state.pending(&id).map(|r| r.revision), Some(1));
         let before = state.in_force_digest();
@@ -490,9 +510,9 @@ mod tests {
     #[test]
     fn an_accepted_retirement_takes_a_record_out_of_force() {
         use crate::domain::Retirement;
-        let v1 = record("value.old", 1, "init", value("Old"));
+        let v1 = record("principle.old", 1, "init", value("Old"));
         let retire = record(
-            "retirement.value-old",
+            "retirement.principle-old",
             1,
             "retire-old",
             RecordBody::Retirement(Retirement {
@@ -502,7 +522,7 @@ mod tests {
             }),
         );
         let p = proposal("proposal.retire", &retire);
-        let id = RecordId::new("value.old").expect("id");
+        let id = RecordId::new("principle.old").expect("id");
         let drafted = AgreementState::from_records(vec![v1.clone(), retire.clone(), p.clone()]);
         assert!(
             drafted.in_force(&id).is_some(),

@@ -15,6 +15,8 @@ fn run(args: &[&str], cwd: &Path) -> Output {
     Command::new(bin())
         .args(args)
         .current_dir(cwd)
+        .env_remove("BEADS_DIR")
+        .env("WHETSTONE_JEV_OFFLINE", "1")
         .output()
         .expect("run whetstone")
 }
@@ -66,8 +68,79 @@ fn change(root: &Path, request: &str, args: &[&str]) -> serde_json::Value {
     json(&run(&record, root))
 }
 
+/// A mission and one must rule the toolchain proves, accepted.
+fn establish(root: &Path, request: &str) {
+    assert!(Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(root)
+        .status()
+        .expect("git")
+        .success());
+    let inspected = json(&run(&["init", "--json", "--request-id", request], root));
+    let revision = inspected["expected_revision"]
+        .as_u64()
+        .expect("revision")
+        .to_string();
+    let token = inspected["resume_token"]
+        .as_str()
+        .expect("token")
+        .to_string();
+    let agreed = json(&run(
+        &[
+            "init",
+            "--json",
+            "--action",
+            "agree",
+            "--request-id",
+            request,
+            "--expected-revision",
+            &revision,
+            "--resume",
+            &token,
+            "--mission",
+            "Keep project intent inspectable.",
+        ],
+        root,
+    ));
+    assert_eq!(
+        agreed["data"]["records"].as_array().map(Vec::len),
+        Some(1),
+        "{agreed}"
+    );
+    let rule = change(
+        root,
+        &format!("{request}-rule"),
+        &[
+            "--kind",
+            "rule",
+            "--record-id",
+            "rule.toolchain",
+            "--content",
+            "The toolchain answers.",
+            "--rationale",
+            "Nothing else can be checked without it.",
+            "--definition",
+            r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"git --version"}}"#,
+        ],
+    );
+    assert_eq!(rule["state"], "success", "{rule}");
+    let proposal = rule["data"]["proposal"]["id"].as_str().expect("proposal");
+    let accepted = json(&run(
+        &[
+            "change",
+            "--json",
+            "--request-id",
+            &format!("accept-{proposal}"),
+            "--accept",
+            proposal,
+        ],
+        root,
+    ));
+    assert_eq!(accepted["state"], "success", "{accepted}");
+}
+
 fn map_feature(root: &Path, id: &str, steps: &[&str]) {
-    let gate = format!("standard.{}", id.trim_start_matches("feature."));
+    let gate = format!("rule.{}", id.trim_start_matches("feature."));
     let definition = serde_json::json!({
         "type": "feature",
         "summary": "The default dashboard view",
@@ -75,7 +148,7 @@ fn map_feature(root: &Path, id: &str, steps: &[&str]) {
         "sweep_order": 1,
         "user_path": "Run wh dash and read the default view.",
         "drive_steps": steps,
-        "proof": "The mission headline and the five-stage flow render.",
+        "proof": "The mission headline and the rules view render.",
         "entry_points": ["assets/dashboard/"],
         "serves": ["mission.project"],
         "proven_by": [gate],
@@ -98,13 +171,13 @@ fn map_feature(root: &Path, id: &str, steps: &[&str]) {
         ],
     );
     assert_eq!(feature["state"], "success", "{feature}");
-    let drive = serde_json::json!({"type": "standard", "strength": "must", "enforcement": {"enforcement": "drive", "feature": id}}).to_string();
+    let drive = serde_json::json!({"type": "rule", "strength": "must", "enforcer": {"kind": "drive", "feature": id}}).to_string();
     let gate_record = change(
         root,
         &format!("{id}-gate"),
         &[
             "--kind",
-            "standard",
+            "rule",
             "--record-id",
             &gate,
             "--content",
@@ -138,60 +211,16 @@ fn map_feature(root: &Path, id: &str, steps: &[&str]) {
 #[test]
 fn the_web_driver_proves_a_dashboard_feature_with_screenshots_and_locates_failures() {
     if !node_available() || !chrome_available() {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "a tool this test needs is missing in CI"
+        );
         eprintln!("SKIP: node and Chrome are required for the web driver proof");
         return;
     }
     let temp = tempfile::tempdir().expect("temp");
     let root = temp.path();
-    assert!(Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(root)
-        .status()
-        .expect("git")
-        .success());
-    let inspected = json(&run(&["init", "--json", "--request-id", "web-init"], root));
-    let token = inspected["resume_token"]
-        .as_str()
-        .expect("token")
-        .to_string();
-    let agreed = json(&run(
-        &[
-            "init",
-            "--json",
-            "--action",
-            "agree",
-            "--request-id",
-            "web-init",
-            "--expected-revision",
-            "0",
-            "--resume",
-            &token,
-            "--mission",
-            "Keep project intent inspectable.",
-            "--desired-outcome",
-            "Routine drift is repaired before handoff.",
-            "--values",
-            "Evidence before assertion.",
-            "--philosophy",
-            "Typed services own deterministic work.",
-            "--owner",
-            "Owner",
-            "--initial-safeguard",
-            "The toolchain answers.",
-            "--safeguard-scope",
-            "repository",
-            "--revision-triggers",
-            "a gate fails twice",
-            "--gate-command",
-            "git --version",
-        ],
-        root,
-    ));
-    assert_eq!(
-        agreed["data"]["records"].as_array().map(Vec::len),
-        Some(5),
-        "{agreed}"
-    );
+    establish(root, "web-init");
 
     // The project's driver launches this project's own dashboard.
     let verify = root.join("whetstone/verify");
@@ -224,10 +253,11 @@ fn the_web_driver_proves_a_dashboard_feature_with_screenshots_and_locates_failur
             "expect #mission-line",
             "expect text=Needs attention",
             "screenshot home",
-            "click #tab-foundations",
-            "expect #st-gates",
-            "expect-count #foundations .panel 6",
-            "screenshot foundations",
+            "click #tab-rules",
+            "expect-count #rules h2 6",
+            "expect #rules [data-id='rule.toolchain']",
+            "expect text=The toolchain answers.",
+            "screenshot rules",
         ],
     );
     let proven = json(&run(
@@ -373,60 +403,16 @@ fn the_web_driver_proves_a_dashboard_feature_with_screenshots_and_locates_failur
 #[test]
 fn the_repository_seed_map_sweeps_the_real_dashboard() {
     if !node_available() || !chrome_available() {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "a tool this test needs is missing in CI"
+        );
         eprintln!("SKIP: node and Chrome are required for the seed map sweep");
         return;
     }
     let temp = tempfile::tempdir().expect("temp");
     let root = temp.path();
-    assert!(Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(root)
-        .status()
-        .expect("git")
-        .success());
-    let inspected = json(&run(&["init", "--json", "--request-id", "seed-init"], root));
-    let token = inspected["resume_token"]
-        .as_str()
-        .expect("token")
-        .to_string();
-    let agreed = json(&run(
-        &[
-            "init",
-            "--json",
-            "--action",
-            "agree",
-            "--request-id",
-            "seed-init",
-            "--expected-revision",
-            "0",
-            "--resume",
-            &token,
-            "--mission",
-            "Keep project intent inspectable.",
-            "--desired-outcome",
-            "Routine drift is repaired before handoff.",
-            "--values",
-            "Evidence before assertion.",
-            "--philosophy",
-            "Typed services own deterministic work.",
-            "--owner",
-            "Owner",
-            "--initial-safeguard",
-            "The toolchain answers.",
-            "--safeguard-scope",
-            "repository",
-            "--revision-triggers",
-            "a gate fails twice",
-            "--gate-command",
-            "git --version",
-        ],
-        root,
-    ));
-    assert_eq!(
-        agreed["data"]["records"].as_array().map(Vec::len),
-        Some(5),
-        "{agreed}"
-    );
+    establish(root, "seed-init");
     let verify = root.join("whetstone/verify");
     fs::create_dir_all(&verify).expect("verify dir");
     fs::copy(

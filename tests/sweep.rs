@@ -17,6 +17,8 @@ fn run(args: &[&str], cwd: &Path) -> Output {
         .args(args)
         .current_dir(cwd)
         .env_remove("WH_SWEEP_NEVER_SET")
+        .env_remove("BEADS_DIR")
+        .env("WHETSTONE_JEV_OFFLINE", "1")
         .output()
         .expect("run whetstone")
 }
@@ -128,14 +130,14 @@ fn feature(
 }
 
 fn drive_gate(root: &Path, feature: &str) {
-    let gate = format!("standard.{}", feature.trim_start_matches("feature."));
-    let definition = serde_json::json!({"type": "standard", "strength": "must", "enforcement": {"enforcement": "drive", "feature": feature}});
+    let gate = format!("rule.{}", feature.trim_start_matches("feature."));
+    let definition = serde_json::json!({"type": "rule", "strength": "must", "enforcer": {"kind": "drive", "feature": feature}});
     let recorded = change(
         root,
         &format!("{feature}-g"),
         &[
             "--kind",
-            "standard",
+            "rule",
             "--record-id",
             &gate,
             "--content",
@@ -163,6 +165,10 @@ fn establish(root: &Path) {
             .expect("chmod");
     }
     let inspected = json(&run(&["init", "--json", "--request-id", "i1"], root));
+    let revision = inspected["expected_revision"]
+        .as_u64()
+        .expect("revision")
+        .to_string();
     let token = inspected["resume_token"]
         .as_str()
         .expect("token")
@@ -176,40 +182,46 @@ fn establish(root: &Path) {
             "--request-id",
             "i1",
             "--expected-revision",
-            "0",
+            &revision,
             "--resume",
             &token,
             "--mission",
             "Sweep it all.",
-            "--desired-outcome",
-            "Nothing rots.",
-            "--values",
-            "Evidence.",
-            "--philosophy",
-            "Small.",
-            "--owner",
-            "Owner",
-            "--initial-safeguard",
-            "Git answers.",
-            "--safeguard-scope",
-            "repository",
-            "--revision-triggers",
-            "a gate fails",
-            "--gate-command",
-            "git --version",
         ],
         root,
     ));
     assert_eq!(
         agreed["data"]["records"].as_array().map(Vec::len),
-        Some(5),
+        Some(1),
         "{agreed}"
     );
+    let first = change(
+        root,
+        "first-rule",
+        &[
+            "--kind",
+            "rule",
+            "--record-id",
+            "rule.toolchain",
+            "--content",
+            "Git answers.",
+            "--rationale",
+            "Nothing else can be checked without it.",
+            "--definition",
+            r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"git --version"}}"#,
+        ],
+    );
+    assert_eq!(first["state"], "success", "{first}");
+    accept_all(root);
 }
 
 #[test]
 fn the_sweep_reports_every_feature_honestly_and_hygiene_names_the_feature() {
     if !node_available() {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "a tool this test needs is missing in CI"
+        );
         eprintln!("SKIP: node is required for the driver");
         return;
     }
@@ -447,6 +459,10 @@ fn install_cli_driver(root: &Path) {
 #[test]
 fn a_change_is_proven_with_its_own_steps_and_committed_work_selects_its_features() {
     if !node_available() {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "a tool this test needs is missing in CI"
+        );
         eprintln!("SKIP: node is required for the driver");
         return;
     }
@@ -468,10 +484,7 @@ fn a_change_is_proven_with_its_own_steps_and_committed_work_selects_its_features
         accepted_only["data"]["scanner_included"], false,
         "a feature proof is about the feature"
     );
-    let initial = json(&run(
-        &["check", "--json", "--rule", "standard.initial-gate"],
-        root,
-    ));
+    let initial = json(&run(&["check", "--json", "--rule", "rule.toolchain"], root));
     assert_eq!(initial["state"], "success", "{initial}");
     assert_ne!(
         initial["data"]["gate_receipts"], accepted_only["data"]["gate_receipts"],
@@ -508,7 +521,7 @@ fn a_change_is_proven_with_its_own_steps_and_committed_work_selects_its_features
     let run_id = with_change["data"]["run_id"].as_str().expect("run id");
     let evidence_root = PathBuf::from(with_change["data"]["evidence_root"].as_str().expect("root"));
     let steps: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(evidence_root.join(run_id).join("standard_alpha.steps.json"))
+        &fs::read_to_string(evidence_root.join(run_id).join("rule_alpha.steps.json"))
             .expect("steps evidence"),
     )
     .expect("steps json");
@@ -611,19 +624,16 @@ fn the_changelog_search_finds_visible_titles() {
     assert!(
         titles
             .iter()
-            .any(|title| title == "Foundations established"),
+            .any(|title| title == "Mission added: Sweep it all."),
         "{titles:?}"
     );
     assert_eq!(everything["data"]["changelog_truncated"], false);
-    let found = json(&run(
-        &["dash", "--json", "--search", "foundations ESTABLISHED"],
-        root,
-    ));
+    let found = json(&run(&["dash", "--json", "--search", "mission ADDED"], root));
     let found = found["data"]["changelog"].as_array().expect("changelog");
     assert!(
         found
             .iter()
-            .any(|entry| entry["title"] == "Foundations established"),
+            .any(|entry| entry["title"] == "Mission added: Sweep it all."),
         "{found:?}"
     );
     let none = json(&run(&["dash", "--json", "--search", "zqxj-nothing"], root));

@@ -18,7 +18,7 @@ In short:
 
 Do not extend the removed direction: the eight-decision onboarding, values and
 metrics, exceptions, scopes, PR-manifest activation, repair-host sockets and
-mandates. Their code is scheduled for deletion in `whetstone-ppq.2`.
+mandates. Their code was deleted in `whetstone-ppq.2`.
 
 Do not restore removed modules, commands, packs, generated artifacts, fixtures,
 or compatibility paths for convenience. The last old-product revision is

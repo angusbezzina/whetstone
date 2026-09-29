@@ -70,27 +70,41 @@ resume token. A retry with the same request ID must keep the same input.
   worktree root from nested directories and reports detected facts separately
   from inferences and unknowns. Proposed defaults are suggestions, not
   answers.
-- `wh init --action agree` records the owner's agreement. It still asks for
-  the earlier eight decisions until `whetstone-ppq.2.4` replaces them with
-  mission, principles and proposed rules, so pass only answers the owner
-  gave you.
-- `wh init --action wire --host <host> --hooks` writes the skill, feature map,
-  driver and Claude Code hooks. `wh init --action import --from <dir>` turns
-  pstack-edited skill files into drafts.
-- `wh change` drafts, previews, accepts, withdraws or retires records.
-  Accepting is the owner's call.
-- `wh check` runs the rules: `--changed` or `--base` for the change,
-  `--feature` and `--step` to prove one feature, `--sweep` for every mapped
-  feature.
+- `wh init --action agree` records the owner's agreement: `--mission`,
+  optional `--principle <pstack id>` and `--custom-principle`, and
+  `--starter <id|all>`. Pass only answers the owner gave you.
+  `--action setup` detects and (with `--yes`) installs Beads and pstack;
+  `--action exemplar --from <path>` turns a codebase the owner admires into
+  rule drafts.
+- `wh init --action wire --host <claude|codex|cursor|agents> --hooks` writes
+  the skill (with `rules/*.md` and `whetstone.verify.json`), feature map,
+  driver, the agent hooks and the git pre-commit and pre-push hooks. `--ci`
+  adds the required CI status. `wh init --action import --from <dir>` turns
+  pstack-edited skill files, including rule files, into drafts.
+- `wh change` drafts, previews, accepts, withdraws or retires records
+  (`--kind mission|principle|rule|feature|map`). `--accept-flag` and
+  `--dismiss-flag` label a flag, `--answer <issue>` answers a raised hand, and
+  `--tune` and `--migrate` record drafts. Accepting is the owner's call.
+- `wh check` runs the rules: `--staged` for pre-commit, `--changed` or
+  `--base` for the change, `--feature` and `--step` to prove one feature,
+  `--sweep` for every mapped feature, `--mutate` to test the proofs.
+- Before building, run pstack's `/how`, `/why` and `/blast-radius` and record
+  them with `wh check --brief --area <feature|path> --skill how --skill why`.
+- When confidence is low, a repair fails twice, the spec is vague or the area
+  is under a must rule, raise a hand and move on to other ready work:
+  `wh check --raise-hand --question "..." --tried "..." --recommend "..."
+  --trigger <low-confidence|second-failed-repair|must-rule-area|vague-spec>`.
+- A review rule passes only with an attestation at this commit:
+  `wh check --attest <rule> --verdict pass|fail --reviewer interrogate
+  --notes "..."`.
 - `wh push` previews an exact package of accepted records and needs
   `--confirm <token>`. `wh pull` receives shared records and never executes
   or accepts them.
 - Hidden `validate`, `eval` and `scan` are repository gates, not product
   workflows.
 
-Do not use `wh push --propose`, `wh change --activate`, `wh init --ci
---reviewer` or the `wh check` repair-session flags. They belong to the
-earlier direction and are being removed.
+The earlier direction's `wh push --propose`, `wh change --activate`,
+`wh init --ci --reviewer` and repair-session flags have been removed.
 
 ## Judgment rules
 

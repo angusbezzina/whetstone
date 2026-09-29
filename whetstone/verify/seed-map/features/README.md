@@ -12,14 +12,14 @@ This directory is the maintained source for verifying the user-facing behavior o
 ## Driving conventions
 
 - Start every recipe from the default view unless its preconditions say otherwise.
-- Prefer element ids and ARIA roles (`#tab-foundations`, `role=tab`) over classes, text over coordinates.
+- Prefer element ids and ARIA roles (`#tab-rules`, `role=tab`) over classes, text over coordinates.
 - Run actions through `node whetstone/verify/drive.mjs drive <step> ...`; `node whetstone/verify/drive.mjs help` lists the steps.
 - Drive read-only: editing needs the one-time edit handoff and is not part of these recipes.
 
 ## Proof and skip reporting
 
 - Capture the view after each navigation with a `screenshot` step, and the final state.
-- Assert the view's own landmark (a stage, the gate board, a journal entry), not only that a tab was clicked.
+- Assert the view's own landmark (a rules section, the check board, a journal entry), not only that a tab was clicked.
 - `wh check --feature <id>` stores evidence under the run directory it prints; a pass without evidence is unknown.
 - Report an unreachable path with the attempted command and the unmet precondition.
 
@@ -36,7 +36,7 @@ Keep implementation details out of the map. Name only user paths, stable handles
 
 ## Features
 
-- [Dashboard home](./dashboard-home.md) covers the mission headline, what needs attention, key metrics and gates.
-- [Foundations](./foundations.md) covers the five stages from mission to gates, then the feature list.
-- [Checks](./checks.md) covers the gate board and the last run per gate.
+- [Dashboard home](./dashboard-home.md) covers the mission headline, what needs attention and the rules in force.
+- [Foundations](./foundations.md) covers the Rules tab: mission, principles, rules by strength, then the feature list.
+- [Checks](./checks.md) covers the rule board, the last run per rule and flags to label.
 - [Changelog](./changelog.md) covers the journal, search and the decision trail export.

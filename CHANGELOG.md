@@ -21,6 +21,62 @@ exemplar codebases. Several entries below describe code this plan removes:
 the eight-decision agreement, key metrics, team activation through pull
 requests, and gate exceptions. They stay here as a record of what was built.
 
+### Added (delegation plan, `whetstone-ppq`)
+
+- Rule v2 (`references/rule-v2.schema.json`): one strength and exactly one
+  enforcer (mechanical, Jev question or review), labelled examples, source,
+  hand-raise triggers and privacy. Earlier standards and guidance are read as
+  rules.
+- Onboarding: `wh init --action setup` (Beads and pstack detection, one
+  confirmed install, `whetstone/tools.lock.json`), mission plus pstack
+  principles plus three starter rules in `--action agree`, and
+  `--action exemplar` to draft rules from a codebase the owner admires.
+- Jev questions through the driver's `ask` command with kernel-side
+  redaction and local-only rules; shadow mode, confidence bars, and the rule
+  that a Jev answer never passes a must rule.
+- Gates: git pre-commit (`wh check --staged`), pre-push
+  (`wh check --base <remote>`) and a required CI status (`--ci`), chaining any
+  existing hook; Codex and Cursor stop hooks next to Claude's.
+- Review attestations (`wh check --attest`), briefs (`--brief`), raised hands
+  as `bd human` issues (`--raise-hand`, answered with `wh change --answer`),
+  flag labels (`--accept-flag`, `--dismiss-flag`), false-flag rates, tuning
+  drafts (`wh change --tune`), hardening candidates (`--hardens`), and
+  `wh change --migrate` for earlier values, philosophy and YAML rules.
+- Proof quality: flaky proofs are quarantined, and `wh check --mutate` runs
+  declared mutations in an isolated worktree to catch hollow proofs.
+- `wh eval` scores each rule's examples by enforcer and checks the pstack
+  round trip.
+- The generated verification skill carries `rules/*.md` and
+  `whetstone.verify.json` (`references/verify-skill-v1.schema.json`).
+
+### Removed
+
+- The eight-decision onboarding, core values, implementation philosophy and
+  key metrics as live kinds, policy exceptions, scopes, PR-manifest activation,
+  repair-host sockets and transport, and mandates. Their stored records are
+  still read byte-exactly as retired kinds and can never be written.
+
+### Fixed
+
+- A second `wh change` (or `--accept`) without `--request-id` no longer
+  collides with the first: the default request id is derived from the
+  change's input.
+- Pre-push checks exactly what is pushed: the hook passes the pushed commit,
+  and the check refuses when that commit is not checked out or tracked files
+  have uncommitted changes; untracked files are not part of the push.
+- A review attestation binds to the tree it reviewed, so it stops holding as
+  soon as the checked content changes (one more commit included).
+- Committing Whetstone's own wiring, a change with no file an AST rule reads,
+  a whitespace-only signature change, a new module with public items, or a
+  change outside a path-scoped review no longer blocks a commit; neither
+  does a repository whose rules all run at pre-push, or whose only rules are
+  in shadow.
+- Staged checks record no receipts, which brings pre-commit to about 1.5s.
+- `wh init --action agree` replays exactly, resumes a half-written batch,
+  accepts the mission already in force, and writes nothing when stale; batch
+  writes work beside retired records.
+- The Stop hook no longer claims a hand was raised when none could be filed.
+
 ### Documentation
 
 - README, AGENTS, CLAUDE, PRODUCT, SKILL and the planning docs now describe

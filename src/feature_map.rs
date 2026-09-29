@@ -449,6 +449,7 @@ pub fn parse_feature(stem: &str, text: &str) -> Result<ParsedFeature, String> {
         harness: None,
         preconditions: Vec::new(),
         drive_recipe: Vec::new(),
+        mutations: Vec::new(),
     };
     let mut preserved = Vec::new();
     let mut seen = Vec::new();
@@ -719,6 +720,63 @@ pub fn h2_headings(text: &str) -> Vec<String> {
         .collect()
 }
 
+const PINNED_README: &str = include_str!("../tests/fixtures/pstack-feature-map-example/README.md");
+const PINNED_CREATE: &str =
+    include_str!("../tests/fixtures/pstack-feature-map-example/create-note.md");
+const PINNED_SEARCH: &str = include_str!("../tests/fixtures/pstack-feature-map-example/search.md");
+
+/// The adapter contract on the pinned pstack example: each feature file and
+/// the README import and re-render byte-identically. A pstack format change
+/// breaks this, never generation from records.
+pub fn pinned_roundtrip() -> Vec<(&'static str, Result<(), String>)> {
+    let feature = |stem: &str, text: &str| -> Result<ParsedFeature, String> {
+        let parsed = parse_feature(stem, text)?;
+        let rendered = render_feature_body(&parsed.id, &parsed.feature);
+        if rendered != text {
+            return Err(format!("{stem}.md did not re-render byte-identically"));
+        }
+        conforms(&rendered)?;
+        Ok(parsed)
+    };
+    let mut results = Vec::new();
+    let mut parsed = Vec::new();
+    for (file, stem, text) in [
+        ("create-note.md", "create-note", PINNED_CREATE),
+        ("search.md", "search", PINNED_SEARCH),
+    ] {
+        match feature(stem, text) {
+            Ok(feature) => {
+                parsed.push((stem, feature));
+                results.push((file, Ok(())));
+            }
+            Err(error) => results.push((file, Err(error))),
+        }
+    }
+    let readme = parse_readme(PINNED_README).and_then(|readme| {
+        let mut features = Vec::new();
+        for (stem, mut feature) in parsed {
+            let entry = readme
+                .entries
+                .iter()
+                .find(|entry| entry.0 == stem)
+                .ok_or_else(|| format!("{stem} is not listed in the README"))?;
+            feature.feature.index_summary = Some(entry.2.clone());
+            features.push(feature);
+        }
+        let refs = features
+            .iter()
+            .map(|parsed| (&parsed.id, &parsed.feature))
+            .collect::<Vec<_>>();
+        if render_readme(&readme.map, &refs) == PINNED_README {
+            Ok(())
+        } else {
+            Err("README.md did not re-render byte-identically".into())
+        }
+    });
+    results.push(("README.md", readme));
+    results
+}
+
 /// Whether a feature file has exactly pstack's four H2s in order.
 pub fn conforms(text: &str) -> Result<(), String> {
     let headings = h2_headings(text);
@@ -836,6 +894,7 @@ mod tests {
             harness: None,
             preconditions: Vec::new(),
             drive_recipe: Vec::new(),
+            mutations: Vec::new(),
         };
         let mut frontmatter = String::new();
         frontmatter.push_str(&frontmatter_line("record", &serde_json::json!(id.as_str())));

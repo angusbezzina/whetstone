@@ -1,225 +1,376 @@
+//! The direction fixture catalogue (`fixtures/direction_cases.json`) run
+//! against the domain: rule v2 validation (one strength, exactly one
+//! enforcer, shadow questions, privacy, examples), receipts, earlier rules
+//! read through their migration, and retired kinds that are read exactly but
+//! never written. The published schemas are checked against the same types.
+
 use std::collections::BTreeSet;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use whetstone::domain::{
-    ContentDigest, EvidenceRef, ExternalRef, ExternalSystem, PrincipalKind, PrincipalRef,
-    RecordBody, RecordId, RecordRef, RepairAttemptRecord, RepairAuthorityReservationRecord,
-    RepairCheckPhaseRecord, RepairHandoffRecord, RepairOperationClaimRecord, RepairSessionRecord,
-    RepairSessionStateRecord, RepairSnapshotRecord, RepairWorkspaceFileRecord,
+    AgreementHistory, AgreementRecord, DomainError, Enforcer, RecordBody, RETIRED_KINDS,
 };
 
-#[test]
-fn direction_fixture_catalog_covers_every_demo_and_required_edge() {
-    let catalog: serde_json::Value =
-        serde_json::from_str(include_str!("fixtures/direction_cases.json"))
-            .expect("valid fixture catalog");
-    assert_eq!(catalog["schema_version"], 1);
-    let cases = catalog["cases"].as_array().expect("cases array");
-    let ids = cases
-        .iter()
-        .filter_map(|case| case["id"].as_str())
-        .collect::<BTreeSet<_>>();
-    let required = [
-        "T-042", "T-043", "T-044", "T-045", "T-046", "T-047", "P-048", "C-049", "X-050", "X-051",
-        "X-052", "X-053",
-    ];
-    assert_eq!(ids, required.into_iter().collect());
-    assert_eq!(cases.len(), required.len());
+fn catalogue() -> Value {
+    serde_json::from_str(include_str!("fixtures/direction_cases.json"))
+        .expect("valid fixture catalogue")
+}
+
+fn record_schema() -> Value {
+    serde_json::from_str(include_str!(
+        "../references/agreement-record-v1.schema.json"
+    ))
+    .expect("valid record schema")
+}
+
+fn rule_schema() -> Value {
+    serde_json::from_str(include_str!("../references/rule-v2.schema.json"))
+        .expect("valid rule schema")
+}
+
+/// A complete record envelope around one fixture body.
+fn envelope(case: &Value) -> Value {
+    let id = format!(
+        "fixture.{}",
+        case["id"].as_str().expect("case id").to_ascii_lowercase()
+    );
+    let receipt = matches!(
+        case["record_type"].as_str(),
+        Some("judgment" | "attestation" | "brief" | "hand_raise" | "verification_receipt")
+    );
+    json!({
+        "schema_version": 1,
+        "id": id,
+        "revision": 1,
+        "scope": {"project": "fixture"},
+        "owner": {"kind": "local_user", "stable_id": "local:owner"},
+        "provenance": {
+            "kind": "human_authored",
+            "recorded_by": {"kind": "local_user", "stable_id": "local:owner"},
+            "recorded_at": "2026-09-10T12:00:00Z",
+            "sources": [{"system": "fixture", "locator": "direction_cases.json"}],
+            "authority": if receipt { "candidate_only" } else { "owner_authored" },
+        },
+        "idempotency_key": format!("fixture:{id}"),
+        "record_type": case["record_type"],
+        "record": case["record"],
+    })
+}
+
+fn cases() -> Vec<Value> {
+    catalogue()["cases"]
+        .as_array()
+        .expect("cases array")
+        .clone()
 }
 
 #[test]
-fn published_v1_schema_is_strict_and_version_pinned() {
-    let schema: serde_json::Value = serde_json::from_str(include_str!(
-        "../references/agreement-record-v1.schema.json"
-    ))
-    .expect("valid JSON schema");
+fn the_catalogue_is_versioned_unique_and_covers_every_expectation() {
+    let catalogue = catalogue();
+    assert_eq!(catalogue["schema_version"], 2);
+    let cases = cases();
+    let ids = cases
+        .iter()
+        .map(|case| case["id"].as_str().expect("id"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(ids.len(), cases.len(), "case ids are unique");
+    let expectations = catalogue["expectations"]
+        .as_object()
+        .expect("expectations")
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let used = cases
+        .iter()
+        .map(|case| case["expect"].as_str().expect("expect").to_string())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(used, expectations, "every expectation is exercised");
+    // Every enforcer family and every retired kind the catalogue names is real.
+    for case in &cases {
+        if let Some(family) = case["family"].as_str() {
+            assert!(["mechanical", "question", "review"].contains(&family));
+        }
+        if case["expect"] == "retired" {
+            assert!(
+                RETIRED_KINDS.contains(&case["record_type"].as_str().expect("type")),
+                "{}",
+                case["id"]
+            );
+        }
+    }
+}
+
+#[test]
+fn every_case_meets_its_expectation() {
+    for case in cases() {
+        let id = case["id"].as_str().expect("id");
+        let bytes = serde_json::to_vec(&envelope(&case)).expect("envelope bytes");
+        let parsed = serde_json::from_slice::<AgreementRecord>(&bytes);
+        match case["expect"].as_str().expect("expect") {
+            "parse_error" => {
+                assert!(parsed.is_err(), "{id} parsed but must not: {parsed:?}");
+            }
+            "invalid" => {
+                let record = parsed.unwrap_or_else(|error| panic!("{id} did not parse: {error}"));
+                assert!(
+                    matches!(record.validate(), Err(DomainError::InvalidField(_))),
+                    "{id} validated but must not: {:?}",
+                    record.validate()
+                );
+                let mut history = AgreementHistory::default();
+                assert!(history.append(record, None).is_err(), "{id} was appended");
+            }
+            "valid" => {
+                let record = parsed.unwrap_or_else(|error| panic!("{id} did not parse: {error}"));
+                record
+                    .validate()
+                    .unwrap_or_else(|error| panic!("{id} is invalid: {error}"));
+                assert_eq!(record.body.type_name(), case["record_type"], "{id}");
+                // Canonical bytes are a fixed point of parse and serialize.
+                let canonical = record.canonical_json().expect("canonical");
+                let again: AgreementRecord =
+                    serde_json::from_slice(&canonical).expect("reparse canonical");
+                assert_eq!(again, record, "{id}");
+                assert_eq!(
+                    again.canonical_json().expect("canonical"),
+                    canonical,
+                    "{id}"
+                );
+                let mut history = AgreementHistory::default();
+                let reference = history
+                    .append(record.clone(), None)
+                    .unwrap_or_else(|error| panic!("{id} was not appended: {error}"));
+                assert_eq!(reference.digest, record.digest().expect("digest"));
+                assert_eq!(
+                    history.append(record, None).expect("idempotent replay"),
+                    reference,
+                    "{id}"
+                );
+            }
+            "retired" => {
+                let record = parsed.unwrap_or_else(|error| panic!("{id} did not parse: {error}"));
+                let RecordBody::Retired(retired) = &record.body else {
+                    panic!("{id} was not read as retired: {:?}", record.body);
+                };
+                assert_eq!(retired.record_type, case["record_type"], "{id}");
+                assert_eq!(retired.record, case["record"], "{id} keeps its body");
+                record
+                    .validate()
+                    .expect("retired history validates as stored");
+                assert_eq!(
+                    record.canonical_json().expect("canonical"),
+                    bytes,
+                    "{id} re-serializes byte for byte"
+                );
+                let mut history = AgreementHistory::default();
+                let record_type = retired.record_type.clone();
+                match history.append(record, None) {
+                    Err(DomainError::RetiredKind(kind)) => assert_eq!(kind, record_type),
+                    other => panic!("{id} was not refused as retired: {other:?}"),
+                }
+            }
+            other => panic!("{id} has unknown expectation {other}"),
+        }
+    }
+}
+
+#[test]
+fn rule_cases_keep_their_family_shadow_privacy_and_defaults() {
+    for case in cases() {
+        if case["expect"] != "valid" {
+            continue;
+        }
+        let id = case["id"].as_str().expect("id");
+        let record: AgreementRecord =
+            serde_json::from_value(envelope(&case)).expect("valid case parses");
+        let Some(rule) = record.body.rule_view() else {
+            assert!(
+                case.get("family").is_none(),
+                "{id} names a family but is no rule"
+            );
+            continue;
+        };
+        rule.validate().expect("the rule view is a valid v2 rule");
+        if let Some(family) = case["family"].as_str() {
+            assert_eq!(rule.enforcer.family().label(), family, "{id}");
+        }
+        assert_eq!(
+            rule.in_shadow(),
+            case["shadow"].as_bool().unwrap_or(false),
+            "{id}: only a question in shadow is recorded without being enforced"
+        );
+        assert_eq!(
+            rule.privacy.local_only,
+            case["local_only"].as_bool().unwrap_or(false),
+            "{id}"
+        );
+        if let Some(strength) = case["rule_view_strength"].as_str() {
+            assert_eq!(rule.strength.label(), strength, "{id}");
+        }
+        if let Some(expected) = case.get("serializes_enforcer_as") {
+            assert_eq!(
+                &serde_json::to_value(&rule.enforcer).expect("enforcer JSON"),
+                expected,
+                "{id}: question defaults are written out"
+            );
+        }
+        if case["record_type"] == "rule" {
+            assert_eq!(
+                serde_json::to_value(&rule.examples).expect("examples"),
+                case["record"]
+                    .get("examples")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+                "{id}: labelled examples survive exactly"
+            );
+        }
+    }
+}
+
+#[test]
+fn each_enforcer_kind_parses_alone_and_matches_the_published_rule_schema() {
+    let schema = rule_schema();
+    let published = schema["$defs"]["enforcer"]["oneOf"]
+        .as_array()
+        .expect("enforcer oneOf")
+        .iter()
+        .map(|option| {
+            assert_eq!(option["additionalProperties"], false, "{option}");
+            option["properties"]["kind"]["const"]
+                .as_str()
+                .expect("kind const")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    let minimal = [
+        json!({"kind": "ast", "query": "(identifier) @id"}),
+        json!({"kind": "lint", "tool": "clippy", "code": "clippy::unwrap_used"}),
+        json!({"kind": "formatter", "tool": "rustfmt"}),
+        json!({"kind": "test", "command": "cargo test"}),
+        json!({"kind": "validator", "command": "wh validate"}),
+        json!({"kind": "drive", "feature": "feature.dashboard"}),
+        json!({"kind": "design_tokens", "tokens": "assets/tokens.css"}),
+        json!({"kind": "public_surface"}),
+        json!({"kind": "brief"}),
+        json!({"kind": "question", "question": "Is this public?"}),
+        json!({"kind": "review", "reviewer": {"by": "interrogate"}}),
+    ];
+    let mut kinds = Vec::new();
+    for value in minimal {
+        let enforcer: Enforcer = serde_json::from_value(value.clone())
+            .unwrap_or_else(|error| panic!("{value} did not parse: {error}"));
+        kinds.push(enforcer.kind().to_string());
+        let option = schema["$defs"]["enforcer"]["oneOf"]
+            .as_array()
+            .expect("oneOf")
+            .iter()
+            .find(|option| option["properties"]["kind"]["const"] == enforcer.kind())
+            .expect("published option");
+        let serialized = serde_json::to_value(&enforcer).expect("serialize");
+        let properties = option["properties"].as_object().expect("properties");
+        for key in serialized.as_object().expect("object").keys() {
+            assert!(
+                properties.contains_key(key),
+                "{} writes {key}, which the schema does not publish",
+                enforcer.kind()
+            );
+        }
+        for required in option["required"].as_array().expect("required") {
+            assert!(
+                serialized.get(required.as_str().expect("name")).is_some(),
+                "{} omits required {required}",
+                enforcer.kind()
+            );
+        }
+        // An unknown key is a second enforcer in disguise: refused.
+        let mut extra = value.clone();
+        extra["command"] = json!("true");
+        if enforcer.kind() != "test" && enforcer.kind() != "validator" {
+            assert!(
+                serde_json::from_value::<Enforcer>(extra).is_err(),
+                "{} accepted a foreign key",
+                enforcer.kind()
+            );
+        }
+    }
+    assert_eq!(
+        kinds, published,
+        "the schema publishes exactly the enforcers"
+    );
+}
+
+#[test]
+fn the_record_schema_lists_current_kinds_and_retires_the_removed_ones() {
+    let schema = record_schema();
     assert_eq!(schema["properties"]["schema_version"]["const"], 1);
     assert_eq!(schema["additionalProperties"], false);
     assert_eq!(schema["$defs"]["scope"]["additionalProperties"], false);
-    assert_eq!(schema["$defs"]["proposal"]["additionalProperties"], false);
-    assert_eq!(schema["$defs"]["decision"]["additionalProperties"], false);
-}
-
-#[test]
-fn published_schema_covers_strict_serialized_repair_records() {
-    let schema: serde_json::Value = serde_json::from_str(include_str!(
-        "../references/agreement-record-v1.schema.json"
-    ))
-    .expect("valid JSON schema");
-    let reference = record_ref("repair.session.fixture", 1, 'a');
-    let snapshot = snapshot();
-    let principal = PrincipalRef {
-        kind: PrincipalKind::LocalUser,
-        stable_id: "owner-42".into(),
-        display_name: None,
-    };
-    let task = ExternalRef {
-        system: ExternalSystem::Beads,
-        stable_id: "whetstone-k5r.11".into(),
-        revision: Some("1".into()),
-    };
-    let bodies = [
-        RecordBody::RepairSession(Box::new(RepairSessionRecord {
-            session_id: "fixture".into(),
-            lean_baseline_revision: "2c3f0a3".into(),
-            authority_principal: principal,
-            task: task.clone(),
-            objective: "Repair the authorized source.".into(),
-            non_goals: vec!["Do not change policy.".into()],
-            applicable_guidance: Vec::new(),
-            authority_revision: 1,
-            authority_expires_at: "2026-09-09T13:00:00Z".into(),
-            authority_expires_at_unix: 200,
-            allowed_paths: vec!["src".into()],
-            excluded_paths: Vec::new(),
-            check_paths: vec!["src".into()],
-            check_language: Some("python".into()),
-            check_rules: vec!["team.rule".into()],
-            final_check_paths: vec!["src".into()],
-            final_check_language: Some("python".into()),
-            final_check_rules: vec!["team.rule".into()],
-            final_baseline_snapshot: snapshot.clone(),
-            reviewed_snapshot: snapshot.clone(),
-            reviewed_phase: RepairCheckPhaseRecord::Fast,
-            workspace_files: vec![RepairWorkspaceFileRecord {
-                path: "src/app.py".into(),
-                digest: digest('a'),
-                protected: false,
-            }],
-            started_at_unix: 100,
-            last_checkpoint_at_unix: 101,
-            max_attempts: 3,
-            max_repeated_finding: 2,
-            max_elapsed_seconds: 600,
-            max_resource_units: 3,
-            attempts: vec![RepairAttemptRecord {
-                number: 1,
-                candidate: snapshot.clone(),
-                finding_ids: vec!["finding:one".into()],
-                changed_paths: vec!["src/app.py".into()],
-                elapsed_seconds: 1,
-                resource_units: 1,
-                observed_at_unix: 101,
-            }],
-            attempts_reserved: 2,
-            total_elapsed_seconds: 1,
-            total_resource_units: 1,
-            final_verification_elapsed_seconds: 0,
-            final_verification_resource_units: 0,
-            current_finding_ids: vec!["finding:one".into()],
-            state: RepairSessionStateRecord::Ready,
-            updated_at: "2026-09-09T12:00:01Z".into(),
-            last_check_response: json!({"schema": "whetstone.command-response.v1"}),
-            last_checkpoint_kind: "post_edit_hook".into(),
-            last_check_receipt: Some(record_ref("verification.fixture", 1, 'b')),
-        })),
-        RecordBody::RepairHandoff(Box::new(RepairHandoffRecord {
-            session: reference.clone(),
-            expected_session_revision: 1,
-            reviewed_snapshot: snapshot.clone(),
-            stable_finding_ids: vec!["finding:one".into()],
-            question: "Which accountable change should proceed?".into(),
-            recommendation: "Keep policy unchanged.".into(),
-            alternatives: vec!["Authorize a reviewed scope change.".into()],
-            impact: "The repair is paused.".into(),
-            evidence: vec![EvidenceRef {
-                system: "whetstone_check".into(),
-                locator: "verification.fixture@1".into(),
-                digest: Some(digest('b')),
-            }],
-            permitted_next_step: "Record an owner decision.".into(),
-        })),
-        RecordBody::RepairAuthorityReservation(Box::new(RepairAuthorityReservationRecord {
-            project: "fixture".into(),
-            task: task.clone(),
-            authority_revision: 1,
-            requested_session_id: "fixture".into(),
-            begin_request_id: "fixture-begin".into(),
-            started_at_unix: 100,
-            bootstrap_resource_units: 2,
-            session: Some(reference.clone()),
-        })),
-        RecordBody::RepairOperationClaim(Box::new(RepairOperationClaimRecord {
-            session: reference,
-            request_id: "fixture-check".into(),
-            expected_session_revision: 1,
-            phase: RepairCheckPhaseRecord::Fast,
-            checkpoint_kind: "post_edit_hook".into(),
-            started_at_unix: 101,
-            resource_units: 1,
-        })),
-    ];
-
-    for body in bodies {
-        let serialized = serde_json::to_value(body).expect("serialize repair record body");
-        assert!(schema_accepts_record_body_shape(&schema, &serialized));
-        let record_type = serialized["record_type"].as_str().expect("record type");
-        let definition = &schema["$defs"][record_type];
-        let first_required = definition["required"][0].as_str().expect("required field");
-        let mut missing = serialized.clone();
-        missing["record"]
-            .as_object_mut()
-            .expect("record object")
-            .remove(first_required);
-        assert!(!schema_accepts_record_body_shape(&schema, &missing));
-        let mut unknown = serialized;
-        unknown["record"]
-            .as_object_mut()
-            .expect("record object")
-            .insert("unexpected".into(), json!(true));
-        assert!(!schema_accepts_record_body_shape(&schema, &unknown));
-    }
-}
-
-fn digest(seed: char) -> ContentDigest {
-    ContentDigest::new(format!("sha256:{}", seed.to_string().repeat(64))).expect("digest")
-}
-
-fn record_ref(id: &str, revision: u64, seed: char) -> RecordRef {
-    RecordRef {
-        id: RecordId::new(id).expect("record ID"),
-        revision,
-        digest: digest(seed),
-    }
-}
-
-fn snapshot() -> RepairSnapshotRecord {
-    RepairSnapshotRecord {
-        code_tree: digest('a'),
-        policy: digest('b'),
-        checker_bundle: digest('c'),
-        scope: digest('d'),
-        environment: digest('e'),
-        trust: digest('f'),
-    }
-}
-
-fn schema_accepts_record_body_shape(schema: &serde_json::Value, value: &serde_json::Value) -> bool {
-    let Some(record_type) = value.get("record_type").and_then(serde_json::Value::as_str) else {
-        return false;
-    };
-    let enum_values = schema["properties"]["record_type"]["enum"]
+    let writable = schema["properties"]["record_type"]["enum"]
         .as_array()
-        .expect("record type enum");
-    if !enum_values.iter().any(|value| value == record_type) {
-        return false;
-    }
-    let definition = &schema["$defs"][record_type];
-    if definition["additionalProperties"] != false {
-        return false;
-    }
-    let Some(record) = value.get("record").and_then(serde_json::Value::as_object) else {
-        return false;
-    };
-    let properties = definition["properties"]
-        .as_object()
-        .expect("definition properties");
-    let required = definition["required"]
-        .as_array()
-        .expect("definition required fields");
-    required
+        .expect("record type enum")
         .iter()
-        .filter_map(serde_json::Value::as_str)
-        .all(|field| record.contains_key(field))
-        && record.keys().all(|field| properties.contains_key(field))
+        .map(|kind| kind.as_str().expect("kind").to_string())
+        .collect::<BTreeSet<_>>();
+    let retired = schema["x-retired-kinds"]["kinds"]
+        .as_array()
+        .expect("retired kinds")
+        .iter()
+        .map(|kind| kind.as_str().expect("kind"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        retired, RETIRED_KINDS,
+        "the schema retires exactly what the domain retires"
+    );
+    for kind in RETIRED_KINDS {
+        assert!(
+            !writable.contains(*kind),
+            "{kind} is still writable in the schema"
+        );
+    }
+    for kind in [
+        "mission",
+        "principle",
+        "rule",
+        "judgment",
+        "attestation",
+        "brief",
+        "flag_decision",
+        "hand_raise",
+        "hand_answer",
+    ] {
+        assert!(writable.contains(kind), "{kind} is not published");
+        assert_eq!(
+            schema["$defs"][kind]["additionalProperties"], false,
+            "{kind} is strict"
+        );
+    }
+    // Every valid catalogue case writes only published fields and all
+    // required ones.
+    for case in cases() {
+        if case["expect"] != "valid" {
+            continue;
+        }
+        let record: AgreementRecord =
+            serde_json::from_value(envelope(&case)).expect("valid case parses");
+        let serialized = serde_json::to_value(&record).expect("serialize");
+        let kind = serialized["record_type"].as_str().expect("type");
+        assert!(writable.contains(kind), "{kind}");
+        let definition = &schema["$defs"][kind];
+        let properties = definition["properties"].as_object().expect("properties");
+        let body = serialized["record"].as_object().expect("record");
+        for key in body.keys() {
+            assert!(
+                properties.contains_key(key),
+                "{}: {kind} writes {key}, which the schema does not publish",
+                case["id"]
+            );
+        }
+        for required in definition["required"].as_array().expect("required") {
+            assert!(
+                body.contains_key(required.as_str().expect("name")),
+                "{}: {kind} omits required {required}",
+                case["id"]
+            );
+        }
+    }
 }

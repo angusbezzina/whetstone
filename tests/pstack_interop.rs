@@ -1,8 +1,9 @@
 //! pstack interop through the real binary: a pstack-generated verification
 //! skill imports as reviewable drafts only, renders back byte-identically
 //! once accepted, re-imports without spurious drafts, returns a maintain-pass
-//! edit as exactly one draft, retires a feature through review, and exports
-//! the decision trail in show-me-your-work's TSV shape.
+//! edit to a feature or a rule file as exactly one draft, retires a feature
+//! through review, and exports the decision trail in show-me-your-work's TSV
+//! shape.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -49,6 +50,8 @@ fn run(args: &[&str], cwd: &Path) -> Output {
     Command::new(bin())
         .args(args)
         .current_dir(cwd)
+        .env_remove("BEADS_DIR")
+        .env("WHETSTONE_JEV_OFFLINE", "1")
         .output()
         .expect("run whetstone")
 }
@@ -72,9 +75,31 @@ fn git(root: &Path, args: &[&str]) {
     assert!(status.success(), "git {args:?}");
 }
 
+fn change(root: &Path, request: &str, args: &[&str]) -> serde_json::Value {
+    let mut probe = vec!["change", "--json", "--request-id", request];
+    probe.extend_from_slice(args);
+    let inspected = json(&run(&probe, root));
+    let revision = inspected["expected_revision"]
+        .as_u64()
+        .expect("revision")
+        .to_string();
+    let token = inspected["resume_token"]
+        .as_str()
+        .expect("token")
+        .to_string();
+    let mut record = probe.clone();
+    record.extend_from_slice(&["--expected-revision", &revision, "--resume", &token]);
+    json(&run(&record, root))
+}
+
+/// A mission, a pstack principle and one must rule the toolchain proves.
 fn establish(root: &Path) {
     git(root, &["init", "-q"]);
     let inspected = json(&run(&["init", "--json", "--request-id", "init-1"], root));
+    let revision = inspected["expected_revision"]
+        .as_u64()
+        .expect("revision")
+        .to_string();
     let token = inspected["resume_token"]
         .as_str()
         .expect("token")
@@ -88,31 +113,45 @@ fn establish(root: &Path) {
             "--request-id",
             "init-1",
             "--expected-revision",
-            "0",
+            &revision,
             "--resume",
             &token,
             "--mission",
             "Notes people trust.",
-            "--desired-outcome",
-            "Saved notes are never lost.",
-            "--values",
-            "Evidence before assertion.",
-            "--philosophy",
-            "Small, boring pieces.",
-            "--owner",
-            "Owner",
-            "--initial-safeguard",
-            "The toolchain answers.",
-            "--safeguard-scope",
-            "repository",
-            "--revision-triggers",
-            "a gate fails twice",
-            "--gate-command",
-            "git --version",
+            "--principle",
+            "prove-it-works",
         ],
         root,
     ));
-    assert_eq!(agreed["data"]["records"].as_array().map(Vec::len), Some(5));
+    assert_eq!(
+        agreed["data"]["records"].as_array().map(Vec::len),
+        Some(2),
+        "the mission and the principle: {agreed}"
+    );
+    let rule = change(
+        root,
+        "rule-1",
+        &[
+            "--kind",
+            "rule",
+            "--record-id",
+            "rule.toolchain",
+            "--content",
+            "The toolchain answers.",
+            "--rationale",
+            "Nothing else can be checked without it.",
+            "--definition",
+            r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"git --version"}}"#,
+        ],
+    );
+    assert_eq!(rule["state"], "success", "{rule}");
+    accept(
+        root,
+        &[rule["data"]["proposal"]["id"]
+            .as_str()
+            .expect("proposal")
+            .to_string()],
+    );
 }
 
 fn copy_fixture(to: &Path) {
@@ -346,6 +385,52 @@ fn a_pstack_skill_round_trips_through_review_and_the_maintain_path() {
         .to_string()
         .contains("in the search dialog."));
     accept(root, &changed);
+
+    // Each rule is a file in rules/; an edit there returns as one rule draft.
+    let rule_file = skill.join("rules/toolchain.md");
+    let rule_md = fs::read_to_string(&rule_file).expect("rule file");
+    assert!(
+        rule_md.starts_with("---\nrecord: \"rule.toolchain\"\n"),
+        "{rule_md}"
+    );
+    fs::write(
+        &rule_file,
+        rule_md.replace(
+            "Nothing else can be checked without it.",
+            "Nothing else can be checked without a working toolchain.",
+        ),
+    )
+    .expect("edit rule");
+    let reflected = json(&run(
+        &[
+            "init",
+            "--json",
+            "--action",
+            "import",
+            "--from",
+            skill.to_str().expect("path"),
+            "--request-id",
+            "import-4",
+        ],
+        root,
+    ));
+    let rule_drafts = proposals(&reflected);
+    assert_eq!(rule_drafts.len(), 1, "{reflected}");
+    assert_eq!(reflected["data"]["plan"][0]["record"], "rule.toolchain");
+    assert_eq!(
+        reflected["data"]["plan"][0]["diff"]["after"]["record"]["rationale"],
+        "Nothing else can be checked without a working toolchain."
+    );
+    let pending = json(&run(&["dash", "--json"], root));
+    assert!(
+        pending["data"]["current"]["rules"]
+            .as_array()
+            .expect("rules")
+            .iter()
+            .any(|rule| rule["id"] == "rule.toolchain" && rule["lifecycle"] == "accepted"),
+        "the accepted rule stays in force while its edit is a draft: {pending}"
+    );
+    accept(root, &rule_drafts);
 
     // Retirement is a reviewed draft; accepted, the feature leaves force and
     // the sweep while its history stays.

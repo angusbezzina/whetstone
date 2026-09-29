@@ -23,6 +23,7 @@ fn run(args: &[&str], cwd: &Path, path: &Path) -> Output {
         .current_dir(cwd)
         .env("PATH", path)
         .env_remove("BEADS_DIR")
+        .env("WHETSTONE_JEV_OFFLINE", "1")
         .output()
         .expect("run whetstone")
 }
@@ -80,80 +81,82 @@ fn the_whole_local_flow_runs_without_a_dolt_binary() {
             &token,
             "--mission",
             "No dolt needed.",
-            "--desired-outcome",
-            "Records in Beads.",
-            "--values",
-            "Evidence.",
-            "--philosophy",
-            "Small.",
-            "--owner",
-            "Owner",
-            "--initial-safeguard",
-            "Git answers.",
-            "--safeguard-scope",
-            "repository",
-            "--revision-triggers",
-            "a gate fails",
-            "--gate-command",
-            "git --version",
+            "--principle",
+            "prove-it-works",
+            "--starter",
+            "ask-before-public-api",
         ],
         &root,
         &tools,
     ));
     assert_eq!(
         agreed["data"]["records"].as_array().map(Vec::len),
-        Some(5),
+        Some(3),
         "{agreed}"
     );
+    assert_eq!(agreed["data"]["progress"]["agreement_complete"], true);
 
-    let probe = json(&run(
-        &[
+    let change = |request_id: &str, id: &str, content: &str, definition: &str| {
+        let base = [
             "change",
             "--json",
             "--request-id",
-            "c1",
+            request_id,
             "--kind",
-            "value",
+            "rule",
             "--record-id",
-            "value.speed",
+            id,
             "--content",
-            "Fast feedback",
+            content,
             "--rationale",
-            "speed",
-        ],
-        &root,
-        &tools,
-    ));
-    let revision = probe["expected_revision"]
-        .as_u64()
-        .expect("revision")
-        .to_string();
-    let resume = probe["resume_token"].as_str().expect("token").to_string();
-    let changed = json(&run(
-        &[
-            "change",
-            "--json",
-            "--request-id",
-            "c1",
-            "--kind",
-            "value",
-            "--record-id",
-            "value.speed",
-            "--content",
-            "Fast feedback",
-            "--rationale",
-            "speed",
-            "--expected-revision",
-            &revision,
-            "--resume",
-            &resume,
-        ],
-        &root,
-        &tools,
-    ));
+            "Git answers.",
+            "--definition",
+            definition,
+        ];
+        let probe = json(&run(&base, &root, &tools));
+        let revision = probe["expected_revision"]
+            .as_u64()
+            .expect("revision")
+            .to_string();
+        let resume = probe["resume_token"].as_str().expect("token").to_string();
+        let mut args = base.to_vec();
+        args.extend(["--expected-revision", &revision, "--resume", &resume]);
+        json(&run(&args, &root, &tools))
+    };
+    let definition =
+        r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"git --version"}}"#;
+    let changed = change("c1", "rule.git-answers", "Git answers.", definition);
     assert_eq!(changed["state"], "success", "{changed}");
+    let proposal = changed["data"]["proposal"]["id"]
+        .as_str()
+        .expect("proposal")
+        .to_string();
+    let accepted = json(&run(
+        &[
+            "change",
+            "--json",
+            "--request-id",
+            "a1",
+            "--accept",
+            &proposal,
+        ],
+        &root,
+        &tools,
+    ));
+    assert_eq!(accepted["state"], "success", "{accepted}");
+    let pending = change(
+        "c2",
+        "rule.git-still-answers",
+        "Git still answers.",
+        definition,
+    );
+    assert_eq!(pending["state"], "success", "{pending}");
 
-    let checked = json(&run(&["check", "--json"], &root, &tools));
+    let checked = json(&run(
+        &["check", "--json", "--rule", "rule.git-answers"],
+        &root,
+        &tools,
+    ));
     assert_eq!(checked["state"], "success", "{checked}");
     let dash = json(&run(&["dash", "--json"], &root, &tools));
     assert_eq!(dash["state"], "success", "{dash}");

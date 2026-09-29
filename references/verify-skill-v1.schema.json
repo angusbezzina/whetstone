@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/angusbezzina/whetstone/references/verify-skill-v1.schema.json",
+  "title": "Whetstone verification skill source document (whetstone.verify.v1)",
+  "description": "The source of truth a generated verify-<app> skill is rendered from. pstack's Markdown layout (SKILL.md, features/README.md, four-heading feature files) is a projection of this document through the pstack adapter.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "app",
+    "agreement",
+    "principles",
+    "map",
+    "features",
+    "rules"
+  ],
+  "properties": {
+    "schema": {
+      "const": "whetstone.verify.v1"
+    },
+    "app": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agreement": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "mission": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "principles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "map": {
+      "type": "object"
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "revision",
+          "feature",
+          "proven_by"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "feature": {
+            "type": "object"
+          },
+          "proven_by": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "revision",
+          "rule"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rule": {
+            "$ref": "rule-v2.schema.json"
+          }
+        }
+      }
+    }
+  }
+}

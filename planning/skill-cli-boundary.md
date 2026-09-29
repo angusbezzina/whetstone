@@ -209,25 +209,41 @@ second trust root, no activation state machine and no authority file.
 `wh init --action wire --hooks` installs the Git hooks and `--ci` the
 workflow (`whetstone-ppq.6.1` to `.6.3`).
 
-The code still contains the earlier PR-manifest activation model (ADR-0002,
-now `planning/archive/trust-boundary.md`): `wh push --propose`,
+The pre-push hook checks exactly what is pushed. It passes each pushed commit
+to `wh check --pushed`, which refuses (unknown, with the reason) when that
+commit is not checked out or tracked files have uncommitted changes, so a
+push of another branch, several refs at once or a tag on an older commit is
+refused rather than vouched for; check it out and push it on its own.
+Untracked files are not part of a push and never count. Command enforcers
+(test, lint, validator) still run in the working tree, where an untracked
+helper can influence them; CI, on a clean checkout, is the backstop. A review
+attestation binds to the tracked content it reviewed (a Git tree), so it
+holds at pre-commit and pre-push only while that content is unchanged.
+
+The earlier PR-manifest activation model (ADR-0002, now
+`planning/archive/trust-boundary.md`) has been removed: `wh push --propose`,
 `wh change --activate`, `wh check --required`, `wh init --ci --reviewer`,
 `.whetstone/authority.json`, gate exceptions, `src/authority.rs` and
-`src/activation.rs`. It is removed by `whetstone-ppq.2.1`; do not build on it.
+`src/activation.rs`. Their records are still read, as retired kinds, and can
+never be written again.
 
 ## Agent hosts
 
 The same skill and map are written byte-identically into every selected host
-(`.claude/skills`, `.cursor/skills`, `.agents/skills`), stamped with the
+(`.claude/skills`, `.cursor/skills`, `.agents/skills` for Codex and other
+agents), stamped with the
 agreement digest. Claude Code is hook-capable: `wh init --action wire --hooks`
 adds a `SessionStart` hook (`wh dash --hook session-start`) that prints the
 canonical context or says the skill is stale and must not be relied on (and
 remembers the commit the session began at), and a `Stop` hook
 (`wh check --hook stop`) that proves what changed since then, committed or
 not, and returns violations to the same session for repair, bounded to three
-returns before handing back to the owner. Cursor and other hosts use explicit checkpoints
-(`wh check --changed --host <name>`) until their own hooks are proven
-(`whetstone-ppq.6.4`). The Stop hook is the fast repair loop; the Git hooks
+returns before handing back to the owner; the third failure on the same key
+raises a hand and lets the session stop. Codex gets the same loop through
+`.codex/hooks.json` (`decision: block`) and Cursor through `.cursor/hooks.json`
+(`followup_message`, loop limit three); the Claude hook skips input that
+carries `cursor_version`, so Cursor never runs it twice. Other hosts use
+explicit checkpoints (`wh check --changed --host <name>`). The Stop hook is the fast repair loop; the Git hooks
 and CI are the enforcement. Each checkpoint records the skill
 revision the host actually has; no checkpoint means not acknowledged, and a
 projection that is stale, missing or hand-edited is reported per host, never
@@ -248,9 +264,10 @@ agreement:
    one enforcer and its source.
 
 Nothing is in force until the owner accepts it. `--dry-run` shows the exact
-records and writes nothing. This is `whetstone-ppq.4`. Today's
-`--action agree` still records the earlier eight decisions until
-`whetstone-ppq.2.4` replaces them.
+records and writes nothing. From the terminal this is `--action setup`,
+`--action agree --mission ... --principle ... --starter ...` and
+`--action exemplar --from <path>|--url <url>`; the agreement is complete once
+the mission and at least one rule are in force.
 
 `wh init --action wire` interviews the repository (surface, launch, readiness,
 isolation), scaffolds the driver once, and renders the skill, feature map and

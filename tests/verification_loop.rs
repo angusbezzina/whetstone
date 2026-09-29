@@ -1,6 +1,6 @@
-//! End-to-end verification loop through the real binary: agree with a first
-//! gate, map a feature and a drive gate, accept both, wire the skill, prove
-//! the feature, break it, and prove honesty on every unknown path.
+//! End-to-end verification loop through the real binary: agree the mission,
+//! accept a first rule, map a feature and a drive rule, accept both, wire the
+//! skill, prove the feature, break it, and prove honesty on every unknown path.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,6 +14,8 @@ fn run(args: &[&str], cwd: &Path) -> Output {
     Command::new(bin())
         .args(args)
         .current_dir(cwd)
+        .env_remove("BEADS_DIR")
+        .env("WHETSTONE_JEV_OFFLINE", "1")
         .output()
         .expect("run whetstone")
 }
@@ -111,6 +113,10 @@ fn establish(root: &Path) {
         ],
     );
     let inspected = json(&run(&["init", "--json", "--request-id", "init-1"], root));
+    let revision = inspected["expected_revision"]
+        .as_u64()
+        .expect("revision")
+        .to_string();
     let token = inspected["resume_token"]
         .as_str()
         .expect("token")
@@ -123,39 +129,43 @@ fn establish(root: &Path) {
         "--request-id",
         "init-1",
         "--expected-revision",
-        "0",
+        &revision,
         "--resume",
         &token,
         "--mission",
         "Ship a tiny tool people trust.",
-        "--desired-outcome",
-        "Regressions never reach users.",
-        "--values",
-        "Evidence before assertion.",
-        "--philosophy",
-        "Small scripts over frameworks.",
-        "--owner",
-        "Owner",
-        "--initial-safeguard",
-        "The check script passes.",
-        "--safeguard-scope",
-        "repository",
-        "--revision-triggers",
-        "a gate fails twice",
-        "--gate-command",
-        "./check.sh",
+        "--principle",
+        "prove-it-works",
     ];
     let mut dry = agreement.to_vec();
     dry.push("--dry-run");
     let preview = json(&run(&dry, root));
     assert_eq!(preview["state"], "needs_decision");
-    assert_eq!(preview["data"]["records"].as_array().map(Vec::len), Some(5));
+    assert_eq!(preview["data"]["records"].as_array().map(Vec::len), Some(2));
     assert!(
         !root.join(".git/whetstone").exists(),
         "a dry run must not create the private store"
     );
     let agreed = json(&run(&agreement, root));
-    assert_eq!(agreed["data"]["records"].as_array().map(Vec::len), Some(5));
+    assert_eq!(agreed["data"]["records"].as_array().map(Vec::len), Some(2));
+    let gate = change(
+        root,
+        "first-gate",
+        &[
+            "--kind",
+            "rule",
+            "--record-id",
+            "rule.check-script",
+            "--content",
+            "The check script passes.",
+            "--rationale",
+            "It is the proof.",
+            "--definition",
+            r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"./check.sh"}}"#,
+        ],
+    );
+    assert_eq!(gate["state"], "success", "{gate}");
+    accept_all(root);
 }
 
 #[test]
@@ -165,7 +175,7 @@ fn first_gate_runs_without_a_shell_and_draft_gates_never_run() {
     establish(root);
     let check = json(&run(&["check", "--json"], root));
     assert_eq!(check["state"], "success", "{check}");
-    assert_eq!(check["data"]["gates"][0]["id"], "standard.initial-gate");
+    assert_eq!(check["data"]["gates"][0]["id"], "rule.check-script");
     assert_eq!(check["data"]["gates"][0]["state"], "pass");
     assert!(!check["data"]["gates"][0]["evidence"]
         .as_array()
@@ -177,15 +187,15 @@ fn first_gate_runs_without_a_shell_and_draft_gates_never_run() {
         "shell-gate",
         &[
             "--kind",
-            "standard",
+            "rule",
             "--record-id",
-            "standard.piped",
+            "rule.piped",
             "--content",
             "Piped gate",
             "--rationale",
             "tries a shell",
             "--definition",
-            r#"{"type":"standard","strength":"must","enforcement":{"enforcement":"test","command_ref":"cargo test | tee out"}}"#,
+            r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"cargo test | tee out"}}"#,
         ],
     );
     assert_eq!(refused["state"], "needs_input");
@@ -193,6 +203,35 @@ fn first_gate_runs_without_a_shell_and_draft_gates_never_run() {
         .as_str()
         .expect("question")
         .contains("without a shell"));
+
+    // A drafted rule is never run, however it is written.
+    let draft = change(
+        root,
+        "draft-gate",
+        &[
+            "--kind",
+            "rule",
+            "--record-id",
+            "rule.draft",
+            "--content",
+            "A draft that would leave a file",
+            "--rationale",
+            "not accepted yet",
+            "--definition",
+            r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"touch DRAFT-RAN"}}"#,
+        ],
+    );
+    assert_eq!(draft["state"], "success", "{draft}");
+    let unchanged = json(&run(&["check", "--json"], root));
+    assert_eq!(unchanged["state"], "success", "{unchanged}");
+    assert_eq!(
+        unchanged["data"]["selection"]["skipped_drafts"],
+        serde_json::json!(["rule.draft"])
+    );
+    assert!(!unchanged["data"]["gates"]
+        .to_string()
+        .contains("rule.draft"));
+    assert!(!root.join("DRAFT-RAN").exists(), "a draft never runs");
 
     write_script(root, "#!/bin/sh\necho \"src/main.rs:1: broken\"\nexit 1\n");
     let failing = json(&run(&["check", "--json"], root));
@@ -207,12 +246,16 @@ fn first_gate_runs_without_a_shell_and_draft_gates_never_run() {
     assert!(top["agent_instruction"]
         .as_str()
         .expect("brief")
-        .contains("recheck   wh check --rule standard.initial-gate"));
+        .contains("recheck   wh check --rule rule.check-script"));
 }
 
 #[test]
 fn features_are_mapped_accepted_wired_proven_and_honest_when_evidence_is_missing() {
     if !node_available() {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "a tool this test needs is missing in CI"
+        );
         eprintln!("SKIP: node is unavailable for the verification driver");
         return;
     }
@@ -232,7 +275,7 @@ fn features_are_mapped_accepted_wired_proven_and_honest_when_evidence_is_missing
             "--rationale",
             "The core journey",
             "--definition",
-            r#"{"type":"feature","summary":"Runs the check","area":"CLI","sweep_order":1,"user_path":"Run ./check.sh.","drive_steps":["run ./check.sh","expect-output all good","expect-exit 0"],"proof":"It prints all good and exits 0.","entry_points":["check.sh"],"serves":["mission.project"],"proven_by":["standard.check-journey"]}"#,
+            r#"{"type":"feature","summary":"Runs the check","area":"CLI","sweep_order":1,"user_path":"Run ./check.sh.","drive_steps":["run ./check.sh","expect-output all good","expect-exit 0"],"proof":"It prints all good and exits 0.","entry_points":["check.sh"],"serves":["mission.project"],"proven_by":["rule.check-journey"]}"#,
         ],
     );
     assert_eq!(feature["state"], "success", "{feature}");
@@ -241,15 +284,15 @@ fn features_are_mapped_accepted_wired_proven_and_honest_when_evidence_is_missing
         "gate-1",
         &[
             "--kind",
-            "standard",
+            "rule",
             "--record-id",
-            "standard.check-journey",
+            "rule.check-journey",
             "--content",
             "The check journey is proven by driving it",
             "--rationale",
             "Proof over claims",
             "--definition",
-            r#"{"type":"standard","strength":"must","enforcement":{"enforcement":"drive","feature":"feature.check-script"}}"#,
+            r#"{"type":"rule","strength":"must","enforcer":{"kind":"drive","feature":"feature.check-script"}}"#,
         ],
     );
     assert_eq!(gate["state"], "success", "{gate}");
@@ -361,7 +404,7 @@ fn features_are_mapped_accepted_wired_proven_and_honest_when_evidence_is_missing
         .filter_map(|item| item.get("record").cloned())
         .find(|record| {
             record["record_type"] == "verification_receipt"
-                && record["record"]["subject"]["stable_id"] == "gate:standard.check-journey"
+                && record["record"]["subject"]["stable_id"] == "gate:rule.check-journey"
         })
         .unwrap_or_else(|| panic!("no drive receipt: {dash}"));
     let systems = receipt["record"]["evidence"]
@@ -487,12 +530,12 @@ fn features_are_mapped_accepted_wired_proven_and_honest_when_evidence_is_missing
     // Accepting new content makes the rendered skill stale.
     let revised = change(
         root,
-        "value-2",
+        "principle-2",
         &[
             "--kind",
-            "value",
+            "principle",
             "--record-id",
-            "value.speed",
+            "principle.speed",
             "--content",
             "Fast feedback beats perfect feedback.",
             "--rationale",

@@ -1,13 +1,26 @@
 //! Storage-independent agreement records and lifecycle invariants.
 //!
-//! These types are the single semantic contract used by every future adapter.
-//! They deliberately contain no Dolt, GitHub, CLI, or dashboard concerns.
+//! These types are the single semantic contract used by every adapter. They
+//! deliberately contain no Beads, GitHub, CLI or dashboard concerns.
+//!
+//! Record kinds the delegation plan removed (values and philosophy, metrics,
+//! exceptions, mandates, activation, observations, repair sessions and team
+//! decisions) stay readable as [`RetiredRecord`]s with their original bytes
+//! and digests, so history is never rewritten; they can no longer be created.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
+
+mod receipt;
+mod rule;
+
+pub use receipt::*;
+pub use rule::*;
 
 pub const SCHEMA_VERSION_V1: u16 = 1;
 
@@ -44,13 +57,7 @@ impl AgreementRecord {
         self.owner.validate()?;
         self.provenance.validate()?;
         self.body.validate()?;
-        if matches!(
-            self.body,
-            RecordBody::RepairSession(_)
-                | RecordBody::RepairHandoff(_)
-                | RecordBody::RepairAuthorityReservation(_)
-                | RecordBody::RepairOperationClaim(_)
-        ) && self.provenance.authority != ProvenanceAuthority::CandidateOnly
+        if self.body.is_receipt() && self.provenance.authority != ProvenanceAuthority::CandidateOnly
         {
             return Err(DomainError::OperationalRecordCannotGrantAuthority);
         }
@@ -88,12 +95,6 @@ impl AgreementRecord {
         }
         match &self.body {
             RecordBody::Proposal(body) => links.extend(body.proposed_records.clone()),
-            RecordBody::Decision(body) => links.push(body.proposal.clone()),
-            RecordBody::Activation(body) => {
-                links.push(body.proposal.clone());
-                links.push(body.acceptance_decision.clone());
-                links.push(body.policy.clone());
-            }
             RecordBody::VerificationReceipt(body) => {
                 links.extend(body.related_records.clone());
                 links.extend(
@@ -107,23 +108,15 @@ impl AgreementRecord {
                     .flatten(),
                 );
             }
-            RecordBody::ObservationReceipt(body) => {
-                links.push(body.metric.clone());
-                links.extend(body.related_records.clone());
-            }
             RecordBody::Retirement(body) => {
                 links.push(body.target.clone());
                 links.extend(body.replacement.clone());
             }
-            RecordBody::RepairSession(body) => {
-                links.extend(body.last_check_receipt.clone());
-            }
-            RecordBody::RepairHandoff(body) => links.push(body.session.clone()),
-            RecordBody::RepairAuthorityReservation(body) => {
-                links.extend(body.session.clone());
-            }
-            RecordBody::RepairOperationClaim(body) => links.push(body.session.clone()),
             RecordBody::LocalReview(body) => links.push(body.proposal.clone()),
+            RecordBody::Judgment(body) => links.push(body.rule.clone()),
+            RecordBody::Attestation(body) => links.push(body.rule.clone()),
+            RecordBody::FlagDecision(body) => links.push(body.receipt.clone()),
+            RecordBody::HandAnswer(body) => links.push(body.raise.clone()),
             _ => {}
         }
         links
@@ -223,6 +216,9 @@ impl RecordRef {
     }
 }
 
+/// Where a record belongs. Whetstone writes the project only; earlier
+/// records may carry an organization, component or environment, kept so their
+/// digests still verify.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scope {
@@ -236,6 +232,16 @@ pub struct Scope {
 }
 
 impl Scope {
+    /// The project scope every new record carries.
+    pub fn project(project: impl Into<String>) -> Self {
+        Self {
+            organization: None,
+            project: project.into(),
+            component: None,
+            environment: None,
+        }
+    }
+
     pub fn validate(&self) -> Result<(), DomainError> {
         validate_segment("project", &self.project)?;
         for (name, segment) in [
@@ -249,17 +255,6 @@ impl Scope {
         }
         Ok(())
     }
-
-    pub fn contains(&self, other: &Self) -> bool {
-        self.project == other.project
-            && optional_scope_contains(&self.organization, &other.organization)
-            && optional_scope_contains(&self.component, &other.component)
-            && optional_scope_contains(&self.environment, &other.environment)
-    }
-}
-
-fn optional_scope_contains(parent: &Option<String>, child: &Option<String>) -> bool {
-    parent.is_none() || parent == child
 }
 
 fn validate_segment(name: &'static str, value: &str) -> Result<(), DomainError> {
@@ -384,515 +379,335 @@ pub enum ProvenanceAuthority {
     IndependentlyApproved,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "record_type", content = "record", rename_all = "snake_case")]
+/// Kinds the delegation plan removed. Their records stay readable, byte for
+/// byte, as [`RetiredRecord`]s and can never be created again.
+pub const RETIRED_KINDS: &[&str] = &[
+    "core_value",
+    "implementation_philosophy",
+    "metric_definition",
+    "source_snapshot",
+    "decision",
+    "mandate",
+    "activation",
+    "observation_receipt",
+    "policy_exception",
+    "repair_session",
+    "repair_handoff",
+    "repair_authority_reservation",
+    "repair_operation_claim",
+];
+
+/// A record of a removed kind, kept exactly as stored so its digest still
+/// verifies and it still appears in history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetiredRecord {
+    pub record_type: String,
+    pub record: serde_json::Value,
+}
+
+impl RetiredRecord {
+    /// Text from a retired value or philosophy, for principle drafts.
+    pub fn principle_text(&self) -> Option<(String, Option<String>)> {
+        let text = |field: &str| {
+            self.record
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+        };
+        match self.record_type.as_str() {
+            "core_value" => text("description").map(|statement| (statement, text("name"))),
+            "implementation_philosophy" => {
+                text("statement").map(|statement| (statement, text("rationale")))
+            }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordBody {
     Mission(Mission),
-    CoreValue(CoreValue),
-    ImplementationPhilosophy(ImplementationPhilosophy),
+    Principle(Principle),
+    Rule(Rule),
     Standard(Standard),
     Guidance(Guidance),
-    MetricDefinition(MetricDefinition),
-    SourceSnapshot(SourceSnapshot),
-    Proposal(Proposal),
-    Decision(Decision),
-    Mandate(Mandate),
-    Activation(Activation),
-    VerificationReceipt(VerificationReceipt),
-    ObservationReceipt(ObservationReceipt),
-    Retirement(Retirement),
-    RepairSession(Box<RepairSessionRecord>),
-    RepairHandoff(Box<RepairHandoffRecord>),
-    RepairAuthorityReservation(Box<RepairAuthorityReservationRecord>),
-    RepairOperationClaim(Box<RepairOperationClaimRecord>),
     Feature(Feature),
-    LocalReview(LocalReview),
     VerificationMap(VerificationMap),
-    PolicyException(PolicyException),
+    Proposal(Proposal),
+    LocalReview(LocalReview),
+    Retirement(Retirement),
+    VerificationReceipt(VerificationReceipt),
+    Judgment(JudgmentReceipt),
+    Attestation(Attestation),
+    Brief(Brief),
+    FlagDecision(FlagDecision),
+    HandRaise(HandRaise),
+    HandAnswer(HandAnswer),
+    Retired(RetiredRecord),
+}
+
+#[derive(Serialize)]
+#[serde(tag = "record_type", content = "record", rename_all = "snake_case")]
+enum BodyRef<'a> {
+    Mission(&'a Mission),
+    Principle(&'a Principle),
+    Rule(&'a Rule),
+    Standard(&'a Standard),
+    Guidance(&'a Guidance),
+    Feature(&'a Feature),
+    VerificationMap(&'a VerificationMap),
+    Proposal(&'a Proposal),
+    LocalReview(&'a LocalReview),
+    Retirement(&'a Retirement),
+    VerificationReceipt(&'a VerificationReceipt),
+    Judgment(&'a JudgmentReceipt),
+    Attestation(&'a Attestation),
+    Brief(&'a Brief),
+    FlagDecision(&'a FlagDecision),
+    HandRaise(&'a HandRaise),
+    HandAnswer(&'a HandAnswer),
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "record_type", content = "record", rename_all = "snake_case")]
+enum BodyOwned {
+    Mission(Mission),
+    Principle(Principle),
+    Rule(Rule),
+    Standard(Standard),
+    Guidance(Guidance),
+    Feature(Feature),
+    VerificationMap(VerificationMap),
+    Proposal(Proposal),
+    LocalReview(LocalReview),
+    Retirement(Retirement),
+    VerificationReceipt(VerificationReceipt),
+    Judgment(JudgmentReceipt),
+    Attestation(Attestation),
+    Brief(Brief),
+    FlagDecision(FlagDecision),
+    HandRaise(HandRaise),
+    HandAnswer(HandAnswer),
+}
+
+impl Serialize for RecordBody {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let body = match self {
+            Self::Retired(retired) => {
+                let mut state = serializer.serialize_struct("RecordBody", 2)?;
+                state.serialize_field("record_type", &retired.record_type)?;
+                state.serialize_field("record", &retired.record)?;
+                return state.end();
+            }
+            Self::Mission(value) => BodyRef::Mission(value),
+            Self::Principle(value) => BodyRef::Principle(value),
+            Self::Rule(value) => BodyRef::Rule(value),
+            Self::Standard(value) => BodyRef::Standard(value),
+            Self::Guidance(value) => BodyRef::Guidance(value),
+            Self::Feature(value) => BodyRef::Feature(value),
+            Self::VerificationMap(value) => BodyRef::VerificationMap(value),
+            Self::Proposal(value) => BodyRef::Proposal(value),
+            Self::LocalReview(value) => BodyRef::LocalReview(value),
+            Self::Retirement(value) => BodyRef::Retirement(value),
+            Self::VerificationReceipt(value) => BodyRef::VerificationReceipt(value),
+            Self::Judgment(value) => BodyRef::Judgment(value),
+            Self::Attestation(value) => BodyRef::Attestation(value),
+            Self::Brief(value) => BodyRef::Brief(value),
+            Self::FlagDecision(value) => BodyRef::FlagDecision(value),
+            Self::HandRaise(value) => BodyRef::HandRaise(value),
+            Self::HandAnswer(value) => BodyRef::HandAnswer(value),
+        };
+        body.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for RecordBody {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Raw {
+            record_type: String,
+            record: serde_json::Value,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        if RETIRED_KINDS.contains(&raw.record_type.as_str()) {
+            return Ok(Self::Retired(RetiredRecord {
+                record_type: raw.record_type,
+                record: raw.record,
+            }));
+        }
+        let owned: BodyOwned = serde_json::from_value(serde_json::json!({
+            "record_type": raw.record_type,
+            "record": raw.record,
+        }))
+        .map_err(D::Error::custom)?;
+        Ok(match owned {
+            BodyOwned::Mission(value) => Self::Mission(value),
+            BodyOwned::Principle(value) => Self::Principle(value),
+            BodyOwned::Rule(value) => Self::Rule(value),
+            BodyOwned::Standard(value) => Self::Standard(value),
+            BodyOwned::Guidance(value) => Self::Guidance(value),
+            BodyOwned::Feature(value) => Self::Feature(value),
+            BodyOwned::VerificationMap(value) => Self::VerificationMap(value),
+            BodyOwned::Proposal(value) => Self::Proposal(value),
+            BodyOwned::LocalReview(value) => Self::LocalReview(value),
+            BodyOwned::Retirement(value) => Self::Retirement(value),
+            BodyOwned::VerificationReceipt(value) => Self::VerificationReceipt(value),
+            BodyOwned::Judgment(value) => Self::Judgment(value),
+            BodyOwned::Attestation(value) => Self::Attestation(value),
+            BodyOwned::Brief(value) => Self::Brief(value),
+            BodyOwned::FlagDecision(value) => Self::FlagDecision(value),
+            BodyOwned::HandRaise(value) => Self::HandRaise(value),
+            BodyOwned::HandAnswer(value) => Self::HandAnswer(value),
+        })
+    }
 }
 
 impl RecordBody {
     /// Stable snake_case name matching the serialized `record_type` tag.
-    pub fn type_name(&self) -> &'static str {
+    pub fn type_name(&self) -> &str {
         match self {
             Self::Mission(_) => "mission",
-            Self::CoreValue(_) => "core_value",
-            Self::ImplementationPhilosophy(_) => "implementation_philosophy",
+            Self::Principle(_) => "principle",
+            Self::Rule(_) => "rule",
             Self::Standard(_) => "standard",
             Self::Guidance(_) => "guidance",
-            Self::MetricDefinition(_) => "metric_definition",
-            Self::SourceSnapshot(_) => "source_snapshot",
-            Self::Proposal(_) => "proposal",
-            Self::Decision(_) => "decision",
-            Self::Mandate(_) => "mandate",
-            Self::Activation(_) => "activation",
-            Self::VerificationReceipt(_) => "verification_receipt",
-            Self::ObservationReceipt(_) => "observation_receipt",
-            Self::Retirement(_) => "retirement",
-            Self::RepairSession(_) => "repair_session",
-            Self::RepairHandoff(_) => "repair_handoff",
-            Self::RepairAuthorityReservation(_) => "repair_authority_reservation",
-            Self::RepairOperationClaim(_) => "repair_operation_claim",
             Self::Feature(_) => "feature",
-            Self::LocalReview(_) => "local_review",
             Self::VerificationMap(_) => "verification_map",
-            Self::PolicyException(_) => "policy_exception",
+            Self::Proposal(_) => "proposal",
+            Self::LocalReview(_) => "local_review",
+            Self::Retirement(_) => "retirement",
+            Self::VerificationReceipt(_) => "verification_receipt",
+            Self::Judgment(_) => "judgment",
+            Self::Attestation(_) => "attestation",
+            Self::Brief(_) => "brief",
+            Self::FlagDecision(_) => "flag_decision",
+            Self::HandRaise(_) => "hand_raise",
+            Self::HandAnswer(_) => "hand_answer",
+            Self::Retired(retired) => &retired.record_type,
         }
+    }
+
+    /// The rule this body enforces: a v2 rule, or an earlier standard or
+    /// guidance read through its migration.
+    pub fn rule_view(&self) -> Option<std::borrow::Cow<'_, Rule>> {
+        match self {
+            Self::Rule(rule) => Some(std::borrow::Cow::Borrowed(rule)),
+            Self::Standard(standard) => {
+                Some(std::borrow::Cow::Owned(Rule::from_standard(standard)))
+            }
+            Self::Guidance(guidance) => {
+                Some(std::borrow::Cow::Owned(Rule::from_guidance(guidance)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Operational evidence rather than agreement content or a decision.
+    pub fn is_receipt(&self) -> bool {
+        matches!(
+            self,
+            Self::VerificationReceipt(_)
+                | Self::Judgment(_)
+                | Self::Attestation(_)
+                | Self::Brief(_)
+                | Self::HandRaise(_)
+        )
     }
 
     pub(crate) fn validate(&self) -> Result<(), DomainError> {
         match self {
             Self::Mission(value) => require_text(&value.statement),
-            Self::CoreValue(value) => {
-                require_text(&value.name)?;
-                require_text(&value.description)
-            }
-            Self::ImplementationPhilosophy(value) => {
-                require_text(&value.statement)?;
-                require_text(&value.rationale)
-            }
+            Self::Principle(value) => value.validate(),
+            Self::Rule(value) => value.validate(),
             Self::Standard(value) => value.validate(),
             Self::Guidance(value) => {
                 require_text(&value.statement)?;
                 require_text(&value.rationale)
             }
-            Self::MetricDefinition(value) => value.validate(),
-            Self::SourceSnapshot(value) => {
-                require_text(&value.locator)?;
-                require_text(&value.media_type)?;
-                if !looks_like_utc_timestamp(&value.captured_at) {
-                    return Err(DomainError::InvalidTimestamp(value.captured_at.clone()));
-                }
-                Ok(())
-            }
+            Self::Feature(value) => value.validate(),
+            Self::VerificationMap(value) => value.validate(),
             Self::Proposal(value) => value.validate(),
-            Self::Decision(value) => value.validate(),
-            Self::Mandate(value) => value.validate(),
-            Self::Activation(value) => value.validate(),
-            Self::VerificationReceipt(value) => value.validate(),
-            Self::ObservationReceipt(value) => value.validate(),
+            Self::LocalReview(value) => value.validate(),
             Self::Retirement(value) => {
                 value.target.validate()?;
                 require_text(&value.reason)
             }
-            Self::RepairSession(value) => value.validate(),
-            Self::RepairHandoff(value) => value.validate(),
-            Self::RepairAuthorityReservation(value) => value.validate(),
-            Self::RepairOperationClaim(value) => value.validate(),
-            Self::Feature(value) => value.validate(),
-            Self::LocalReview(value) => value.validate(),
-            Self::VerificationMap(value) => value.validate(),
-            Self::PolicyException(value) => {
-                require_text(&value.reason)?;
-                if !looks_like_utc_timestamp(&value.expires_at) {
-                    return Err(DomainError::InvalidTimestamp(value.expires_at.clone()));
-                }
-                Ok(())
-            }
+            Self::VerificationReceipt(value) => value.validate(),
+            Self::Judgment(value) => value.validate(),
+            Self::Attestation(value) => value.validate(),
+            Self::Brief(value) => value.validate(),
+            Self::FlagDecision(value) => value.validate(),
+            Self::HandRaise(value) => value.validate(),
+            Self::HandAnswer(value) => value.validate(),
+            // History is kept as stored; its digest is verified on read.
+            Self::Retired(_) => Ok(()),
         }
     }
-}
-
-/// Exact deterministic snapshot bound to a repair session.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RepairSnapshotRecord {
-    pub code_tree: ContentDigest,
-    pub policy: ContentDigest,
-    pub checker_bundle: ContentDigest,
-    pub scope: ContentDigest,
-    pub environment: ContentDigest,
-    pub trust: ContentDigest,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RepairWorkspaceFileRecord {
-    pub path: String,
-    pub digest: ContentDigest,
-    /// True when changing this file could weaken a check, test, policy, or
-    /// baseline. Repair authority never permits such a change.
-    pub protected: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RepairSessionStateRecord {
-    Ready,
-    ReadyForFinalVerification,
-    Verified,
-    NeedsDecision,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RepairCheckPhaseRecord {
-    Fast,
-    Final,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RepairAttemptRecord {
-    pub number: u16,
-    pub candidate: RepairSnapshotRecord,
-    pub finding_ids: Vec<String>,
-    pub changed_paths: Vec<String>,
-    pub elapsed_seconds: u64,
-    pub resource_units: u64,
-    pub observed_at_unix: u64,
-}
-
-/// Operational state only. Serialized fields never grant authority; every
-/// mutation requires the trusted host authority adapter to authenticate this
-/// exact binding again.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RepairSessionRecord {
-    pub session_id: String,
-    pub lean_baseline_revision: String,
-    pub authority_principal: PrincipalRef,
-    pub task: ExternalRef,
-    pub objective: String,
-    #[serde(default)]
-    pub non_goals: Vec<String>,
-    #[serde(default)]
-    pub applicable_guidance: Vec<RecordRef>,
-    pub authority_revision: u64,
-    pub authority_expires_at: String,
-    pub authority_expires_at_unix: u64,
-    pub allowed_paths: Vec<String>,
-    #[serde(default)]
-    pub excluded_paths: Vec<String>,
-    pub check_paths: Vec<String>,
-    pub check_language: Option<String>,
-    pub check_rules: Vec<String>,
-    pub final_check_paths: Vec<String>,
-    pub final_check_language: Option<String>,
-    pub final_check_rules: Vec<String>,
-    /// Immutable inputs for the broader final-check plan as observed before
-    /// any repair edit. Its code digest may change; policy/checker/scope,
-    /// environment, and trust may not.
-    pub final_baseline_snapshot: RepairSnapshotRecord,
-    pub reviewed_snapshot: RepairSnapshotRecord,
-    pub reviewed_phase: RepairCheckPhaseRecord,
-    pub workspace_files: Vec<RepairWorkspaceFileRecord>,
-    pub started_at_unix: u64,
-    pub last_checkpoint_at_unix: u64,
-    pub max_attempts: u16,
-    pub max_repeated_finding: u16,
-    pub max_elapsed_seconds: u64,
-    pub max_resource_units: u64,
-    pub attempts: Vec<RepairAttemptRecord>,
-    pub attempts_reserved: u16,
-    pub total_elapsed_seconds: u64,
-    pub total_resource_units: u64,
-    pub final_verification_elapsed_seconds: u64,
-    pub final_verification_resource_units: u64,
-    pub current_finding_ids: Vec<String>,
-    pub state: RepairSessionStateRecord,
-    pub updated_at: String,
-    /// Canonical response returned for an idempotent retry. Replays never run
-    /// another checker outside the persisted operation budget.
-    pub last_check_response: serde_json::Value,
-    /// `post_edit_hook` or `explicit_checkpoint`; binds response presentation
-    /// to the original request rather than the retrying caller.
-    pub last_checkpoint_kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_check_receipt: Option<RecordRef>,
-}
-
-impl RepairSessionRecord {
-    fn validate(&self) -> Result<(), DomainError> {
-        require_text(&self.session_id)?;
-        require_text(&self.lean_baseline_revision)?;
-        self.authority_principal.validate()?;
-        self.task.validate()?;
-        require_text(&self.objective)?;
-        if self.authority_revision == 0
-            || !looks_like_utc_timestamp(&self.authority_expires_at)
-            || self.authority_expires_at_unix <= self.started_at_unix
-            || !looks_like_utc_timestamp(&self.updated_at)
-            || self.allowed_paths.is_empty()
-            || self.max_attempts == 0
-            || self.max_repeated_finding == 0
-            || self.max_repeated_finding > self.max_attempts
-            || self.max_elapsed_seconds == 0
-            || self.max_resource_units == 0
-            || self.attempts.len() > usize::from(self.max_attempts)
-            || self.attempts_reserved > self.max_attempts
-            || usize::from(self.attempts_reserved) < self.attempts.len()
-            || self.started_at_unix == 0
-            || self.last_checkpoint_at_unix < self.started_at_unix
-            || self.workspace_files.len() > 20_000
-            || !self.last_check_response.is_object()
-            || !matches!(
-                self.last_checkpoint_kind.as_str(),
-                "post_edit_hook" | "explicit_checkpoint"
-            )
-        {
-            return Err(DomainError::InvalidRepairRecord);
-        }
-        let elapsed = self
-            .attempts
-            .iter()
-            .fold(self.final_verification_elapsed_seconds, |total, attempt| {
-                total.saturating_add(attempt.elapsed_seconds)
-            });
-        let resources = self
-            .attempts
-            .iter()
-            .fold(self.final_verification_resource_units, |total, attempt| {
-                total.saturating_add(attempt.resource_units)
-            });
-        if self
-            .allowed_paths
-            .iter()
-            .any(|path| !safe_relative_path(path))
-            || self
-                .excluded_paths
-                .iter()
-                .any(|path| !safe_relative_path(path))
-            || self
-                .check_paths
-                .iter()
-                .any(|path| !safe_relative_path(path))
-            || self
-                .final_check_paths
-                .iter()
-                .any(|path| !safe_relative_path(path))
-            || self
-                .workspace_files
-                .windows(2)
-                .any(|pair| pair[0].path >= pair[1].path)
-            || self
-                .workspace_files
-                .iter()
-                .any(|file| !safe_relative_path(&file.path))
-            || self.non_goals.iter().any(|value| value.trim().is_empty())
-            || self
-                .applicable_guidance
-                .iter()
-                .any(|reference| reference.validate().is_err())
-            || self
-                .current_finding_ids
-                .iter()
-                .any(|id| id.trim().is_empty())
-            || elapsed != self.total_elapsed_seconds
-            || resources != self.total_resource_units
-            || self.attempts.iter().enumerate().any(|(index, attempt)| {
-                attempt.number != index as u16 + 1
-                    || attempt
-                        .changed_paths
-                        .iter()
-                        .any(|path| !safe_relative_path(path))
-                    || attempt.finding_ids.iter().any(|id| id.trim().is_empty())
-                    || attempt.changed_paths.iter().any(|path| {
-                        !self
-                            .allowed_paths
-                            .iter()
-                            .any(|allowed| relative_path_contains(allowed, path))
-                            || self
-                                .excluded_paths
-                                .iter()
-                                .any(|excluded| relative_path_contains(excluded, path))
-                    })
-            })
-            || match self.reviewed_phase {
-                RepairCheckPhaseRecord::Fast => {
-                    self.final_verification_elapsed_seconds != 0
-                        || self.final_verification_resource_units != 0
-                }
-                RepairCheckPhaseRecord::Final => {
-                    self.final_verification_elapsed_seconds == 0
-                        || self.final_verification_resource_units == 0
-                        || matches!(
-                            self.state,
-                            RepairSessionStateRecord::Ready
-                                | RepairSessionStateRecord::ReadyForFinalVerification
-                                | RepairSessionStateRecord::Cancelled
-                        )
-                }
-            }
-            || match self.state {
-                RepairSessionStateRecord::Ready => {
-                    self.current_finding_ids.is_empty()
-                        || usize::from(self.attempts_reserved) != self.attempts.len() + 1
-                }
-                RepairSessionStateRecord::ReadyForFinalVerification
-                | RepairSessionStateRecord::Verified => {
-                    !self.current_finding_ids.is_empty()
-                        || usize::from(self.attempts_reserved) != self.attempts.len()
-                }
-                RepairSessionStateRecord::NeedsDecision | RepairSessionStateRecord::Cancelled => {
-                    usize::from(self.attempts_reserved) != self.attempts.len()
-                }
-            }
-        {
-            return Err(DomainError::InvalidRepairRecord);
-        }
-        Ok(())
-    }
-}
-
-/// Permanent private reservation for one task-authority budget. Its
-/// deterministic record ID is the database-level uniqueness key used to make
-/// concurrent session starts contend inside one transaction.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RepairAuthorityReservationRecord {
-    pub project: String,
-    pub task: ExternalRef,
-    pub authority_revision: u64,
-    pub requested_session_id: String,
-    pub begin_request_id: String,
-    pub started_at_unix: u64,
-    pub bootstrap_resource_units: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session: Option<RecordRef>,
-}
-
-impl RepairAuthorityReservationRecord {
-    fn validate(&self) -> Result<(), DomainError> {
-        require_text(&self.project)?;
-        self.task.validate()?;
-        require_text(&self.requested_session_id)?;
-        require_text(&self.begin_request_id)?;
-        if let Some(session) = &self.session {
-            session.validate()?;
-        }
-        if self.authority_revision == 0
-            || self.started_at_unix == 0
-            || self.bootstrap_resource_units == 0
-        {
-            return Err(DomainError::InvalidRepairRecord);
-        }
-        Ok(())
-    }
-}
-
-/// Durable claim written before a checkpoint or finalization executes. A
-/// process interruption therefore leaves an explicit, budgeted operation
-/// rather than allowing silent unbounded reruns.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RepairOperationClaimRecord {
-    pub session: RecordRef,
-    pub request_id: String,
-    pub expected_session_revision: u64,
-    pub phase: RepairCheckPhaseRecord,
-    pub checkpoint_kind: String,
-    pub started_at_unix: u64,
-    pub resource_units: u64,
-}
-
-impl RepairOperationClaimRecord {
-    fn validate(&self) -> Result<(), DomainError> {
-        self.session.validate()?;
-        require_text(&self.request_id)?;
-        if self.expected_session_revision != self.session.revision
-            || self.started_at_unix == 0
-            || self.resource_units == 0
-            || !matches!(
-                self.checkpoint_kind.as_str(),
-                "post_edit_hook" | "explicit_checkpoint"
-            )
-        {
-            return Err(DomainError::InvalidRepairRecord);
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RepairHandoffRecord {
-    pub session: RecordRef,
-    pub expected_session_revision: u64,
-    pub reviewed_snapshot: RepairSnapshotRecord,
-    pub stable_finding_ids: Vec<String>,
-    pub question: String,
-    pub recommendation: String,
-    pub alternatives: Vec<String>,
-    pub impact: String,
-    pub evidence: Vec<EvidenceRef>,
-    pub permitted_next_step: String,
-}
-
-impl RepairHandoffRecord {
-    fn validate(&self) -> Result<(), DomainError> {
-        self.session.validate()?;
-        if self.expected_session_revision != self.session.revision
-            || self.stable_finding_ids.is_empty()
-            || self
-                .stable_finding_ids
-                .iter()
-                .any(|id| id.trim().is_empty())
-            || self.alternatives.is_empty()
-            || self
-                .alternatives
-                .iter()
-                .any(|value| value.trim().is_empty())
-            || self.evidence.is_empty()
-            || self
-                .evidence
-                .iter()
-                .any(|value| value.system.trim().is_empty() || value.locator.trim().is_empty())
-        {
-            return Err(DomainError::InvalidRepairRecord);
-        }
-        require_text(&self.question)?;
-        require_text(&self.recommendation)?;
-        require_text(&self.impact)?;
-        require_text(&self.permitted_next_step)
-    }
-}
-
-fn safe_relative_path(value: &str) -> bool {
-    let path = std::path::Path::new(value);
-    !value.is_empty()
-        && !path.is_absolute()
-        && !path.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir
-                    | std::path::Component::RootDir
-                    | std::path::Component::Prefix(_)
-            )
-        })
-}
-
-fn relative_path_contains(parent: &str, child: &str) -> bool {
-    parent == "."
-        || child == parent
-        || child
-            .strip_prefix(parent)
-            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Mission {
     pub statement: String,
+    /// Kept so earlier missions keep their digests; the plan records outcomes
+    /// as principles and rules instead.
     #[serde(default)]
     pub desired_outcomes: Vec<String>,
 }
 
+/// Where a principle comes from: a pstack principle pinned to the pstack
+/// version it was read from, or the owner's own wording.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CoreValue {
-    pub name: String,
-    pub description: String,
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PrincipleSource {
+    Pstack {
+        id: String,
+        version: String,
+    },
+    Custom,
+    /// Migrated from an earlier value or implementation philosophy record.
+    Migrated {
+        record: RecordRef,
+    },
 }
 
+/// A coding principle the owner picked; rules cite it as their source.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ImplementationPhilosophy {
+pub struct Principle {
     pub statement: String,
-    pub rationale: String,
-    #[serde(default)]
-    pub review_triggers: Vec<String>,
+    pub source: PrincipleSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
+}
+
+impl Principle {
+    fn validate(&self) -> Result<(), DomainError> {
+        require_text(&self.statement)?;
+        if let Some(rationale) = &self.rationale {
+            require_text(rationale)?;
+        }
+        match &self.source {
+            PrincipleSource::Pstack { id, version } => {
+                require_text(id)?;
+                require_text(version)?;
+                if !id
+                    .chars()
+                    .all(|character| character.is_ascii_lowercase() || character == '-')
+                {
+                    return Err(DomainError::InvalidField(
+                        "pstack principle ids are lowercase slugs",
+                    ));
+                }
+                Ok(())
+            }
+            PrincipleSource::Custom => Ok(()),
+            PrincipleSource::Migrated { record } => record.validate(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -930,6 +745,8 @@ pub enum Enforcement {
     },
 }
 
+/// An earlier deterministic rule (v1). It stays readable and in force, and
+/// is enforced as [`Rule::from_standard`]; revisions are written as v2 rules.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Standard {
@@ -960,6 +777,8 @@ impl Standard {
     }
 }
 
+/// Earlier advisory guidance; read as an advisory rule reviewed by
+/// `/interrogate` ([`Rule::from_guidance`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Guidance {
@@ -1000,13 +819,13 @@ pub struct Feature {
     /// Repository-relative path prefixes or globs whose changes affect this feature.
     #[serde(default)]
     pub entry_points: Vec<String>,
-    /// Mission, outcome or metric records this feature exists to serve.
+    /// The mission or principles this feature exists to serve.
     #[serde(default)]
     pub serves: Vec<RecordId>,
-    /// Values, philosophy and guidance that constrain how it is built.
+    /// Principles and rules that constrain how it is built.
     #[serde(default)]
     pub constrained_by: Vec<RecordId>,
-    /// Standards (gates) that prove it.
+    /// Rules (gates) that prove it.
     #[serde(default)]
     pub proven_by: Vec<RecordId>,
     /// One line after the link in `features/README.md`; defaults to the summary.
@@ -1022,6 +841,20 @@ pub struct Feature {
     /// for agents; rendered verbatim. Executable steps stay in `drive_steps`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub drive_recipe: Vec<String>,
+    /// Recorded ways to break the feature on purpose; its proof must fail
+    /// under each one, or the proof is hollow.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mutations: Vec<Mutation>,
+}
+
+/// A deliberate break: replace the first `find` in `path` with `replace`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Mutation {
+    pub path: String,
+    pub find: String,
+    pub replace: String,
+    pub description: String,
 }
 
 impl Feature {
@@ -1071,6 +904,20 @@ impl Feature {
                 ));
             }
         }
+        if self.mutations.len() > 16 {
+            return Err(DomainError::InvalidField(
+                "a feature lists at most 16 mutations",
+            ));
+        }
+        for mutation in &self.mutations {
+            require_text(&mutation.find)?;
+            require_text(&mutation.description)?;
+            if !safe_relative_path(&mutation.path) || mutation.find == mutation.replace {
+                return Err(DomainError::InvalidField(
+                    "a mutation changes a repository-relative file",
+                ));
+            }
+        }
         for links in [&self.serves, &self.constrained_by, &self.proven_by] {
             if links.len() > MAX_FEATURE_LIST_ITEMS {
                 return Err(DomainError::InvalidField("feature links exceed 64 items"));
@@ -1090,17 +937,6 @@ impl Feature {
             .iter()
             .any(|entry| entry_point_matches(entry.trim_start_matches("./"), path))
     }
-}
-
-/// A reviewed, expiring exception to one gate: while it is team-active and
-/// unexpired, a required check still runs the gate but reports a failure as
-/// excepted (visible, never a pass) so authorized recovery can merge.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PolicyException {
-    pub gate: RecordId,
-    pub reason: String,
-    pub expires_at: String,
 }
 
 /// Project-wide conventions of the feature map: what `features/README.md`
@@ -1225,8 +1061,10 @@ pub enum LocalReviewVerdict {
 
 /// Explicit solo self-review of a private local draft.
 ///
-/// This is not a team decision: it can never activate team policy, and it is
-/// only valid for a draft proposal owned by the same principal.
+/// It is only valid for a draft proposal owned by the same principal. Team
+/// review is the code host's branch protection, never a Whetstone record; the
+/// `team_activation_permitted` field stays `false` and exists so earlier
+/// reviews keep their digests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocalReview {
@@ -1254,58 +1092,6 @@ impl LocalReview {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MetricDirection {
-    Increase,
-    Decrease,
-    Maintain,
-    Zero,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MetricDefinition {
-    pub name: String,
-    pub rationale: String,
-    pub source: EvidenceRef,
-    pub cohort: String,
-    pub window: String,
-    pub direction: MetricDirection,
-    pub threshold: String,
-    pub freshness_seconds: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_release: Option<ExternalRef>,
-}
-
-impl MetricDefinition {
-    fn validate(&self) -> Result<(), DomainError> {
-        require_text(&self.name)?;
-        require_text(&self.rationale)?;
-        require_text(&self.source.system)?;
-        require_text(&self.source.locator)?;
-        require_text(&self.cohort)?;
-        require_text(&self.window)?;
-        require_text(&self.threshold)?;
-        if self.freshness_seconds == 0 {
-            return Err(DomainError::InvalidField(
-                "metric freshness_seconds must be positive",
-            ));
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SourceSnapshot {
-    pub locator: String,
-    pub content_digest: ContentDigest,
-    pub media_type: String,
-    pub captured_at: String,
-    pub untrusted_content: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProposalState {
@@ -1315,6 +1101,8 @@ pub enum ProposalState {
     Superseded,
 }
 
+/// The binding an earlier team proposal carried for PR-manifest activation.
+/// Kept so those proposals keep their digests; nothing writes one now.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalBinding {
@@ -1361,212 +1149,10 @@ impl Proposal {
 impl ProposalBinding {
     fn validate(&self) -> Result<(), DomainError> {
         if self.repository_id == 0 || self.authority_revision == 0 {
-            return Err(DomainError::InvalidAuthorityBinding);
+            return Err(DomainError::InvalidProposalBinding);
         }
         if !looks_like_utc_timestamp(&self.expires_at) {
             return Err(DomainError::InvalidTimestamp(self.expires_at.clone()));
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DecisionVerdict {
-    Accept,
-    Decline,
-    Redirect,
-    ApproveArchive,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Decision {
-    pub proposal: RecordRef,
-    pub proposal_binding: ProposalBinding,
-    pub verdict: DecisionVerdict,
-    pub reviewer: PrincipalRef,
-    pub rationale: String,
-    pub decided_at: String,
-}
-
-impl Decision {
-    fn validate(&self) -> Result<(), DomainError> {
-        self.proposal.validate()?;
-        self.proposal_binding.validate()?;
-        self.reviewer.validate()?;
-        require_text(&self.rationale)?;
-        if !looks_like_utc_timestamp(&self.decided_at) {
-            return Err(DomainError::InvalidTimestamp(self.decided_at.clone()));
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Mandate {
-    pub objective: String,
-    pub allowed_actions: Vec<String>,
-    pub excluded_actions: Vec<String>,
-    pub expires_at: String,
-    pub maximum_attempts: u32,
-    pub maximum_minutes: u32,
-}
-
-impl Mandate {
-    fn validate(&self) -> Result<(), DomainError> {
-        require_text(&self.objective)?;
-        if self.allowed_actions.is_empty()
-            || self.maximum_attempts == 0
-            || self.maximum_minutes == 0
-        {
-            return Err(DomainError::InvalidMandate);
-        }
-        if !looks_like_utc_timestamp(&self.expires_at) {
-            return Err(DomainError::InvalidTimestamp(self.expires_at.clone()));
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PolicyStateSnapshot {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub accepted: Option<RecordRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub required: Option<RecordRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub installed: Option<RecordRef>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub experimental: Option<RecordRef>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Activation {
-    pub proposal: RecordRef,
-    pub acceptance_decision: RecordRef,
-    pub policy: RecordRef,
-    pub binding: ProposalBinding,
-    pub activation_sequence: u64,
-    pub activated_at: String,
-    /// Repository files the activated gate runs, pinned by digest at the
-    /// merge commit (`<commit>:<path>`), so required checks run exactly them.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub pinned_checkers: Vec<EvidenceRef>,
-}
-
-impl Activation {
-    fn validate(&self) -> Result<(), DomainError> {
-        self.proposal.validate()?;
-        self.acceptance_decision.validate()?;
-        self.policy.validate()?;
-        self.binding.validate()?;
-        if self.activation_sequence == 0 {
-            return Err(DomainError::InvalidActivation);
-        }
-        if !looks_like_utc_timestamp(&self.activated_at) {
-            return Err(DomainError::InvalidTimestamp(self.activated_at.clone()));
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VerificationAxis {
-    Pass,
-    Fail,
-    Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AuthorizationAxis {
-    Authorized,
-    Denied,
-    Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OutcomeAxis {
-    Improved,
-    Maintained,
-    Harmed,
-    Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Freshness {
-    Fresh,
-    Stale,
-    Missing,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct VerificationReceipt {
-    pub subject: ExternalRef,
-    pub code_digest: ContentDigest,
-    pub policy_state: PolicyStateSnapshot,
-    pub verification: VerificationAxis,
-    pub authorization: AuthorizationAxis,
-    pub freshness: Freshness,
-    pub checked_at: String,
-    #[serde(default)]
-    pub related_records: Vec<RecordRef>,
-    #[serde(default)]
-    pub evidence: Vec<EvidenceRef>,
-}
-
-impl VerificationReceipt {
-    fn validate(&self) -> Result<(), DomainError> {
-        self.subject.validate()?;
-        if !looks_like_utc_timestamp(&self.checked_at) {
-            return Err(DomainError::InvalidTimestamp(self.checked_at.clone()));
-        }
-        if self.verification == VerificationAxis::Pass
-            && (self.freshness != Freshness::Fresh || self.evidence.is_empty())
-        {
-            return Err(DomainError::PassRequiresFreshEvidence);
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ObservationReceipt {
-    pub metric: RecordRef,
-    pub release: ExternalRef,
-    pub observed_at: String,
-    pub source_updated_at: String,
-    pub freshness: Freshness,
-    pub outcome: OutcomeAxis,
-    pub sample_size: u64,
-    pub summary: String,
-    #[serde(default)]
-    pub related_records: Vec<RecordRef>,
-    #[serde(default)]
-    pub evidence: Vec<EvidenceRef>,
-}
-
-impl ObservationReceipt {
-    fn validate(&self) -> Result<(), DomainError> {
-        self.metric.validate()?;
-        self.release.validate()?;
-        if !looks_like_utc_timestamp(&self.observed_at)
-            || !looks_like_utc_timestamp(&self.source_updated_at)
-        {
-            return Err(DomainError::InvalidTimestamp(self.observed_at.clone()));
-        }
-        require_text(&self.summary)?;
-        if self.freshness == Freshness::Missing && self.outcome != OutcomeAxis::Unknown {
-            return Err(DomainError::MissingObservationCannotClaimOutcome);
         }
         Ok(())
     }
@@ -1581,33 +1167,6 @@ pub struct Retirement {
     pub replacement: Option<RecordRef>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExternalSystem {
-    Beads,
-    GithubPullRequest,
-    GithubRelease,
-    GithubCheckRun,
-    Incident,
-    Deployment,
-    Custom,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ExternalRef {
-    pub system: ExternalSystem,
-    pub stable_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub revision: Option<String>,
-}
-
-impl ExternalRef {
-    fn validate(&self) -> Result<(), DomainError> {
-        require_text(&self.stable_id)
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct AgreementHistory {
     records: BTreeMap<RecordId, Vec<AgreementRecord>>,
@@ -1616,6 +1175,22 @@ pub struct AgreementHistory {
 
 impl AgreementHistory {
     pub fn append(
+        &mut self,
+        record: AgreementRecord,
+        expected_revision: Option<u64>,
+    ) -> Result<RecordRef, DomainError> {
+        if matches!(record.body, RecordBody::Retired(_)) {
+            return Err(DomainError::RetiredKind(
+                record.body.type_name().to_string(),
+            ));
+        }
+        self.replay(record, expected_revision)
+    }
+
+    /// Load a record that is already stored. Retired kinds are history: they
+    /// are replayed beside new records, never written anew (that is
+    /// [`Self::append`]'s guard).
+    pub fn replay(
         &mut self,
         record: AgreementRecord,
         expected_revision: Option<u64>,
@@ -1629,13 +1204,8 @@ impl AgreementHistory {
                 record.idempotency_key.clone(),
             ));
         }
-
-        match &record.body {
-            RecordBody::Decision(_) => self.validate_decision(&record)?,
-            RecordBody::Activation(_) => self.validate_activation(&record)?,
-            RecordBody::ObservationReceipt(_) => self.validate_observation(&record)?,
-            RecordBody::LocalReview(_) => self.validate_local_review(&record)?,
-            _ => {}
+        if matches!(record.body, RecordBody::LocalReview(_)) {
+            self.validate_local_review(&record)?;
         }
 
         let previous = self.latest(&record.id);
@@ -1701,71 +1271,6 @@ impl AgreementHistory {
         Ok(result)
     }
 
-    pub fn validate_decision(&self, decision: &AgreementRecord) -> Result<(), DomainError> {
-        let RecordBody::Decision(body) = &decision.body else {
-            return Err(DomainError::WrongRecordType("decision"));
-        };
-        let proposal_record = self
-            .by_ref(&body.proposal)
-            .ok_or_else(|| DomainError::UnknownReference(body.proposal.id.clone()))?;
-        let RecordBody::Proposal(proposal) = &proposal_record.body else {
-            return Err(DomainError::WrongRecordType("proposal"));
-        };
-        if proposal.state != ProposalState::Shared {
-            return Err(DomainError::DraftCannotBeApproved);
-        }
-        if proposal.binding.as_ref() != Some(&body.proposal_binding) {
-            return Err(DomainError::InvalidAuthorityBinding);
-        }
-        if decision.owner != body.reviewer {
-            return Err(DomainError::PrincipalMismatch);
-        }
-        if proposal_record.owner.stable_id == body.reviewer.stable_id
-            && proposal_record.owner.kind == body.reviewer.kind
-        {
-            return Err(DomainError::SelfApproval);
-        }
-        if !proposal_record.scope.contains(&decision.scope) {
-            return Err(DomainError::UnauthorizedScope);
-        }
-        Ok(())
-    }
-
-    pub fn validate_activation(&self, activation: &AgreementRecord) -> Result<(), DomainError> {
-        let RecordBody::Activation(body) = &activation.body else {
-            return Err(DomainError::WrongRecordType("activation"));
-        };
-        let proposal_record = self
-            .by_ref(&body.proposal)
-            .ok_or_else(|| DomainError::UnknownReference(body.proposal.id.clone()))?;
-        let RecordBody::Proposal(proposal) = &proposal_record.body else {
-            return Err(DomainError::WrongRecordType("proposal"));
-        };
-        if proposal.state != ProposalState::Shared {
-            return Err(DomainError::DraftCannotBeActivated);
-        }
-        let decision_record = self
-            .by_ref(&body.acceptance_decision)
-            .ok_or_else(|| DomainError::UnknownReference(body.acceptance_decision.id.clone()))?;
-        let RecordBody::Decision(decision) = &decision_record.body else {
-            return Err(DomainError::WrongRecordType("decision"));
-        };
-        self.validate_decision(decision_record)?;
-        if decision.verdict != DecisionVerdict::Accept
-            || decision.proposal != body.proposal
-            || decision.proposal_binding != body.binding
-        {
-            return Err(DomainError::ActivationWithoutAcceptance);
-        }
-        if !proposal.proposed_records.contains(&body.policy) {
-            return Err(DomainError::ActivationPolicyNotProposed);
-        }
-        if !proposal_record.scope.contains(&activation.scope) {
-            return Err(DomainError::UnauthorizedScope);
-        }
-        Ok(())
-    }
-
     /// A solo review binds an existing draft owned by the reviewer. It never
     /// substitutes for an independent team decision.
     pub fn validate_local_review(&self, review: &AgreementRecord) -> Result<(), DomainError> {
@@ -1784,26 +1289,8 @@ impl AgreementHistory {
         if review.owner != body.reviewer || proposal_record.owner != body.reviewer {
             return Err(DomainError::PrincipalMismatch);
         }
-        if !proposal_record.scope.contains(&review.scope) {
+        if proposal_record.scope.project != review.scope.project {
             return Err(DomainError::UnauthorizedScope);
-        }
-        Ok(())
-    }
-
-    pub fn validate_observation(&self, observation: &AgreementRecord) -> Result<(), DomainError> {
-        let RecordBody::ObservationReceipt(body) = &observation.body else {
-            return Err(DomainError::WrongRecordType("observation_receipt"));
-        };
-        let metric_record = self
-            .by_ref(&body.metric)
-            .ok_or_else(|| DomainError::UnknownReference(body.metric.id.clone()))?;
-        let RecordBody::MetricDefinition(metric) = &metric_record.body else {
-            return Err(DomainError::WrongRecordType("metric_definition"));
-        };
-        if let Some(expected_release) = &metric.expected_release {
-            if expected_release != &body.release {
-                return Err(DomainError::ObservationWrongRelease);
-            }
         }
         Ok(())
     }
@@ -1836,7 +1323,7 @@ fn validate_proposal_transition(
     }
 }
 
-fn require_text(value: &str) -> Result<(), DomainError> {
+pub(crate) fn require_text(value: &str) -> Result<(), DomainError> {
     if value.trim().is_empty() {
         Err(DomainError::InvalidField("required text is empty"))
     } else {
@@ -1844,12 +1331,26 @@ fn require_text(value: &str) -> Result<(), DomainError> {
     }
 }
 
-fn looks_like_utc_timestamp(value: &str) -> bool {
+pub(crate) fn looks_like_utc_timestamp(value: &str) -> bool {
     value.len() >= 20
         && value.ends_with('Z')
         && value.as_bytes().get(4) == Some(&b'-')
         && value.as_bytes().get(7) == Some(&b'-')
         && value.contains('T')
+}
+
+pub(crate) fn safe_relative_path(value: &str) -> bool {
+    let path = std::path::Path::new(value);
+    !value.is_empty()
+        && !path.is_absolute()
+        && !path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1865,11 +1366,7 @@ pub enum DomainError {
     ImportedContentCannotGrantAuthority,
     InvalidSupersession,
     InvalidProposalBinding,
-    InvalidAuthorityBinding,
-    InvalidActivation,
-    InvalidMandate,
     PassRequiresFreshEvidence,
-    MissingObservationCannotClaimOutcome,
     IdempotencyConflict(String),
     StaleRevision {
         expected: Option<u64>,
@@ -1881,18 +1378,13 @@ pub enum DomainError {
     },
     UnknownReference(RecordId),
     WrongRecordType(&'static str),
-    DraftCannotBeApproved,
-    DraftCannotBeActivated,
-    SelfApproval,
     PrincipalMismatch,
     UnauthorizedScope,
-    ActivationWithoutAcceptance,
-    ActivationPolicyNotProposed,
     IllegalProposalTransition,
-    ObservationWrongRelease,
-    InvalidRepairRecord,
     OperationalRecordCannotGrantAuthority,
     InvalidLocalReview,
+    /// A kind the delegation plan removed; it can be read, never created.
+    RetiredKind(String),
     Serialization(String),
 }
 

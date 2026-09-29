@@ -36,13 +36,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::domain::{
-    AgreementHistory, AgreementRecord, ContentDigest, RecordBody, RecordId, RecordRef,
-};
+use crate::domain::{AgreementHistory, AgreementRecord, RecordBody, RecordId, RecordRef};
 use crate::storage::{AppendRequest, StorageError, StoreKind};
 
 /// The oldest `bd` whose JSON shapes Whetstone is tested against.
 pub const MINIMUM_BD_VERSION: (u64, u64, u64) = (1, 1, 2);
+/// The same minimum as text, pinned in scaffolds such as the CI workflow.
+pub const MIN_BD_VERSION: &str = "1.1.2";
 pub const WHETSTONE_LABEL: &str = "whetstone";
 pub const LIFECYCLE_LABEL_PREFIX: &str = "wh:lifecycle:";
 pub const METADATA_SCHEMA: u64 = 1;
@@ -150,27 +150,31 @@ pub fn ascii_json(canonical: &[u8]) -> Result<String, StorageError> {
 fn bead_type(body: &RecordBody) -> &'static str {
     match body {
         RecordBody::Mission(_)
-        | RecordBody::CoreValue(_)
-        | RecordBody::ImplementationPhilosophy(_)
+        | RecordBody::Principle(_)
+        | RecordBody::Rule(_)
         | RecordBody::Standard(_)
         | RecordBody::Guidance(_)
-        | RecordBody::MetricDefinition(_)
         | RecordBody::Feature(_)
-        | RecordBody::VerificationMap(_)
-        | RecordBody::PolicyException(_)
-        | RecordBody::SourceSnapshot(_) => "record",
+        | RecordBody::VerificationMap(_) => "record",
         RecordBody::Proposal(_)
-        | RecordBody::Decision(_)
         | RecordBody::LocalReview(_)
-        | RecordBody::Activation(_)
-        | RecordBody::Mandate(_)
-        | RecordBody::Retirement(_) => "decision",
+        | RecordBody::Retirement(_)
+        | RecordBody::FlagDecision(_)
+        | RecordBody::HandAnswer(_) => "decision",
         RecordBody::VerificationReceipt(_)
-        | RecordBody::ObservationReceipt(_)
-        | RecordBody::RepairSession(_)
-        | RecordBody::RepairHandoff(_)
-        | RecordBody::RepairAuthorityReservation(_)
-        | RecordBody::RepairOperationClaim(_) => "receipt",
+        | RecordBody::Judgment(_)
+        | RecordBody::Attestation(_)
+        | RecordBody::Brief(_)
+        | RecordBody::HandRaise(_) => "receipt",
+        RecordBody::Retired(retired) => match retired.record_type.as_str() {
+            "core_value"
+            | "implementation_philosophy"
+            | "metric_definition"
+            | "source_snapshot"
+            | "policy_exception" => "record",
+            "decision" | "mandate" | "activation" => "decision",
+            _ => "receipt",
+        },
     }
 }
 
@@ -253,7 +257,7 @@ impl RecordStore {
         ensure_bd_version()?;
         reject_symlink(dir)?;
         create_private_dir(dir)?;
-        let _lock = lock_file(&dir.join(".whetstone-init.lock"))?;
+        let _lock = lock_file(&init_lock_path(dir, kind))?;
         let store = Self::new(dir, kind)?;
         if !is_initialized(dir) {
             match kind {
@@ -759,38 +763,20 @@ impl RecordStore {
         record: &AgreementRecord,
         expected_revision: Option<u64>,
     ) -> Result<RecordRef, StorageError> {
-        self.append_checked(record, expected_revision, false, None)
-    }
-
-    /// Insert a record exactly once; an exact replay is an error, so a replay
-    /// can never be mistaken for exclusive ownership of work.
-    pub fn append_exclusive(
-        &self,
-        record: &AgreementRecord,
-        expected_revision: Option<u64>,
-    ) -> Result<RecordRef, StorageError> {
-        self.append_checked(record, expected_revision, true, None)
-    }
-
-    /// Insert an exclusive record only while `guard` is still exactly the
-    /// latest revision the caller observed (checked under the write lock).
-    pub fn append_exclusive_guarded(
-        &self,
-        record: &AgreementRecord,
-        expected_revision: Option<u64>,
-        guard: &RecordRef,
-    ) -> Result<RecordRef, StorageError> {
-        self.append_checked(record, expected_revision, true, Some(guard))
+        self.append_checked(record, expected_revision)
     }
 
     fn append_checked(
         &self,
         record: &AgreementRecord,
         expected_revision: Option<u64>,
-        exclusive: bool,
-        guard: Option<&RecordRef>,
     ) -> Result<RecordRef, StorageError> {
         record.validate().map_err(StorageError::Domain)?;
+        if matches!(record.body, RecordBody::Retired(_)) {
+            return Err(StorageError::Domain(
+                crate::domain::DomainError::RetiredKind(record.body.type_name().to_string()),
+            ));
+        }
         self.before_write()?;
         let reference = record.reference().map_err(StorageError::Domain)?;
         let _guard = self
@@ -801,14 +787,7 @@ impl RecordStore {
         // Under the write lock no other writer can move the fingerprint, so a
         // snapshot that still matches it is exactly what bd would list.
         let beads = self.snapshot()?;
-        self.insert_checked(
-            &beads,
-            record,
-            reference,
-            expected_revision,
-            exclusive,
-            guard,
-        )
+        self.insert_checked(&beads, record, reference, expected_revision)
     }
 
     /// Validate one append against `beads` (fresh, under the write lock) and
@@ -819,18 +798,11 @@ impl RecordStore {
         record: &AgreementRecord,
         reference: RecordRef,
         expected_revision: Option<u64>,
-        exclusive: bool,
-        guard: Option<&RecordRef>,
     ) -> Result<RecordRef, StorageError> {
         if let Some(existing) = beads
             .iter()
             .find(|item| item.record.idempotency_key == record.idempotency_key)
         {
-            if exclusive {
-                return Err(StorageError::ExclusiveRecordExists(
-                    existing.reference.clone(),
-                ));
-            }
             return if existing.reference == reference {
                 Ok(reference)
             } else {
@@ -843,25 +815,6 @@ impl RecordStore {
             .iter()
             .filter(|item| item.record.id == record.id)
             .max_by_key(|item| item.record.revision);
-        if exclusive {
-            if let Some(existing) = latest {
-                return Err(StorageError::ExclusiveRecordExists(
-                    existing.reference.clone(),
-                ));
-            }
-        }
-        if let Some(guard) = guard {
-            let current = beads
-                .iter()
-                .filter(|item| item.record.id == guard.id)
-                .max_by_key(|item| item.record.revision);
-            if current.map(|item| &item.reference) != Some(guard) {
-                return Err(StorageError::StaleRevision {
-                    expected: Some(guard.revision),
-                    actual: current.map(|item| item.record.revision),
-                });
-            }
-        }
         let actual = latest.map(|item| item.record.revision);
         if actual != expected_revision {
             return Err(StorageError::StaleRevision {
@@ -1020,7 +973,7 @@ impl RecordStore {
             for record in records {
                 let expected = history.latest(&record.id).map(|current| current.revision);
                 history
-                    .append(record, expected)
+                    .replay(record, expected)
                     .map_err(StorageError::Domain)?;
             }
             for request in requests {
@@ -1057,8 +1010,6 @@ impl RecordStore {
                     request.record,
                     reference.clone(),
                     request.expected_revision,
-                    false,
-                    None,
                 )?;
                 beads = self.snapshot()?;
             }
@@ -1203,6 +1154,12 @@ impl RecordStore {
             if bead_type(&record.body) == "receipt" {
                 return Err(StorageError::InvalidProjectionBoundary);
             }
+            // Retired kinds stay where they were; they are never written anew.
+            if matches!(record.body, RecordBody::Retired(_)) {
+                return Err(StorageError::Domain(
+                    crate::domain::DomainError::RetiredKind(record.body.type_name().to_string()),
+                ));
+            }
             let canonical = record.canonical_json().map_err(StorageError::Domain)?;
             for canary in private_canaries {
                 if !canary.is_empty()
@@ -1276,110 +1233,6 @@ impl RecordStore {
         self.refresh()?;
         Ok(output)
     }
-
-    /// Write every record as a digest-bound logical archive.
-    pub fn export_logical(&self, destination: &Path) -> Result<LogicalArchive, StorageError> {
-        reject_symlink(destination)?;
-        if destination.exists() {
-            return Err(StorageError::DestinationExists(destination.to_path_buf()));
-        }
-        let records = self.all_records()?;
-        let payload = json!({"schema_version": 1, "kind": self.kind, "records": records});
-        let canonical = serde_json::to_vec(&payload)
-            .map_err(|error| StorageError::Serialization(error.to_string()))?;
-        if canonical.len() > 16 * 1024 * 1024 || records.len() > 10_000 {
-            return Err(StorageError::LogicalArchiveTooLarge);
-        }
-        let digest = ContentDigest::new(format!("sha256:{:x}", Sha256::digest(&canonical)))
-            .map_err(StorageError::Domain)?;
-        let document = json!({"payload_digest": digest, "payload": payload});
-        write_private(
-            destination,
-            &serde_json::to_vec_pretty(&document)
-                .map_err(|error| StorageError::Serialization(error.to_string()))?,
-        )?;
-        Ok(LogicalArchive {
-            payload_digest: digest,
-            records: records.len(),
-            destination: destination.to_path_buf(),
-        })
-    }
-
-    /// Restore a logical archive into a new store, verifying every digest
-    /// and the complete history before and after.
-    pub fn import_logical(
-        archive: &Path,
-        destination: &Path,
-        kind: StoreKind,
-    ) -> Result<(Self, LogicalArchive), StorageError> {
-        if is_initialized(destination) {
-            return Err(StorageError::DestinationExists(destination.to_path_buf()));
-        }
-        let bytes = fs::read(archive).map_err(StorageError::Io)?;
-        if bytes.len() > 16 * 1024 * 1024 {
-            return Err(StorageError::LogicalArchiveTooLarge);
-        }
-        let document: Value = serde_json::from_slice(&bytes)
-            .map_err(|error| StorageError::Serialization(error.to_string()))?;
-        let payload = document
-            .get("payload")
-            .ok_or(StorageError::LogicalArchiveDigestMismatch)?;
-        let canonical = serde_json::to_vec(payload)
-            .map_err(|error| StorageError::Serialization(error.to_string()))?;
-        let actual = ContentDigest::new(format!("sha256:{:x}", Sha256::digest(&canonical)))
-            .map_err(StorageError::Domain)?;
-        if document.get("payload_digest").and_then(Value::as_str) != Some(actual.as_str()) {
-            return Err(StorageError::LogicalArchiveDigestMismatch);
-        }
-        if payload.get("kind") != Some(&json!(kind)) {
-            return Err(StorageError::LogicalArchiveKindMismatch);
-        }
-        let mut records: Vec<AgreementRecord> =
-            serde_json::from_value(payload.get("records").cloned().unwrap_or(Value::Null))
-                .map_err(|error| StorageError::Serialization(error.to_string()))?;
-        records.sort_by(|left, right| {
-            logical_stage(left)
-                .cmp(&logical_stage(right))
-                .then_with(|| left.id.cmp(&right.id))
-                .then_with(|| left.revision.cmp(&right.revision))
-        });
-        let store = Self::initialize(destination, kind)?;
-        for record in &records {
-            let expected = store.latest(&record.id)?.map(|current| current.revision);
-            store.append(record, expected)?;
-        }
-        let mut restored = store
-            .refresh()?
-            .into_iter()
-            .map(|item| item.record)
-            .collect::<Vec<_>>();
-        let mut original = records.clone();
-        let order = |left: &AgreementRecord, right: &AgreementRecord| {
-            left.id
-                .cmp(&right.id)
-                .then(left.revision.cmp(&right.revision))
-        };
-        restored.sort_by(order);
-        original.sort_by(order);
-        if restored != original {
-            return Err(StorageError::LogicalArchiveRoundTripMismatch);
-        }
-        Ok((
-            store,
-            LogicalArchive {
-                payload_digest: actual,
-                records: records.len(),
-                destination: destination.to_path_buf(),
-            },
-        ))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LogicalArchive {
-    pub payload_digest: ContentDigest,
-    pub records: usize,
-    pub destination: PathBuf,
 }
 
 /// Decode and verify one bead's Whetstone metadata.
@@ -1437,16 +1290,14 @@ fn batch_marker_key(requests: &[AppendRequest<'_>]) -> String {
     })
 }
 
+/// Write order that keeps every link resolvable: agreement content first,
+/// then proposals, then the reviews and decisions on them, then receipts.
 fn logical_stage(record: &AgreementRecord) -> u8 {
     match &record.body {
         RecordBody::Proposal(_) => 1,
-        RecordBody::Decision(_) | RecordBody::LocalReview(_) => 2,
-        RecordBody::Activation(_)
-        | RecordBody::ObservationReceipt(_)
-        | RecordBody::RepairSession(_)
-        | RecordBody::RepairHandoff(_)
-        | RecordBody::RepairAuthorityReservation(_)
-        | RecordBody::RepairOperationClaim(_) => 3,
+        RecordBody::LocalReview(_) => 2,
+        body if body.is_receipt() => 3,
+        RecordBody::FlagDecision(_) | RecordBody::HandAnswer(_) => 4,
         _ => 0,
     }
 }
@@ -1522,6 +1373,26 @@ fn shared_cache(dir: &Path) -> Result<SharedCache, StorageError> {
         .entry(dir.to_path_buf())
         .or_insert_with(|| Arc::new(Mutex::new(None)))
         .clone())
+}
+
+/// Where store initialization is serialised. The shared store lives in the
+/// working tree (`.beads`), so its lock goes in Git's common directory,
+/// which is never committed; the private store is already inside it.
+fn init_lock_path(dir: &Path, kind: StoreKind) -> PathBuf {
+    if kind == StoreKind::Shareable {
+        let common = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()));
+        if let Some(common) = common.filter(|path| path.is_dir()) {
+            return common.join("whetstone-shared-init.lock");
+        }
+    }
+    dir.join(".whetstone-init.lock")
 }
 
 fn lock_file(path: &Path) -> Result<File, StorageError> {

@@ -1,0 +1,170 @@
+{
+  "schema": "whetstone.principle-catalogue.v1",
+  "source": "cursor/plugins pstack",
+  "version": "0.15.5",
+  "commit": "12d587dfb20741cafc376c42c696c5f6e2a64487",
+  "license": "Principle text from pstack by Lauren Tan, MIT License. The enforceable and suggestion fields are Whetstone's judgement, not pstack's.",
+  "principles": [
+    {
+      "id": "laziness-protocol",
+      "group": "core",
+      "rule": "Bias toward deletion and the smallest change that solves the problem.",
+      "enforceable": "question",
+      "suggestion": "Does this change add code, abstractions or tests the task did not need?"
+    },
+    {
+      "id": "foundational-thinking",
+      "group": "core",
+      "rule": "Apply before writing logic: choosing core types and data structures, sequencing scaffold-vs-feature work, asking what concurrent actors share. Get the data structures right so downstream code becomes obvious.",
+      "enforceable": "review",
+      "suggestion": null
+    },
+    {
+      "id": "redesign-from-first-principles",
+      "group": "core",
+      "rule": "Redesign as if the requirement had been a foundational assumption from day one, instead of bolting it on.",
+      "enforceable": "review",
+      "suggestion": null
+    },
+    {
+      "id": "attack-the-premise",
+      "group": "core",
+      "rule": "Apply when two or more fixes that share one premise have failed the same gate. Take a census of which actors hold the imbalance before the next fix, then question the premise instead of writing another fix that assumes it.",
+      "enforceable": "review",
+      "suggestion": null
+    },
+    {
+      "id": "subtract-before-you-add",
+      "group": "core",
+      "rule": "Remove dead weight, redundant validators, and stub references first, then build on the simpler base.",
+      "enforceable": "question",
+      "suggestion": "Does this change add new code next to dead or duplicate code it could have removed first?"
+    },
+    {
+      "id": "minimize-reader-load",
+      "group": "core",
+      "rule": "Count layers between question and answer, and hidden state in the reader's head; collapse one-caller wrappers and shrink mutable scope.",
+      "enforceable": "question",
+      "suggestion": "Does this change add a wrapper or layer that has only one caller?"
+    },
+    {
+      "id": "outcome-oriented-execution",
+      "group": "core",
+      "rule": "Apply during planned rewrites and migrations with explicit phase boundaries. Converge on the target architecture; don't preserve smooth intermediate states with throwaway compatibility code.",
+      "enforceable": "question",
+      "suggestion": "Does this change add throwaway compatibility code to preserve an intermediate state?"
+    },
+    {
+      "id": "experience-first",
+      "group": "core",
+      "rule": "Choose user delight over implementation convenience; ship fewer polished features over more rough ones.",
+      "enforceable": "review",
+      "suggestion": null
+    },
+    {
+      "id": "exhaust-the-design-space",
+      "group": "core",
+      "rule": "Build 2-3 competing prototypes and compare side by side before committing.",
+      "enforceable": "review",
+      "suggestion": null
+    },
+    {
+      "id": "build-the-lever",
+      "group": "core",
+      "rule": "Apply to any non-trivial work, not just bulk work: edits, migrations, analyses, checks. Build the tool that does it or proves it (codemod, script, generator, or a skill your subagents follow) instead of working by hand. The tool is the artifact a reviewer can rerun.",
+      "enforceable": "review",
+      "suggestion": null
+    },
+    {
+      "id": "model-the-domain",
+      "group": "architecture",
+      "rule": "Encode the domain in a structure instead of scattered conditionals.",
+      "enforceable": "question",
+      "suggestion": "Does this change encode a domain rule as scattered conditionals instead of a type or table?"
+    },
+    {
+      "id": "boundary-discipline",
+      "group": "architecture",
+      "rule": "Concentrate guards at system boundaries (CLI, config, network, external APIs); trust internal types and keep business logic in pure functions.",
+      "enforceable": "question",
+      "suggestion": "Does this change add validation inside internal code instead of at a system boundary?"
+    },
+    {
+      "id": "type-system-discipline",
+      "group": "architecture",
+      "rule": "Make illegal states unrepresentable, brand semantic primitives, parse external data at boundaries, refuse to lie to the compiler, exhaust variants, derive from authoritative schemas.",
+      "enforceable": "mechanical",
+      "suggestion": "Lint for casts, any and non-null assertions (for example @typescript-eslint/no-explicit-any, clippy::unwrap_used)."
+    },
+    {
+      "id": "make-operations-idempotent",
+      "group": "architecture",
+      "rule": "Converge to the same end state regardless of partial prior runs.",
+      "enforceable": "mechanical",
+      "suggestion": "A test that runs the operation twice and asserts the same end state."
+    },
+    {
+      "id": "migrate-callers-then-delete-legacy-apis",
+      "group": "architecture",
+      "rule": "Migrate callers and delete the old API in the same wave instead of preserving compatibility layers.",
+      "enforceable": "question",
+      "suggestion": "Does this change keep an old API alive next to its replacement?"
+    },
+    {
+      "id": "separate-before-serializing-shared-state",
+      "group": "architecture",
+      "rule": "Eliminate the sharing first; serialize structurally only when one shared writer is a real invariant.",
+      "enforceable": "review",
+      "suggestion": null
+    },
+    {
+      "id": "prove-it-works",
+      "group": "verification",
+      "rule": "Apply after completing a task, before declaring done. Verify against the real artifact (run the feature, read the actual value, inspect the diff), not a proxy, self-report, or 'it compiles.'.",
+      "enforceable": "mechanical",
+      "suggestion": "A drive proof of the changed feature, with evidence, before done."
+    },
+    {
+      "id": "fix-root-causes",
+      "group": "verification",
+      "rule": "Trace each symptom to its root cause and fix it there; reproduce first, ask why until you reach it, resist nil-check guards that silence crashes.",
+      "enforceable": "question",
+      "suggestion": "Does this change add a guard that hides an error instead of fixing its cause?"
+    },
+    {
+      "id": "sequence-verifiable-units",
+      "group": "verification",
+      "rule": "Apply to multi-step work (sweeps, migrations, runs of similar edits) and to how you stack commits and PRs. Break work into small units that each end in a verifiable state, check each before the next, and order delivery so the sequence proves itself to a reviewer.",
+      "enforceable": "mechanical",
+      "suggestion": "Every commit passes the pre-commit and pre-push gates."
+    },
+    {
+      "id": "test-behavior-not-implementation",
+      "group": "verification",
+      "rule": "Apply when you write, change, or keep a test. Call the code the way its users do and assert the result they observe against a literal expected value. If the test would still pass when every imported function returns undefined, rewrite the assertion or delete the test.",
+      "enforceable": "question",
+      "suggestion": "Does this test assert on internals or mocks instead of the result a user observes?"
+    },
+    {
+      "id": "guard-the-context-window",
+      "group": "delegation",
+      "rule": "Route bulk to subagents; keep summaries in the main thread, not raw payloads.",
+      "enforceable": "review",
+      "suggestion": null
+    },
+    {
+      "id": "never-block-on-the-human",
+      "group": "delegation",
+      "rule": "Proceed, present the result, let the human course-correct after the fact; reserve confirmation for irreversible actions.",
+      "enforceable": "review",
+      "suggestion": null
+    },
+    {
+      "id": "encode-lessons-in-structure",
+      "group": "meta",
+      "rule": "Encode the rule as a lint, metadata flag, runtime check, or script instead of more text.",
+      "enforceable": "review",
+      "suggestion": null
+    }
+  ]
+}

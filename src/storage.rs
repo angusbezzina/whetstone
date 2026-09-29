@@ -36,7 +36,7 @@ pub struct ProjectLayout {
 }
 
 impl ProjectLayout {
-    pub fn resolve(start: &Path, monorepo_scope: Option<&str>) -> Result<Self, StorageError> {
+    pub fn resolve(start: &Path) -> Result<Self, StorageError> {
         let start = start.canonicalize().map_err(StorageError::Io)?;
         let search_root = if start.is_file() {
             start.parent().ok_or(StorageError::ProjectRootNotFound)?
@@ -55,9 +55,9 @@ impl ProjectLayout {
             search_root.join(common)
         };
         let common = common.canonicalize().map_err(StorageError::Io)?;
-        let scope = monorepo_scope.unwrap_or(".");
-        validate_scope_path(scope)?;
-        let identity = format!("{}\0{scope}", common.display());
+        // The trailing "." is the whole-repository scope every earlier store
+        // was keyed by; keeping it keeps existing private stores in place.
+        let identity = format!("{}\0.", common.display());
         let project_id = format!("{:x}", Sha256::digest(identity.as_bytes()));
         let state_root = common.join("whetstone/v1").join(&project_id[..20]);
         Ok(Self {
@@ -95,20 +95,6 @@ impl ProjectLayout {
 
     pub fn projections_path(&self) -> PathBuf {
         self.state_root.join("projections")
-    }
-}
-
-fn validate_scope_path(scope: &str) -> Result<(), StorageError> {
-    let path = Path::new(scope);
-    if scope.is_empty()
-        || path.is_absolute()
-        || path
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-    {
-        Err(StorageError::InvalidProjectScope(scope.to_string()))
-    } else {
-        Ok(())
     }
 }
 
@@ -182,7 +168,6 @@ pub enum StorageError {
     },
     /// The private store must never be able to push anywhere.
     PrivateStoreHasRemote(PathBuf),
-    InvalidProjectScope(String),
     ProjectRootNotFound,
     RepositoryNotInitialized(PathBuf),
     SymlinkPath(PathBuf),
@@ -196,19 +181,12 @@ pub enum StorageError {
         actual: u64,
     },
     IdempotencyConflict(String),
-    ExclusiveRecordExists(RecordRef),
     EmptyBatch,
     UnknownReference(RecordRef),
     DigestMismatch(RecordId),
     UnexpectedData(String),
     InvalidProjectionBoundary,
     PrivateCanaryFound(String),
-    LogicalArchiveTooLarge,
-    LogicalArchiveKindMismatch,
-    LogicalArchiveDigestMismatch,
-    LogicalArchiveRoundTripMismatch,
-    InvalidDestination,
-    DestinationExists(PathBuf),
 }
 
 impl std::fmt::Display for StorageError {

@@ -53,39 +53,60 @@ earlier `whetstone-k5r` plan.
 
 ## Where it stands today
 
-This is a pre-release. The six commands work against the Beads record store,
-and a good part of the plan already exists:
+This is a pre-release. The six commands work against the Beads record store
+and the plan in epic `whetstone-ppq` is built:
 
-- Rules with a strength and one mechanical enforcer, run by `wh check` with
-  bounded execution and a receipt per gate.
-- A generated, pstack-compatible verification skill, feature map and driver
-  (`wh init --action wire`), with import of pstack-edited skills
-  (`wh init --action import --from <dir>`).
-- The Claude Code SessionStart and Stop hooks (`--hooks`). The Stop hook
-  returns violations to the same session for up to three repairs.
-- A local dashboard with onboarding, checks and the changelog, plus a
-  show-me-your-work TSV trail (`wh dash --trail`).
-- Private drafts, and `wh push` and `wh pull` that never leak private records.
+- **Setup.** `wh init --action setup` detects Beads and pstack, shows the
+  exact install commands and runs them after one confirmation, and pins what
+  it found in `whetstone/tools.lock.json`. Onboarding asks for a one-line
+  mission, offers pstack's principles and three starter rules chosen for the
+  repository, and turns exemplar codebases (`--action exemplar --from <path>`
+  or `--url <git url>`) into rule drafts with provenance.
+- **Rules.** One strength and one enforcer per rule
+  ([rule schema](references/rule-v2.schema.json)): AST, lint, formatter, test,
+  validator, drive, design tokens, public surface or brief; a Jev question
+  (in shadow until promoted); or a review by `/interrogate` or a named person
+  (`wh check --attest`). Earlier standards and guidance are read as rules, and
+  `wh change --migrate` turns earlier values, philosophy and YAML rules into
+  drafts.
+- **Jev.** Questions go through the driver's `ask` command to TypeSafe System
+  One. Text is redacted in Whetstone before the driver sees it (path globs,
+  patterns, built-in secret patterns and the key itself), receipts record
+  that redaction happened, and a local-only rule never leaves the machine.
+  A Jev answer can flag but never pass a must rule; low confidence raises a
+  hand.
+- **Gates.** `wh init --action wire --hooks` installs git pre-commit (staged
+  content, mechanical rules only) and pre-push (`wh check --base <remote>`)
+  hooks, chaining any existing hook, plus the Claude, Codex and Cursor agent
+  hooks. `--ci` writes the `whetstone/policy` required status workflow.
+- **Hands and briefs.** `wh check --raise-hand` files a `bd human` issue and
+  the dashboard shows it until `wh change --answer` records the answer.
+  `wh check --brief` records a pstack brief that brief-enforced rules require.
+- **Learning.** `wh change --accept-flag` and `--dismiss-flag` label flags.
+  Each rule then has a false-flag rate, and `wh change --tune` drafts
+  demotions for noisy rules and promotions for accurate shadow questions.
+  Recurring accepted flags are offered as hardening candidates
+  (`wh change --kind rule --hardens <rule>`).
+- **Proofs.** Flaky proofs are quarantined as unknown, and
+  `wh check --mutate` runs a feature's declared mutations in an isolated
+  worktree to catch proofs that pass on broken code.
 
-Not built yet: principles, exemplar codebases and rule proposals in
-onboarding, starter rules, installing Beads and pstack, Jev questions and
-redaction, git pre-commit and pre-push hooks, the new CI check, `bd human`
-hand-raising, flag tracking, and the proof-quality work.
-
-Some of today's code serves the earlier direction and is scheduled for
-removal in epic `whetstone-ppq`. That covers the eight-decision onboarding,
-values and key metrics, PR-manifest team activation (`wh push --propose`,
-`wh change --activate`, `wh init --ci --reviewer`) and the repair-session
-flags on `wh check`. Don't build on them.
+Still waiting on the owner: a live Jev key run, the milestone walkthroughs and
+the two-week tuning experiment, all tracked under `whetstone-ppq.10`.
 
 ```bash
-wh init --json                                              # inspect the project
-wh init --action wire --host claude --host cursor --hooks   # skill, map, driver, hooks
-wh init --action import --from path/to/verify-app           # pstack skill -> drafts
-wh change --json --record-id <id>                           # bind an exact base, then draft
-wh check --json --changed                                   # prove what the change touched
-wh check --changed --base origin/main                       # ...including committed work
+wh init                                                     # guided onboarding in the dashboard
+wh init --json                                              # inspect: missing steps, starters, tools
+wh init --action setup --yes                                # install bd and pstack if missing
+wh init --action agree --mission "..." --principle prove-it-works --starter all \
+  --expected-revision 0 --resume <token>
+wh init --action wire --host claude --host codex --hooks --ci
+wh change --kind rule --record-id rule.no-todo --content "..." --rationale "..." \
+  --definition '{"type":"rule","strength":"should","enforcer":{"kind":"question","question":"Does this change add a TODO?"}}'
+wh check --staged                                           # what pre-commit runs
+wh check --base origin/main                                 # what pre-push runs
 wh check --sweep                                            # drive every mapped feature
+wh check --attest rule.api-review --verdict pass --reviewer interrogate --notes "..."
 wh dash                                                     # local dashboard
 wh dash --trail                                             # decision trail as TSV
 wh push                                                     # review the exact package, then --confirm <token>
@@ -129,8 +150,8 @@ wh --help   # lists init, dash, change, check, pull and push
 ```
 
 Requirements: `bd` 1.1.2 or later, Node 22 for the verification driver, and
-Chrome or Chromium for web surfaces. Jev rules will also need a
-`TYPESAFE_API_KEY` in the environment; without one they report `unavailable`.
+Chrome or Chromium for web surfaces. Jev rules need a `TYPESAFE_API_KEY` in
+the environment; without one they report `unavailable`, which is never a pass.
 
 An earlier install of the previous product also answers to `wh` and would open
 its terminal UI instead. If `wh --help` lists commands such as `extract`,

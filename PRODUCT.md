@@ -62,11 +62,11 @@ console, or CI replacement.
 
 ## Surfaces
 
-The four views confirmed on 2026-09-10 are being reshaped for the delegation
-plan (Beads `whetstone-ppq.1.3` updates the reference, and `whetstone-ppq.3.8`
-builds it):
+The dashboard has five views for the delegation plan
+(`planning/direction-demo/index.html` is the reference, built from the
+product's own dashboard files):
 
-1. **Dashboard** (default): what needs the owner (raised hands, flags to
+1. **Home** (default): what needs the owner (raised hands, flags to
    accept or dismiss, drafts), rule health, and one primary action. Before
    `wh init`, it shows only onboarding: mission, principles, exemplar
    codebases, then accepting each proposed rule with its examples, strength
@@ -83,9 +83,8 @@ builds it):
 4. **Changelog**: the decision log, newest first, grouped by day. It includes
    raised hands and answers, accepted and dismissed flags, strength changes
    and redactions. Exact records sit behind disclosure.
-
-Until that work lands, the shipped dashboard still shows the earlier
-eight-decision onboarding and five Foundations stages.
+5. **Requests**: raised hands (`bd human` issues), open ones first, each with
+   the question, what was tried and the recommendation, answered in place.
 
 ## Durable constraints
 

@@ -18,6 +18,7 @@ fn run(args: &[&str], cwd: &Path) -> Output {
         .args(args)
         .current_dir(cwd)
         .env_remove("BEADS_DIR")
+        .env("WHETSTONE_JEV_OFFLINE", "1")
         .output()
         .expect("run whetstone")
 }
@@ -96,6 +97,10 @@ fn accept(root: &Path, proposal: &str) {
 
 fn agree(root: &Path) {
     let inspected = json(&run(&["init", "--json", "--request-id", "init-a"], root));
+    let revision = inspected["expected_revision"]
+        .as_u64()
+        .expect("revision")
+        .to_string();
     let token = inspected["resume_token"]
         .as_str()
         .expect("token")
@@ -109,34 +114,38 @@ fn agree(root: &Path) {
             "--request-id",
             "init-a",
             "--expected-revision",
-            "0",
+            &revision,
             "--resume",
             &token,
             "--mission",
             "A team tool people trust.",
-            "--desired-outcome",
-            "Regressions never reach users.",
-            "--values",
-            "Evidence before assertion.",
-            "--philosophy",
-            "Small, boring pieces.",
-            "--owner",
-            "Ada",
-            "--initial-safeguard",
-            "The toolchain answers.",
-            "--safeguard-scope",
-            "repository",
-            "--revision-triggers",
-            "a gate fails twice",
-            "--gate-command",
-            "git --version",
         ],
         root,
     ));
     assert_eq!(
         agreed["data"]["records"].as_array().map(Vec::len),
-        Some(5),
+        Some(1),
         "{agreed}"
+    );
+    let first = change(
+        root,
+        "first-rule",
+        &[
+            "--kind",
+            "rule",
+            "--record-id",
+            "rule.toolchain",
+            "--content",
+            "The toolchain answers.",
+            "--rationale",
+            "Nothing else can be checked without it.",
+            "--definition",
+            r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"git --version"}}"#,
+        ],
+    );
+    accept(
+        root,
+        first["data"]["proposal"]["id"].as_str().expect("proposal"),
     );
 }
 
@@ -192,15 +201,15 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
     bd(&a, &["dolt", "remote", "add", "origin", &url]);
     agree(&a);
 
-    // A private canary draft and a withdrawn-then-redrafted value.
+    // A private canary draft and an accepted principle.
     let canary = change(
         &a,
         "canary",
         &[
             "--kind",
-            "value",
+            "principle",
             "--record-id",
-            "value.secret",
+            "principle.secret",
             "--content",
             "PRIVATE-CANARY-7f3a never leaves",
             "--rationale",
@@ -213,9 +222,9 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
         "speed",
         &[
             "--kind",
-            "value",
+            "principle",
             "--record-id",
-            "value.speed",
+            "principle.speed",
             "--content",
             "Fast feedback",
             "--rationale",
@@ -232,15 +241,15 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
         "gate-draft",
         &[
             "--kind",
-            "standard",
+            "rule",
             "--record-id",
-            "standard.journey",
+            "rule.journey",
             "--content",
             "The journey is proven",
             "--rationale",
             "proof over claims",
             "--definition",
-            r#"{"type":"standard","strength":"must","enforcement":{"enforcement":"test","command_ref":"git --version"}}"#,
+            r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"git --version"}}"#,
         ],
     );
     assert_eq!(gate["state"], "success", "{gate}");
@@ -257,7 +266,7 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
             "--rationale",
             "the core path",
             "--definition",
-            r#"{"type":"feature","summary":"The core path","area":"App","user_path":"Open it.","proof":"It opens.","proven_by":["standard.journey"]}"#,
+            r#"{"type":"feature","summary":"The core path","area":"App","user_path":"Open it.","proof":"It opens.","proven_by":["rule.journey"]}"#,
         ],
     );
     accept(
@@ -280,14 +289,17 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
         .to_string();
     let package = reviewed["data"]["package"].to_string();
     assert!(
-        package.contains("mission.project") && package.contains("value.speed"),
+        package.contains("mission.project") && package.contains("principle.speed"),
         "{package}"
     );
-    assert!(!package.contains("value.secret"), "a draft is never shared");
-    assert!(!package.contains("standard.journey"));
+    assert!(
+        !package.contains("principle.secret"),
+        "a draft is never shared"
+    );
+    assert!(!package.contains("rule.journey"));
     let blocked = reviewed["data"]["blocked"].to_string();
     assert!(
-        blocked.contains("feature.journey") && blocked.contains("standard.journey"),
+        blocked.contains("feature.journey") && blocked.contains("rule.journey"),
         "{blocked}"
     );
     assert!(reviewed["data"]["destination"]["remotes"]
@@ -329,9 +341,9 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
         "late",
         &[
             "--kind",
-            "value",
+            "principle",
             "--record-id",
-            "value.late",
+            "principle.late",
             "--content",
             "Late but shared",
             "--rationale",
@@ -344,14 +356,14 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
     );
     let parked = temp.path().join("origin-offline.git");
     fs::rename(&origin, &parked).expect("take the remote offline");
-    let review = json(&run(&["push", "--json", "--select", "value.late"], &a));
+    let review = json(&run(&["push", "--json", "--select", "principle.late"], &a));
     let token = review["resume_token"].as_str().expect("token").to_string();
     let offline = json(&run(
         &[
             "push",
             "--json",
             "--select",
-            "value.late",
+            "principle.late",
             "--confirm",
             &token,
         ],
@@ -408,7 +420,7 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
         !everything.contains("PRIVATE-CANARY"),
         "the canary never reached the team"
     );
-    assert!(!everything.contains("value.secret"));
+    assert!(!everything.contains("principle.secret"));
 
     // B drafts locally, then A shares a gate whose command would leave a
     // file if anything ran it; B pulls.
@@ -417,9 +429,9 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
         "b-local",
         &[
             "--kind",
-            "value",
+            "principle",
             "--record-id",
-            "value.b-only",
+            "principle.b-only",
             "--content",
             "B's private idea",
             "--rationale",
@@ -432,29 +444,29 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
         "trap",
         &[
             "--kind",
-            "standard",
+            "rule",
             "--record-id",
-            "standard.trap",
+            "rule.trap",
             "--content",
             "Touch a file",
             "--rationale",
             "proves pull never executes",
             "--definition",
-            r#"{"type":"standard","strength":"must","enforcement":{"enforcement":"test","command_ref":"touch PULLED-AND-EXECUTED"}}"#,
+            r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"touch PULLED-AND-EXECUTED"}}"#,
         ],
     );
     accept(
         &a,
         trap["data"]["proposal"]["id"].as_str().expect("proposal"),
     );
-    let review = json(&run(&["push", "--json", "--select", "standard.trap"], &a));
+    let review = json(&run(&["push", "--json", "--select", "rule.trap"], &a));
     let token = review["resume_token"].as_str().expect("token").to_string();
     let shared = json(&run(
         &[
             "push",
             "--json",
             "--select",
-            "standard.trap",
+            "rule.trap",
             "--confirm",
             &token,
         ],
@@ -467,9 +479,7 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
     assert_eq!(pulled["data"]["executes"], false);
     assert_eq!(pulled["data"]["activates"], false);
     assert!(
-        pulled["data"]["arrived"]
-            .to_string()
-            .contains("standard.trap"),
+        pulled["data"]["arrived"].to_string().contains("rule.trap"),
         "{pulled}"
     );
     assert!(!b.join("PULLED-AND-EXECUTED").exists(), "pull ran nothing");
@@ -480,7 +490,7 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
     );
     let b_shared = bd(&b, &["list", "--json", "--all", "--limit", "0"]);
     assert!(
-        !b_shared.contains("value.b-only"),
+        !b_shared.contains("principle.b-only"),
         "B's draft stays out of the shared database"
     );
     let _ = fs::remove_dir_all(temp.path().join("unused"));

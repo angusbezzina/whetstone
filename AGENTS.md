@@ -45,7 +45,8 @@ Two 2026-09-10 decisions still stand:
   import`, control-adapter driver vocabulary, show-me-your-work TSV).
   Whetstone owns the format, and pstack's layout is its projection.
 
-Removed from direction, with code scheduled for deletion in `whetstone-ppq`:
+Removed from direction; their code was deleted in `whetstone-ppq.2` (stored
+records of these kinds are read as retired and never written):
 
 - the eight-decision onboarding;
 - values, key metrics and outcome observations;
@@ -128,7 +129,9 @@ bd dolt push
 
 Use current Dolt-native collaboration, never legacy `bd sync` or a
 `beads-sync` branch. If local state is broken or another machine cannot see
-issues, use `./scripts/beads-repair.sh`.
+issues, start with `bd doctor` and the non-destructive `bd bootstrap` (bd 1.3).
+`./scripts/beads-repair.sh` is the last resort: it backs up and re-clones the
+local Dolt database from the remote.
 
 Beads is also Whetstone's record store (see the current boundary). Whetstone
 records in Beads are `record`, `decision` and `receipt` beads labelled

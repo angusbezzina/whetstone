@@ -4,8 +4,8 @@ area: "Dashboard"
 sweep_order: 4
 serves: ["mission.project"]
 proven_by: ["standard.changelog"]
-entry_points: ["assets/dashboard/views.js", "src/history.rs", "src/projection.rs", "assets/dashboard/index.html", "assets/dashboard/app.js"]
-drive_steps: ["open /", "click #tab-changelog", "expect .entry", "expect text=Foundations established", "expect #cl-q", "expect #changelog a.export", "screenshot changelog"]
+entry_points: ["assets/dashboard/views.js", "src/history.rs", "src/projection/journal.rs", "assets/dashboard/index.html", "assets/dashboard/app.js"]
+drive_steps: ["open /", "click #tab-changelog", "expect .entry", "expect text=Mission added", "expect #cl-q", "expect #changelog a.export", "screenshot changelog"]
 ---
 
 # Changelog
@@ -21,7 +21,7 @@ The changelog is the project journal, newest first: every accepted change and ev
 ## How to get to it (user POV)
 
 - Choose the `Changelog` tab.
-- Choose `Latest change` at the foot of the Dashboard; it opens the Changelog.
+- Choose `Latest change` on Home; it opens the Changelog.
 - Run `wh dash --trail` for the same trail as TSV.
 
 ## Driving it with drive.mjs
@@ -29,10 +29,10 @@ The changelog is the project journal, newest first: every accepted change and ev
 Preconditions:
 
 - `node whetstone/verify/drive.mjs doctor --json` reports `"ok": true` for a fresh build.
-- The agreement is established, so the journal holds at least the onboarding entry.
+- The agreement is established, so the journal holds at least the entry that recorded the mission.
 
 - **Open the changelog.** Run `node whetstone/verify/drive.mjs drive "open /" "click #tab-changelog" "expect .entry" --json`. At least one journal entry renders.
-- **Find the founding decision.** Run `node whetstone/verify/drive.mjs drive "open /" "click #tab-changelog" "expect text=Foundations established" --json`. The onboarding entry is listed.
+- **Find the mission.** Run `node whetstone/verify/drive.mjs drive "open /" "click #tab-changelog" "expect text=Mission added" --json`. The entry that recorded the mission is listed.
 - **Proof.** The journal, its search box and the trail export render. Run `wh check --feature feature.changelog`. The receipt names the screenshot.
 
 ## Gotchas

@@ -21,7 +21,13 @@
 //   node whetstone/verify/drive.mjs inspect / --json
 //   node whetstone/verify/drive.mjs screenshot / --json
 //   node whetstone/verify/drive.mjs prove --steps-file steps.json --json
+//   node whetstone/verify/drive.mjs ask --request-file question.json --json
 //   node whetstone/verify/drive.mjs cleanup
+//
+// `ask` is the only network call Whetstone makes: one literal yes/no question
+// to TypeSafe System One (Jev). `wh check` writes the request file with the
+// smallest unit of change the question needs, already redacted. The key is
+// read from TYPESAFE_API_KEY and is never printed, logged or written.
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -53,6 +59,10 @@ Commands (all accept --json; anything with side effects accepts --dry-run):
   screenshot [path]          Capture the current state of a path (web).
   prove --steps-file <file>  Composite used by wh check: launch, drive the steps,
                              capture evidence, clean up, print a verdict.
+  ask --request-file <file>  Ask Jev (TypeSafe System One) one yes/no question
+                             from a request wh check wrote. Needs
+                             TYPESAFE_API_KEY; prints the probability of yes.
+                             --dry-run prints exactly what would be sent.
   cleanup                    Stop anything this driver started. Evidence stays.
   help                       This text.
 
@@ -813,6 +823,87 @@ function newestMtime(path) {
   return newest;
 }
 
+// ---------- ask (Jev) ----------
+
+function errorDetail(text, key) {
+  let detail = String(text ?? "").slice(0, 400);
+  try {
+    const parsed = JSON.parse(text);
+    detail = parsed?.detail?.message ?? parsed?.detail ?? detail;
+  } catch {
+    // Plain-text error bodies are reported as they are, bounded.
+  }
+  detail = typeof detail === "string" ? detail : JSON.stringify(detail);
+  return key ? detail.split(key).join("[REDACTED]") : detail;
+}
+
+function jevBody(request) {
+  const question = { type: "noul", instructions: request.question };
+  if (request.criteria) question.criteria = request.criteria;
+  return { state: request.state, model: request.model, questions: { rule: question } };
+}
+
+async function ask(requestFile) {
+  let request;
+  try {
+    request = JSON.parse(readFileSync(requestFile, "utf8"));
+  } catch (readError) {
+    return emit({ ok: false, state: "unavailable", detail: `request file unreadable: ${readError.message}` }, 3);
+  }
+  if (typeof request.question !== "string" || typeof request.state !== "string" || typeof request.model !== "string") {
+    return emit({ ok: false, state: "unavailable", detail: "the request needs question, state and model" }, 3);
+  }
+  const body = jevBody(request);
+  if (dryRun) return emit({ ok: true, dry_run: true, would_send: body });
+  const key = process.env.TYPESAFE_API_KEY;
+  if (!key) {
+    return emit({ ok: false, state: "unavailable", detail: "TYPESAFE_API_KEY is not set, so the question was not asked." }, 3);
+  }
+  const base = (process.env.TYPESAFE_BASE_URL || "https://api.typesafe.ai").replace(/\/+$/, "");
+  let lastError = "no attempt was made";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(`${base}/v1/systemone`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const requestId = response.headers.get("x-typesafe-request-id");
+      const text = await response.text();
+      if (response.ok) {
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          return emit({ ok: false, state: "unavailable", detail: "Jev returned a body that is not JSON", request_id: requestId }, 3);
+        }
+        const probability = parsed?.answers?.rule?.noul;
+        if (typeof probability !== "number" || probability < 0 || probability > 1) {
+          return emit({ ok: false, state: "unavailable", detail: "Jev's response carried no noul answer", request_id: requestId }, 3);
+        }
+        return emit({
+          ok: true,
+          state: "answered",
+          probability,
+          model: parsed.model ?? request.model,
+          request_id: requestId,
+          input_tokens: parsed?.usage?.input_tokens ?? null,
+        });
+      }
+      lastError = `HTTP ${response.status}: ${errorDetail(text, key)}`;
+      const retryable = [408, 429].includes(response.status) || response.status >= 500;
+      if (!retryable) break;
+      const retryAfter = Number(response.headers.get("retry-after")) * 1000;
+      await delay(Math.min(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 500 * 2 ** attempt, 5_000));
+    } catch (requestError) {
+      lastError = requestError?.name === "TimeoutError" ? "the request timed out" : String(requestError?.message ?? requestError).split(key).join("[REDACTED]");
+      await delay(500 * 2 ** attempt);
+    }
+  }
+  return emit({ ok: false, state: "unavailable", detail: `Jev did not answer: ${lastError}` }, 3);
+}
+
 function readdirSyncSafe(path) {
   return readdirSync(path, { withFileTypes: true });
 }
@@ -877,8 +968,13 @@ async function main() {
         return fail(runError.message);
       }
     }
+    case "ask": {
+      const at = args.indexOf("--request-file");
+      if (at === -1 || !args[at + 1]) return emit({ ok: false, state: "unavailable", detail: "ask needs --request-file <file>." }, 3);
+      return ask(args[at + 1]);
+    }
     default:
-      return fail(`unknown command "${command}"; run help for doctor, launch, drive, inspect, screenshot, prove and cleanup.`);
+      return fail(`unknown command "${command}"; run help for doctor, launch, drive, inspect, screenshot, prove, ask and cleanup.`);
   }
 }
 
