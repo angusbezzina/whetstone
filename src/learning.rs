@@ -23,6 +23,11 @@ pub const JEV_USD_PER_MILLION_INPUT_TOKENS: f64 = 0.042;
 pub const NOISY_COMMITS_PER_FALSE_FLAG: u64 = 10;
 /// Recurring accepted flags that suggest a mechanical check instead.
 pub const HARDENING_RECURRENCES: u64 = 3;
+/// Distinct commits of shadow results before a rule-level shadow rule (one
+/// drafted from a lesson) is considered for promotion, as for Jev questions.
+pub const SHADOW_PROMOTE_AFTER: u32 = 50;
+/// Precision (accepted over labelled shadow flags) that promotion needs.
+pub const SHADOW_PRECISION_BAR_BP: u16 = 9_000;
 
 /// One flag a rule raised, and the owner's label on it if any.
 #[derive(Debug, Clone, Serialize)]
@@ -108,7 +113,14 @@ pub fn flags(state: &AgreementState, rule: &RecordId) -> Vec<Flag> {
                     .iter()
                     .find(|evidence| evidence.system == GIT_HEAD_SYSTEM)
                     .map(|evidence| evidence.locator.clone()),
-                false,
+                // A gate flag is a shadow flag when the rule revision it ran
+                // under was in shadow.
+                body.policy_state
+                    .accepted
+                    .as_ref()
+                    .and_then(|reference| state.get(reference))
+                    .and_then(|record| record.body.rule_view())
+                    .is_some_and(|rule| rule.in_shadow()),
                 body.checked_at.clone(),
             ),
             _ => continue,
@@ -240,13 +252,19 @@ pub fn suggestions(state: &AgreementState) -> Vec<Suggestion> {
                 examples: Vec::new(),
             });
         }
-        if let Enforcer::Question {
-            shadow: true,
-            promote_after,
-            precision_bar_bp,
-            ..
-        } = &rule.enforcer
-        {
+        // A rule in shadow (a Jev question's own shadow, or a rule drafted
+        // from a lesson) is promoted on its shadow flags' precision.
+        let bar = match &rule.enforcer {
+            Enforcer::Question {
+                shadow: true,
+                promote_after,
+                precision_bar_bp,
+                ..
+            } => Some((*promote_after, *precision_bar_bp)),
+            _ if rule.shadow => Some((SHADOW_PROMOTE_AFTER, SHADOW_PRECISION_BAR_BP)),
+            _ => None,
+        };
+        if let Some((promote_after, precision_bar_bp)) = bar {
             let shadow_flags = all_flags
                 .iter()
                 .filter(|flag| flag.shadow)
@@ -260,11 +278,12 @@ pub fn suggestions(state: &AgreementState) -> Vec<Suggestion> {
                 .filter(|flag| flag.verdict.is_some())
                 .count() as u64;
             let precision_bp = (accepted * 10_000).checked_div(labelled).unwrap_or(0);
-            if stats.commits >= u64::from(*promote_after)
+            if stats.commits >= u64::from(promote_after)
                 && labelled > 0
-                && precision_bp >= u64::from(*precision_bar_bp)
+                && precision_bp >= u64::from(precision_bar_bp)
             {
                 let mut draft = rule.clone();
+                draft.shadow = false;
                 if let Enforcer::Question { shadow, .. } = &mut draft.enforcer {
                     *shadow = false;
                 }
@@ -272,7 +291,7 @@ pub fn suggestions(state: &AgreementState) -> Vec<Suggestion> {
                     kind: "promotion",
                     rule: id.as_str().into(),
                     reason: format!(
-                        "In shadow over {} commit(s), {accepted} of {labelled} labelled flags were right ({}.{:02}% precision, bar {}.{:02}%). Promote it so its answers are enforced.",
+                        "In shadow over {} commit(s), {accepted} of {labelled} labelled flags were right ({}.{:02}% precision, bar {}.{:02}%). Promote it so its results are enforced.",
                         stats.commits,
                         precision_bp / 100,
                         precision_bp % 100,

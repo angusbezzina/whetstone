@@ -36,7 +36,7 @@ function rule(id, title, strength, family, enforcer, command, extra = {}) {
   return {
     ...entry(id, "rule", title, { definition, state: extra.result || label("pass", "pass"), lifecycle: extra.lifecycle || "accepted", pending: extra.pending || null }),
     strength, family, enforcer, command, shadow: !!extra.shadow, local_only: false,
-    runs_at: extra.runs_at || "pre-push and CI", source: "owner", paths: [], examples: extra.examples || [],
+    runs_at: extra.runs_at || "pre-push and CI", sweep_class: extra.sweep_class || "discuss", origin_lesson: null, source: "owner", paths: [], examples: extra.examples || [],
     hand_raise: extra.hand_raise || [], stats: stats(extra.stats), unlabelled_flags: extra.flags || [], result: extra.result || label("pass", "pass"),
   };
 }

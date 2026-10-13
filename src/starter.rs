@@ -123,6 +123,8 @@ pub fn starters(root: &Path) -> Vec<Starter> {
         paths: Vec::new(),
         hand_raise: vec![HandRaiseTrigger::Unavailable],
         privacy: Privacy::default(),
+        shadow: false,
+        sweep: None,
     };
     let surface_paths = surface_paths(root);
     let api = Rule {
@@ -151,6 +153,8 @@ pub fn starters(root: &Path) -> Vec<Starter> {
         paths: surface_paths.clone(),
         hand_raise: vec![HandRaiseTrigger::Flag],
         privacy: Privacy::default(),
+        shadow: false,
+        sweep: None,
     };
     let tests = Rule {
         schema: RULE_SCHEMA_V2.into(),
@@ -192,6 +196,8 @@ pub fn starters(root: &Path) -> Vec<Starter> {
         ],
         hand_raise: vec![HandRaiseTrigger::LowConfidence],
         privacy: Privacy::default(),
+        shadow: false,
+        sweep: None,
     };
     vec![
         Starter {

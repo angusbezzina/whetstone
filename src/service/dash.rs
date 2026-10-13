@@ -108,14 +108,35 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
             (None, "unavailable", Some(error.to_string()))
         }
     };
+    let mut hands = crate::hands::statuses(layout.project_root());
+    // Hands filed as Virgil tasks are read back from Virgil.
+    if let Some(Ok(records)) = &records {
+        let virgil = records
+            .iter()
+            .filter_map(|record| match &record.body {
+                crate::domain::RecordBody::HandRaise(body) => {
+                    crate::hands::virgil_group(body.route.as_deref())
+                        .map(|group| (body.issue.clone(), group.to_string()))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !virgil.is_empty() {
+            hands.extend(crate::hands::virgil_statuses(
+                layout.project_root(),
+                &virgil,
+            ));
+        }
+    }
     let agreement_state = match records {
         Some(Ok(records)) => Ok(AgreementState::from_records(records)),
         Some(Err(error)) => Err(error),
         None => Ok(AgreementState::default()),
     };
-    let hands = crate::hands::statuses(layout.project_root());
+    let mut memory = None;
     let (current, journal, trail) = match agreement_state {
         Ok(state) => {
+            memory = Some(super::lesson::dash_section(&layout, &state));
             let fingerprint = crate::gates::workspace_fingerprint(layout.project_root()).ok();
             let evidence_root = crate::gates::evidence_root(&layout);
             let manifest = crate::skill::read_manifest(&layout);
@@ -156,6 +177,8 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
                         at: entry.recorded_at.clone(),
                     });
             let trail = request.trail.then(|| projection::decision_trail(&state));
+            let mut view = serde_json::to_value(&view).unwrap_or(Value::Null);
+            attach_lineage(&layout, &state, &mut view);
             (Some(view), journal, trail)
         }
         Err(_error) => {
@@ -197,10 +220,11 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
         "changelog": journal,
         "changelog_truncated": changelog_truncated,
         "current": current,
+        "memory": memory,
         "workflows": [
             {"name": "init", "state": "available", "effect": "inspect, agree the mission, principles and rules, wire the gates"},
             {"name": "dash", "state": "available", "effect": "inspect rules, checks, requests and history"},
-            {"name": "change", "state": "available", "effect": "draft a change, accept or withdraw it, label a flag, answer a hand"},
+            {"name": "change", "state": "available", "effect": "draft a change, accept or withdraw it, label a flag, answer a hand, remember or admit a lesson"},
             {"name": "check", "state": "available", "effect": "run the rules and return repair feedback"},
             {"name": "pull", "state": if shared_exists { "available" } else { "unavailable" }, "effect": "receive shared records; nothing runs or is accepted"},
             {"name": "push", "state": if shared_exists { "available" } else { "unavailable" }, "effect": "share an exact, confirmed package of accepted records"}
@@ -213,6 +237,35 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
             json!(trail.unwrap_or_else(|| format!("{}\n", projection::TRAIL_HEADER)));
     }
     response
+}
+
+/// Each rule drafted from a lesson gets its lineage: the review that
+/// accepted it, the lesson that review cites, and the lesson's anchors now.
+fn attach_lineage(layout: &ProjectLayout, state: &AgreementState, view: &mut Value) {
+    let Some(rules) = view.get_mut("rules").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let needs = rules.iter().any(|rule| rule["origin_lesson"].is_string());
+    let lessons = if needs {
+        crate::memory::read_config(layout.project_root())
+            .ok()
+            .and_then(|config| crate::memory::open_store(layout, &config).find().ok())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    for rule in rules {
+        let Some(id) = rule["id"]
+            .as_str()
+            .and_then(|id| crate::domain::RecordId::new(id).ok())
+        else {
+            continue;
+        };
+        if rule["origin_lesson"].is_string() {
+            rule["lineage"] =
+                super::lesson::lineage(layout, state, &id, &lessons).unwrap_or(Value::Null);
+        }
+    }
 }
 
 /// Whether an area is the closing multi-surface journeys group.

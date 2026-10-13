@@ -21,6 +21,32 @@ exemplar codebases. Several entries below describe code this plan removes:
 the eight-decision agreement, key metrics, team activation through pull
 requests, and gate exceptions. They stay here as a record of what was built.
 
+### Added (memory as the whetstone, `whetstone-jpd`)
+
+- Lessons: a `lesson` record (`whetstone.lesson.v1`) with subjects,
+  audience, a store-stamped provenance, anchors, trust (inferred, validated,
+  authoritative) and status (proposed, admitted, superseded, forgotten).
+  `wh change --kind lesson` proposes one; `--admit`, `--supersede` and
+  `--forget` are a person's (an agent's correction or forget is a proposal,
+  an agent's admit is refused). Requests that supply provenance, and group
+  lessons about something narrower than the group, are refused.
+- Anchors: the paths a lesson names plus the writer's additions, hashed at
+  write. `wh dash` and session start mark a lesson whose anchor changed as
+  "may be stale" without a model call; `wh check` records each comparison as
+  a `lesson_check` receipt.
+- A pluggable lesson store behind `whetstone/memory.json`
+  (`wh init --action memory`): Whetstone's Beads store standalone, or a
+  Virgil group's lesson collection through `virgil lessons` only. Switching
+  migrates nothing. Raised hands follow the switch: a Virgil task in the
+  group's channel instead of `bd human`.
+- The ladder: `wh change --kind rule --from-lesson <key>` drafts a shadow
+  rule from an admitted lesson; accepting it cites the lesson, and `wh dash`
+  walks rule, accepting review, lesson and anchors. Any rule can be in
+  shadow (`shadow`), and shadow rules are promoted by `wh change --tune`.
+- Sweep mode: a rule's `sweep` class (draft_pr, confirm_first, discuss) and
+  `wh check --sweep --format findings`, one stable JSON finding per flag of
+  the rules below must.
+
 ### Added (delegation plan, `whetstone-ppq`)
 
 - Rule v2 (`references/rule-v2.schema.json`): one strength and exactly one

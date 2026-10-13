@@ -395,22 +395,28 @@ pub(crate) fn raise_hand(
         hand.trigger.label(),
         rule.as_ref().map(RecordId::as_str),
     );
-    let issue = match crate::hands::file_issue(
+    let filed = match crate::hands::route(
         layout.project_root(),
         &format!("Owner decision needed: {question}"),
         &description,
     ) {
-        Ok(issue) => issue,
+        Ok(filed) => filed,
         Err(error) => {
             let mut response = ServiceResponse::new(
                 request_id,
                 "check",
                 ServiceState::Unavailable,
-                format!("The hand could not be raised in Beads: {error}"),
+                format!("The hand could not be raised: {error}"),
             );
-            response.permitted_actions = vec!["bd init, then raise the hand again".into()];
+            response.permitted_actions =
+                vec!["bd init (or start Virgil), then raise the hand again".into()];
             return response;
         }
+    };
+    let issue = filed.issue.clone();
+    let where_filed = match crate::hands::virgil_group(filed.route.as_deref()) {
+        Some(group) => format!("a task in Virgil group {group}'s channel"),
+        None => "labelled human".to_string(),
     };
     let raised_at = utc_now();
     let record = match receipt_record(
@@ -421,12 +427,18 @@ pub(crate) fn raise_hand(
         ProvenanceKind::HumanAuthored,
         &raised_at,
         EvidenceRef {
-            system: "beads".into(),
+            system: if filed.route.is_some() {
+                "virgil_tasks"
+            } else {
+                "beads"
+            }
+            .into(),
             locator: issue.clone(),
             digest: None,
         },
         RecordBody::HandRaise(HandRaise {
             issue: issue.clone(),
+            route: filed.route.clone(),
             trigger: hand.trigger,
             rule,
             question: question.clone(),
@@ -446,12 +458,17 @@ pub(crate) fn raise_hand(
         request_id,
         "check",
         ServiceState::NeedsDecision,
-        format!("A hand was raised for the owner as {issue} (labelled human). Take other ready work now; do not guess the answer."),
+        format!("A hand was raised for the owner as {issue} ({where_filed}). Take other ready work now; do not guess the answer."),
     );
     response.permitted_actions = vec![
         "bd ready".into(),
-        format!("bd human list (the owner answers {issue})"),
+        if filed.route.is_some() {
+            format!("the owner answers {issue} in Virgil, or with wh change --answer {issue}")
+        } else {
+            format!("bd human list (the owner answers {issue})")
+        },
     ];
-    response.data = json!({"issue": issue, "hand": reference, "question": question});
+    response.data =
+        json!({"issue": issue, "route": filed.route, "hand": reference, "question": question});
     response
 }

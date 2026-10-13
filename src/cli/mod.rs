@@ -94,6 +94,12 @@ enum Command {
         /// Run the install commands setup found (setup): the one confirmation.
         #[arg(long)]
         yes: bool,
+        /// Where lessons live (memory): beads (standalone) or virgil.
+        #[arg(long = "store", value_parser = ["beads", "virgil"])]
+        memory_store: Option<String>,
+        /// The Virgil group (its ULID) lessons live in (memory, with --store virgil).
+        #[arg(long = "group")]
+        memory_group: Option<String>,
     },
 
     /// Open the inspectable local dashboard.
@@ -200,6 +206,22 @@ enum Command {
         /// With --kind rule: the Jev rule this mechanical rule hardens.
         #[arg(long, requires = "kind")]
         hardens: Option<String>,
+        /// Admit a proposed lesson by its key (a person only; agents propose).
+        #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind", "supersede", "forget"])]
+        admit: Option<String>,
+        /// With --admit: validated (the default) or authoritative.
+        #[arg(long, value_enum, requires = "admit")]
+        trust: Option<TrustArg>,
+        /// Correct a lesson: the correction is --content (applied by a person,
+        /// proposed by an agent).
+        #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind", "forget"])]
+        supersede: Option<String>,
+        /// Forget a lesson, with --rationale (applied by a person, proposed by an agent).
+        #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind"])]
+        forget: Option<String>,
+        /// With --kind rule: the admitted lesson the rule is drafted from (it starts in shadow).
+        #[arg(long, requires = "kind")]
+        from_lesson: Option<String>,
     },
 
     /// Run the rules and return actionable findings, or record a review, a
@@ -236,6 +258,11 @@ enum Command {
         /// Drive every mapped feature in sweep order.
         #[arg(long)]
         sweep: bool,
+        /// With --sweep: `findings` runs only the rules below must and prints
+        /// one JSON line per flag {fingerprint, subjectDigest, class, title,
+        /// responsibility} for a night sweep's controller.
+        #[arg(long, value_enum, requires = "sweep")]
+        format: Option<CheckFormatArg>,
         /// Also prove each feature with its recorded mutations applied (in an
         /// isolated worktree); a proof that still passes is hollow.
         #[arg(long)]
@@ -393,6 +420,7 @@ enum InitActionArg {
     Import,
     Setup,
     Exemplar,
+    Memory,
 }
 
 impl From<InitActionArg> for InitAction {
@@ -405,6 +433,7 @@ impl From<InitActionArg> for InitAction {
             InitActionArg::Import => Self::Import,
             InitActionArg::Setup => Self::Setup,
             InitActionArg::Exemplar => Self::Exemplar,
+            InitActionArg::Memory => Self::Memory,
         }
     }
 }
@@ -419,6 +448,11 @@ enum CheckHookArg {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum DashHookArg {
     SessionStart,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CheckFormatArg {
+    Findings,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -464,6 +498,13 @@ enum ChangeKindArg {
     Rule,
     Feature,
     Map,
+    Lesson,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum TrustArg {
+    Validated,
+    Authoritative,
 }
 
 fn parse_change_definition(value: &str) -> Result<Box<ChangeDefinition>, String> {
@@ -491,6 +532,7 @@ impl From<ChangeKindArg> for ChangeKind {
             ChangeKindArg::Rule => Self::Rule,
             ChangeKindArg::Feature => Self::Feature,
             ChangeKindArg::Map => Self::Map,
+            ChangeKindArg::Lesson => Self::Lesson,
         }
     }
 }
@@ -521,6 +563,8 @@ pub fn run() -> i32 {
             hooks,
             ci,
             yes,
+            memory_store,
+            memory_group,
         }) => {
             // A person inspecting a project with no agreement is walked through
             // it in the dashboard. Machine callers always get the envelope.
@@ -546,6 +590,8 @@ pub fn run() -> i32 {
                 hooks,
                 ci,
                 yes,
+                memory_store,
+                memory_group,
             }));
             if guided && needs_onboarding(&response) {
                 return run_dashboard(
@@ -652,6 +698,11 @@ pub fn run() -> i32 {
             migrate,
             tune,
             hardens,
+            admit,
+            trust,
+            supersede,
+            forget,
+            from_lesson,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
             project_dir,
             request_id,
@@ -696,6 +747,18 @@ pub fn run() -> i32 {
             migrate,
             tune,
             hardens,
+            actor: crate::memory::detect_actor(),
+            lesson: admit
+                .map(|key| crate::service::LessonOp::Admit {
+                    key,
+                    trust: trust.map(|trust| match trust {
+                        TrustArg::Validated => crate::domain::Trust::Validated,
+                        TrustArg::Authoritative => crate::domain::Trust::Authoritative,
+                    }),
+                })
+                .or_else(|| supersede.map(|key| crate::service::LessonOp::Supersede { key }))
+                .or_else(|| forget.map(|key| crate::service::LessonOp::Forget { key })),
+            from_lesson,
         })),
         Some(Command::Check {
             project_dir,
@@ -709,6 +772,7 @@ pub fn run() -> i32 {
             staged,
             steps,
             sweep,
+            format,
             mutate,
             timeout,
             dry_run,
@@ -790,6 +854,7 @@ pub fn run() -> i32 {
                     notes: notes.clone().unwrap_or_default(),
                 }),
                 mutate,
+                findings: format == Some(CheckFormatArg::Findings),
                 raise_hand: raise_hand.then(|| HandRequest {
                     question: question.clone().unwrap_or_default(),
                     tried: tried.clone().unwrap_or_default(),
@@ -804,6 +869,25 @@ pub fn run() -> i32 {
                 }
                 Some(CheckHookArg::PreCommit | CheckHookArg::PrePush) => {
                     return run_git_hook(&service, request, hook == Some(CheckHookArg::PreCommit))
+                }
+                None if request.findings => {
+                    // Findings mode prints only the findings, one JSON line
+                    // each, unless the envelope was asked for.
+                    let response = service.execute(ServiceRequest::Check(request));
+                    if explicit_json {
+                        response
+                    } else {
+                        match response.data["findings_jsonl"].as_str() {
+                            Some(lines) => {
+                                print!("{lines}");
+                                return 0;
+                            }
+                            None => {
+                                eprintln!("{}", response.summary);
+                                return response.state.exit_code();
+                            }
+                        }
+                    }
                 }
                 None => service.execute(ServiceRequest::Check(request)),
             }
@@ -875,14 +959,20 @@ fn run_dashboard(
     onboarding: Option<&ServiceResponse>,
 ) -> i32 {
     let (progress, recorded) = mpsc::channel::<String>();
+    // A dashboard started for automation never acts for a person.
+    let actor = if bootstrap_file.is_some() {
+        crate::domain::ActorKind::Agent
+    } else {
+        crate::memory::detect_actor()
+    };
     let backend = Arc::new(
-        dashboard_service::CommandDashboardBackend::new(project_dir, request_id).observed(
-            Arc::new(move |response: &ServiceResponse| {
+        dashboard_service::CommandDashboardBackend::new(project_dir, request_id)
+            .acting_as(actor)
+            .observed(Arc::new(move |response: &ServiceResponse| {
                 if let Some(line) = progress_line(response) {
                     let _ = progress.send(line);
                 }
-            }),
-        ),
+            })),
     );
     let handle = match dashboard::DashboardHandle::start(
         dashboard::DashboardMode::Local {

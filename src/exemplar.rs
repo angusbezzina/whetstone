@@ -186,6 +186,8 @@ fn rule(
         paths,
         hand_raise: Vec::new(),
         privacy: Privacy::default(),
+        shadow: false,
+        sweep: None,
     }
 }
 

@@ -62,6 +62,18 @@
         },
         "privacy": {
           "$ref": "#/$defs/privacy"
+        },
+        "shadow": {
+          "type": "boolean",
+          "description": "Recorded and shown, never enforced, until a promotion is accepted (a rule drafted from a lesson starts here)."
+        },
+        "sweep": {
+          "enum": [
+            "discuss",
+            "confirm_first",
+            "draft_pr"
+          ],
+          "description": "How a night sweep works the rule's flags; absent means discuss. Only a person widens it."
         }
       }
     },
@@ -392,7 +404,8 @@
             "owner",
             "starter",
             "hardening",
-            "migration"
+            "migration",
+            "lesson"
           ]
         },
         "reference": {

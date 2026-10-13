@@ -53,10 +53,30 @@ Stop and ask instead of guessing when:
   public API;
 - the spec is too vague to satisfy the rules.
 
-File the question as a Beads issue labelled `human` (`bd create --labels
-human ...`; the owner sees it in `bd human list`). Include what you were asked,
+File the question with `wh check --raise-hand` (below): standalone it is a
+Beads issue labelled `human` (the owner sees it in `bd human list`); with the
+memory switch naming a Virgil group it is a task in the group's channel. Include what you were asked,
 what you tried, what you recommend, and the one decision needed. Then take other ready
 work (`bd ready`). A second agent may advise but cannot decide for the owner.
+
+## Remember what you learn
+
+When you learn something the next agent or person should know (a convention
+the code does not show, a trap, why something is the way it is), propose it
+as a lesson: `wh change --json --kind lesson --content "<the lesson in
+words>" --definition '{"type":"lesson","about":[{"kind":"path","path":"src/x.rs"}],"concepts":["..."]}'`.
+Name the files it depends on in `about` (or `anchors`): Whetstone hashes them
+and flags the lesson as possibly stale when they change. Never supply who
+wrote it, trust, status or a decision: the store stamps provenance, and a
+request carrying them is refused.
+
+You propose; a person admits. `wh change --admit` from an agent is refused
+by design. Correct a lesson with `wh change --supersede <key> --content
+"..."` and propose forgetting one with `wh change --forget <key> --rationale
+"..."`; both wait for a person. Admitted lessons arrive at session start;
+treat one marked "may be stale" as a lead to check, never as a rule. A
+lesson that keeps holding can become a rule only as a draft in shadow:
+`wh change --kind rule --from-lesson <key> ...`.
 
 ## Using the CLI
 
@@ -82,12 +102,18 @@ resume token. A retry with the same request ID must keep the same input.
   adds the required CI status. `wh init --action import --from <dir>` turns
   pstack-edited skill files, including rule files, into drafts.
 - `wh change` drafts, previews, accepts, withdraws or retires records
-  (`--kind mission|principle|rule|feature|map`). `--accept-flag` and
+  (`--kind mission|principle|rule|feature|map`), and remembers lessons
+  (`--kind lesson`; `--admit`, `--supersede` and `--forget` are a person's). `--accept-flag` and
   `--dismiss-flag` label a flag, `--answer <issue>` answers a raised hand, and
   `--tune` and `--migrate` record drafts. Accepting is the owner's call.
 - `wh check` runs the rules: `--staged` for pre-commit, `--changed` or
   `--base` for the change, `--feature` and `--step` to prove one feature,
   `--sweep` for every mapped feature, `--mutate` to test the proofs.
+  `--sweep --format findings` runs only the rules below must and prints one
+  JSON line per flag (`fingerprint`, `subjectDigest`, `class`, `title`,
+  `responsibility`) for a night sweep; a rule's `sweep` class (`draft_pr`,
+  `confirm_first`, `discuss`, the default) says how far the sweep may go,
+  and only a person widens it.
 - Before building, run pstack's `/how`, `/why` and `/blast-radius` and record
   them with `wh check --brief --area <feature|path> --skill how --skill why`.
 - When confidence is low, a repair fails twice, the spec is vague or the area

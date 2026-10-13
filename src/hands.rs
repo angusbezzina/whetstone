@@ -3,6 +3,11 @@
 //! `bd human list`), and a `hand_raise` receipt in Whetstone's store. Answers
 //! go back through `bd human respond` and are recorded as `hand_answer`
 //! decisions. Whetstone wraps Beads; it never invents a second tracker.
+//!
+//! With the memory switch naming a Virgil group, the same hand is a native
+//! task in the group's channel (`virgil tasks create`), not a Beads issue.
+//! [`route`] is the one place that decides; the triggers and the receipt are
+//! the same either way.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -68,6 +73,74 @@ pub fn file_issue(project_root: &Path, title: &str, description: &str) -> Result
         return Err(format!("bd create did not return an issue id: {id}"));
     }
     Ok(id)
+}
+
+/// Where a raised hand was filed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FiledHand {
+    /// The Beads issue id, or the Virgil task reference (`task:<ULID>`).
+    pub issue: String,
+    /// `None` for Beads; `virgil:<group>` for a task in a Virgil channel.
+    pub route: Option<String>,
+}
+
+/// The one routing point for a raised hand: `bd human` standalone, a task
+/// in the group's channel when the memory switch names a Virgil group.
+pub fn route(project_root: &Path, title: &str, description: &str) -> Result<FiledHand, String> {
+    match crate::memory::read_config(project_root)? {
+        crate::memory::MemoryConfig::Beads => Ok(FiledHand {
+            issue: file_issue(project_root, title, description)?,
+            route: None,
+        }),
+        crate::memory::MemoryConfig::Virgil { group } => {
+            let title = title.chars().take(200).collect::<String>();
+            let task =
+                crate::memory::virgil::create_task(project_root, &group, &title, description)
+                    .map_err(|refusal| refusal.message)?;
+            Ok(FiledHand {
+                issue: task,
+                route: Some(format!("virgil:{group}")),
+            })
+        }
+    }
+}
+
+/// The Virgil group a hand's route names, if it went to Virgil.
+pub fn virgil_group(route: Option<&str>) -> Option<&str> {
+    route.and_then(|route| route.strip_prefix("virgil:"))
+}
+
+/// Tracker status of hands filed as Virgil tasks, keyed by task reference.
+pub fn virgil_statuses(
+    project_root: &Path,
+    hands: &[(String, String)],
+) -> BTreeMap<String, HandStatus> {
+    let mut result = BTreeMap::new();
+    for (task, group) in hands.iter().take(32) {
+        if let Some((state, answer)) = crate::memory::virgil::task_status(project_root, group, task)
+        {
+            let status = match state.as_str() {
+                "done" | "cancelled" => "closed".to_string(),
+                other => other.to_string(),
+            };
+            result.insert(task.clone(), HandStatus { status, answer });
+        }
+    }
+    result
+}
+
+/// Answer a hand where it was filed.
+pub fn answer(
+    project_root: &Path,
+    issue: &str,
+    route: Option<&str>,
+    answer: &str,
+) -> Result<(), String> {
+    match virgil_group(route) {
+        Some(group) => crate::memory::virgil::answer_task(project_root, group, issue, answer)
+            .map_err(|refusal| refusal.message),
+        None => respond(project_root, issue, answer),
+    }
 }
 
 /// Queue work for any agent: a Beads task labelled `whetstone`, for

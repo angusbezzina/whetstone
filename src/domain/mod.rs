@@ -16,9 +16,11 @@ use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 
+mod lesson;
 mod receipt;
 mod rule;
 
+pub use lesson::*;
 pub use receipt::*;
 pub use rule::*;
 
@@ -445,6 +447,8 @@ pub enum RecordBody {
     FlagDecision(FlagDecision),
     HandRaise(HandRaise),
     HandAnswer(HandAnswer),
+    Lesson(Lesson),
+    LessonCheck(LessonCheck),
     Retired(RetiredRecord),
 }
 
@@ -468,6 +472,8 @@ enum BodyRef<'a> {
     FlagDecision(&'a FlagDecision),
     HandRaise(&'a HandRaise),
     HandAnswer(&'a HandAnswer),
+    Lesson(&'a Lesson),
+    LessonCheck(&'a LessonCheck),
 }
 
 #[derive(Deserialize)]
@@ -490,6 +496,8 @@ enum BodyOwned {
     FlagDecision(FlagDecision),
     HandRaise(HandRaise),
     HandAnswer(HandAnswer),
+    Lesson(Lesson),
+    LessonCheck(LessonCheck),
 }
 
 impl Serialize for RecordBody {
@@ -518,6 +526,8 @@ impl Serialize for RecordBody {
             Self::FlagDecision(value) => BodyRef::FlagDecision(value),
             Self::HandRaise(value) => BodyRef::HandRaise(value),
             Self::HandAnswer(value) => BodyRef::HandAnswer(value),
+            Self::Lesson(value) => BodyRef::Lesson(value),
+            Self::LessonCheck(value) => BodyRef::LessonCheck(value),
         };
         body.serialize(serializer)
     }
@@ -561,6 +571,8 @@ impl<'de> Deserialize<'de> for RecordBody {
             BodyOwned::FlagDecision(value) => Self::FlagDecision(value),
             BodyOwned::HandRaise(value) => Self::HandRaise(value),
             BodyOwned::HandAnswer(value) => Self::HandAnswer(value),
+            BodyOwned::Lesson(value) => Self::Lesson(value),
+            BodyOwned::LessonCheck(value) => Self::LessonCheck(value),
         })
     }
 }
@@ -586,6 +598,8 @@ impl RecordBody {
             Self::FlagDecision(_) => "flag_decision",
             Self::HandRaise(_) => "hand_raise",
             Self::HandAnswer(_) => "hand_answer",
+            Self::Lesson(_) => "lesson",
+            Self::LessonCheck(_) => "lesson_check",
             Self::Retired(retired) => &retired.record_type,
         }
     }
@@ -614,6 +628,7 @@ impl RecordBody {
                 | Self::Attestation(_)
                 | Self::Brief(_)
                 | Self::HandRaise(_)
+                | Self::LessonCheck(_)
         )
     }
 
@@ -642,6 +657,8 @@ impl RecordBody {
             Self::FlagDecision(value) => value.validate(),
             Self::HandRaise(value) => value.validate(),
             Self::HandAnswer(value) => value.validate(),
+            Self::Lesson(value) => value.validate(),
+            Self::LessonCheck(value) => value.validate(),
             // History is kept as stored; its digest is verified on read.
             Self::Retired(_) => Ok(()),
         }
@@ -1075,6 +1092,10 @@ pub struct LocalReview {
     pub rationale: String,
     pub reviewed_at: String,
     pub team_activation_permitted: bool,
+    /// What the decision rested on: the origin lesson of a rule it accepts,
+    /// or other evidence. Absent on earlier reviews, which keep their digests.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cites: Vec<EvidenceRef>,
 }
 
 impl LocalReview {
@@ -1087,6 +1108,16 @@ impl LocalReview {
         }
         if !looks_like_utc_timestamp(&self.reviewed_at) {
             return Err(DomainError::InvalidTimestamp(self.reviewed_at.clone()));
+        }
+        if self.cites.len() > 16
+            || self
+                .cites
+                .iter()
+                .any(|cite| cite.system.trim().is_empty() || cite.locator.trim().is_empty())
+        {
+            return Err(DomainError::InvalidField(
+                "a review cites at most 16 named sources",
+            ));
         }
         Ok(())
     }

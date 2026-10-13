@@ -14,8 +14,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
-    AgreementRecord, ContentDigest, Enforcer, HandRaiseTrigger, HandTrigger, Privacy, RecordId,
-    Reviewer, RuleExample, RuleSource, Strength,
+    ActorKind, AgreementRecord, ContentDigest, Enforcer, HandRaiseTrigger, HandTrigger, Privacy,
+    RecordId, Reviewer, RuleExample, RuleSource, Strength, SweepClass, Trust,
 };
 use crate::storage::{ProjectLayout, RecordStore, StorageError, StoreKind};
 
@@ -23,6 +23,7 @@ mod change;
 mod check;
 mod dash;
 mod init;
+pub(crate) mod lesson;
 pub(crate) mod record;
 
 pub use record::{agreement_record, digest_bytes, utc_timestamp};
@@ -104,6 +105,8 @@ pub enum InitAction {
     Setup,
     /// Read an exemplar codebase and draft rules from it, with provenance.
     Exemplar,
+    /// Set where lessons live: Whetstone's Beads store or a Virgil group.
+    Memory,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -136,6 +139,10 @@ pub struct InitRequest {
     pub ci: bool,
     /// Run the install commands setup found (setup).
     pub yes: bool,
+    /// Where lessons live (memory): `beads` or `virgil`.
+    pub memory_store: Option<String>,
+    /// The Virgil group lessons live in (memory, with `virgil`).
+    pub memory_group: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +152,20 @@ pub enum ChangeKind {
     Rule,
     Feature,
     Map,
+    /// Remember a lesson (a proposal; a person admits it).
+    Lesson,
+}
+
+/// A person's decision on a lesson, or a proposal to correct or forget one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LessonOp {
+    /// Admit a proposed lesson (a person only).
+    Admit { key: String, trust: Option<Trust> },
+    /// Correct a lesson with the request's content: applied when a person
+    /// asks, proposed when an agent does.
+    Supersede { key: String },
+    /// Forget a lesson: applied when a person asks, proposed when an agent does.
+    Forget { key: String },
 }
 
 /// Explicit solo review of a pending local draft.
@@ -181,6 +202,12 @@ pub enum ChangeDefinition {
         hand_raise: Vec<HandRaiseTrigger>,
         #[serde(default)]
         privacy: Privacy,
+        /// Recorded, never enforced, until a promotion is accepted.
+        #[serde(default)]
+        shadow: bool,
+        /// How a night sweep works the rule's flags (discuss when absent).
+        #[serde(default)]
+        sweep: Option<SweepClass>,
     },
     Principle {
         /// A pstack principle id from the catalogue; absent means custom.
@@ -233,6 +260,29 @@ pub enum ChangeDefinition {
         #[serde(default)]
         entry_contract: Option<String>,
     },
+    /// A lesson's subjects, concepts, audience and extra anchors. The text is
+    /// the request's content; provenance, trust, status and decisions are
+    /// never supplied (they are refused by name).
+    Lesson(LessonDefinition),
+}
+
+/// What a writer may say about a lesson. Any other field is kept so the
+/// refusal can name it: stamped fields are `provenance_is_stamped`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LessonDefinition {
+    #[serde(default)]
+    pub key: Option<String>,
+    #[serde(default)]
+    pub about: Vec<crate::domain::Subject>,
+    #[serde(default)]
+    pub concepts: Vec<String>,
+    #[serde(default)]
+    pub audience: Option<crate::domain::Audience>,
+    /// Paths to anchor beyond the paths the lesson is about.
+    #[serde(default)]
+    pub anchors: Vec<String>,
+    #[serde(flatten)]
+    pub other: std::collections::BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -268,6 +318,13 @@ pub struct ChangeRequest {
     pub tune: bool,
     /// The rule a new mechanical rule replaces a recurring Jev flag of.
     pub hardens: Option<String>,
+    /// Who is asking: a person, or an agent (the default, so nothing passes
+    /// as a person by omission).
+    pub actor: ActorKind,
+    /// Admit, correct or forget a lesson.
+    pub lesson: Option<LessonOp>,
+    /// With a rule: the admitted lesson it is drafted from (it starts in shadow).
+    pub from_lesson: Option<String>,
 }
 
 /// Which in-force rules a check runs besides the compiled-in scanner.
@@ -353,6 +410,9 @@ pub struct CheckRequest {
     /// Also prove each selected feature with its recorded mutations applied,
     /// in an isolated worktree; a proof that still passes is hollow.
     pub mutate: bool,
+    /// With the sweep: run only the rules below must and report each flag as
+    /// a finding for a night sweep (`--format findings`).
+    pub findings: bool,
     /// The commit a push sends (pre-push). The check reads the working tree,
     /// so it refuses unless that commit is checked out with no uncommitted
     /// tracked changes; changed paths then come from commits only.

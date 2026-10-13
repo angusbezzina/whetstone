@@ -197,6 +197,8 @@ pub fn parse_rule_file(text: &str) -> Result<ParsedRule, String> {
         paths,
         hand_raise,
         privacy,
+        shadow: false,
+        sweep: None,
     };
     rule.validate()
         .map_err(|error| format!("the rule is not valid: {error}"))?;

@@ -81,7 +81,7 @@ function ruleEntry(r) {
   const runs = r.strength === "advisory" ? RUNS.never : shadow ? RUNS.shadow : family === "review" ? RUNS.review : ["public_surface", "ast", "lint", "formatter", "design_tokens"].includes(r.enforcer.kind) ? RUNS["pre-commit"] : RUNS.push;
   const definition = { type: "rule", strength: r.strength, enforcer: r.enforcer, examples: r.examples, source: { kind: "owner" }, paths: r.paths, hand_raise: r.hand_raise, privacy: {} };
   return { ...entry(r.id, "rule", r.statement, r.version, { lifecycle: r.lifecycle, pending: r.pending, state: r.result, changed_at: r.changed_at, edit: { kind: "rule", record_id: r.id, content: r.statement, definition } }),
-    strength: r.strength, family, enforcer: enf, command: cmdText(r.enforcer), shadow, local_only: false, runs_at: runs, source: r.source, paths: r.paths, examples: r.examples, hand_raise: r.hand_raise, stats: r.stats, unlabelled_flags: S.flags.filter((f) => f.rule === r.id).map(({ receipt, at, unit, shadow }) => ({ receipt, at, unit, commit: null, shadow })), result: r.result };
+    strength: r.strength, family, enforcer: enf, command: cmdText(r.enforcer), shadow, local_only: false, runs_at: runs, sweep_class: r.sweep || "discuss", origin_lesson: null, source: r.source, paths: r.paths, examples: r.examples, hand_raise: r.hand_raise, stats: r.stats, unlabelled_flags: S.flags.filter((f) => f.rule === r.id).map(({ receipt, at, unit, shadow }) => ({ receipt, at, unit, commit: null, shadow })), result: r.result };
 }
 function view() {
   const rules = S.rules.map(ruleEntry);

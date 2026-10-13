@@ -155,7 +155,8 @@ fn bead_type(body: &RecordBody) -> &'static str {
         | RecordBody::Standard(_)
         | RecordBody::Guidance(_)
         | RecordBody::Feature(_)
-        | RecordBody::VerificationMap(_) => "record",
+        | RecordBody::VerificationMap(_)
+        | RecordBody::Lesson(_) => "record",
         RecordBody::Proposal(_)
         | RecordBody::LocalReview(_)
         | RecordBody::Retirement(_)
@@ -165,7 +166,8 @@ fn bead_type(body: &RecordBody) -> &'static str {
         | RecordBody::Judgment(_)
         | RecordBody::Attestation(_)
         | RecordBody::Brief(_)
-        | RecordBody::HandRaise(_) => "receipt",
+        | RecordBody::HandRaise(_)
+        | RecordBody::LessonCheck(_) => "receipt",
         RecordBody::Retired(retired) => match retired.record_type.as_str() {
             "core_value"
             | "implementation_philosophy"

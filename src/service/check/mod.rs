@@ -47,6 +47,7 @@ use super::{
 /// The repository's own privacy settings, applied to every question.
 pub const PRIVACY_RELATIVE: &str = "whetstone/privacy.json";
 
+mod findings;
 mod persist;
 mod question;
 mod review;
@@ -221,6 +222,14 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     if request.dry_run {
         return dry_run_response(request_id, &request, &selection);
     }
+    // Every anchored lesson's hash comparison, recorded once per result: the
+    // cheap staleness check, no model call.
+    let lesson_checks = match layout.as_ref() {
+        Some(layout) if !request.ci && !staged && !request.findings => {
+            super::lesson::record_checks(layout)
+        }
+        _ => Vec::new(),
+    };
     let scanner_rules = request
         .rules
         .iter()
@@ -782,7 +791,9 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                     }
                 }
             };
-            let enforced = !(rule.in_shadow() && requirement_kind == RequirementKind::Judgment);
+            // Shadow results (a Jev question's or a rule drafted from a
+            // lesson) are recorded and shown, never enforced.
+            let enforced = !rule.in_shadow();
             if enforced {
                 let advisory = rule.strength == Strength::Advisory;
                 requirements.push(VerificationRequirement {
@@ -820,57 +831,15 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             outcomes.push(outcome);
         }
     }
-    let sweep = (request.gate_mode == GateMode::Sweep).then(|| {
-        super::dash::sweep_report(agreement.as_ref(), &selection, &outcomes, layout.as_ref())
-    });
-    if requirements.is_empty() {
-        return nothing_ran(
-            request_id,
-            &request,
-            &selection,
-            &outcomes,
-            sweep,
-            &not_applicable,
-            layout.as_ref(),
-            &judgment_records,
-        );
-    }
-    let plan = VerificationPlan {
-        subject: format!(
-            "project:{:x}:check",
-            Sha256::digest(project.to_string_lossy().as_bytes())
-        ),
-        snapshot: snapshot.clone(),
-        requirements,
-    };
-    let evidence = TrustedEvidenceSet {
-        items: evidence_items,
-    };
-    let report = match verification::aggregate(&plan, &evidence, unix_now(), &[]) {
-        Ok(report) => report,
-        Err(error) => {
-            return unknown_response(
-                "check",
-                request_id,
-                format!("Verification evidence could not be aggregated: {error}"),
-            )
-        }
-    };
     let checked_at = utc_now();
     // CI records nothing, and neither does a staged check: the index is not
     // a commit yet, so a receipt would bind to the wrong one (pre-push
-    // checks the same content again and records it).
+    // checks the same content again and records it). Gate and judgment
+    // receipts are recorded even when only shadow rules ran: their flags are
+    // what a promotion is measured on.
     let records_receipts = !request.ci && request.gate_mode != GateMode::Staged;
-    let (receipt_record, gate_receipts, judgment_receipts) = match layout.as_ref() {
+    let (gate_receipts, judgment_receipts) = match layout.as_ref() {
         Some(layout) if records_receipts => {
-            let native = if include_native {
-                match persist_verification_receipt(layout, &request_id, &report, &checked_at) {
-                    Ok(reference) => reference,
-                    Err(error) => return storage_error("check", request_id, error),
-                }
-            } else {
-                None
-            };
             let mut gate_receipts = Vec::new();
             for (selected, outcome) in selection.rules.iter().zip(&outcomes) {
                 if outcome.family != "mechanical" {
@@ -904,9 +873,59 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                 Ok(references) => references,
                 Err(error) => return storage_error("check", request_id, error),
             };
-            (native, gate_receipts, judgment_receipts)
+            (gate_receipts, judgment_receipts)
         }
-        _ => (None, Vec::new(), Vec::new()),
+        _ => (Vec::new(), Vec::new()),
+    };
+    let sweep_findings = request
+        .findings
+        .then(|| findings::findings(&project, &selection.rules, &outcomes));
+    let sweep = (request.gate_mode == GateMode::Sweep && !request.findings).then(|| {
+        super::dash::sweep_report(agreement.as_ref(), &selection, &outcomes, layout.as_ref())
+    });
+    if requirements.is_empty() {
+        let mut response = nothing_ran(
+            request_id,
+            &request,
+            &selection,
+            &outcomes,
+            sweep,
+            &not_applicable,
+            &gate_receipts,
+            &judgment_receipts,
+        );
+        attach_extras(&mut response, sweep_findings.as_deref(), &lesson_checks);
+        return response;
+    }
+    let plan = VerificationPlan {
+        subject: format!(
+            "project:{:x}:check",
+            Sha256::digest(project.to_string_lossy().as_bytes())
+        ),
+        snapshot: snapshot.clone(),
+        requirements,
+    };
+    let evidence = TrustedEvidenceSet {
+        items: evidence_items,
+    };
+    let report = match verification::aggregate(&plan, &evidence, unix_now(), &[]) {
+        Ok(report) => report,
+        Err(error) => {
+            return unknown_response(
+                "check",
+                request_id,
+                format!("Verification evidence could not be aggregated: {error}"),
+            )
+        }
+    };
+    let receipt_record = match layout.as_ref() {
+        Some(layout) if records_receipts && include_native => {
+            match persist_verification_receipt(layout, &request_id, &report, &checked_at) {
+                Ok(reference) => reference,
+                Err(error) => return storage_error("check", request_id, error),
+            }
+        }
+        _ => None,
     };
     let mut state = service_state(report.state);
     let mut summary = report.human_summary();
@@ -925,7 +944,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     if let Some(sweep) = &sweep {
         let proven = sweep["tally"]["proven"].as_u64().unwrap_or(0);
         let total = sweep["features"].as_array().map_or(0, Vec::len) as u64;
-        if state == ServiceState::Success && proven < total {
+        if state == ServiceState::Success && proven < total && !request.findings {
             // A sweep promises every mapped feature; anything short of
             // proven leaves the sweep unknown, not green.
             state = ServiceState::Unknown;
@@ -1002,7 +1021,24 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         "ci": request.ci,
         "selection": selection_json(&request, &selection),
     });
+    attach_extras(&mut response, sweep_findings.as_deref(), &lesson_checks);
     response
+}
+
+/// What a check adds beside its gates: sweep findings (with `--format
+/// findings`) and the lesson anchor comparisons it recorded.
+fn attach_extras(
+    response: &mut ServiceResponse,
+    sweep_findings: Option<&[findings::SweepFinding]>,
+    lesson_checks: &[Value],
+) {
+    if let Some(found) = sweep_findings {
+        response.data["findings"] = json!(found);
+        response.data["findings_jsonl"] = json!(findings::json_lines(found));
+    }
+    if !lesson_checks.is_empty() {
+        response.data["lesson_checks"] = json!(lesson_checks);
+    }
 }
 
 fn selection_json(request: &CheckRequest, selection: &Selection) -> Value {
@@ -1077,14 +1113,9 @@ fn nothing_ran(
     outcomes: &[GateOutcome],
     sweep: Option<Value>,
     not_applicable: &[String],
-    layout: Option<&ProjectLayout>,
-    judgments: &[AgreementRecord],
+    gate_receipts: &[RecordRef],
+    recorded: &[RecordRef],
 ) -> ServiceResponse {
-    // Shadow answers are still recorded when nothing else is enforced.
-    let recorded = match (layout, request.ci || request.gate_mode == GateMode::Staged) {
-        (Some(layout), false) => persist_all(layout, judgments).unwrap_or_default(),
-        _ => Vec::new(),
-    };
     let shadow = outcomes.iter().filter(|outcome| outcome.shadow).count();
     // Rules are in force, but none runs at pre-commit (question, review and
     // command rules run at pre-push): the commit is not blocked on them.
@@ -1131,6 +1162,7 @@ fn nothing_ran(
     };
     response.data = json!({
         "gates": outcomes,
+        "gate_receipts": gate_receipts,
         "judgment_receipts": recorded,
         "not_applicable": not_applicable,
         "sweep": sweep,
@@ -1312,9 +1344,15 @@ pub(crate) fn select_rules(
         let Some(rule) = record.body.rule_view() else {
             continue;
         };
-        if request.gate_mode == GateMode::Sweep && !matches!(rule.enforcer, Enforcer::Drive { .. })
-        {
-            continue;
+        if request.gate_mode == GateMode::Sweep {
+            let wanted = if request.findings {
+                findings::sweepable(&rule)
+            } else {
+                matches!(rule.enforcer, Enforcer::Drive { .. })
+            };
+            if !wanted {
+                continue;
+            }
         }
         let reference = record.reference().map_err(|error| error.to_string())?;
         selection.rules.push(SelectedRule {

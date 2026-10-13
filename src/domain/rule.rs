@@ -369,6 +369,8 @@ pub enum RuleSourceKind {
     Hardening,
     /// Migrated from an earlier record or rule file.
     Migration,
+    /// Drafted from an admitted lesson (the reference is its key).
+    Lesson,
 }
 
 impl RuleSourceKind {
@@ -381,6 +383,7 @@ impl RuleSourceKind {
             Self::Starter => "starter",
             Self::Hardening => "hardening",
             Self::Migration => "migration",
+            Self::Lesson => "lesson",
         }
     }
 }
@@ -451,6 +454,39 @@ impl Privacy {
     }
 }
 
+/// How a below-must rule's flags are worked by a night sweep (Messo's, inside
+/// Virgil): the reach an agent has over them. Narrowest is the default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SweepClass {
+    /// The agent only posts and asks.
+    #[default]
+    Discuss,
+    /// A person approves the exact plan first.
+    ConfirmFirst,
+    /// A mechanical fix the agent may open as a draft PR.
+    DraftPr,
+}
+
+impl SweepClass {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Discuss => "discuss",
+            Self::ConfirmFirst => "confirm_first",
+            Self::DraftPr => "draft_pr",
+        }
+    }
+
+    /// The agent's reach, narrowest first.
+    pub fn reach(self) -> u8 {
+        match self {
+            Self::Discuss => 0,
+            Self::ConfirmFirst => 1,
+            Self::DraftPr => 2,
+        }
+    }
+}
+
 /// Rule record v2.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -470,6 +506,14 @@ pub struct Rule {
     pub hand_raise: Vec<HandRaiseTrigger>,
     #[serde(default, skip_serializing_if = "Privacy::is_default")]
     pub privacy: Privacy,
+    /// Recorded and shown, never enforced, whatever the enforcer, until the
+    /// owner accepts a promotion draft (a rule drafted from a lesson starts
+    /// here). A question rule's own `shadow` works the same way.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shadow: bool,
+    /// How a night sweep works this rule's flags; absent means discuss.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sweep: Option<SweepClass>,
 }
 
 impl Rule {
@@ -524,9 +568,15 @@ impl Rule {
                 .any(|pattern| super::entry_point_matches(pattern.trim_start_matches("./"), path))
     }
 
-    /// Whether a question rule is still in shadow (recorded, not enforced).
+    /// Whether the rule is in shadow (recorded, not enforced): the rule's
+    /// own flag, or a question rule's.
     pub fn in_shadow(&self) -> bool {
-        matches!(self.enforcer, Enforcer::Question { shadow: true, .. })
+        self.shadow || matches!(self.enforcer, Enforcer::Question { shadow: true, .. })
+    }
+
+    /// How a sweep works this rule's flags (discuss when unset).
+    pub fn sweep_class(&self) -> SweepClass {
+        self.sweep.unwrap_or_default()
     }
 
     pub fn raises_hand_on(&self, trigger: HandRaiseTrigger) -> bool {
@@ -579,6 +629,8 @@ impl Rule {
             paths: Vec::new(),
             hand_raise: Vec::new(),
             privacy: Privacy::default(),
+            shadow: false,
+            sweep: None,
         }
     }
 
@@ -606,6 +658,8 @@ impl Rule {
             paths: Vec::new(),
             hand_raise: Vec::new(),
             privacy: Privacy::default(),
+            shadow: false,
+            sweep: None,
         }
     }
 }

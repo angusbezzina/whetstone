@@ -85,6 +85,8 @@ fn rule(enforcer: Enforcer) -> Rule {
         paths: vec!["src/**".into()],
         hand_raise: Vec::new(),
         privacy: Privacy::default(),
+        shadow: false,
+        sweep: None,
     }
 }
 
@@ -531,6 +533,7 @@ fn solo_review_binds_an_owned_draft_and_never_permits_team_activation() {
                 rationale: "Explicit solo confirmation".into(),
                 reviewed_at: "2026-09-10T10:00:00Z".into(),
                 team_activation_permitted: permitted,
+                cites: Vec::new(),
             }),
         );
         review.owner = reviewer.clone();

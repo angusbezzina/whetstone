@@ -358,8 +358,12 @@ impl HandTrigger {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HandRaise {
-    /// The Beads issue that carries the question.
+    /// The Beads issue that carries the question, or the Virgil task.
     pub issue: String,
+    /// Where the hand went: absent for Beads (`bd human`), `virgil:<group>`
+    /// for a task in a Virgil group's channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
     pub trigger: HandTrigger,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<RecordId>,

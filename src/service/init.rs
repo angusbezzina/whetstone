@@ -253,6 +253,7 @@ pub(super) fn init(request: InitRequest) -> ServiceResponse {
         InitAction::Import => return crate::skill::import(&layout, request_id, &request),
         InitAction::Setup => return setup(&layout, request_id, &request),
         InitAction::Exemplar => return exemplar(&layout, request_id, &request),
+        InitAction::Memory => return memory_switch(&layout, request_id, &request),
         _ => {}
     }
     let setup_plan = match onboarding::inspect(layout.project_root()) {
@@ -896,5 +897,87 @@ fn exemplar(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
     );
     response.permitted_actions = vec!["wh dash".into(), "wh change --accept <proposal>".into()];
     response.data = json!({"exemplar": opened, "drafts": drafts, "proposals": proposals});
+    response
+}
+
+/// Set where lessons live. The switch changes where new lessons are written
+/// and read, never what they mean, and migrates nothing: lessons already in
+/// the other store stay there, and `wh dash` says so.
+fn memory_switch(
+    layout: &ProjectLayout,
+    request_id: String,
+    request: &InitRequest,
+) -> ServiceResponse {
+    use crate::memory::{self, MemoryConfig};
+    let current = memory::read_config(layout.project_root()).ok();
+    let wanted = match (request.memory_store.as_deref(), request.memory_group.clone()) {
+        (None, _) => {
+            let mut response = ServiceResponse::new(
+                request_id,
+                "init",
+                ServiceState::Success,
+                format!(
+                    "Lessons live in the {} store. Choose with --store beads, or --store virgil --group <ULID>.",
+                    current.as_ref().map_or("(unreadable)", MemoryConfig::backend)
+                ),
+            );
+            response.data = json!({"memory": current, "switch": memory::MEMORY_CONFIG, "read_only": true});
+            return response;
+        }
+        (Some("beads"), None) => MemoryConfig::Beads,
+        (Some("virgil"), Some(group)) => MemoryConfig::Virgil { group },
+        (Some("virgil"), None) => {
+            return needs_input(
+                "init",
+                request_id,
+                0,
+                String::new(),
+                "Name the Virgil group lessons live in: --group <ULID>.".into(),
+            )
+        }
+        (Some(store), _) => {
+            return unknown_response(
+                "init",
+                request_id,
+                format!("{store} is not a lesson store; use beads or virgil (with --group only for virgil)."),
+            )
+        }
+    };
+    let changed = current.as_ref() != Some(&wanted);
+    let mut response = ServiceResponse::new(
+        request_id,
+        "init",
+        if request.dry_run {
+            ServiceState::NeedsDecision
+        } else {
+            ServiceState::Success
+        },
+        match (request.dry_run, changed) {
+            (_, false) => format!("Lessons already live in the {} store; nothing changed.", wanted.backend()),
+            (true, true) => format!(
+                "{} would name the {} store; nothing was written and no lesson moves.",
+                memory::MEMORY_CONFIG,
+                wanted.backend()
+            ),
+            (false, true) => format!(
+                "Lessons now live in the {} store ({} records the switch; commit it so the team shares it). Nothing was migrated: lessons already in the other store stay there.",
+                wanted.backend(),
+                memory::MEMORY_CONFIG
+            ),
+        },
+    );
+    if changed && !request.dry_run {
+        if let Err(error) = memory::write_config(layout.project_root(), &wanted) {
+            return unknown_response("init", response.request_id, error);
+        }
+    }
+    response.permitted_actions = vec!["wh dash".into()];
+    response.data = json!({
+        "memory": wanted,
+        "previous": current,
+        "switch": memory::MEMORY_CONFIG,
+        "migrated": 0,
+        "written": changed && !request.dry_run,
+    });
     response
 }

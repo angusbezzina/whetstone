@@ -188,6 +188,11 @@ pub struct RuleEntry {
     /// `receipt` is what `wh change --accept-flag|--dismiss-flag` takes.
     pub unlabelled_flags: Vec<Value>,
     pub result: StateLabel,
+    /// How a night sweep works this rule's flags: draft_pr, confirm_first or
+    /// discuss (the default).
+    pub sweep_class: &'static str,
+    /// The lesson key the rule was drafted from, when it was.
+    pub origin_lesson: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -389,6 +394,9 @@ pub fn runs_at(rule: &Rule) -> &'static str {
     {
         return "review (local-only: Jev is never called)";
     }
+    if rule.shadow {
+        return "pre-push and CI, in shadow (recorded, not enforced)";
+    }
     match rule.enforcer.family() {
         crate::domain::EnforcerFamily::Mechanical if rule.enforcer.runs_staged() => {
             "pre-commit, pre-push and CI"
@@ -477,6 +485,8 @@ fn rule_definition(rule: &Rule) -> Value {
         "paths": rule.paths,
         "hand_raise": rule.hand_raise,
         "privacy": rule.privacy,
+        "shadow": rule.shadow,
+        "sweep": rule.sweep,
     })
 }
 
@@ -865,6 +875,8 @@ fn rule_entries(state: &AgreementState, runs: &[GateRun]) -> Vec<RuleEntry> {
                 })
                 .collect(),
             result,
+            sweep_class: rule.sweep_class().label(),
+            origin_lesson: crate::memory::origin_lesson(&rule).map(str::to_owned),
         });
     }
     rules.sort_by(|left, right| {

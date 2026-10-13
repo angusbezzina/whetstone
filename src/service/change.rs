@@ -60,6 +60,9 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
     if request.tune {
         return tune(&layout, &private, request_id, &request);
     }
+    if request.lesson.is_some() || request.kind == Some(ChangeKind::Lesson) {
+        return super::lesson::change(&layout, request_id, &request);
+    }
     propose(&layout, &private, request_id, &request)
 }
 
@@ -69,7 +72,7 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
 /// they differ between the inspection and the confirmation.
 fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String {
     let input = format!(
-        "{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{}\0{}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}",
+        "{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{}\0{}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}",
         request.kind,
         request.record_id,
         request.content,
@@ -88,6 +91,8 @@ fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String
         request.hardens,
         request.examples,
         request.conflicts,
+        request.lesson,
+        request.from_lesson,
         layout.project_id(),
     );
     format!(
@@ -496,6 +501,8 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
                 paths,
                 hand_raise,
                 privacy,
+                shadow,
+                sweep,
             }) = request.definition.as_deref()
             else {
                 return Err("Provide the rule's strength and its one enforcer as a rule definition: {\"type\": \"rule\", \"strength\": \"must\", \"enforcer\": {\"kind\": \"test\", \"command\": \"cargo test\"}}.".into());
@@ -519,7 +526,7 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
                 (None, Some(source)) => source.clone(),
                 (None, None) => RuleSource::owner(),
             };
-            let rule = Rule {
+            let mut rule = Rule {
                 schema: RULE_SCHEMA_V2.into(),
                 statement: content,
                 rationale,
@@ -530,7 +537,40 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
                 paths: paths.clone(),
                 hand_raise: hand_raise.clone(),
                 privacy: privacy.clone(),
+                shadow: *shadow,
+                sweep: *sweep,
             };
+            // A rule drafted from a lesson starts in shadow and names the
+            // admitted lesson it came from.
+            let origin = request.from_lesson.clone().or_else(|| {
+                (rule.source.kind == RuleSourceKind::Lesson)
+                    .then(|| rule.source.reference.clone())
+                    .flatten()
+            });
+            if let Some(key) = origin {
+                super::lesson::rule_from_lesson(layout, &key, &mut rule)?;
+            }
+            // How far a sweep may reach over this rule's flags is a person's
+            // call: an agent never widens it.
+            if request.actor != crate::domain::ActorKind::Person {
+                let current = request
+                    .record_id
+                    .as_deref()
+                    .and_then(|id| RecordId::new(id).ok())
+                    .and_then(|id| {
+                        let state = state_of(layout).ok()?;
+                        let class = state.in_force(&id)?.body.rule_view()?.sweep_class();
+                        Some(class)
+                    })
+                    .unwrap_or_default();
+                if rule.sweep_class().reach() > current.reach() {
+                    return Err(format!(
+                        "An agent cannot widen how a sweep works this rule (from {} to {}); a person sets the sweep class.",
+                        current.label(),
+                        rule.sweep_class().label()
+                    ));
+                }
+            }
             rule.validate()
                 .map_err(|error| format!("The rule is not valid: {error}"))?;
             RecordBody::Rule(rule)
@@ -585,6 +625,10 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
                 mutations: mutations.clone(),
             })
         }
+        ChangeKind::Lesson => return Err(
+            "A lesson is remembered with wh change --kind lesson; it is not an agreement record."
+                .into(),
+        ),
         ChangeKind::Map => {
             let Some(ChangeDefinition::Map {
                 intro,
@@ -779,7 +823,13 @@ fn answer_hand(
     let answer = match request.content.clone() {
         Some(content) => match bounded_input(Some(content), "answer", 4_000) {
             Ok(answer) => {
-                if let Err(error) = crate::hands::respond(layout.project_root(), issue, &answer) {
+                let route = match &raise.body {
+                    RecordBody::HandRaise(body) => body.route.clone(),
+                    _ => None,
+                };
+                if let Err(error) =
+                    crate::hands::answer(layout.project_root(), issue, route.as_deref(), &answer)
+                {
                     // Already closed in Beads (answered there) is fine; any
                     // other failure means the tracker did not take it.
                     if !error.to_ascii_lowercase().contains("closed") {
@@ -787,7 +837,7 @@ fn answer_hand(
                             request_id,
                             "change",
                             ServiceState::Unavailable,
-                            format!("Beads did not take the answer: {error}"),
+                            format!("The tracker did not take the answer: {error}"),
                         );
                         response.permitted_actions = vec![format!("bd human respond {issue} -r \"<answer>\"")];
                         return response;
@@ -846,7 +896,7 @@ fn answer_hand(
                 request_id,
                 "change",
                 ServiceState::Success,
-                format!("{issue} was answered and closed in Beads; the answer is in the trail."),
+                format!("{issue} was answered and closed where it was filed; the answer is in the trail."),
             );
             response.permitted_actions = vec!["wh dash --trail".into()];
             response.data = json!({"answer": reference, "issue": issue});
@@ -1015,6 +1065,7 @@ fn tune(
         Err(error) => return storage_error("change", request_id, error),
     };
     let suggestions = crate::learning::suggestions(&state);
+    let lesson_reviews = super::lesson::rule_reviews(layout, &state);
     let mut drafts = Vec::new();
     let mut hardening = Vec::new();
     for suggestion in &suggestions {
@@ -1076,20 +1127,25 @@ fn tune(
         } else {
             ServiceState::Success
         },
-        if drafts.is_empty() && hardening.is_empty() {
+        if drafts.is_empty() && hardening.is_empty() && lesson_reviews.is_empty() {
             "No rule's record suggests a change yet; nothing was drafted.".to_string()
         } else {
             format!(
-                "{} tuning draft(s) {} and {} hardening candidate(s) listed; nothing changes force until you accept.",
+                "{} tuning draft(s) {}, {} hardening candidate(s) and {} rule(s) whose lesson moved listed; nothing changes force until you accept.",
                 drafts.len(),
                 if request.preview { "would be recorded" } else { "recorded" },
-                hardening.len()
+                hardening.len(),
+                lesson_reviews.len()
             )
         },
     );
     response.permitted_actions = vec!["wh dash".into(), "wh change --accept <proposal>".into()];
-    response.data =
-        json!({"drafts": drafts, "hardening": hardening, "preview_only": request.preview});
+    response.data = json!({
+        "drafts": drafts,
+        "hardening": hardening,
+        "lesson_reviews": lesson_reviews,
+        "preview_only": request.preview,
+    });
     response
 }
 
@@ -1175,6 +1231,22 @@ pub(crate) fn review_draft(
             |value| value.chars().take(4_000).collect(),
         );
     let reviewer = target.proposal.owner.clone();
+    // Accepting a rule drafted from a lesson cites the lesson revision it
+    // rested on; a lesson no longer admitted cannot carry a rule into force.
+    let mut cites = Vec::new();
+    if review.verdict == LocalReviewVerdict::Accept {
+        for candidate in &target.candidates {
+            let Some(rule) = candidate.body.rule_view() else {
+                continue;
+            };
+            match super::lesson::citations(layout, &rule) {
+                Ok(found) => cites.extend(found),
+                Err(question) => {
+                    return needs_input("change", request_id, 0, String::new(), question)
+                }
+            }
+        }
+    }
     let suffix = &format!("{:x}", Sha256::digest(key.as_bytes()))[..24];
     let record = AgreementRecord {
         schema_version: SCHEMA_VERSION_V1,
@@ -1206,6 +1278,7 @@ pub(crate) fn review_draft(
             rationale: rationale.clone(),
             reviewed_at: utc_now(),
             team_activation_permitted: false,
+            cites: cites.clone(),
         }),
     };
     let candidates = target
@@ -1249,7 +1322,6 @@ pub(crate) fn review_draft(
         Ok(reference) => reference,
         Err(error) => return storage_error("change", request_id, error),
     };
-    let _ = layout;
     let mut response = ServiceResponse::new(
         request_id,
         "change",
@@ -1270,6 +1342,7 @@ pub(crate) fn review_draft(
         "verdict": verb,
         "candidates": candidates,
         "rationale": rationale,
+        "cites": cites,
         "shared": false,
     });
     response

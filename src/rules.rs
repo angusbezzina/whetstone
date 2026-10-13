@@ -1136,6 +1136,8 @@ pub fn legacy_rules_as_v2(
             paths: Vec::new(),
             hand_raise: Vec::new(),
             privacy: Privacy::default(),
+            shadow: false,
+            sweep: None,
         };
         if let Err(error) = converted_rule.validate() {
             skipped.push(format!("{}: {error}", rule.id));

@@ -430,6 +430,7 @@ mod tests {
                 rationale: "explicit".into(),
                 reviewed_at: "2026-09-10T11:00:00Z".into(),
                 team_activation_permitted: false,
+                cites: Vec::new(),
             }),
         )
     }

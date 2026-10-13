@@ -303,6 +303,66 @@ hygiene checks (features without steps or gates, dangling links, entry points
 that match no files, README and file mismatches). Corrections return through
 `wh change`; the maintain pass never edits product code.
 
+## Memory: lessons on the ladder
+
+Lessons are the softest rung of the ladder (`whetstone-jpd`): observation,
+proposed lesson (inferred), team lesson (validated), rule in words, enforced
+rule (shadow, then should, then must). Whetstone owns the lesson contract;
+where lessons live is a backend behind one switch, `whetstone/memory.json`,
+written by `wh init --action memory --store beads|virgil [--group <ULID>]`.
+
+- **Record.** `lesson` (`whetstone.lesson.v1`): text, a stable key,
+  subjects (`about`: repos, records by qualified locator, code paths;
+  concepts stay keys and search text), audience (a person or a group), a
+  stamp (who, agent or person, session, task, branch, commit), anchors
+  (paths with content hashes), trust (`inferred`, `validated`,
+  `authoritative`, recall's names), status (`proposed`, `admitted`,
+  `superseded`, `forgotten`), the supersession links, a proposed forget, and
+  the decision that admitted, superseded or forgot it. One revision per verb.
+- **Admission.** The verbs are remember, admit, supersede and forget, all in
+  `wh change`. Anyone proposes; only a person admits, by any route: the
+  caller is an agent unless stdin is a terminal and no agent host's marker
+  (`CLAUDECODE`, `CODEX_SANDBOX`, `CURSOR_AGENT`, ...) is set, or the request
+  comes from a dashboard a person opened (never one started with
+  `--bootstrap-file`). A person's correction or forget is applied; an
+  agent's is a proposal. Nothing is admitted from evidence (merged PRs,
+  passing tests, hashes) in v1, and there is no feedback verb.
+- **Refusals.** A request that supplies provenance, trust, status or a
+  decision is refused (`provenance_is_stamped`); an agent admitting is
+  refused (`agent_cannot_admit`); a group lesson about something narrower
+  than its audience (a draft record, a `personal:` locator, a Git-ignored
+  path) is refused (`scope_exceeds_authority`).
+- **Anchors and staleness.** Anchors are the paths a lesson names plus the
+  writer's additions, never every file a session changed. Every read
+  (`wh dash`, session start) compares hashes without a model call and marks a
+  changed anchor "may be stale"; `wh check` records each distinct comparison
+  as a `lesson_check` receipt. Rules keep their enforcers and have no
+  anchors.
+- **The ladder.** `wh change --kind rule --from-lesson <key>` drafts a rule
+  from an admitted lesson: it starts in shadow (recorded, never enforced,
+  whatever its enforcer) and its source names the lesson. Accepting it cites
+  the lesson revision in the review, so `wh dash` walks rule, accepting
+  review, origin lesson and its anchors. A lesson corrected twice is flagged
+  for review. Promotion out of shadow is a `wh change --tune` draft on the
+  same precision bar as Jev questions.
+- **Stores.** Standalone, lessons are records in Whetstone's private Beads
+  store. With the switch naming a Virgil group, they live in the group's
+  Records `lesson` collection, reached only by `virgil lessons
+  <remember|admit|supersede|forget|proposals|find> --group <G> --input -`
+  (one JSON request, one JSON line back, the `virgil tasks` conventions);
+  the daemon stamps provenance. Flipping the switch migrates nothing, and
+  `wh dash` reports lessons left in the other store. Raised hands follow the
+  same switch: `bd human` standalone, `virgil tasks create` in the group's
+  channel inside Virgil, with the `hand_raise` receipt either way.
+- **Sweep.** A rule carries a sweep class (`draft_pr`, `confirm_first`,
+  `discuss`; absent is discuss) set through `wh change`; an agent never
+  widens it. `wh check --sweep --format findings` runs only the rules below
+  must (should, advisory, or in shadow; not drive proofs or reviews) and
+  prints one JSON line per flag: a fingerprint of rule, repository and
+  subject that is stable across runs, a digest of the flagged content, the
+  class, a title and the responsible rule. A night sweep's controller
+  (Messo's, inside Virgil) works them; it never runs `wh change`.
+
 ## Public surface
 
 Exactly six workflow families: `init`, `dash`, `change`, `check`, `pull` and

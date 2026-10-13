@@ -119,12 +119,46 @@ pub fn projections(
     result
 }
 
+/// Admitted lessons for delivery, each flagged when an anchored file changed
+/// since it was written (a hash comparison, no model call).
+fn lesson_line(dash: &Value) -> Option<String> {
+    let lessons = dash["data"]["memory"]["lessons"]
+        .as_array()?
+        .iter()
+        .filter(|lesson| lesson["status"] == "admitted")
+        .take(12)
+        .map(|lesson| {
+            format!(
+                "{} [{}{}]",
+                lesson["text"].as_str().unwrap_or_default(),
+                lesson["trust"].as_str().unwrap_or_default(),
+                if lesson["may_be_stale"] == true {
+                    " · may be stale: an anchored file changed"
+                } else {
+                    ""
+                }
+            )
+        })
+        .collect::<Vec<_>>();
+    (!lessons.is_empty()).then(|| {
+        format!(
+            "Lessons the team admitted (guidance, never a gate; check a stale one before relying on it): {}.",
+            lessons.join("; ")
+        )
+    })
+}
+
 /// The SessionStart context: short, canonical, and never pointing at a stale
 /// projection.
 pub fn session_context(dash: &Value, host: &str) -> String {
     let current = &dash["data"]["current"];
     if current["established"] != true {
-        return "Whetstone: this project has no accepted agreement yet; `wh init` records it. No project policy applies until then.".into();
+        let mut text = String::from("Whetstone: this project has no accepted agreement yet; `wh init` records it. No project policy applies until then.");
+        if let Some(lessons) = lesson_line(dash) {
+            text.push('\n');
+            text.push_str(&lessons);
+        }
+        return text;
     }
     let hosts = current["skill"]["projections"]
         .as_array()
@@ -181,6 +215,7 @@ pub fn session_context(dash: &Value, host: &str) -> String {
             rules.join("; ")
         ));
     }
+    lines.extend(lesson_line(dash));
     lines.push("Before building: brief yourself with pstack /how, /why and /blast-radius and record it (wh check --brief). Raise a hand (wh check --raise-hand) instead of guessing when a must rule is unavailable, a finding survives a second repair, the change touches an owner-reserved area, or the spec is vague.".into());
     if let Some(first) = current["attention"]
         .as_array()

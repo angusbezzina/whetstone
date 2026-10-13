@@ -83,6 +83,8 @@ fn rule(statement: &str) -> RecordBody {
         paths: Vec::new(),
         hand_raise: Vec::new(),
         privacy: Privacy::default(),
+        shadow: false,
+        sweep: None,
     })
 }
 
@@ -464,6 +466,7 @@ fn every_record_kind_lands_in_its_bead_type_with_its_digest() {
             tried: "Read the spec.".into(),
             recommendation: "Keep the current shape.".into(),
             raised_at: "2026-09-10T12:02:00Z".into(),
+            route: None,
         }),
     );
     let raise_ref = store.append(&raise, None).expect("raise");
@@ -811,6 +814,7 @@ fn lifecycle_labels_follow_the_kernel() {
             rationale: "Explicit solo acceptance by the owner.".into(),
             reviewed_at: "2026-09-10T12:05:00Z".into(),
             team_activation_permitted: false,
+            cites: Vec::new(),
         }),
     );
     store.append(&review, None).expect("review");

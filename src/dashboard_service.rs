@@ -21,6 +21,9 @@ pub struct CommandDashboardBackend {
     project_dir: PathBuf,
     inspect_request_id: Option<String>,
     service: CommandService,
+    /// Who the dashboard acts for: a person when a person opened it, an agent
+    /// (the default) otherwise, so lessons are never admitted by automation.
+    actor: crate::domain::ActorKind,
     /// Sees every mutation response after the service has answered it, so
     /// the foreground process can narrate what the dashboard recorded.
     /// Inspections are never reported.
@@ -47,8 +50,16 @@ impl CommandDashboardBackend {
             project_dir,
             inspect_request_id,
             service: CommandService,
+            actor: crate::domain::ActorKind::Agent,
             observer: None,
         }
+    }
+
+    /// Act for a person: only a dashboard a person opened (never one started
+    /// for automation) may admit, correct or forget lessons.
+    pub fn acting_as(mut self, actor: crate::domain::ActorKind) -> Self {
+        self.actor = actor;
+        self
     }
 
     /// Report each mutation response to `observer`.
@@ -162,7 +173,12 @@ impl DashboardBackend for CommandDashboardBackend {
             Err(error) => return invalid_request(format!("invalid dashboard command: {error}")),
         };
         let response = match mutation {
-            Mutation::Service(request) => self.service.execute(*request),
+            Mutation::Service(mut request) => {
+                if let ServiceRequest::Change(change) = request.as_mut() {
+                    change.actor = self.actor;
+                }
+                self.service.execute(*request)
+            }
             Mutation::Task { title, description } => {
                 queue_task(&self.project_dir, &title, &description)
             }
@@ -263,6 +279,9 @@ enum DashboardCommand {
         migrate: bool,
         #[serde(default)]
         tune: bool,
+        /// Admit, correct or forget a lesson.
+        #[serde(default)]
+        lesson: Option<DashboardLesson>,
     },
     Check {
         #[serde(default)]
@@ -280,6 +299,23 @@ enum DashboardCommand {
     },
     /// Queue work for any agent as a Beads task (Grok Bot is optional).
     Task { title: String, description: String },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DashboardLesson {
+    verb: DashboardLessonVerb,
+    key: String,
+    #[serde(default)]
+    trust: Option<crate::domain::Trust>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DashboardLessonVerb {
+    Admit,
+    Supersede,
+    Forget,
 }
 
 #[derive(Debug, Deserialize)]
@@ -397,6 +433,7 @@ impl DashboardCommand {
                 answer,
                 migrate,
                 tune,
+                lesson,
             } => ServiceRequest::Change(ChangeRequest {
                 project_dir,
                 request_id,
@@ -433,6 +470,21 @@ impl DashboardCommand {
                 migrate,
                 tune,
                 hardens: None,
+                // The backend sets who is asking; a request cannot claim it.
+                actor: crate::domain::ActorKind::Agent,
+                lesson: lesson.map(|lesson| match lesson.verb {
+                    DashboardLessonVerb::Admit => crate::service::LessonOp::Admit {
+                        key: lesson.key,
+                        trust: lesson.trust,
+                    },
+                    DashboardLessonVerb::Supersede => {
+                        crate::service::LessonOp::Supersede { key: lesson.key }
+                    }
+                    DashboardLessonVerb::Forget => {
+                        crate::service::LessonOp::Forget { key: lesson.key }
+                    }
+                }),
+                from_lesson: None,
             }),
             Self::Check {
                 request_id,

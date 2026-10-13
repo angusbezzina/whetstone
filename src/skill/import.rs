@@ -275,6 +275,8 @@ pub fn import(
                     paths: Vec::new(),
                     hand_raise: Vec::new(),
                     privacy: crate::domain::Privacy::default(),
+                    shadow: false,
+                    sweep: None,
                 });
                 candidates.push(ImportCandidate {
                     id: gate.clone(),
