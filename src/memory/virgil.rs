@@ -139,6 +139,22 @@ pub fn lesson_from_virgil(value: &Value) -> Result<StoredLesson, Refusal> {
     if let Some(provenance) = object.remove("provenance") {
         object.insert("stamp".into(), provenance);
     }
+    // Anchors may come as `{repo, path, sha256}` (hex), the shape Messo's
+    // lesson port reads, or as Whetstone's `{path, digest}`.
+    if let Some(Value::Array(anchors)) = object.get_mut("anchors") {
+        for anchor in anchors.iter_mut() {
+            if let Some(anchor) = anchor.as_object_mut() {
+                anchor.remove("repo");
+                if let Some(hex) = anchor.remove("sha256") {
+                    if !anchor.contains_key("digest") {
+                        if let Some(hex) = hex.as_str() {
+                            anchor.insert("digest".into(), json!(format!("sha256:{hex}")));
+                        }
+                    }
+                }
+            }
+        }
+    }
     object.insert("schema".into(), json!(LESSON_SCHEMA_V1));
     let lesson = serde_json::from_value::<Lesson>(Value::Object(object)).map_err(|error| {
         Refusal::new(
@@ -365,4 +381,33 @@ pub fn answer_task(
         &json!({"task": task, "state": "done"}),
     )
     .map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn either_anchor_shape_reads_as_a_whetstone_anchor() {
+        let hex = "a".repeat(64);
+        let stored = lesson_from_virgil(&json!({
+            "id": "lesson:01",
+            "key": "values-are-floats",
+            "text": "Values are floats.",
+            "audience": {"kind": "group", "name": "G"},
+            "provenance": {"who": "principal:P", "actor": "agent", "at": "2026-10-13T09:00:00Z"},
+            "anchors": [{"repo": "gpu-cli/virgil", "path": "app.py", "sha256": hex}],
+            "trust": "inferred",
+            "status": "proposed",
+        }))
+        .expect("lesson");
+        assert_eq!(
+            stored.lesson.anchors[0]
+                .digest
+                .as_ref()
+                .map(|digest| digest.as_str().to_string()),
+            Some(format!("sha256:{hex}"))
+        );
+        assert_eq!(stored.locator, "virgil:lesson:01");
+    }
 }

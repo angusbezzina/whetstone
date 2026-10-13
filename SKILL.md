@@ -109,9 +109,9 @@ resume token. A retry with the same request ID must keep the same input.
 - `wh check` runs the rules: `--staged` for pre-commit, `--changed` or
   `--base` for the change, `--feature` and `--step` to prove one feature,
   `--sweep` for every mapped feature, `--mutate` to test the proofs.
-  `--sweep --format findings` runs only the rules below must and prints one
-  JSON line per flag (`fingerprint`, `subjectDigest`, `class`, `title`,
-  `responsibility`) for a night sweep; a rule's `sweep` class (`draft_pr`,
+  `--sweep --format findings` runs only the rules below must and prints a
+  JSON array, one finding per flag (`fingerprint`, `subjectDigest`, `class`,
+  `title`, `responsibility`), for a night sweep's `findings.json`; a rule's `sweep` class (`draft_pr`,
   `confirm_first`, `discuss`, the default) says how far the sweep may go,
   and only a person widens it.
 - Before building, run pstack's `/how`, `/why` and `/blast-radius` and record

@@ -174,11 +174,17 @@ pub(crate) fn findings(
     result
 }
 
-/// JSON lines, one finding per line, for the controller to read.
-pub(crate) fn json_lines(findings: &[SweepFinding]) -> String {
-    findings
+/// The findings as one JSON array, one finding per line: what a sweep's
+/// controller reads as `findings.json` (Messo's `messo-ctl observe` parses
+/// the whole document, an object or a list).
+pub(crate) fn json_array(findings: &[SweepFinding]) -> String {
+    let lines = findings
         .iter()
         .filter_map(|finding| serde_json::to_string(finding).ok())
-        .map(|line| line + "\n")
-        .collect()
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        "[]\n".into()
+    } else {
+        format!("[\n{}\n]\n", lines.join(",\n"))
+    }
 }

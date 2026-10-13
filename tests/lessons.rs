@@ -857,10 +857,15 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
         first.stdout, second.stdout,
         "the same state gives the same findings"
     );
-    let findings = String::from_utf8_lossy(&first.stdout)
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).expect("one JSON finding per line"))
-        .collect::<Vec<_>>();
+    // One JSON document (Messo's `messo-ctl observe` parses the whole
+    // findings.json), one finding per line.
+    let findings: Vec<Value> =
+        serde_json::from_slice(&first.stdout).expect("findings are one JSON array");
+    assert_eq!(
+        String::from_utf8_lossy(&first.stdout).lines().count(),
+        findings.len() + 2,
+        "one finding per line"
+    );
     assert_eq!(findings.len(), 2, "{findings:?}");
     for finding in &findings {
         let keys = finding
@@ -901,9 +906,9 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
     let before = by_rule("rule.print-should");
     std::fs::write(root.join("src/app.py"), "print('two')\nvalue = 1\n").expect("write");
     let changed = run(root, &["check", "--sweep", "--format", "findings"]);
-    let after = String::from_utf8_lossy(&changed.stdout)
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).expect("finding"))
+    let after = serde_json::from_slice::<Vec<Value>>(&changed.stdout)
+        .expect("findings")
+        .into_iter()
         .find(|finding| finding["responsibility"] == "rule.print-should")
         .expect("still flagged");
     assert_eq!(after["fingerprint"], before["fingerprint"]);
@@ -912,4 +917,160 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
     // The ordinary feature sweep is unchanged: it drives features only.
     let sweep = wh(root, &["check", "--sweep", "--json"]);
     assert!(sweep["data"]["findings"].is_null(), "{}", sweep["data"]);
+}
+
+fn plain(root: &Path, program: &str, args: &[&str], beads: bool) -> String {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .current_dir(root)
+        .env("BD_NON_INTERACTIVE", "1");
+    if beads {
+        command.env("BEADS_DIR", root.join(".beads"));
+    }
+    let output = command.output().expect(program);
+    assert!(
+        output.status.success(),
+        "{program} {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).to_string()
+}
+
+#[test]
+fn admitted_team_lessons_travel_with_wh_push_and_personal_or_unadmitted_ones_never_do() {
+    if !have_bd() {
+        return;
+    }
+    let temp = TempDir::new().expect("temp");
+    let origin = temp.path().join("origin.git");
+    plain(
+        temp.path(),
+        "git",
+        &["init", "-q", "--bare", origin.to_str().expect("path")],
+        false,
+    );
+    let url = format!("git+file://{}", origin.display());
+    let a = temp.path().join("a");
+    plain(
+        temp.path(),
+        "git",
+        &[
+            "clone",
+            "-q",
+            origin.to_str().expect("path"),
+            a.to_str().expect("path"),
+        ],
+        false,
+    );
+    plain(
+        &a,
+        "git",
+        &["config", "user.email", "ada@example.com"],
+        false,
+    );
+    plain(&a, "git", &["config", "user.name", "Ada"], false);
+    plain(&a, "git", &["config", "commit.gpgsign", "false"], false);
+    std::fs::write(a.join("app.py"), "value = 1\n").expect("write");
+    plain(&a, "git", &["add", "."], false);
+    plain(&a, "git", &["commit", "-qm", "init"], false);
+    plain(&a, "git", &["push", "-q", "origin", "HEAD:main"], false);
+    plain(
+        &a,
+        "bd",
+        &[
+            "init",
+            "--non-interactive",
+            "--skip-agents",
+            "--skip-hooks",
+            "-p",
+            "team",
+            "-q",
+        ],
+        true,
+    );
+    plain(&a, "bd", &["dolt", "remote", "add", "origin", &url], true);
+
+    remember(
+        &a,
+        "team",
+        "Values are integers.",
+        json!({"type": "lesson", "key": "values-are-integers", "about": [{"kind": "path", "path": "app.py"}]}),
+    );
+    remember(
+        &a,
+        "waiting",
+        "Nobody admitted this yet.",
+        json!({"type": "lesson", "key": "not-yet-admitted"}),
+    );
+    remember(
+        &a,
+        "mine",
+        "I prefer short functions.",
+        json!({"type": "lesson", "key": "my-own-taste", "audience": {"kind": "person", "name": "Ada"}}),
+    );
+    person(
+        &a,
+        "admit-team",
+        LessonOp::Admit {
+            key: "values-are-integers".into(),
+            trust: None,
+        },
+        None,
+        None,
+    );
+    person(
+        &a,
+        "admit-mine",
+        LessonOp::Admit {
+            key: "my-own-taste".into(),
+            trust: None,
+        },
+        None,
+        None,
+    );
+
+    let reviewed = wh(&a, &["push", "--json"]);
+    assert_eq!(reviewed["state"], "needs_decision", "{reviewed}");
+    let package = reviewed["data"]["package"].to_string();
+    assert!(package.contains("lesson.values-are-integers"), "{package}");
+    assert!(
+        !package.contains("not-yet-admitted"),
+        "an unadmitted lesson stays private"
+    );
+    assert!(
+        !package.contains("my-own-taste"),
+        "a personal lesson never travels"
+    );
+    let token = reviewed["resume_token"]
+        .as_str()
+        .expect("token")
+        .to_string();
+    let pushed = wh(&a, &["push", "--json", "--confirm", &token]);
+    assert_eq!(pushed["state"], "success", "{pushed}");
+    assert_eq!(pushed["data"]["transmitted"], true);
+
+    // A teammate's fresh clone sees the team lesson, admitted, and nothing else.
+    let b = temp.path().join("b");
+    plain(
+        temp.path(),
+        "git",
+        &[
+            "clone",
+            "-q",
+            origin.to_str().expect("path"),
+            b.to_str().expect("path"),
+        ],
+        false,
+    );
+    plain(&b, "bd", &["bootstrap", "--yes"], true);
+    let lessons = lessons(&b);
+    let keys = lessons
+        .iter()
+        .map(|lesson| lesson["key"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(keys, vec![json!("values-are-integers")], "{lessons:?}");
+    assert_eq!(lessons[0]["status"], "admitted");
+    assert_eq!(lessons[0]["decision"]["by"], "Ada");
+    assert_eq!(lessons[0]["may_be_stale"], false);
 }

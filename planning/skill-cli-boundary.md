@@ -346,7 +346,10 @@ written by `wh init --action memory --store beads|virgil [--group <ULID>]`.
   for review. Promotion out of shadow is a `wh change --tune` draft on the
   same precision bar as Jev questions.
 - **Stores.** Standalone, lessons are records in Whetstone's private Beads
-  store. With the switch naming a Virgil group, they live in the group's
+  store; a group lesson a person has decided on (admitted, or later
+  superseded or forgotten) travels with `wh push` with every revision, and a
+  teammate's `wh pull` or `bd bootstrap` reads it. Personal lessons and
+  lessons nobody has admitted never leave the machine. With the switch naming a Virgil group, they live in the group's
   Records `lesson` collection, reached only by `virgil lessons
   <remember|admit|supersede|forget|proposals|find> --group <G> --input -`
   (one JSON request, one JSON line back, the `virgil tasks` conventions);
@@ -358,7 +361,7 @@ written by `wh init --action memory --store beads|virgil [--group <ULID>]`.
   `discuss`; absent is discuss) set through `wh change`; an agent never
   widens it. `wh check --sweep --format findings` runs only the rules below
   must (should, advisory, or in shadow; not drive proofs or reviews) and
-  prints one JSON line per flag: a fingerprint of rule, repository and
+  prints a JSON array (`findings.json`), one finding per flag: a fingerprint of rule, repository and
   subject that is stable across runs, a digest of the flagged content, the
   class, a title and the responsible rule. A night sweep's controller
   (Messo's, inside Virgil) works them; it never runs `wh change`.

@@ -38,14 +38,16 @@ requests, and gate exceptions. They stay here as a record of what was built.
   (`wh init --action memory`): Whetstone's Beads store standalone, or a
   Virgil group's lesson collection through `virgil lessons` only. Switching
   migrates nothing. Raised hands follow the switch: a Virgil task in the
-  group's channel instead of `bd human`.
+  group's channel instead of `bd human`. Standalone, admitted group lessons
+  travel with `wh push`; personal and unadmitted lessons never do.
 - The ladder: `wh change --kind rule --from-lesson <key>` drafts a shadow
   rule from an admitted lesson; accepting it cites the lesson, and `wh dash`
   walks rule, accepting review, lesson and anchors. Any rule can be in
   shadow (`shadow`), and shadow rules are promoted by `wh change --tune`.
 - Sweep mode: a rule's `sweep` class (draft_pr, confirm_first, discuss) and
-  `wh check --sweep --format findings`, one stable JSON finding per flag of
-  the rules below must.
+  `wh check --sweep --format findings`, a JSON array (`findings.json`, the
+  shape Messo's `messo-ctl observe` reads) with one stable finding per flag
+  of the rules below must.
 
 ### Added (delegation plan, `whetstone-ppq`)
 

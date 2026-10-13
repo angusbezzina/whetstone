@@ -1034,7 +1034,7 @@ fn attach_extras(
 ) {
     if let Some(found) = sweep_findings {
         response.data["findings"] = json!(found);
-        response.data["findings_jsonl"] = json!(findings::json_lines(found));
+        response.data["findings_json"] = json!(findings::json_array(found));
     }
     if !lesson_checks.is_empty() {
         response.data["lesson_checks"] = json!(lesson_checks);

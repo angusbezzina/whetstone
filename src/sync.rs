@@ -101,6 +101,7 @@ fn build_package(
     shared: &BTreeSet<RecordRef>,
     shared_ids: &BTreeSet<RecordId>,
     request: &PushRequest,
+    share_lessons: bool,
 ) -> Package {
     let include_ancestry = request
         .include_ancestry
@@ -119,6 +120,22 @@ fn build_package(
             && !ids.contains(&record.id)
         {
             ids.push(record.id.clone());
+        }
+    }
+    // Team lessons travel with the agreement once a person has decided on
+    // them (admitted, or later superseded or forgotten): every revision, so
+    // the other side sees who proposed and who decided. Personal lessons and
+    // lessons nobody has admitted stay private. Inside Virgil, lessons live
+    // in the group's collection and never travel through Beads.
+    if share_lessons {
+        for record in state.records() {
+            let RecordBody::Lesson(lesson) = &record.body else {
+                continue;
+            };
+            if lesson.audience.is_group() && lesson.decision.is_some() && !ids.contains(&record.id)
+            {
+                ids.push(record.id.clone());
+            }
         }
     }
     if !request.select.is_empty() {
@@ -152,7 +169,10 @@ fn build_package(
             .collect::<Vec<_>>();
         let private_ancestry = chain
             .iter()
-            .filter(|record| state.lifecycle_of(record) != Lifecycle::Accepted)
+            .filter(|record| {
+                state.lifecycle_of(record) != Lifecycle::Accepted
+                    && !matches!(record.body, RecordBody::Lesson(_))
+            })
             .map(|record| {
                 format!(
                     "v{} ({})",
@@ -339,7 +359,9 @@ pub fn push(request: PushRequest) -> ServiceResponse {
         .map(|record| record.id.clone())
         .collect::<BTreeSet<_>>();
     let state = AgreementState::from_records(private_records);
-    let package = build_package(&state, &shared_refs, &shared_ids, &request);
+    let share_lessons = crate::memory::read_config(layout.project_root())
+        .is_ok_and(|config| config == crate::memory::MemoryConfig::Beads);
+    let package = build_package(&state, &shared_refs, &shared_ids, &request, share_lessons);
     let remotes = shared.remotes().unwrap_or_default();
     let destination = json!({
         "database": shared_dir.display().to_string(),

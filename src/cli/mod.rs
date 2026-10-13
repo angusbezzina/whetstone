@@ -259,8 +259,8 @@ enum Command {
         #[arg(long)]
         sweep: bool,
         /// With --sweep: `findings` runs only the rules below must and prints
-        /// one JSON line per flag {fingerprint, subjectDigest, class, title,
-        /// responsibility} for a night sweep's controller.
+        /// a JSON array, one finding per flag {fingerprint, subjectDigest, class,
+        /// title, responsibility}, for a night sweep's controller (findings.json).
         #[arg(long, value_enum, requires = "sweep")]
         format: Option<CheckFormatArg>,
         /// Also prove each feature with its recorded mutations applied (in an
@@ -871,13 +871,13 @@ pub fn run() -> i32 {
                     return run_git_hook(&service, request, hook == Some(CheckHookArg::PreCommit))
                 }
                 None if request.findings => {
-                    // Findings mode prints only the findings, one JSON line
+                    // Findings mode prints only the findings (a JSON array, one per line)
                     // each, unless the envelope was asked for.
                     let response = service.execute(ServiceRequest::Check(request));
                     if explicit_json {
                         response
                     } else {
-                        match response.data["findings_jsonl"].as_str() {
+                        match response.data["findings_json"].as_str() {
                             Some(lines) => {
                                 print!("{lines}");
                                 return 0;
