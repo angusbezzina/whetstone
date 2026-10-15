@@ -64,6 +64,7 @@ fn send(address: SocketAddr, request: &str) -> String {
         match stream.read(&mut chunk) {
             Ok(0) => break,
             Ok(read) => response.extend_from_slice(&chunk[..read]),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => break,
             Err(error) => panic!("read response: {error}"),
         }
