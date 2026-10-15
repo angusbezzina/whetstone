@@ -155,7 +155,13 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
     let origin = temp.path().join("origin.git");
     git(
         temp.path(),
-        &["init", "-q", "--bare", origin.to_str().expect("path")],
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "--initial-branch=main",
+            origin.to_str().expect("path"),
+        ],
     );
     let url = format!("git+file://{}", origin.display());
 

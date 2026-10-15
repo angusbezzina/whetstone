@@ -841,7 +841,13 @@ fn the_private_store_never_inherits_the_team_remote_or_its_data() {
     let origin = temp.path().join("origin.git");
     git(
         temp.path(),
-        &["init", "-q", "--bare", origin.to_str().expect("path")],
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "--initial-branch=main",
+            origin.to_str().expect("path"),
+        ],
     );
     let team = temp.path().join("team");
     git(

@@ -78,7 +78,13 @@ impl Repo {
         };
         repo.git_in(
             repo.temp.path(),
-            &["init", "-q", "--bare", repo.origin.to_str().expect("path")],
+            &[
+                "init",
+                "-q",
+                "--bare",
+                "--initial-branch=main",
+                repo.origin.to_str().expect("path"),
+            ],
         );
         repo.git_in(
             repo.temp.path(),

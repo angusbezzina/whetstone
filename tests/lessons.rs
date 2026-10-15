@@ -1010,7 +1010,13 @@ fn admitted_team_lessons_travel_with_wh_push_and_personal_or_unadmitted_ones_nev
     plain(
         temp.path(),
         "git",
-        &["init", "-q", "--bare", origin.to_str().expect("path")],
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "--initial-branch=main",
+            origin.to_str().expect("path"),
+        ],
         false,
     );
     let url = format!("git+file://{}", origin.display());
