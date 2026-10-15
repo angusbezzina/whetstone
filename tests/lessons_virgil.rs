@@ -1,8 +1,7 @@
-//! The Virgil backend (whetstone-jpd.2, .5): with the memory switch naming a
-//! Virgil group, lessons live in the group's lesson collection and raised
-//! hands are tasks in its channel, reached only through `virgil lessons` and
-//! `virgil tasks`. A fake `virgil` on PATH stands in until Off Beads step 2a
-//! ships the real `virgil lessons` commands; it logs every call.
+//! The Virgil backend (whetstone-jpd.8, .10, .11) against a fake `virgil`
+//! (tests/fake_virgil.py) that speaks the shipped `virgil lessons`,
+//! `virgil tasks` and `virgil repos` flags, JSON lines and exit codes, and
+//! logs every call with the `VIRGIL_VIA` it saw.
 //!
 //! One test in its own binary, because it puts the fake first on this
 //! process's PATH for the person's in-process calls.
@@ -13,91 +12,14 @@ use std::process::{Command, Output};
 use serde_json::{json, Value};
 use tempfile::TempDir;
 use whetstone::domain::ActorKind;
-use whetstone::service::{ChangeRequest, CommandService, LessonOp, ServiceRequest};
+use whetstone::memory::virgil::{idempotency_ulid, Remember, VirgilCli};
+use whetstone::service::{
+    ChangeDefinition, ChangeKind, ChangeRequest, CommandService, InitAction, InitRequest, LessonOp,
+    ServiceRequest, ServiceResponse, ServiceState,
+};
 
 const GROUP: &str = "01J8Z0000000000000000000AD";
-
-/// A small stand-in for the daemon's CLI: one JSON request on stdin, one
-/// JSON line out, state in a file, every argv logged.
-const FAKE_VIRGIL: &str = r#"#!/usr/bin/env python3
-import json, os, sys
-args = sys.argv[1:]
-with open(os.environ["FAKE_VIRGIL_LOG"], "a") as log:
-    log.write(json.dumps(args) + "\n")
-family, op = args[0], args[1]
-request = json.loads(sys.stdin.read() or "{}")
-path = os.environ["FAKE_VIRGIL_STATE"]
-state = json.load(open(path)) if os.path.exists(path) else {"lessons": {}, "tasks": {}, "n": 0}
-api = "virgil." + family + "/v1"
-def done(result):
-    json.dump(state, open(path, "w"))
-    print(json.dumps({"api_version": api, "result": result}))
-    sys.exit(0)
-def fail(code, message, exit_code):
-    print(json.dumps({"api_version": api, "error": {"code": code, "message": message, "hint": ""}}))
-    sys.exit(exit_code)
-def stamp():
-    state["n"] += 1
-    return {"who": "principal:01J8Z0000000000000000000PR", "actor": "agent", "at": "2026-10-13T09:00:%02dZ" % (state["n"] % 60)}
-lessons = state["lessons"]
-if family == "lessons":
-    if op in ("find", "proposals"):
-        found = list(lessons.values())
-        if op == "proposals":
-            found = [l for l in found if l["status"] == "proposed" or l.get("forget_proposed")]
-        done({"lessons": found})
-    if op in ("remember", "supersede"):
-        body = request["lesson"]
-        for field in ("provenance", "stamp", "trust", "status", "decision"):
-            if field in body:
-                fail("provenance_supplied", field + " is stamped by the daemon", 2)
-        if body["key"] in lessons:
-            fail("exists", "lesson exists", 2)
-        lesson = dict(body)
-        lesson.update({"id": "lesson:%03d" % (len(lessons) + 1), "revision": 1, "provenance": stamp(), "trust": "inferred", "status": "proposed"})
-        if op == "supersede":
-            lesson["supersedes"] = request["key"]
-        lesson = {k: v for k, v in lesson.items() if v is not None}
-        lessons[body["key"]] = lesson
-        done({"lesson": lesson})
-    lesson = lessons.get(request.get("key"))
-    if lesson is None:
-        fail("not_found", "no such lesson", 2)
-    decision = {"by": "Owner", "at": "2026-10-13T10:00:00Z", "rationale": request.get("rationale") or request.get("reason") or "decided"}
-    if op == "admit":
-        receipt = "receipt:admit-%s" % lesson["key"]
-        lesson.update({"status": "admitted", "trust": request.get("trust", "validated"), "decision": dict(decision, verb="admit", receipt=receipt), "revision": lesson["revision"] + 1, "provenance": stamp()})
-        old = lessons.get(lesson.get("supersedes") or "")
-        if old:
-            old.update({"status": "superseded", "superseded_by": lesson["key"], "decision": dict(decision, verb="supersede"), "revision": old["revision"] + 1})
-        done({"lesson": lesson, "receipt": receipt})
-    if op == "forget":
-        if request.get("propose"):
-            lesson["forget_proposed"] = {"reason": request["reason"], "by": "an agent", "at": "2026-10-13T10:00:00Z"}
-        else:
-            lesson.update({"status": "forgotten", "decision": dict(decision, verb="forget")})
-            lesson.pop("forget_proposed", None)
-        lesson["revision"] += 1
-        done({"lesson": lesson})
-    fail("unknown_op", op, 2)
-if family == "tasks":
-    tasks = state["tasks"]
-    if op == "create":
-        ref = "task:01J8Z0000000000000000000T%d" % (len(tasks) + 1)
-        tasks[ref] = {"task": ref, "title": request["title"], "state": "todo", "comments": []}
-        done({"scope": request.get("scope"), "task": ref, "origin_source": "", "queued": False})
-    ref = args[2]
-    task = tasks[ref]
-    if op == "show":
-        done(task)
-    if op == "comment":
-        task["comments"].append({"text": request["text"]})
-        done({"task": ref, "queued": False})
-    if op == "move":
-        task["state"] = request["state"]
-        done({"task": ref, "state": task["state"], "changed": True})
-fail("unknown", family + " " + op, 2)
-"#;
+const REPOSITORY: &str = "01J8Z0000000000000000000RP";
 
 fn git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -141,7 +63,11 @@ impl Fake {
         let bin = dir.path().join("bin");
         std::fs::create_dir_all(&bin).expect("bin");
         let program = bin.join("virgil");
-        std::fs::write(&program, FAKE_VIRGIL).expect("write");
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake_virgil.py"),
+            &program,
+        )
+        .expect("copy fake");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -164,13 +90,64 @@ impl Fake {
         )
     }
 
-    fn calls(&self) -> Vec<Vec<String>> {
+    fn calls(&self) -> Vec<Value> {
         std::fs::read_to_string(&self.log)
             .unwrap_or_default()
             .lines()
             .map(|line| serde_json::from_str(line).expect("call"))
             .collect()
     }
+
+    fn clear(&self) {
+        let _ = std::fs::remove_file(&self.log);
+    }
+
+    /// The calls of one `virgil lessons <op>` (or tasks).
+    fn ops(&self, family: &str, op: &str) -> Vec<Value> {
+        self.calls()
+            .into_iter()
+            .filter(|call| call["argv"][0] == family && call["argv"][1] == op)
+            .collect()
+    }
+
+    fn state(&self) -> Value {
+        std::fs::read_to_string(&self.state)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_else(|| json!({}))
+    }
+
+    fn knob(&self, name: &str, value: Value) {
+        let mut state = self.state();
+        if state.get("knobs").is_none() {
+            state["knobs"] = json!({"attached": null, "fail": {}, "stale_get": false, "page": 100});
+        }
+        state["knobs"][name] = value;
+        std::fs::write(&self.state, state.to_string()).expect("state");
+    }
+
+    fn fail_next(&self, op: &str, exit: i32, landed: bool) {
+        let mut state = self.state();
+        state["knobs"]["fail"][op] = json!([exit, landed]);
+        std::fs::write(&self.state, state.to_string()).expect("state");
+    }
+
+    fn lesson(&self, key: &str) -> Value {
+        self.state()["lessons"][key].clone()
+    }
+}
+
+fn argv(call: &Value) -> Vec<String> {
+    call["argv"]
+        .as_array()
+        .expect("argv")
+        .iter()
+        .map(|arg| arg.as_str().expect("arg").to_string())
+        .collect()
+}
+
+fn has(call: &Value, arg: &str) -> bool {
+    argv(call).iter().any(|given| given == arg)
 }
 
 fn run(root: &Path, fake: &Fake, args: &[&str]) -> Output {
@@ -200,16 +177,126 @@ fn wh(root: &Path, fake: &Fake, args: &[&str]) -> Value {
     })
 }
 
-fn lesson(root: &Path, fake: &Fake, key: &str) -> Value {
-    let dash = wh(root, fake, &["dash", "--json"]);
-    dash["data"]["memory"]["lessons"]
+fn dash_memory(root: &Path, fake: &Fake) -> Value {
+    wh(root, fake, &["dash", "--json"])["data"]["memory"].clone()
+}
+
+fn listed(root: &Path, fake: &Fake, key: &str) -> Value {
+    let memory = dash_memory(root, fake);
+    memory["lessons"]
         .as_array()
         .and_then(|lessons| lessons.iter().find(|lesson| lesson["key"] == key).cloned())
-        .unwrap_or_else(|| panic!("no lesson {key}: {}", dash["data"]["memory"]))
+        .unwrap_or_else(|| panic!("no lesson {key}: {memory}"))
+}
+
+/// A person's `wh change` in this process (an agent cannot pass as one).
+fn person(root: &Path, request_id: &str, change: ChangeRequest) -> ServiceResponse {
+    CommandService.execute(ServiceRequest::Change(ChangeRequest {
+        project_dir: root.to_path_buf(),
+        request_id: Some(request_id.into()),
+        actor: ActorKind::Person,
+        ..change
+    }))
+}
+
+fn lesson_definition(value: Value) -> Option<Box<ChangeDefinition>> {
+    Some(Box::new(serde_json::from_value(value).expect("definition")))
+}
+
+fn remember(
+    root: &Path,
+    request_id: &str,
+    actor: ActorKind,
+    text: &str,
+    definition: Value,
+) -> ServiceResponse {
+    CommandService.execute(ServiceRequest::Change(ChangeRequest {
+        project_dir: root.to_path_buf(),
+        request_id: Some(request_id.into()),
+        actor,
+        kind: Some(ChangeKind::Lesson),
+        content: Some(text.into()),
+        definition: lesson_definition(definition),
+        ..ChangeRequest::default()
+    }))
+}
+
+fn admit(root: &Path, request_id: &str, key: &str) -> ServiceResponse {
+    person(
+        root,
+        request_id,
+        ChangeRequest {
+            lesson: Some(LessonOp::Admit {
+                key: key.into(),
+                trust: None,
+            }),
+            ..ChangeRequest::default()
+        },
+    )
+}
+
+fn memory_init(root: &Path, request_id: &str, actor: ActorKind, yes: bool) -> ServiceResponse {
+    CommandService.execute(ServiceRequest::Init(InitRequest {
+        project_dir: root.to_path_buf(),
+        request_id: Some(request_id.into()),
+        action: InitAction::Memory,
+        memory_store: Some("virgil".into()),
+        memory_group: Some(GROUP.into()),
+        yes,
+        actor,
+        ..InitRequest::default()
+    }))
+}
+
+fn ok(response: &ServiceResponse) {
+    assert_eq!(
+        response.state,
+        ServiceState::Success,
+        "{}: {}",
+        response.summary,
+        response.data
+    );
+}
+
+/// The importer's header grammar (Virgil lessons_import.rs, parse_header).
+fn parses_as_beads_header(line: &str) -> bool {
+    let parts = line.split(' ').collect::<Vec<_>>();
+    if !matches!(parts.len(), 4 | 5) {
+        return false;
+    }
+    let status = parts[0];
+    let field = |index: usize, name: &str| parts[index].strip_prefix(&format!("{name}=")[..]);
+    let scope_ok = matches!(field(1, "scope"), Some("repo" | "team" | "personal"));
+    let evidence_ok = matches!(
+        field(2, "evidence"),
+        Some("feedback" | "inference" | "code" | "test")
+    );
+    let verified_ok = field(3, "verified").is_some_and(|date| {
+        date.len() == 10
+            && date.chars().enumerate().all(|(index, character)| {
+                if index == 4 || index == 7 {
+                    character == '-'
+                } else {
+                    character.is_ascii_digit()
+                }
+            })
+    });
+    let successor = parts.get(4).map(|part| part.strip_prefix("successor="));
+    let successor_ok = match (status, successor) {
+        ("CURRENT" | "OBSOLETE", None) => true,
+        ("SUPERSEDED" | "OBSOLETE", Some(Some(key))) => {
+            !key.is_empty()
+                && key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        }
+        _ => false,
+    };
+    scope_ok && evidence_ok && verified_ok && successor_ok
 }
 
 #[test]
-fn with_the_switch_on_lessons_and_hands_live_in_virgil_and_nothing_migrates() {
+fn lessons_live_in_virgil_through_the_shipped_cli() {
     if !ready() {
         return;
     }
@@ -218,13 +305,17 @@ fn with_the_switch_on_lessons_and_hands_live_in_virgil_and_nothing_migrates() {
     std::env::set_var("PATH", fake.path());
     std::env::set_var("FAKE_VIRGIL_LOG", &fake.log);
     std::env::set_var("FAKE_VIRGIL_STATE", &fake.state);
+    let home = TempDir::new().expect("home");
+    std::env::set_var("HOME", home.path());
     let temp = TempDir::new().expect("temp");
-    let root = temp.path();
+    let root = temp.path().canonicalize().expect("root");
+    let root = root.as_path();
     git(root, &["init", "-q", "-b", "main"]);
     git(root, &["config", "user.email", "owner@example.com"]);
     git(root, &["config", "user.name", "Owner"]);
     git(root, &["config", "commit.gpgsign", "false"]);
     std::fs::write(root.join("app.py"), "value = 1\n").expect("write");
+    std::fs::write(root.join("units.py"), "unit = 'm'\n").expect("write");
     git(root, &["add", "."]);
     git(root, &["commit", "-qm", "start"]);
     let bd = Command::new("bd")
@@ -241,25 +332,75 @@ fn with_the_switch_on_lessons_and_hands_live_in_virgil_and_nothing_migrates() {
         String::from_utf8_lossy(&bd.stderr)
     );
 
-    // Standalone first: a lesson in Whetstone's Beads store, a hand in bd human.
-    let standalone = wh(
+    // ── Standalone: lessons in Whetstone's store, never a virgil call. ──
+    let path_about = json!({"type": "lesson", "key": "values-are-integers", "about": [{"kind": "path", "path": "app.py"}, {"kind": "repo", "repo": "fixture"}]});
+    ok(&remember(
         root,
-        &fake,
-        &[
-            "change",
-            "--json",
-            "--kind",
-            "lesson",
-            "--content",
-            "Values are integers.",
-            "--definition",
-            r#"{"type":"lesson","key":"values-are-integers"}"#,
-        ],
+        "s1",
+        ActorKind::Agent,
+        "Values are integers.",
+        path_about,
+    ));
+    ok(&admit(root, "s1-admit", "values-are-integers"));
+    ok(&remember(
+        root,
+        "s2",
+        ActorKind::Agent,
+        "Units are metres.",
+        json!({"type": "lesson", "key": "units-are-metres"}),
+    ));
+    ok(&admit(root, "s2-admit", "units-are-metres"));
+    // A person's correction: units-are-metres is superseded by its successor.
+    let corrected = person(
+        root,
+        "s3",
+        ChangeRequest {
+            lesson: Some(LessonOp::Supersede {
+                key: "units-are-metres".into(),
+            }),
+            content: Some("Units are metres, stored as floats.".into()),
+            ..ChangeRequest::default()
+        },
     );
-    assert_eq!(standalone["state"], "success", "{standalone}");
-    assert!(standalone["data"]["lesson"]["locator"]
+    ok(&corrected);
+    let successor = corrected.data["lesson"]["key"]
         .as_str()
-        .is_some_and(|locator| locator.starts_with("whetstone:")));
+        .expect("successor")
+        .to_string();
+    ok(&remember(
+        root,
+        "s4",
+        ActorKind::Agent,
+        "Old transport retries.",
+        json!({"type": "lesson", "key": "old-transport-retries"}),
+    ));
+    ok(&admit(root, "s4-admit", "old-transport-retries"));
+    ok(&person(
+        root,
+        "s4-forget",
+        ChangeRequest {
+            lesson: Some(LessonOp::Forget {
+                key: "old-transport-retries".into(),
+            }),
+            rationale: Some("The transport was removed.".into()),
+            ..ChangeRequest::default()
+        },
+    ));
+    ok(&remember(
+        root,
+        "s5",
+        ActorKind::Agent,
+        "I prefer short answers.",
+        json!({"type": "lesson", "key": "prefer-short-answers", "audience": {"kind": "person", "name": "Owner"}}),
+    ));
+    ok(&admit(root, "s5-admit", "prefer-short-answers"));
+    ok(&remember(
+        root,
+        "s6",
+        ActorKind::Agent,
+        "Maybe cache the parser.",
+        json!({"type": "lesson", "key": "maybe-cache-the-parser"}),
+    ));
     let hand = wh(
         root,
         &fake,
@@ -277,44 +418,222 @@ fn with_the_switch_on_lessons_and_hands_live_in_virgil_and_nothing_migrates() {
     );
     assert_eq!(hand["state"], "needs_decision", "{hand}");
     assert!(hand["data"]["route"].is_null());
-    assert!(!hand["data"]["issue"]
-        .as_str()
-        .expect("issue")
-        .starts_with("task:"));
     assert!(
         fake.calls().is_empty(),
         "standalone never calls virgil: {:?}",
         fake.calls()
     );
 
-    // Flip the switch: nothing migrates.
-    let switched = wh(
+    // ── Flipping without an attachment says what is missing; no flip. ──
+    fake.knob("attached", Value::Null);
+    let unattached = memory_init(root, "flip-1", ActorKind::Person, false);
+    assert_eq!(
+        unattached.state,
+        ServiceState::NeedsInput,
+        "{}",
+        unattached.summary
+    );
+    assert!(
+        unattached.summary.contains("not attached"),
+        "{}",
+        unattached.summary
+    );
+    assert!(unattached
+        .permitted_actions
+        .iter()
+        .any(|action| action.starts_with("virgil repos attach")));
+    assert!(
+        !root.join("whetstone/memory.json").exists(),
+        "the switch did not flip"
+    );
+
+    // ── Attached: the export is the importer's file, outside the repo. ──
+    fake.knob("attached", json!([GROUP, REPOSITORY]));
+    let exported = memory_init(root, "flip-2", ActorKind::Person, false);
+    assert_eq!(
+        exported.state,
+        ServiceState::NeedsDecision,
+        "{}",
+        exported.summary
+    );
+    assert!(
+        !root.join("whetstone/memory.json").exists(),
+        "no flip before the import"
+    );
+    let file = PathBuf::from(exported.data["migration"]["file"].as_str().expect("file"));
+    assert!(
+        !file.starts_with(root),
+        "the importer refuses exports inside the repository"
+    );
+    let text = std::fs::read_to_string(&file).expect("export");
+    let export: serde_json::Map<String, Value> =
+        serde_json::from_str(&text).expect("one JSON object");
+    let mut keys = export.keys().cloned().collect::<Vec<_>>();
+    keys.sort();
+    let mut expected = vec![
+        "old-transport-retries".to_string(),
+        "prefer-short-answers".into(),
+        "units-are-metres".into(),
+        "values-are-integers".into(),
+        successor.clone(),
+    ];
+    expected.sort();
+    assert_eq!(keys, expected, "every key once, no proposals");
+    for (key, body) in &export {
+        let (header, lesson_text) = body
+            .as_str()
+            .expect("body")
+            .split_once('\n')
+            .expect("header line");
+        assert!(parses_as_beads_header(header), "{key}: {header}");
+        assert!(!lesson_text.is_empty());
+    }
+    let header = |key: &str| {
+        export[key]
+            .as_str()
+            .expect("body")
+            .lines()
+            .next()
+            .expect("line")
+            .to_string()
+    };
+    assert!(
+        header("values-are-integers").starts_with("CURRENT scope=repo evidence=feedback verified=")
+    );
+    assert!(header("prefer-short-answers").starts_with("CURRENT scope=personal "));
+    assert!(header("units-are-metres").starts_with("SUPERSEDED scope=team "));
+    assert!(header("units-are-metres").ends_with(&format!(" successor={successor}")));
+    assert!(header("old-transport-retries").starts_with("OBSOLETE "));
+    let proposals: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            exported.data["migration"]["proposals_file"]
+                .as_str()
+                .expect("proposals"),
+        )
+        .expect("read"),
+    )
+    .expect("json");
+    assert!(
+        proposals.get("maybe-cache-the-parser").is_some(),
+        "{proposals}"
+    );
+    assert_eq!(
+        exported.data["migration"]["personal"],
+        json!(["prefer-short-answers"])
+    );
+    assert!(exported.permitted_actions.iter().any(|action| action
+        .contains(&format!("import-beads --repo {REPOSITORY} --file"))
+        && action.ends_with("--dry-run --json")));
+    let again = memory_init(root, "flip-3", ActorKind::Person, false);
+    assert_eq!(again.state, ServiceState::NeedsDecision);
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("again"),
+        text,
+        "the flip rewrites an identical file"
+    );
+
+    // Until the import is applied, a switch flipped by hand reports what was
+    // left behind.
+    std::fs::create_dir_all(root.join("whetstone")).expect("dir");
+    std::fs::write(
+        root.join("whetstone/memory.json"),
+        json!({"store": "virgil", "group": GROUP}).to_string(),
+    )
+    .expect("switch");
+    let memory = dash_memory(root, &fake);
+    assert_eq!(memory["backend"], "virgil");
+    assert_eq!(memory["not_migrated"]["lessons"], 4, "{memory}");
+    assert!(
+        memory["proposals"]
+            .as_array()
+            .expect("proposals")
+            .contains(&json!("maybe-cache-the-parser")),
+        "proposals stay in Whetstone's store: {memory}"
+    );
+    std::fs::remove_file(root.join("whetstone/memory.json")).expect("unflip");
+
+    // The person reviews and applies the import (Virgil's command, faked).
+    let file_arg = format!("--file={}", file.display());
+    for mode in ["--dry-run", "--apply"] {
+        let output = Command::new(fake.bin.join("virgil"))
+            .args([
+                "lessons",
+                "import-beads",
+                &format!("--repo={REPOSITORY}"),
+                &file_arg,
+                mode,
+                "--json",
+            ])
+            .current_dir(root)
+            .output()
+            .expect("import");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        if mode == "--dry-run" {
+            let plan: Value = serde_json::from_slice(&output.stdout).expect("plan");
+            let personal = plan["result"]["entries"]
+                .as_array()
+                .expect("entries")
+                .iter()
+                .find(|entry| entry["key"] == "prefer-short-answers")
+                .cloned()
+                .expect("personal entry");
+            assert_eq!(personal["disposition"], "personal_needs_owner");
+        }
+    }
+    // An agent cannot confirm it; a person's confirmation reads back,
+    // re-anchors and flips.
+    fake.clear();
+    let agent_confirm = wh(
         root,
         &fake,
         &[
-            "init", "--json", "--action", "memory", "--store", "virgil", "--group", GROUP,
+            "init", "--json", "--action", "memory", "--store", "virgil", "--group", GROUP, "--yes",
         ],
     );
-    assert_eq!(switched["state"], "success", "{switched}");
-    assert_eq!(switched["data"]["migrated"], 0);
-    let written: Value = serde_json::from_str(
-        &std::fs::read_to_string(root.join("whetstone/memory.json")).expect("switch"),
-    )
-    .expect("json");
-    assert_eq!(written, json!({"store": "virgil", "group": GROUP}));
-    let dash = wh(root, &fake, &["dash", "--json"]);
-    let memory = &dash["data"]["memory"];
-    assert_eq!(memory["backend"], "virgil");
-    assert_eq!(memory["group"], GROUP);
-    assert_eq!(memory["not_migrated"]["lessons"], 1, "{memory}");
+    assert_eq!(agent_confirm["state"], "conflict", "{agent_confirm}");
+    assert!(!root.join("whetstone/memory.json").exists());
+    let confirmed = memory_init(root, "flip-4", ActorKind::Person, true);
+    ok(&confirmed);
+    assert_eq!(confirmed.data["migrated"], 4);
     assert_eq!(
-        memory["lessons"],
-        json!([]),
-        "the Beads lesson was not copied"
+        confirmed.data["migration"]["re_anchored"],
+        json!(["values-are-integers"])
     );
+    let reanchor = fake.ops("lessons", "remember");
+    assert_eq!(reanchor.len(), 1, "{reanchor:?}");
+    assert!(has(&reanchor[0], "--key=values-are-integers"));
+    assert!(has(&reanchor[0], "--if-revision=1"));
+    assert!(has(&reanchor[0], "--reason=re-anchored after import"));
+    assert!(has(&reanchor[0], "--anchor=app.py"));
+    assert!(
+        reanchor[0]["via"].is_null(),
+        "the person's write carries no marker"
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(
+            &std::fs::read_to_string(root.join("whetstone/memory.json")).expect("switch")
+        )
+        .expect("json"),
+        json!({"store": "virgil", "group": GROUP})
+    );
+    let memory = dash_memory(root, &fake);
+    assert!(memory["not_migrated"].is_null(), "{memory}");
+    assert_eq!(
+        listed(root, &fake, "values-are-integers")["status"],
+        "admitted"
+    );
+    assert!(listed(root, &fake, "values-are-integers")["locator"]
+        .as_str()
+        .expect("locator")
+        .starts_with("virgil:"));
 
-    // The same verbs, now in Virgil: an agent proposes and cannot admit.
-    let remembered = wh(
+    // ── Virgil mode: an agent's lesson stays a proposal in Whetstone. ──
+    fake.clear();
+    let proposed = wh(
         root,
         &fake,
         &[
@@ -327,29 +646,25 @@ fn with_the_switch_on_lessons_and_hands_live_in_virgil_and_nothing_migrates() {
             "--content",
             "Values are floats since the units change.",
             "--definition",
-            r#"{"type":"lesson","key":"values-are-floats","about":[{"kind":"path","path":"app.py"}]}"#,
+            r#"{"type":"lesson","key":"values-are-floats","about":[{"kind":"path","path":"app.py"},{"kind":"repo","repo":"fixture"}]}"#,
         ],
     );
-    assert_eq!(remembered["state"], "success", "{remembered}");
-    assert!(remembered["data"]["lesson"]["locator"]
+    assert_eq!(proposed["state"], "success", "{proposed}");
+    assert!(proposed["data"]["lesson"]["locator"]
         .as_str()
-        .is_some_and(|locator| locator.starts_with("virgil:lesson:")));
-    let sent = fake
-        .calls()
-        .into_iter()
-        .find(|call| call[0] == "lessons" && call[1] == "remember")
-        .expect("remember went to virgil");
-    assert!(sent.contains(&GROUP.to_string()));
+        .expect("locator")
+        .starts_with("whetstone:"));
+    assert!(
+        fake.ops("lessons", "remember").is_empty(),
+        "an agent's proposal never reaches Virgil"
+    );
+    assert!(fake.state()["lessons"].get("values-are-floats").is_none());
     let refused = wh(
         root,
         &fake,
         &["change", "--json", "--admit", "values-are-floats"],
     );
     assert_eq!(refused["data"]["refusal"]["code"], "agent_cannot_admit");
-    assert!(
-        !fake.calls().iter().any(|call| call[1] == "admit"),
-        "a refused admit never reaches the store"
-    );
     let provenance = wh(
         root,
         &fake,
@@ -368,40 +683,355 @@ fn with_the_switch_on_lessons_and_hands_live_in_virgil_and_nothing_migrates() {
         provenance["data"]["refusal"]["code"],
         "provenance_is_stamped"
     );
-
-    // A person admits; the daemon's receipt is the decision's record.
-    let admitted = CommandService.execute(ServiceRequest::Change(ChangeRequest {
-        project_dir: root.to_path_buf(),
-        request_id: Some("v-admit".into()),
-        actor: ActorKind::Person,
-        lesson: Some(LessonOp::Admit {
-            key: "values-are-floats".into(),
-            trust: None,
-        }),
-        ..ChangeRequest::default()
-    }));
+    let chosen = person(
+        root,
+        "v-trust",
+        ChangeRequest {
+            lesson: Some(LessonOp::Admit {
+                key: "values-are-floats".into(),
+                trust: Some(whetstone::domain::Trust::Authoritative),
+            }),
+            ..ChangeRequest::default()
+        },
+    );
     assert_eq!(
-        admitted.state,
-        whetstone::service::ServiceState::Success,
+        chosen.data["refusal"]["code"], "trust_not_chosen",
         "{}",
-        admitted.summary
+        chosen.summary
     );
-    let listed = lesson(root, &fake, "values-are-floats");
-    assert_eq!(listed["status"], "admitted");
-    assert_eq!(listed["trust"], "validated");
-    assert_eq!(
-        listed["decision"]["receipt"],
-        "receipt:admit-values-are-floats"
+    assert!(fake.ops("lessons", "remember").is_empty());
+
+    // A person's admit is their `virgil lessons remember`: validated.
+    let admitted = admit(root, "v-admit", "values-are-floats");
+    ok(&admitted);
+    let writes = fake.ops("lessons", "remember");
+    assert_eq!(writes.len(), 1);
+    let write = &writes[0];
+    for flag in [
+        "--key=values-are-floats",
+        "--text=Values are floats since the units change.",
+        "--audience=channel",
+        "--about=repo",
+        "--anchor=app.py",
+    ] {
+        assert!(has(write, flag), "{flag}: {write}");
+    }
+    assert!(argv(write)
+        .iter()
+        .any(|arg| arg.starts_with("--idempotency-key=")
+            && arg.len() == "--idempotency-key=".len() + 26));
+    assert!(
+        !argv(write).iter().any(|arg| arg.starts_with("--group")),
+        "no --group: the attachment scopes it"
     );
-    assert_eq!(listed["may_be_stale"], false);
+    assert!(write["via"].is_null());
+    assert_eq!(fake.lesson("values-are-floats")["trust"], "validated");
+    let shown = listed(root, &fake, "values-are-floats");
+    assert_eq!(shown["status"], "admitted");
+    assert_eq!(shown["trust"], "validated");
+    assert!(shown["decision"]["receipt"]
+        .as_str()
+        .expect("receipt")
+        .starts_with("virgil:"));
+    assert!(!dash_memory(root, &fake)["proposals"]
+        .as_array()
+        .expect("proposals")
+        .contains(&json!("values-are-floats")));
+    // Staleness is Virgil's: the anchor changed.
+    assert_eq!(shown["may_be_stale"], false);
     std::fs::write(root.join("app.py"), "value = 1.0\n").expect("write");
     assert_eq!(
-        lesson(root, &fake, "values-are-floats")["may_be_stale"],
-        true,
-        "staleness is Whetstone's, whatever the store"
+        listed(root, &fake, "values-are-floats")["may_be_stale"],
+        true
+    );
+    assert!(!fake
+        .ops("lessons", "list")
+        .iter()
+        .filter(|call| has(call, "--changed"))
+        .collect::<Vec<_>>()
+        .is_empty());
+    std::fs::write(root.join("app.py"), "value = 1\n").expect("write");
+
+    // Text that starts with `-` is data, never a flag.
+    ok(&remember(
+        root,
+        "v-dash",
+        ActorKind::Person,
+        "--never-a-flag: pass values as --flag=value.",
+        json!({"type": "lesson", "key": "values-are-not-flags"}),
+    ));
+    ok(&admit(root, "v-dash-admit", "values-are-not-flags"));
+    assert_eq!(
+        fake.lesson("values-are-not-flags")["text"],
+        "--never-a-flag: pass values as --flag=value."
     );
 
-    // A raised hand is a task in the group's channel, and the trail has it.
+    // An agent's correction waits; a person's rewrites in place, keeping
+    // the subjects and anchors, revision-checked.
+    fake.clear();
+    let agent_fix = wh(
+        root,
+        &fake,
+        &[
+            "change",
+            "--json",
+            "--supersede",
+            "values-are-floats",
+            "--content",
+            "Values are decimals.",
+        ],
+    );
+    assert_eq!(agent_fix["state"], "success", "{agent_fix}");
+    assert_eq!(agent_fix["data"]["applied"], false);
+    assert!(fake.ops("lessons", "remember").is_empty());
+    let revision = fake.lesson("values-are-floats")["revision"]
+        .as_u64()
+        .expect("revision");
+    let fixed = person(
+        root,
+        "v-fix",
+        ChangeRequest {
+            lesson: Some(LessonOp::Supersede {
+                key: "values-are-floats".into(),
+            }),
+            content: Some("Values are floats in SI units.".into()),
+            rationale: Some("The units settled.".into()),
+            ..ChangeRequest::default()
+        },
+    );
+    ok(&fixed);
+    assert!(
+        fixed.summary.contains("rewritten in place"),
+        "{}",
+        fixed.summary
+    );
+    let rewrite = fake.ops("lessons", "remember");
+    assert_eq!(rewrite.len(), 1, "{rewrite:?}");
+    for flag in [
+        "--key=values-are-floats".to_string(),
+        format!("--if-revision={revision}"),
+        "--reason=The units settled.".into(),
+        "--about=repo".into(),
+        "--anchor=app.py".into(),
+    ] {
+        assert!(has(&rewrite[0], &flag), "{flag}: {}", rewrite[0]);
+    }
+    assert_eq!(
+        fake.lesson("values-are-floats")["text"],
+        "Values are floats in SI units."
+    );
+    assert_eq!(fake.lesson("values-are-floats")["revision"], revision + 1);
+
+    // A moved revision is read-again, never retried blind.
+    fake.clear();
+    fake.knob("stale_get", json!(true));
+    let moved = person(
+        root,
+        "v-moved",
+        ChangeRequest {
+            lesson: Some(LessonOp::Supersede {
+                key: "values-are-floats".into(),
+            }),
+            content: Some("Values are floats, always.".into()),
+            rationale: Some("Again.".into()),
+            ..ChangeRequest::default()
+        },
+    );
+    assert_eq!(
+        moved.data["refusal"]["code"], "read_again",
+        "{}",
+        moved.summary
+    );
+    assert_eq!(fake.ops("lessons", "remember").len(), 1, "one attempt only");
+    fake.knob("stale_get", json!(false));
+
+    // Supersede onto a successor that already exists: Virgil's own verb.
+    fake.clear();
+    let retired = person(
+        root,
+        "v-retire",
+        ChangeRequest {
+            lesson: Some(LessonOp::Supersede {
+                key: "values-are-not-flags".into(),
+            }),
+            record_id: Some("lesson.values-are-floats".into()),
+            content: Some("Folded into values-are-floats.".into()),
+            rationale: Some("One lesson is enough.".into()),
+            ..ChangeRequest::default()
+        },
+    );
+    ok(&retired);
+    let supersede = fake.ops("lessons", "supersede");
+    assert_eq!(supersede.len(), 1, "{:?}", fake.calls());
+    assert!(has(&supersede[0], "values-are-not-flags"));
+    assert!(has(&supersede[0], "--with=values-are-floats"));
+    assert!(argv(&supersede[0])
+        .iter()
+        .any(|arg| arg.starts_with("--if-revision=")));
+    assert!(argv(&supersede[0])
+        .iter()
+        .any(|arg| arg.starts_with("--successor-revision=")));
+    assert_eq!(fake.lesson("values-are-not-flags")["status"], "superseded");
+
+    // Forget: an agent proposes (nothing in Virgil); a person's is
+    // revision-checked.
+    fake.clear();
+    let agent_forget = wh(
+        root,
+        &fake,
+        &[
+            "change",
+            "--json",
+            "--forget",
+            "prefer-short-answers",
+            "--rationale",
+            "Stale preference.",
+        ],
+    );
+    assert_eq!(agent_forget["state"], "success", "{agent_forget}");
+    assert!(fake.ops("lessons", "forget").is_empty());
+    assert!(!listed(root, &fake, "prefer-short-answers")["forget_proposed"].is_null());
+    let forgotten = person(
+        root,
+        "v-forget",
+        ChangeRequest {
+            lesson: Some(LessonOp::Forget {
+                key: "prefer-short-answers".into(),
+            }),
+            rationale: Some("No longer true.".into()),
+            ..ChangeRequest::default()
+        },
+    );
+    ok(&forgotten);
+    let forget = fake.ops("lessons", "forget");
+    assert_eq!(forget.len(), 1);
+    assert!(has(&forget[0], "--if-revision=1"));
+    assert!(has(&forget[0], "--reason=No longer true."));
+    assert_eq!(fake.lesson("prefer-short-answers")["status"], "forgotten");
+
+    // Exit codes: an id means it landed, even at 7 or 5; without one it is
+    // refused with Whetstone's code; 6 unattached says attach.
+    ok(&remember(
+        root,
+        "e1",
+        ActorKind::Person,
+        "Pending lessons still land.",
+        json!({"type": "lesson", "key": "pending-lessons-land"}),
+    ));
+    fake.fail_next("remember", 7, true);
+    ok(&admit(root, "e1-admit", "pending-lessons-land"));
+    ok(&remember(
+        root,
+        "e2",
+        ActorKind::Person,
+        "Follow-ups may be refused.",
+        json!({"type": "lesson", "key": "follow-ups-refused"}),
+    ));
+    fake.fail_next("remember", 5, true);
+    ok(&admit(root, "e2-admit", "follow-ups-refused"));
+    ok(&remember(
+        root,
+        "e3",
+        ActorKind::Person,
+        "Some writes are not permitted.",
+        json!({"type": "lesson", "key": "writes-not-permitted"}),
+    ));
+    fake.fail_next("remember", 5, false);
+    assert_eq!(
+        admit(root, "e3-admit", "writes-not-permitted").data["refusal"]["code"],
+        "not_permitted"
+    );
+    fake.fail_next("remember", 7, false);
+    let unavailable = admit(root, "e3-again", "writes-not-permitted");
+    assert_eq!(
+        unavailable.state,
+        ServiceState::Unavailable,
+        "{}",
+        unavailable.summary
+    );
+    fake.knob("attached", Value::Null);
+    let detached = admit(root, "e4", "writes-not-permitted");
+    assert_eq!(
+        detached.data["refusal"]["code"], "unattached",
+        "{}",
+        detached.summary
+    );
+    assert!(
+        detached.summary.contains("Attach the repository"),
+        "{}",
+        detached.summary
+    );
+    fake.knob("attached", json!([GROUP, REPOSITORY]));
+
+    // ── whetstone-jpd.11: an agent's writes are marked; a person's not. ──
+    fake.clear();
+    let host = whetstone::memory::agent_host();
+    let agent = VirgilCli::new(root, ActorKind::Agent);
+    let written = agent
+        .remember(&Remember {
+            key: "agents-write-inferred",
+            text: "An agent's direct write is inferred.",
+            audience: "channel",
+            about: vec!["repo".into()],
+            anchors: vec!["units.py".into()],
+            if_revision: None,
+            reason: None,
+            idempotency: idempotency_ulid("agent-write", 0),
+        })
+        .expect("agent remember");
+    assert_eq!(written.trust, Some(whetstone::domain::Trust::Inferred));
+    assert_eq!(written.via, format!("agent:{host}"));
+    let as_proposal = listed(root, &fake, "agents-write-inferred");
+    assert_eq!(
+        as_proposal["status"], "proposed",
+        "a current but inferred lesson waits on a person"
+    );
+    agent
+        .supersede(
+            "agents-write-inferred",
+            "values-are-floats",
+            99,
+            99,
+            "test",
+            &idempotency_ulid("agent-supersede", 0),
+        )
+        .expect_err("a moved revision is refused; only the marker matters here");
+    agent
+        .forget(
+            "agents-write-inferred",
+            99,
+            "test",
+            &idempotency_ulid("agent-forget", 0),
+        )
+        .expect_err("a moved revision is refused");
+    for call in fake.calls().iter().filter(|call| {
+        matches!(
+            call["argv"][1].as_str(),
+            Some("remember" | "supersede" | "forget")
+        )
+    }) {
+        assert_eq!(call["via"], format!("agent:{host}"), "{call}");
+    }
+    // The person's admit rewrites it as theirs: validated, no marker.
+    fake.clear();
+    ok(&admit(root, "j11-admit", "agents-write-inferred"));
+    let rewrite = fake.ops("lessons", "remember");
+    assert!(rewrite[0]["via"].is_null());
+    assert!(has(&rewrite[0], "--anchor=units.py") && has(&rewrite[0], "--if-revision=1"));
+    assert_eq!(fake.lesson("agents-write-inferred")["trust"], "validated");
+    // A host that breaks Virgil's client rule never reaches it unnormalised.
+    assert_eq!(
+        whetstone::memory::virgil_client("Cursor Agent!"),
+        "cursor-agent-"
+    );
+    assert_eq!(whetstone::memory::virgil_client("--"), "whetstone");
+    assert_eq!(
+        whetstone::memory::virgil_client(&"x".repeat(65)),
+        "whetstone"
+    );
+
+    // ── Raised hands: a task in the channel naming the agent, no marker. ──
+    fake.clear();
     let hand = wh(
         root,
         &fake,
@@ -420,17 +1050,25 @@ fn with_the_switch_on_lessons_and_hands_live_in_virgil_and_nothing_migrates() {
     assert_eq!(hand["data"]["route"], format!("virgil:{GROUP}"), "{hand}");
     let task = hand["data"]["issue"].as_str().expect("task").to_string();
     assert!(task.starts_with("task:"));
-    let dash = wh(root, &fake, &["dash", "--json"]);
-    let request = dash["data"]["current"]["requests"]
-        .as_array()
-        .and_then(|requests| {
-            requests
-                .iter()
-                .find(|request| request["issue"] == task.as_str())
-                .cloned()
-        })
-        .expect("the hand is listed");
-    assert_eq!(request["question"], "Floats everywhere?");
+    let description = fake.state()["tasks"][&task]["description"]
+        .as_str()
+        .expect("description")
+        .to_string();
+    assert!(
+        description.starts_with(&format!("Raised by {host} (an agent) through Whetstone.")),
+        "{description}"
+    );
+    for call in fake
+        .calls()
+        .iter()
+        .filter(|call| call["argv"][0] == "tasks")
+    {
+        assert!(
+            call["via"].is_null(),
+            "virgil tasks never gets VIRGIL_VIA: {call}"
+        );
+        assert!(has(call, "--group") && has(call, GROUP));
+    }
     let answered = wh(
         root,
         &fake,
@@ -444,21 +1082,27 @@ fn with_the_switch_on_lessons_and_hands_live_in_virgil_and_nothing_migrates() {
         ],
     );
     assert_eq!(answered["state"], "success", "{answered}");
-    let calls = fake.calls();
-    assert!(calls
-        .iter()
-        .any(|call| call[0] == "tasks" && call[1] == "comment" && call[2] == task));
-    assert!(calls
-        .iter()
-        .any(|call| call[0] == "tasks" && call[1] == "move" && call[2] == task));
+    assert_eq!(fake.state()["tasks"][&task]["state"], "done");
+    let dash = wh(root, &fake, &["dash", "--json"]);
+    let request = dash["data"]["current"]["requests"]
+        .as_array()
+        .and_then(|requests| {
+            requests
+                .iter()
+                .find(|request| request["issue"] == task.as_str())
+                .cloned()
+        })
+        .expect("the hand is listed");
+    assert_eq!(request["question"], "Floats everywhere?");
 
-    // Backend b never calls anything but `virgil lessons` and `virgil tasks`.
+    // Backend b never calls anything but `virgil lessons`, `tasks`, `repos`.
     for call in fake.calls() {
-        assert!(matches!(call[0].as_str(), "lessons" | "tasks"), "{call:?}");
         assert!(
-            call.windows(2)
-                .any(|pair| pair[0] == "--group" && pair[1] == GROUP),
-            "{call:?}"
+            matches!(
+                call["argv"][0].as_str(),
+                Some("lessons" | "tasks" | "repos")
+            ),
+            "{call}"
         );
     }
 }

@@ -143,6 +143,8 @@ pub struct InitRequest {
     pub memory_store: Option<String>,
     /// The Virgil group lessons live in (memory, with `virgil`).
     pub memory_group: Option<String>,
+    /// Who asked: confirming an import into Virgil is a person's (memory).
+    pub actor: crate::domain::ActorKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -369,6 +371,8 @@ pub struct HandRequest {
     pub recommendation: String,
     pub trigger: HandTrigger,
     pub rule: Option<String>,
+    /// Who raised it; an agent's hand in Virgil names the agent in the task.
+    pub actor: crate::domain::ActorKind,
 }
 
 #[derive(Debug, Clone, Default)]

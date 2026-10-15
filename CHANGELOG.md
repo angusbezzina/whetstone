@@ -36,10 +36,24 @@ requests, and gate exceptions. They stay here as a record of what was built.
   a `lesson_check` receipt.
 - A pluggable lesson store behind `whetstone/memory.json`
   (`wh init --action memory`): Whetstone's Beads store standalone, or a
-  Virgil group's lesson collection through `virgil lessons` only. Switching
-  migrates nothing. Raised hands follow the switch: a Virgil task in the
-  group's channel instead of `bd human`. Standalone, admitted group lessons
-  travel with `wh push`; personal and unadmitted lessons never do.
+  Virgil group's lesson collection through `virgil lessons` only. Raised
+  hands follow the switch: a Virgil task in the group's channel instead of
+  `bd human`. Standalone, admitted group lessons travel with `wh push`;
+  personal and unadmitted lessons never do.
+- The Virgil backend speaks the shipped `virgil lessons` CLI (Virgil PRs
+  #1021, #1036): proposals stay in Whetstone's store and a person's admit is
+  their `virgil lessons remember` (validated; `--trust` is refused there);
+  corrections rewrite in place with `--if-revision`, keeping `--about` and
+  `--anchor`; Virgil's exit codes map to Whetstone's refusals (`read_again`,
+  `unattached`, ...); staleness comes from Virgil's anchors and
+  `list --changed`. An agent's writes carry `VIRGIL_VIA=agent:<host>`, and an
+  agent's raised hand names the agent in the task.
+- Flipping to Virgil migrates: `wh init --action memory --store virgil`
+  checks the checkout's attachment, writes the admitted lessons outside the
+  repository as the file `virgil lessons import-beads` reads (proposals
+  beside it), and flips only when a person confirms with `--yes` that every
+  key read back; anchored lessons are then re-anchored. `wh dash` counts the
+  lessons left behind until then.
 - The ladder: `wh change --kind rule --from-lesson <key>` drafts a shadow
   rule from an admitted lesson; accepting it cites the lesson, and `wh dash`
   walks rule, accepting review, lesson and anchors. Any rule can be in

@@ -395,10 +395,12 @@ pub(crate) fn raise_hand(
         hand.trigger.label(),
         rule.as_ref().map(RecordId::as_str),
     );
+    let host = (hand.actor == crate::domain::ActorKind::Agent).then(crate::memory::agent_host);
     let filed = match crate::hands::route(
         layout.project_root(),
         &format!("Owner decision needed: {question}"),
         &description,
+        host.as_deref(),
     ) {
         Ok(filed) => filed,
         Err(error) => {
@@ -445,6 +447,7 @@ pub(crate) fn raise_hand(
             tried,
             recommendation,
             raised_at: raised_at.clone(),
+            actor: Some(hand.actor),
         }),
     ) {
         Ok(record) => record,

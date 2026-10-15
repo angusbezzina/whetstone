@@ -25,7 +25,7 @@ use super::{
 pub(crate) fn refused(request_id: String, refusal: Refusal) -> ServiceResponse {
     let state = match refusal.code {
         "store_unavailable" => ServiceState::Unavailable,
-        "lesson_not_found" => ServiceState::NeedsInput,
+        "lesson_not_found" | "unattached" => ServiceState::NeedsInput,
         _ => ServiceState::Conflict,
     };
     let mut response = ServiceResponse::new(
@@ -39,6 +39,15 @@ pub(crate) fn refused(request_id: String, refusal: Refusal) -> ServiceResponse {
             "wh dash (a person admits it there)".into(),
             "take other ready work".into(),
         ],
+        "read_again" => vec![
+            "wh dash --json (read the lesson's current revision)".into(),
+            "repeat the request with a new request id".into(),
+        ],
+        "unattached" => vec![
+            "virgil repos show".into(),
+            "virgil repos attach <repository> --group <group>".into(),
+        ],
+        "store_unavailable" => vec!["virgil status, then repeat the request".into()],
         _ => vec!["correct the request, then repeat it".into()],
     };
     response.data = json!({"refusal": refusal, "recorded": false});
@@ -171,7 +180,19 @@ fn draft(
             .unwrap_or_else(|| {
                 memory::default_audience(config, &project_label(layout.project_root()))
             }),
-        anchor_paths: definition.anchors.clone(),
+        // A correction keeps the anchors of the lesson it corrects unless the
+        // writer names others (inside Virgil a rewrite replaces them whole).
+        anchor_paths: inherit(
+            &definition.anchors,
+            base.map(|lesson| {
+                lesson
+                    .anchors
+                    .iter()
+                    .map(|anchor| anchor.path.clone())
+                    .collect::<Vec<_>>()
+            })
+            .as_ref(),
+        ),
         supersedes,
     })
 }
@@ -216,11 +237,17 @@ pub(crate) fn change(
         Ok(config) => config,
         Err(refusal) => return refused(request_id, refusal),
     };
-    let store = memory::open_store(layout, &config);
+    let store = memory::open_store_as(layout, &config, request.actor);
     let result = match (&request.lesson, request.kind) {
-        (Some(LessonOp::Admit { key, trust }), _) => {
-            admit(layout, store.as_ref(), &request_id, request, key, *trust)
-        }
+        (Some(LessonOp::Admit { key, trust }), _) => admit(
+            layout,
+            &config,
+            store.as_ref(),
+            &request_id,
+            request,
+            key,
+            *trust,
+        ),
         (Some(LessonOp::Supersede { key }), _) => {
             supersede(layout, &config, store.as_ref(), &request_id, request, key)
         }
@@ -256,11 +283,16 @@ fn remember(
         request_id.to_string(),
         "change",
         ServiceState::Success,
-        format!(
-            "Lesson {} was proposed (inferred) in the {} store. A person admits it; nothing is delivered until then.",
-            stored.lesson.key,
-            store.backend()
-        ),
+        match config {
+            MemoryConfig::Beads => format!(
+                "Lesson {} was proposed (inferred) in the beads store. A person admits it; nothing is delivered until then.",
+                stored.lesson.key
+            ),
+            MemoryConfig::Virgil { .. } => format!(
+                "Lesson {} was proposed (inferred) and waits in Whetstone's store; nothing reaches Virgil until a person admits it, which writes it to the group's lessons.",
+                stored.lesson.key
+            ),
+        },
     );
     response.permitted_actions = vec![
         format!("wh change --admit {} (a person)", stored.lesson.key),
@@ -316,6 +348,7 @@ fn person_decision(
 
 fn admit(
     layout: &ProjectLayout,
+    config: &MemoryConfig,
     store: &dyn LessonStore,
     request_id: &str,
     request: &ChangeRequest,
@@ -326,6 +359,12 @@ fn admit(
         return Err(Refusal::new(
             "agent_cannot_admit",
             format!("An agent proposes lessons and never admits them, by any route. {key} stays proposed (inferred) until a person admits it at a terminal or in wh dash."),
+        ));
+    }
+    if let (MemoryConfig::Virgil { .. }, Some(trust)) = (config, trust) {
+        return Err(Refusal::new(
+            "trust_not_chosen",
+            format!("Inside Virgil trust is derived from the writer, never chosen: a person's admit lands validated and nothing writes authoritative. Repeat without --trust {}.", trust.label()),
         ));
     }
     let trust = trust.unwrap_or(Trust::Validated);
@@ -359,8 +398,10 @@ fn admit(
         "change",
         ServiceState::Success,
         format!(
-            "Lesson {key} was admitted ({}); it is delivered to agents and people from now on.{}",
+            "Lesson {} was admitted ({}) in the {} store; it is delivered to agents and people from now on.{}",
+            stored.lesson.key,
             stored.lesson.trust.label(),
+            store.backend(),
             stored
                 .lesson
                 .supersedes
@@ -408,6 +449,47 @@ fn supersede(
             ),
         ));
     }
+    let named = lesson_definition(request)?
+        .and_then(|definition| definition.key.clone())
+        .or_else(|| {
+            request
+                .record_id
+                .as_deref()
+                .map(|id| id.trim_start_matches("lesson.").to_string())
+        });
+    // Inside Virgil a person may retire a lesson in favour of one that
+    // already exists there, without writing new text.
+    if let (ActorKind::Person, Some(successor)) = (request.actor, named.as_deref()) {
+        if successor != key && !request.preview {
+            let (decision, _) = person_decision(
+                layout,
+                LessonVerb::Supersede,
+                request,
+                &format!("{key} retired in favour of {successor} by {{who}}."),
+            );
+            if let Some(retired) = store.retire(
+                key,
+                successor,
+                &decision,
+                &format!("lesson:retire:{request_id}:{key}"),
+            )? {
+                let mut response = ServiceResponse::new(
+                    request_id.to_string(),
+                    "change",
+                    ServiceState::Success,
+                    format!("{key} was superseded by {successor}, which already held; no new text was written."),
+                );
+                response.permitted_actions = vec!["wh dash".into()];
+                response.data = json!({
+                    "lesson": view(layout, &retired, &[], &BTreeMap::new()),
+                    "supersedes": key,
+                    "applied": true,
+                    "recorded": true,
+                });
+                return Ok(response);
+            }
+        }
+    }
     let mut draft = draft(
         layout,
         config,
@@ -415,17 +497,10 @@ fn supersede(
         Some(&old.lesson),
         Some(key.to_string()),
     )?;
-    let explicit_key = lesson_definition(request)?
-        .and_then(|definition| definition.key.clone())
-        .is_some()
-        || request.record_id.is_some();
+    let explicit_key = named.is_some();
     if !explicit_key {
         // A correction gets its own key: the old key with the next free suffix.
-        let existing = store
-            .find()?
-            .into_iter()
-            .map(|stored| stored.lesson.key)
-            .collect::<std::collections::BTreeSet<_>>();
+        let existing = store.taken_keys()?;
         let stem = key.chars().take(72).collect::<String>();
         let stem =
             stem.trim_end_matches(|character: char| character.is_ascii_digit() || character == '-');
@@ -475,7 +550,12 @@ fn supersede(
         request_id.to_string(),
         "change",
         ServiceState::Success,
-        if applied.is_some() {
+        if applied.is_some() && current.lesson.key == key {
+            format!(
+                "{key} was rewritten in place (revision {}) with the correction; its subjects and anchors were kept.",
+                current.revision
+            )
+        } else if applied.is_some() {
             format!(
                 "{key} was corrected by {} and is superseded.",
                 current.lesson.key
@@ -581,7 +661,7 @@ pub(crate) fn view(
     derived: &BTreeMap<String, Vec<String>>,
 ) -> Value {
     let lesson = &stored.lesson;
-    let comparisons = memory::compare(layout.project_root(), lesson);
+    let comparisons = memory::anchor_state(layout.project_root(), stored);
     let by_key = all
         .iter()
         .map(|stored| (stored.lesson.key.clone(), &stored.lesson))
@@ -669,19 +749,12 @@ pub(crate) fn dash_section(layout: &ProjectLayout, state: &AgreementState) -> Va
         .filter(|view| view["needs_review"] == true)
         .map(|view| view["key"].clone())
         .collect::<Vec<_>>();
-    // Lessons in Whetstone's own store while the switch names Virgil stay
-    // where they are: reported, never copied.
-    let left_behind = match &config {
-        MemoryConfig::Virgil { .. } => state
-            .records()
-            .iter()
-            .filter_map(|record| match &record.body {
-                RecordBody::Lesson(lesson) => Some(lesson.key.clone()),
-                _ => None,
-            })
-            .collect::<std::collections::BTreeSet<_>>()
-            .len(),
-        MemoryConfig::Beads => 0,
+    // Admitted lessons still only in Whetstone's own store while the switch
+    // names Virgil: reported until the import's apply is confirmed.
+    let left_behind = if store_state == "available" {
+        store.left_behind(&lessons).unwrap_or_default()
+    } else {
+        Vec::new()
     };
     json!({
         "state": store_state,
@@ -694,10 +767,11 @@ pub(crate) fn dash_section(layout: &ProjectLayout, state: &AgreementState) -> Va
         "proposals": proposals,
         "may_be_stale": stale,
         "needs_review": review,
-        "not_migrated": (left_behind > 0).then(|| json!({
+        "not_migrated": (!left_behind.is_empty()).then(|| json!({
             "backend": "beads",
-            "lessons": left_behind,
-            "note": "These lessons stay in Whetstone's Beads store; switching stores migrates nothing.",
+            "lessons": left_behind.len(),
+            "keys": left_behind,
+            "note": "Admitted lessons still only in Whetstone's Beads store. Export and import them with wh init --action memory --store virgil (it prints the virgil lessons import-beads commands), then confirm with --yes.",
         })),
     })
 }
@@ -726,7 +800,7 @@ pub(crate) fn record_checks(layout: &ProjectLayout) -> Vec<Value> {
         let Some(reference) = memory::lesson_reference(&stored) else {
             continue;
         };
-        let comparisons = memory::compare(layout.project_root(), &stored.lesson);
+        let comparisons = memory::anchor_state(layout.project_root(), &stored);
         let fingerprint = serde_json::to_string(&comparisons).unwrap_or_default();
         let key = format!(
             "lesson-check:{}:{}",
@@ -881,7 +955,7 @@ pub(crate) fn lineage(
             "status": stored.lesson.status,
             "locator": stored.locator,
             "decision": stored.lesson.decision,
-            "anchors": memory::compare(layout.project_root(), &stored.lesson),
+            "anchors": memory::anchor_state(layout.project_root(), stored),
         })),
     }))
 }

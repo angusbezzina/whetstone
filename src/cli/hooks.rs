@@ -153,6 +153,7 @@ pub(super) fn run_stop_hook(
             recommendation: "Review the failing rule and the change together: fix the approach, or adjust the rule through wh change.".into(),
             trigger: HandTrigger::SecondFailedRepair,
             rule: key.split(',').next().filter(|rule| rule.contains('.')).map(str::to_owned),
+            actor: crate::domain::ActorKind::Agent,
         };
         let raised = service.execute(ServiceRequest::Check(CheckRequest {
             project_dir: project_dir.clone(),

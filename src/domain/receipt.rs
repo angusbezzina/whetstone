@@ -371,6 +371,9 @@ pub struct HandRaise {
     pub tried: String,
     pub recommendation: String,
     pub raised_at: String,
+    /// Who raised it (absent on hands raised before this was recorded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<super::ActorKind>,
 }
 
 impl HandRaise {

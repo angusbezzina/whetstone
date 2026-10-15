@@ -21,6 +21,9 @@ pub struct StoredLesson {
     pub reference: Option<RecordRef>,
     /// Where it lives: `whetstone:lesson.<key>@<revision>` or `virgil:<id>`.
     pub locator: String,
+    /// The anchors as the store judged them (Virgil); `None` means Whetstone
+    /// compares the hashes itself (Beads).
+    pub anchor_state: Option<Vec<crate::domain::AnchorComparison>>,
 }
 
 /// The four verbs plus the two reads, over either backend. Every write takes
@@ -83,18 +86,55 @@ pub trait LessonStore {
         stamp: &LessonStamp,
         idempotency: &str,
     ) -> Result<StoredLesson, Refusal>;
+
+    /// A person retires `key` in favour of `successor`, a lesson that already
+    /// exists, without writing new text. Only Virgil has the verb; standalone
+    /// a correction is always a new lesson.
+    fn retire(
+        &self,
+        key: &str,
+        successor: &str,
+        _decision: &LessonDecision,
+        _idempotency: &str,
+    ) -> Result<Option<StoredLesson>, Refusal> {
+        let _ = (key, successor);
+        Ok(None)
+    }
+
+    /// Every key in use, including ones a listing does not show, so a new
+    /// lesson's key never collides.
+    fn taken_keys(&self) -> Result<std::collections::BTreeSet<String>, Refusal> {
+        Ok(self
+            .find()?
+            .into_iter()
+            .map(|stored| stored.lesson.key)
+            .collect())
+    }
+
+    /// Admitted lessons this store does not hold but Whetstone's own store
+    /// still does (left behind by flipping the switch), by key.
+    fn left_behind(&self, _current: &[StoredLesson]) -> Result<Vec<String>, Refusal> {
+        Ok(Vec::new())
+    }
 }
 
-/// Open the store the switch names.
+/// Open the store the switch names, for reads (and an agent's writes).
 pub fn open_store(layout: &ProjectLayout, config: &MemoryConfig) -> Box<dyn LessonStore> {
+    open_store_as(layout, config, ActorKind::Agent)
+}
+
+/// Open the store the switch names, writing as `actor`: inside Virgil an
+/// agent's writes carry `VIRGIL_VIA=agent:<host>` so they land inferred.
+pub fn open_store_as(
+    layout: &ProjectLayout,
+    config: &MemoryConfig,
+    actor: ActorKind,
+) -> Box<dyn LessonStore> {
     match config {
         MemoryConfig::Beads => Box::new(BeadsLessons {
             layout: layout.clone(),
         }),
-        MemoryConfig::Virgil { group } => Box::new(super::virgil::VirgilLessons::new(
-            layout.project_root(),
-            group,
-        )),
+        MemoryConfig::Virgil { .. } => Box::new(super::virgil::VirgilLessons::new(layout, actor)),
     }
 }
 
@@ -151,11 +191,16 @@ impl BeadsLessons {
             revision: record.revision,
             reference: record.reference().ok(),
             locator: format!("whetstone:{}@{}", record.id.as_str(), record.revision),
+            anchor_state: None,
         })
     }
 
     /// Append the next revision of a lesson, or return what this key recorded.
-    fn append(&self, lesson: Lesson, idempotency: &str) -> Result<StoredLesson, Refusal> {
+    pub(crate) fn append(
+        &self,
+        lesson: Lesson,
+        idempotency: &str,
+    ) -> Result<StoredLesson, Refusal> {
         let store = self.store()?;
         if let Some(existing) = store
             .by_idempotency_key(idempotency)

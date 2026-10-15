@@ -7,9 +7,13 @@
 //! - Inside Virgil: the Records `lesson` collection, reached only through the
 //!   `virgil lessons` commands on the daemon socket ([`virgil`]).
 //!
-//! The switch changes where lessons live, never what they mean, and flipping
-//! it migrates nothing. Agents propose; only a person admits, supersedes or
-//! forgets. Nothing here calls a model.
+//! The switch changes where admitted lessons live, never what they mean.
+//! Proposals always stay in Whetstone's own store until a person admits them;
+//! inside Virgil the admit is that person's `virgil lessons remember`.
+//! Flipping to Virgil exports the admitted lessons in the shape
+//! `virgil lessons import-beads` reads ([`export`]) and flips only once a
+//! person confirms the import read back. Agents propose; only a person
+//! admits, supersedes or forgets. Nothing here calls a model.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -25,10 +29,11 @@ use crate::domain::{
     LESSON_SCHEMA_V1, MAX_LESSON_ITEMS,
 };
 
+pub mod export;
 pub mod store;
 pub mod virgil;
 
-pub use store::{open_store, LessonStore, StoredLesson};
+pub use store::{open_store, open_store_as, LessonStore, StoredLesson};
 
 /// The switch that names where lessons live, committed with the repository
 /// so the whole team uses the same store.
@@ -121,18 +126,72 @@ pub const AGENT_MARKERS: &[&str] = &[
 ];
 
 /// Who is calling: a person at a terminal, or an agent. Anything that is not
-/// clearly a person (no terminal on stdin, or an agent host's marker in the
-/// environment) is an agent, so an agent can never pass as a person by
-/// leaving something out.
+/// clearly a person (no terminal on stdin, an agent host's marker in the
+/// environment, or a launcher's `VIRGIL_VIA=agent:<client>`) is an agent, so
+/// an agent can never pass as a person by leaving something out.
 pub fn detect_actor() -> ActorKind {
     use std::io::IsTerminal;
     let marked = AGENT_MARKERS
         .iter()
-        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()));
+        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+        || std::env::var("VIRGIL_VIA").is_ok_and(|via| via.starts_with("agent:"));
     if !marked && std::io::stdin().is_terminal() {
         ActorKind::Person
     } else {
         ActorKind::Agent
+    }
+}
+
+/// The agent host running this process, as Virgil's client name: a
+/// launcher's own `VIRGIL_VIA=agent:<client>` first, then the host markers
+/// (claude, codex, cursor, gemini), else `whetstone`.
+pub fn agent_host() -> String {
+    let set = |name: &str| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+    if let Some(client) = std::env::var("VIRGIL_VIA")
+        .ok()
+        .and_then(|via| via.strip_prefix("agent:").map(str::to_owned))
+    {
+        return virgil_client(&client);
+    }
+    let host = if set("CLAUDECODE") || set("CLAUDE_CODE_ENTRYPOINT") {
+        "claude"
+    } else if set("CODEX_SANDBOX") || set("CODEX_THREAD_ID") {
+        "codex"
+    } else if set("CURSOR_AGENT") {
+        "cursor"
+    } else if set("GEMINI_CLI") {
+        "gemini"
+    } else {
+        "whetstone"
+    };
+    host.to_string()
+}
+
+/// A host name as Virgil accepts a client (`WriterAttribution::new`): 1 to
+/// 64 bytes, the first an ASCII letter or digit, the rest lowercase letters,
+/// digits, `-`, `_` or `.`. Anything else becomes `whetstone`, so a write
+/// is never refused for its marker.
+pub fn virgil_client(host: &str) -> String {
+    let client = host
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|character| {
+            if character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || "-_.".contains(character)
+            {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let client = client.trim_start_matches(|character: char| !character.is_ascii_alphanumeric());
+    if client.is_empty() || client.len() > 64 {
+        "whetstone".into()
+    } else {
+        client.to_string()
     }
 }
 
@@ -369,6 +428,16 @@ pub fn compare(project_root: &Path, lesson: &Lesson) -> Vec<AnchorComparison> {
             }
         })
         .collect()
+}
+
+/// A stored lesson's anchors now: what its store reported (Virgil hashes at
+/// the writer's commit and says which anchors are stale), else Whetstone's
+/// own hash comparison (the Beads backend).
+pub fn anchor_state(project_root: &Path, stored: &StoredLesson) -> Vec<AnchorComparison> {
+    stored
+        .anchor_state
+        .clone()
+        .unwrap_or_else(|| compare(project_root, &stored.lesson))
 }
 
 pub fn may_be_stale(comparisons: &[AnchorComparison]) -> bool {

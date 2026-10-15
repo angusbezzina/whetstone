@@ -78,6 +78,19 @@ treat one marked "may be stale" as a lead to check, never as a rule. A
 lesson that keeps holding can become a rule only as a draft in shadow:
 `wh change --kind rule --from-lesson <key> ...`.
 
+Where admitted lessons live is one switch, `whetstone/memory.json`: Whetstone's
+own Beads store (standalone), or a Virgil group's lessons (`wh init --action
+memory --store virgil --group <ULID>`). Proposals stay in Whetstone's store
+either way; inside Virgil a person's admit is their `virgil lessons
+remember`, Virgil derives trust from the writer (`--trust` is refused there),
+and a correction rewrites the lesson in place. Flipping to Virgil needs the
+checkout attached to a Virgil repository (`virgil repos attach`); when
+Whetstone's store holds admitted lessons it writes them, outside the
+repository, as the file `virgil lessons import-beads` reads, prints the dry-run
+and apply commands, and flips only when a person runs the same command with
+`--yes` after the apply: every key must read back, and anchored lessons are
+re-anchored. Never run `--yes` or the import yourself; raise a hand.
+
 ## Using the CLI
 
 For automation, always pass `--json` and consume the versioned

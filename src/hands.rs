@@ -86,7 +86,15 @@ pub struct FiledHand {
 
 /// The one routing point for a raised hand: `bd human` standalone, a task
 /// in the group's channel when the memory switch names a Virgil group.
-pub fn route(project_root: &Path, title: &str, description: &str) -> Result<FiledHand, String> {
+/// `virgil tasks` records every task as the daemon's principal's whoever
+/// asked, so an agent's hand (`raised_by` names its host) says so in the
+/// task's first line.
+pub fn route(
+    project_root: &Path,
+    title: &str,
+    description: &str,
+    raised_by: Option<&str>,
+) -> Result<FiledHand, String> {
     match crate::memory::read_config(project_root)? {
         crate::memory::MemoryConfig::Beads => Ok(FiledHand {
             issue: file_issue(project_root, title, description)?,
@@ -94,8 +102,14 @@ pub fn route(project_root: &Path, title: &str, description: &str) -> Result<File
         }),
         crate::memory::MemoryConfig::Virgil { group } => {
             let title = title.chars().take(200).collect::<String>();
+            let description = match raised_by {
+                Some(host) => {
+                    format!("Raised by {host} (an agent) through Whetstone.\n\n{description}")
+                }
+                None => description.to_string(),
+            };
             let task =
-                crate::memory::virgil::create_task(project_root, &group, &title, description)
+                crate::memory::virgil::create_task(project_root, &group, &title, &description)
                     .map_err(|refusal| refusal.message)?;
             Ok(FiledHand {
                 issue: task,

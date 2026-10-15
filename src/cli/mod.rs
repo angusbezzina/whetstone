@@ -592,6 +592,7 @@ pub fn run() -> i32 {
                 yes,
                 memory_store,
                 memory_group,
+                actor: crate::memory::detect_actor(),
             }));
             if guided && needs_onboarding(&response) {
                 return run_dashboard(
@@ -861,6 +862,7 @@ pub fn run() -> i32 {
                     recommendation: recommend.clone().unwrap_or_default(),
                     trigger: trigger.into(),
                     rule: hand_rule,
+                    actor: crate::memory::detect_actor(),
                 }),
             };
             match hook {

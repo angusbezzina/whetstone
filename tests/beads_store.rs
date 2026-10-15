@@ -467,6 +467,7 @@ fn every_record_kind_lands_in_its_bead_type_with_its_digest() {
             recommendation: "Keep the current shape.".into(),
             raised_at: "2026-09-10T12:02:00Z".into(),
             route: None,
+            actor: None,
         }),
     );
     let raise_ref = store.append(&raise, None).expect("raise");
