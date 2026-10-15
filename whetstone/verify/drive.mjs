@@ -298,8 +298,10 @@ function cleanup() {
   }
   // Scratch data only; evidence lives elsewhere and is never removed here.
   if (state.data_dir && state.data_dir.startsWith(tmpdir()) && existsSync(state.data_dir)) {
-    rmSync(state.data_dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    removed.push(state.data_dir);
+    try {
+      rmSync(state.data_dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+      removed.push(state.data_dir);
+    } catch {}
   }
   rmSync(path, { force: true });
   return { stopped, removed, retained: ["evidence"], detail: stopped.length ? "stopped the launched app" : "the launched app had already exited" };
@@ -399,14 +401,17 @@ async function browserOnce(config) {
   return {
     cdp,
     // Chrome can still be flushing its profile after SIGKILL; wait for the
-    // exit and retry the removal instead of racing it.
+    // exit and retry the removal instead of racing it. The profile is a temp
+    // directory, so one left behind never changes a verdict.
     async close() {
       if (child.exitCode === null && child.signalCode === null) {
         const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
         child.kill("SIGKILL");
         await Promise.race([exited, delay(2000)]);
       }
-      rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+      try {
+        rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+      } catch {}
     },
   };
 }
