@@ -1138,6 +1138,8 @@ pub fn legacy_rules_as_v2(
             privacy: Privacy::default(),
             shadow: false,
             sweep: None,
+            sweep_priority: None,
+            sweep_unsure: Vec::new(),
         };
         if let Err(error) = converted_rule.validate() {
             skipped.push(format!("{}: {error}", rule.id));

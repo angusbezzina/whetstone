@@ -210,6 +210,12 @@ pub enum ChangeDefinition {
         /// How a night sweep works the rule's flags (discuss when absent).
         #[serde(default)]
         sweep: Option<SweepClass>,
+        /// How urgent its sweep findings are, 0 (most) to 4 (2 when absent).
+        #[serde(default)]
+        sweep_priority: Option<u8>,
+        /// Where its own flags are doubtful: findings there say `unsure`.
+        #[serde(default)]
+        sweep_unsure: Vec<crate::domain::SweepUnsure>,
     },
     Principle {
         /// A pstack principle id from the catalogue; absent means custom.

@@ -87,6 +87,8 @@ fn rule(enforcer: Enforcer) -> Rule {
         privacy: Privacy::default(),
         shadow: false,
         sweep: None,
+        sweep_priority: None,
+        sweep_unsure: Vec::new(),
     }
 }
 

@@ -124,9 +124,13 @@ resume token. A retry with the same request ID must keep the same input.
   `--sweep` for every mapped feature, `--mutate` to test the proofs.
   `--sweep --format findings` runs only the rules below must and prints a
   JSON array, one finding per flag (`fingerprint`, `subjectDigest`, `class`,
-  `title`, `responsibility`), for a night sweep's `findings.json`; a rule's `sweep` class (`draft_pr`,
+  `priority`, `title`, `responsibility`, and `unsure` with a reason where the
+  rule doubts its own flag), for a sweep's `findings.json`; a rule's `sweep` class (`draft_pr`,
   `confirm_first`, `discuss`, the default) says how far the sweep may go,
-  and only a person widens it.
+  and only a person widens it. Its `sweep_priority` (0 most urgent to 4,
+  default 2) orders the work, and `sweep_unsure` (`[{"paths": [...] or
+  "matching": "<regex>", "reason": "..."}]`) parks the doubtful flags until a
+  person raises them; a doubt that covers every flag is refused.
 - Before building, run pstack's `/how`, `/why` and `/blast-radius` and record
   them with `wh check --brief --area <feature|path> --skill how --skill why`.
 - When confidence is low, a repair fails twice, the spec is vague or the area

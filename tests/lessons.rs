@@ -739,6 +739,10 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
     git(root, &["add", "."]);
     git(root, &["commit", "-qm", "app"]);
     let query = "((call function: (identifier) @f) @match (#eq? @f \"print\"))";
+    let prioritised = |mut definition: Value| {
+        definition["sweep_priority"] = json!(0);
+        definition
+    };
     let rule = |strength: &str, sweep: Option<&str>| {
         let mut definition = json!({
             "type": "rule",
@@ -775,7 +779,8 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
         content: Some("Prefer logging to print.".into()),
         rationale: Some("Mechanical, safe to open as a draft PR.".into()),
         definition: Some(Box::new(
-            serde_json::from_value(rule("should", Some("draft_pr"))).expect("definition"),
+            serde_json::from_value(prioritised(rule("should", Some("draft_pr"))))
+                .expect("definition"),
         )),
         ..ChangeRequest::default()
     }));
@@ -789,7 +794,8 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
         content: Some("Prefer logging to print.".into()),
         rationale: Some("Mechanical, safe to open as a draft PR.".into()),
         definition: Some(Box::new(
-            serde_json::from_value(rule("should", Some("draft_pr"))).expect("definition"),
+            serde_json::from_value(prioritised(rule("should", Some("draft_pr"))))
+                .expect("definition"),
         )),
         expected_revision: by_person.expected_revision,
         resume_token: Some(token),
@@ -805,12 +811,40 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
         root,
         confirmed.data["proposal"]["id"].as_str().expect("proposal"),
     );
+    // A priority outside 0..4 and a doubt that covers every flag are refused.
+    for (name, bad) in [
+        ("priority-5", json!({"sweep_priority": 5})),
+        (
+            "unsure-all",
+            json!({"sweep_unsure": [{"paths": ["**"], "reason": "everything"}]}),
+        ),
+        (
+            "unsure-any",
+            json!({"sweep_unsure": [{"matching": ".*", "reason": "everything"}]}),
+        ),
+        (
+            "unsure-blank",
+            json!({"sweep_unsure": [{"paths": ["src/**"], "reason": " "}]}),
+        ),
+    ] {
+        let mut definition = rule("advisory", None);
+        for (key, value) in bad.as_object().expect("object") {
+            definition[key] = value.clone();
+        }
+        let refused = draft_rule(root, name, "rule.print-bad", "Bad.", definition, &[]);
+        assert!(
+            refused["state"] != "success" && refused["data"]["proposal"].is_null(),
+            "{name}: {refused}"
+        );
+    }
+    let mut doubtful = rule("advisory", None);
+    doubtful["sweep_unsure"] = json!([{"matching": "print\\('one'\\)", "reason": "a one-off print in a demo is borderline"}]);
     let advisory = draft_rule(
         root,
         "advisory",
         "rule.print-advisory",
         "Print is a smell.",
-        rule("advisory", None),
+        doubtful,
         &[],
     );
     accept(
@@ -843,6 +877,18 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
     assert_eq!(class_of("rule.print-should"), Some(json!("draft_pr")));
     assert_eq!(class_of("rule.print-advisory"), Some(json!("discuss")));
     assert_eq!(class_of("rule.print-must"), Some(json!("discuss")));
+    let priority_of = |id: &str| {
+        dash["data"]["current"]["rules"]
+            .as_array()
+            .and_then(|rules| rules.iter().find(|rule| rule["id"] == id).cloned())
+            .map(|rule| rule["sweep_priority"].clone())
+    };
+    assert_eq!(priority_of("rule.print-should"), Some(json!(0)));
+    assert_eq!(
+        priority_of("rule.print-advisory"),
+        Some(json!(2)),
+        "no priority reads as 2"
+    );
 
     // Findings for the rules below must only, byte-identical across runs.
     let first = run(root, &["check", "--sweep", "--format", "findings"]);
@@ -874,19 +920,21 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
             .keys()
             .cloned()
             .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(
-            keys,
-            [
-                "class",
-                "fingerprint",
-                "responsibility",
-                "subjectDigest",
-                "title"
-            ]
-            .map(String::from)
-            .into_iter()
-            .collect()
-        );
+        let mut expected = [
+            "class",
+            "fingerprint",
+            "priority",
+            "responsibility",
+            "subjectDigest",
+            "title",
+        ]
+        .map(String::from)
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+        if finding["responsibility"] == "rule.print-advisory" {
+            expected.insert("unsure".into());
+        }
+        assert_eq!(keys, expected, "{finding}");
         assert_ne!(
             finding["responsibility"], "rule.print-must",
             "a must rule never emits"
@@ -901,6 +949,12 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
     };
     assert_eq!(by_rule("rule.print-should")["class"], "draft_pr");
     assert_eq!(by_rule("rule.print-advisory")["class"], "discuss");
+    assert_eq!(by_rule("rule.print-should")["priority"], 0);
+    assert_eq!(by_rule("rule.print-advisory")["priority"], 2);
+    assert_eq!(
+        by_rule("rule.print-advisory")["unsure"],
+        "a one-off print in a demo is borderline"
+    );
 
     // The fingerprint holds while the flagged content changes; the digest moves.
     let before = by_rule("rule.print-should");
@@ -913,6 +967,15 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
         .expect("still flagged");
     assert_eq!(after["fingerprint"], before["fingerprint"]);
     assert_ne!(after["subjectDigest"], before["subjectDigest"]);
+    let advisory_after = serde_json::from_slice::<Vec<Value>>(&changed.stdout)
+        .expect("findings")
+        .into_iter()
+        .find(|finding| finding["responsibility"] == "rule.print-advisory")
+        .expect("still flagged");
+    assert!(
+        advisory_after.get("unsure").is_none(),
+        "the doubt covers only the flags its pattern matches: {advisory_after}"
+    );
 
     // The ordinary feature sweep is unchanged: it drives features only.
     let sweep = wh(root, &["check", "--sweep", "--json"]);

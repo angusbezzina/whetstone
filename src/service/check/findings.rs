@@ -2,7 +2,10 @@
 //! below must (should, advisory, or in shadow) and turns each flag into one
 //! finding for a night sweep's controller to work (Messo's, inside Virgil).
 //!
-//! A finding is `{fingerprint, subjectDigest, class, title, responsibility}`.
+//! A finding is `{fingerprint, subjectDigest, class, priority, title,
+//! responsibility, unsure?}`: `priority` (0 most urgent to 4) is the rule's,
+//! and `unsure` says why, only where the rule doubts its own flag (the
+//! consumer parks such a finding until a person raises it).
 //! The fingerprint (rule id, repository and subject) stays the same across
 //! runs for the same subject, so a dismissed finding stays quiet until its
 //! subject changes; the subject digest changes exactly when the flagged
@@ -27,8 +30,11 @@ pub(crate) struct SweepFinding {
     #[serde(rename = "subjectDigest")]
     pub(crate) subject_digest: String,
     pub(crate) class: &'static str,
+    pub(crate) priority: u8,
     pub(crate) title: String,
     pub(crate) responsibility: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) unsure: Option<String>,
 }
 
 /// Whether a rule's flags are sweep work: below must (or a must rule still in
@@ -122,19 +128,29 @@ pub(crate) fn findings(
         if !sweepable(rule) {
             continue;
         }
-        // (subject, digest of what was flagged, where to say it is)
-        let mut flagged = Vec::<(String, String, String)>::new();
+        // (subject, digest of what was flagged, where to say it is, why the
+        // rule doubts it)
+        let mut flagged = Vec::<(String, String, String, Option<String>)>::new();
+        let doubt =
+            |path: Option<&str>, text: &str| rule.sweep_unsure_for(path, text).map(str::to_owned);
         for failure in &outcome.failures {
             match located(project, &failure.location) {
-                Some((path, line)) => flagged.push((
-                    path.clone(),
-                    digest(&flagged_content(project, &path, line)),
-                    path,
-                )),
+                Some((path, line)) => {
+                    let content = flagged_content(project, &path, line);
+                    let text =
+                        format!("{}\n{}", String::from_utf8_lossy(&content), failure.message);
+                    flagged.push((
+                        path.clone(),
+                        digest(&content),
+                        path.clone(),
+                        doubt(Some(&path), &text),
+                    ));
+                }
                 None => flagged.push((
                     "repository".into(),
                     digest(format!("{}\0{}", failure.location, failure.message).as_bytes()),
                     failure.location.clone(),
+                    doubt(None, &format!("{}\n{}", failure.location, failure.message)),
                 )),
             }
         }
@@ -143,13 +159,14 @@ pub(crate) fn findings(
                 "repository".into(),
                 digest(outcome.summary.as_bytes()),
                 "the repository".into(),
+                doubt(None, &outcome.summary),
             ));
         }
         // The same rule flagging one subject twice: the second is `#2`, so
         // each flag is its own finding and the first keeps its fingerprint.
         flagged.sort();
         let mut seen = BTreeMap::<String, usize>::new();
-        for (subject, subject_digest, place) in flagged {
+        for (subject, subject_digest, place, unsure) in flagged {
             let count = seen.entry(subject.clone()).or_insert(0);
             *count += 1;
             let subject = if *count == 1 {
@@ -161,11 +178,13 @@ pub(crate) fn findings(
                 fingerprint: digest(format!("{}\0{repository}\0{subject}", outcome.id).as_bytes()),
                 subject_digest,
                 class: rule.sweep_class().label(),
+                priority: rule.sweep_priority(),
                 title: format!("{} ({place})", rule.statement)
                     .chars()
                     .take(300)
                     .collect(),
                 responsibility: outcome.id.clone(),
+                unsure,
             });
         }
     }
@@ -186,5 +205,27 @@ pub(crate) fn json_array(findings: &[SweepFinding]) -> String {
         "[]\n".into()
     } else {
         format!("[\n{}\n]\n", lines.join(",\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn findings_carry_priority_always_and_unsure_only_when_set() {
+        let finding = |unsure: Option<&str>| SweepFinding {
+            fingerprint: "sha256:f".into(),
+            subject_digest: "sha256:d".into(),
+            class: "discuss",
+            priority: 2,
+            title: "Print is a smell. (src/app.py)".into(),
+            responsibility: "rule.print-advisory".into(),
+            unsure: unsure.map(str::to_owned),
+        };
+        assert_eq!(
+            json_array(&[finding(None), finding(Some("borderline"))]),
+            "[\n{\"fingerprint\":\"sha256:f\",\"subjectDigest\":\"sha256:d\",\"class\":\"discuss\",\"priority\":2,\"title\":\"Print is a smell. (src/app.py)\",\"responsibility\":\"rule.print-advisory\"},\n{\"fingerprint\":\"sha256:f\",\"subjectDigest\":\"sha256:d\",\"class\":\"discuss\",\"priority\":2,\"title\":\"Print is a smell. (src/app.py)\",\"responsibility\":\"rule.print-advisory\",\"unsure\":\"borderline\"}\n]\n"
+        );
     }
 }

@@ -503,6 +503,8 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
                 privacy,
                 shadow,
                 sweep,
+                sweep_priority,
+                sweep_unsure,
             }) = request.definition.as_deref()
             else {
                 return Err("Provide the rule's strength and its one enforcer as a rule definition: {\"type\": \"rule\", \"strength\": \"must\", \"enforcer\": {\"kind\": \"test\", \"command\": \"cargo test\"}}.".into());
@@ -539,6 +541,8 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
                 privacy: privacy.clone(),
                 shadow: *shadow,
                 sweep: *sweep,
+                sweep_priority: *sweep_priority,
+                sweep_unsure: sweep_unsure.clone(),
             };
             // A rule drafted from a lesson starts in shadow and names the
             // admitted lesson it came from.

@@ -199,6 +199,8 @@ pub fn parse_rule_file(text: &str) -> Result<ParsedRule, String> {
         privacy,
         shadow: false,
         sweep: None,
+        sweep_priority: None,
+        sweep_unsure: Vec::new(),
     };
     rule.validate()
         .map_err(|error| format!("the rule is not valid: {error}"))?;

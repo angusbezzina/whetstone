@@ -191,6 +191,10 @@ pub struct RuleEntry {
     /// How a night sweep works this rule's flags: draft_pr, confirm_first or
     /// discuss (the default).
     pub sweep_class: &'static str,
+    /// How urgent its sweep findings are, 0 (most) to 4.
+    pub sweep_priority: u8,
+    /// Where its own flags are doubtful, with the reason each says.
+    pub sweep_unsure: Vec<crate::domain::SweepUnsure>,
     /// The lesson key the rule was drafted from, when it was.
     pub origin_lesson: Option<String>,
 }
@@ -487,6 +491,8 @@ fn rule_definition(rule: &Rule) -> Value {
         "privacy": rule.privacy,
         "shadow": rule.shadow,
         "sweep": rule.sweep,
+        "sweep_priority": rule.sweep_priority,
+        "sweep_unsure": rule.sweep_unsure,
     })
 }
 
@@ -876,6 +882,8 @@ fn rule_entries(state: &AgreementState, runs: &[GateRun]) -> Vec<RuleEntry> {
                 .collect(),
             result,
             sweep_class: rule.sweep_class().label(),
+            sweep_priority: rule.sweep_priority(),
+            sweep_unsure: rule.sweep_unsure.clone(),
             origin_lesson: crate::memory::origin_lesson(&rule).map(str::to_owned),
         });
     }

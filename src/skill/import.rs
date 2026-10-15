@@ -277,6 +277,8 @@ pub fn import(
                     privacy: crate::domain::Privacy::default(),
                     shadow: false,
                     sweep: None,
+                    sweep_priority: None,
+                    sweep_unsure: Vec::new(),
                 });
                 candidates.push(ImportCandidate {
                     id: gate.clone(),

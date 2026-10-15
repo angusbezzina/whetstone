@@ -125,6 +125,8 @@ pub fn starters(root: &Path) -> Vec<Starter> {
         privacy: Privacy::default(),
         shadow: false,
         sweep: None,
+        sweep_priority: None,
+        sweep_unsure: Vec::new(),
     };
     let surface_paths = surface_paths(root);
     let api = Rule {
@@ -155,6 +157,8 @@ pub fn starters(root: &Path) -> Vec<Starter> {
         privacy: Privacy::default(),
         shadow: false,
         sweep: None,
+        sweep_priority: None,
+        sweep_unsure: Vec::new(),
     };
     let tests = Rule {
         schema: RULE_SCHEMA_V2.into(),
@@ -198,6 +202,8 @@ pub fn starters(root: &Path) -> Vec<Starter> {
         privacy: Privacy::default(),
         shadow: false,
         sweep: None,
+        sweep_priority: None,
+        sweep_unsure: Vec::new(),
     };
     vec![
         Starter {

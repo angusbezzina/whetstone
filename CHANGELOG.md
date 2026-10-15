@@ -61,7 +61,9 @@ requests, and gate exceptions. They stay here as a record of what was built.
 - Sweep mode: a rule's `sweep` class (draft_pr, confirm_first, discuss) and
   `wh check --sweep --format findings`, a JSON array (`findings.json`, the
   shape Messo's `messo-ctl observe` reads) with one stable finding per flag
-  of the rules below must.
+  of the rules below must. Each finding carries the rule's `sweep_priority`
+  (0 to 4, default 2) and, where the rule's `sweep_unsure` paths or pattern
+  cover the flag, an `unsure` reason; a doubt covering every flag is refused.
 
 ### Added (delegation plan, `whetstone-ppq`)
 

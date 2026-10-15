@@ -487,6 +487,81 @@ impl SweepClass {
     }
 }
 
+/// How urgent a rule's sweep findings are when it names none: the middle of
+/// 0 (most urgent) to 4.
+pub const DEFAULT_SWEEP_PRIORITY: u8 = 2;
+pub const MAX_SWEEP_PRIORITY: u8 = 4;
+const MAX_SWEEP_UNSURE: usize = 16;
+
+/// Where a rule's own flags are doubtful: a flag on one of `paths` (globs),
+/// or whose flagged text matches `matching`, is reported `unsure` with the
+/// reason, so a sweep parks it until a person raises it. It never covers
+/// every flag; a rule that doubts all its flags is a rule to demote.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SweepUnsure {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+    /// A regular expression over the flagged line (or the failure message).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matching: Option<String>,
+    /// One line: why the check cannot tell whether such a flag is real.
+    pub reason: String,
+}
+
+impl SweepUnsure {
+    fn validate(&self) -> Result<(), DomainError> {
+        let reason = self.reason.trim();
+        if reason.is_empty() || reason.len() > 200 || reason.contains('\n') {
+            return Err(DomainError::InvalidField(
+                "an unsure reason is one line of at most 200 bytes",
+            ));
+        }
+        if self.paths.is_empty() && self.matching.is_none() {
+            return Err(DomainError::InvalidField(
+                "an unsure entry names paths or a matching pattern; one that covers every flag is a rule to demote",
+            ));
+        }
+        bounded_paths(&self.paths)?;
+        let everything = ["*", "**", "**/*", ".", "./", "./**"];
+        if self
+            .paths
+            .iter()
+            .any(|path| everything.contains(&path.trim()))
+        {
+            return Err(DomainError::InvalidField(
+                "an unsure path covers every flag; a rule that doubts all its flags is a rule to demote",
+            ));
+        }
+        if let Some(pattern) = &self.matching {
+            let regex = regex::Regex::new(pattern).map_err(|_| {
+                DomainError::InvalidField("an unsure pattern is not a valid regular expression")
+            })?;
+            if regex.is_match("") {
+                return Err(DomainError::InvalidField(
+                    "an unsure pattern matches every flag; a rule that doubts all its flags is a rule to demote",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether a flag on `path` (when it names one) with `text` is doubtful.
+    pub fn covers(&self, path: Option<&str>, text: &str) -> bool {
+        let on_path = path.is_some_and(|path| {
+            self.paths
+                .iter()
+                .any(|pattern| super::entry_point_matches(pattern.trim_start_matches("./"), path))
+        });
+        let matched = self
+            .matching
+            .as_deref()
+            .and_then(|pattern| regex::Regex::new(pattern).ok())
+            .is_some_and(|regex| regex.is_match(text));
+        on_path || matched
+    }
+}
+
 /// Rule record v2.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -514,6 +589,13 @@ pub struct Rule {
     /// How a night sweep works this rule's flags; absent means discuss.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sweep: Option<SweepClass>,
+    /// How urgent this rule's sweep findings are, 0 (most) to 4; absent
+    /// means 2. A person's priority on the task downstream still wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sweep_priority: Option<u8>,
+    /// Where this rule's own flags are doubtful (see [`SweepUnsure`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sweep_unsure: Vec<SweepUnsure>,
 }
 
 impl Rule {
@@ -556,6 +638,22 @@ impl Rule {
         if let Some(reference) = &self.source.reference {
             require_text(reference)?;
         }
+        if self
+            .sweep_priority
+            .is_some_and(|priority| priority > MAX_SWEEP_PRIORITY)
+        {
+            return Err(DomainError::InvalidField(
+                "a sweep priority is a whole number from 0 (most urgent) to 4",
+            ));
+        }
+        if self.sweep_unsure.len() > MAX_SWEEP_UNSURE {
+            return Err(DomainError::InvalidField(
+                "a rule has at most 16 unsure entries",
+            ));
+        }
+        for unsure in &self.sweep_unsure {
+            unsure.validate()?;
+        }
         Ok(())
     }
 
@@ -577,6 +675,19 @@ impl Rule {
     /// How a sweep works this rule's flags (discuss when unset).
     pub fn sweep_class(&self) -> SweepClass {
         self.sweep.unwrap_or_default()
+    }
+
+    /// How urgent this rule's sweep findings are (2 when unset).
+    pub fn sweep_priority(&self) -> u8 {
+        self.sweep_priority.unwrap_or(DEFAULT_SWEEP_PRIORITY)
+    }
+
+    /// Why a flag on `path` with `text` is doubtful, when the rule says so.
+    pub fn sweep_unsure_for(&self, path: Option<&str>, text: &str) -> Option<&str> {
+        self.sweep_unsure
+            .iter()
+            .find(|unsure| unsure.covers(path, text))
+            .map(|unsure| unsure.reason.trim())
     }
 
     pub fn raises_hand_on(&self, trigger: HandRaiseTrigger) -> bool {
@@ -631,6 +742,8 @@ impl Rule {
             privacy: Privacy::default(),
             shadow: false,
             sweep: None,
+            sweep_priority: None,
+            sweep_unsure: Vec::new(),
         }
     }
 
@@ -660,6 +773,8 @@ impl Rule {
             privacy: Privacy::default(),
             shadow: false,
             sweep: None,
+            sweep_priority: None,
+            sweep_unsure: Vec::new(),
         }
     }
 }

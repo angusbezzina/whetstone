@@ -363,8 +363,12 @@ written by `wh init --action memory --store beads|virgil [--group <ULID>]`.
   must (should, advisory, or in shadow; not drive proofs or reviews) and
   prints a JSON array (`findings.json`), one finding per flag: a fingerprint of rule, repository and
   subject that is stable across runs, a digest of the flagged content, the
-  class, a title and the responsible rule. A night sweep's controller
-  (Messo's, inside Virgil) works them; it never runs `wh change`.
+  class, the rule's `sweep_priority` (0 most urgent to 4, default 2), a
+  title, the responsible rule, and `unsure` with a reason where the rule's
+  `sweep_unsure` (paths or a pattern) covers the flag. A scanner runs it on
+  every push to main and Messo works the findings as tasks, reported bugs
+  first, then by priority, parking unsure ones until a person raises them;
+  it never runs `wh change`.
 
 ## Public surface
 

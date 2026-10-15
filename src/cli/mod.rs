@@ -260,7 +260,8 @@ enum Command {
         sweep: bool,
         /// With --sweep: `findings` runs only the rules below must and prints
         /// a JSON array, one finding per flag {fingerprint, subjectDigest, class,
-        /// title, responsibility}, for a night sweep's controller (findings.json).
+        /// priority, title, responsibility, unsure?}, for a sweep's controller
+        /// (findings.json).
         #[arg(long, value_enum, requires = "sweep")]
         format: Option<CheckFormatArg>,
         /// Also prove each feature with its recorded mutations applied (in an
