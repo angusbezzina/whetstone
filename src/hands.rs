@@ -1,7 +1,7 @@
 //! Raising a hand without stalling: a question for the owner is a Beads
 //! issue labelled `human` in the repository's tracker (the owner sees it in
 //! `bd human list`), and a `hand_raise` receipt in Whetstone's store. Answers
-//! go back through `bd human respond` and are recorded as `hand_answer`
+//! go back as a Beads response (comment and close) and are recorded as `hand_answer`
 //! decisions. Whetstone wraps Beads; it never invents a second tracker.
 //!
 //! With the memory switch naming a Virgil group, the same hand is a native
@@ -182,12 +182,14 @@ pub fn file_task(project_root: &Path, title: &str, description: &str) -> Result<
 }
 
 /// Answer a human-needed issue in Beads (adds the comment and closes it).
+/// Writes what `bd human respond` writes, through commands that also work on
+/// bd 1.1.2, whose `human respond` cannot open the store.
 pub fn respond(project_root: &Path, issue: &str, answer: &str) -> Result<(), String> {
     bd(
         project_root,
-        &["human", "respond", issue, "--response", answer],
-    )
-    .map(|_| ())
+        &["comments", "add", issue, &format!("Response: {answer}")],
+    )?;
+    bd(project_root, &["close", issue, "--reason", "Responded"]).map(|_| ())
 }
 
 /// The latest comment on an issue, when the owner answered it in Beads.
