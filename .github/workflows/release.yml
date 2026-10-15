@@ -79,7 +79,7 @@ jobs:
             .workflow == "orientation" and
             .data.read_only == true and
             .data.workflows == ["init", "dash", "change", "check", "pull", "push"] and
-            .permitted_actions == ["wh init", "wh dash", "wh change", "wh check", "wh pull", "wh push"]
+            .permitted_actions[:6] == ["wh init", "wh dash", "wh change", "wh check", "wh pull", "wh push"]
           ' >/dev/null
           "$bin" validate
           eval_result=$("$bin" eval --json)

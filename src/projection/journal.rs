@@ -848,7 +848,7 @@ pub fn decision_trail(state: &AgreementState) -> String {
                             .policy_state
                             .accepted
                             .as_ref()
-                            .map(&rule_title)
+                            .map(rule_title)
                             .or_else(|| {
                                 RecordId::new(gate.as_str())
                                     .ok()
