@@ -111,7 +111,12 @@ export async function launchOnce() {
     "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
     "--no-first-run", "--no-default-browser-check", "--disable-background-networking",
     "--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "about:blank",
-  ], { stdio: ["ignore", "ignore", "pipe"] });
+  ], { stdio: ["ignore", "ignore", "pipe"], detached: true });
+  // Chrome's helpers (renderer, GPU, crashpad) outlive a signal to the main
+  // process, so it runs in its own process group and is killed as a group.
+  const kill = () => {
+    try { process.kill(-child.pid, "SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch {} }
+  };
   let chromeErrors = "";
   child.stderr?.on("data", (chunk) => { chromeErrors = (chromeErrors + chunk).slice(-800); });
   const portFile = join(profile, "DevToolsActivePort");
@@ -137,7 +142,7 @@ export async function launchOnce() {
     if (!page) await delay(25);
   }
   if (!page) {
-    try { child.kill("SIGKILL"); } catch {}
+    kill();
     throw new Error(`Chrome did not expose a page target after 20s (exit code ${child.exitCode}, last targets ${lastTargets}, port ${port}); chrome said: ${chromeErrors.trim() || "nothing"}`);
   }
   const cdp = new Cdp(page.webSocketDebuggerUrl);
@@ -146,14 +151,21 @@ export async function launchOnce() {
   return {
     cdp,
     // Chrome can still be flushing its profile after SIGKILL; wait for the
-    // exit and retry the removal instead of racing it.
+    // exit and retry the removal instead of racing it. The profile is a temp
+    // directory, so one left behind never fails the run.
     async close() {
       if (child.exitCode === null && child.signalCode === null) {
         const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
-        child.kill("SIGKILL");
+        kill();
         await Promise.race([exited, delay(2000)]);
+      } else {
+        kill();
       }
-      rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+      try {
+        rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+      } catch (error) {
+        process.stderr.write(`left Chrome profile ${profile}: ${error.code ?? error}\n`);
+      }
     },
   };
 }
