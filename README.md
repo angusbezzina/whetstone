@@ -137,9 +137,14 @@ They run with the other five in [AGENTS.md](AGENTS.md) before every push.
 
 ## Install
 
-There is no release of this product yet. The latest GitHub release, v0.12.0,
-is the previous product, and `install.sh` installs that release. Build from
-source:
+Install the latest release (it also links `wh`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/angusbezzina/whetstone/main/install.sh | sh
+wh --help   # lists init, dash, change, check, pull and push
+```
+
+Releases before v0.13.0 are the previous product. Or build from source:
 
 ```bash
 cargo build --release

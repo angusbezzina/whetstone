@@ -9,8 +9,11 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
-Whetstone is rebuilt around six workflows and a verification skill that any
-agent can use. Nothing here has been released yet.
+## [0.13.0] - 2026-10-15
+
+The first release of the rebuilt product. Whetstone is rebuilt around six
+workflows and a verification skill that any agent can use. It replaces the
+previous product line (0.1.0 to 0.12.0) and is not compatible with it.
 
 **Direction change (2026-09-27).** The owner adopted the delegation plan
 (`planning/direction.md`, Beads epic `whetstone-ppq`, which supersedes
