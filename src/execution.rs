@@ -221,8 +221,13 @@ fn cleanup_process_group(pid: u32) -> String {
     {
         // SAFETY: a negative, freshly spawned process-group ID targets only the
         // checker group established by `CommandExt::process_group(0)`.
-        unsafe {
-            kill(-(pid as i32), 9);
+        // A member forking as the group is killed can escape one signal, so
+        // signal until the group is gone (kill fails), for at most a second.
+        for _ in 0..200 {
+            if unsafe { kill(-(pid as i32), 9) } != 0 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
         }
         "hard:unix-process-group-sigkill".into()
     }
