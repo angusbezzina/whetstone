@@ -93,12 +93,12 @@ class Cdp {
   }
 }
 
-// One bad Chrome start (no page target) is retried once, cleanly.
+// One bad Chrome start (no debugging port or no page target) is retried once, cleanly.
 export async function launch() {
   try {
     return await launchOnce();
   } catch (error) {
-    if (!/page target/.test(String(error.message))) throw error;
+    if (!/page target|debugging port/.test(String(error.message))) throw error;
     return await launchOnce();
   }
 }
@@ -111,18 +111,19 @@ export async function launchOnce() {
     "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
     "--no-first-run", "--no-default-browser-check", "--disable-background-networking",
     "--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox", "--hide-scrollbars", "about:blank",
-  ], { stdio: ["ignore", "ignore", "pipe"], detached: true });
-  // Chrome's helpers (renderer, GPU, crashpad) outlive a signal to the main
-  // process, so it runs in its own process group and is killed as a group.
-  const kill = () => {
-    try { process.kill(-child.pid, "SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch {} }
-  };
+  ], { stdio: ["ignore", "ignore", "pipe"] });
+  const kill = () => { try { child.kill("SIGKILL"); } catch {} };
   let chromeErrors = "";
   child.stderr?.on("data", (chunk) => { chromeErrors = (chromeErrors + chunk).slice(-800); });
   const portFile = join(profile, "DevToolsActivePort");
-  for (let attempt = 0; attempt < 400 && !existsSync(portFile); attempt += 1) {
+  for (let attempt = 0; attempt < 800 && !existsSync(portFile); attempt += 1) {
     if (child.exitCode !== null) throw new Error(`Chrome exited early with ${child.exitCode}`);
     await delay(25);
+  }
+  if (!existsSync(portFile)) {
+    kill();
+    try { rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }); } catch {}
+    throw new Error(`Chrome did not report a debugging port after 20s; chrome said: ${chromeErrors.trim() || "nothing"}`);
   }
   const port = readFileSync(portFile, "utf8").split("\n")[0];
   let page;
@@ -158,8 +159,6 @@ export async function launchOnce() {
         const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
         kill();
         await Promise.race([exited, delay(2000)]);
-      } else {
-        kill();
       }
       try {
         rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
