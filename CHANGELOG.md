@@ -9,6 +9,11 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+### Fixed
+
+- A checker's process group is signalled until it is empty, so a descendant
+  forking as the group is killed can no longer hold its output open.
+
 ## [0.13.0] - 2026-10-15
 
 The first release of the rebuilt product. Whetstone is rebuilt around six
@@ -105,6 +110,11 @@ requests, and gate exceptions. They stay here as a record of what was built.
 
 ### Fixed
 
+- Answering a raised hand works on bd 1.1.2, the minimum supported version,
+  whose `bd human respond` cannot open the store. The answer is recorded the
+  same way: a `Response:` comment and the close reason `Responded`.
+- A Chrome profile the driver cannot remove (Chrome still writing it) no
+  longer turns a real verdict into `unknown`.
 - A second `wh change` (or `--accept`) without `--request-id` no longer
   collides with the first: the default request id is derived from the
   change's input.
