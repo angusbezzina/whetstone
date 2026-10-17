@@ -221,6 +221,7 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
         "changelog_truncated": changelog_truncated,
         "current": current,
         "memory": memory,
+        "store": store_section(&layout),
         "workflows": [
             {"name": "init", "state": "available", "effect": "inspect, agree the mission, principles and rules, wire the gates"},
             {"name": "dash", "state": "available", "effect": "inspect rules, checks, requests and history"},
@@ -237,6 +238,38 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
             json!(trail.unwrap_or_else(|| format!("{}\n", projection::TRAIL_HEADER)));
     }
     response
+}
+
+/// Which store holds the records, how the switch was read, where Virgil is
+/// attached, and any records left in the store the switch no longer names.
+fn store_section(layout: &ProjectLayout) -> Value {
+    let switch = crate::storage::read_switch(layout.project_root());
+    let mut section = match &switch {
+        Ok(switch) => json!({
+            "kind": switch.config.backend(),
+            "lessons": switch.lessons.backend(),
+            "source": switch.source,
+            "switch": crate::storage::STORE_CONFIG,
+            "notice": switch.notice(),
+        }),
+        Err(error) => {
+            return json!({"kind": null, "state": "invalid", "detail": error, "switch": crate::storage::STORE_CONFIG})
+        }
+    };
+    let virgil = switch.as_ref().is_ok_and(|switch| {
+        switch.config == crate::storage::StoreConfig::Virgil
+            || switch.lessons == crate::storage::StoreConfig::Virgil
+    });
+    if virgil {
+        section["attachment"] = match crate::memory::virgil::attachment(layout.project_root()) {
+            Ok(Some((group, repository))) => json!({"group": group, "repository": repository}),
+            Ok(None) => json!(null),
+            Err(refusal) => json!({"state": "unavailable", "refusal": refusal}),
+        };
+    }
+    let left = crate::store::export::left_behind(layout);
+    section["left_behind"] = json!(left);
+    section
 }
 
 /// Each rule drafted from a lesson gets its lineage: the review that

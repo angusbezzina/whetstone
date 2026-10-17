@@ -10,7 +10,7 @@ use crate::agreement::AgreementState;
 use crate::domain::RecordId;
 use crate::projection::{self, SkillFile, SkillManifest};
 use crate::service::{InitRequest, ServiceResponse, ServiceState};
-use crate::storage::{ProjectLayout, RecordStore, StoreKind};
+use crate::storage::ProjectLayout;
 
 use super::render::{
     feature_markdown, features, features_readme, journal_markdown, map_conventions, skill_markdown,
@@ -24,8 +24,7 @@ use super::{
 /// Generate the verification skill, feature map and journal from accepted
 /// records, and scaffold the team-owned driver when absent.
 pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -> ServiceResponse {
-    let store = layout.private_store();
-    if !crate::beads::is_initialized(&store) {
+    if !layout.private_store_exists() {
         return error_response(
             request_id,
             ServiceState::NeedsInput,
@@ -33,7 +32,7 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
                 .into(),
         );
     }
-    let records = match RecordStore::open_existing(&store, StoreKind::Private)
+    let records = match crate::storage::open_private(layout)
         .and_then(|repository| repository.all_records())
     {
         Ok(records) => records,
@@ -272,7 +271,7 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
                 CI_WORKFLOW.to_string(),
                 CI_TEMPLATE
                     .replace("__WHETSTONE_VERSION__", env!("CARGO_PKG_VERSION"))
-                    .replace("__BD_VERSION__", crate::beads::MIN_BD_VERSION),
+                    .replace("__BD_VERSION__", crate::setup::MIN_BD_VERSION),
                 "repository",
                 "scaffolded once; team-owned; protect with CODEOWNERS",
             ));

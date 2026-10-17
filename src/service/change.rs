@@ -13,7 +13,7 @@ use crate::domain::{
     RecordRef, Rule, RuleSource, RuleSourceKind, VerificationAxis, RULE_SCHEMA_V2,
     SCHEMA_VERSION_V1,
 };
-use crate::storage::{ProjectLayout, RecordStore, StorageError, StoreKind};
+use crate::storage::{ProjectLayout, RecordStore, StorageError};
 
 use super::record::{
     agreement_record, append_private, ensure_local_change_proposal, key_suffix, receipt_record,
@@ -38,15 +38,16 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
         Ok(request_id) => request_id,
         Err(summary) => return unknown_response("change", "invalid-request-id".into(), summary),
     };
-    let private = match RecordStore::initialize(&layout.private_store(), StoreKind::Private) {
+    let private = match crate::storage::initialize_private(&layout) {
         Ok(repository) => repository,
         Err(error) => return storage_error("change", request_id, error),
     };
+    let private: &dyn RecordStore = &*private;
     if let Some(review) = request.review.clone() {
-        return review_draft(&layout, &private, request_id, &review, &request);
+        return review_draft(&layout, private, request_id, &review, &request);
     }
     if let Some(target) = request.retire.clone() {
-        return retire_record(&layout, &private, request_id, &target, &request);
+        return retire_record(&layout, private, request_id, &target, &request);
     }
     if let Some(flag) = request.flag.clone() {
         return record_flag(&layout, request_id, &flag, &request);
@@ -55,15 +56,15 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
         return answer_hand(&layout, request_id, &issue, &request);
     }
     if request.migrate {
-        return migrate(&layout, &private, request_id, &request);
+        return migrate(&layout, private, request_id, &request);
     }
     if request.tune {
-        return tune(&layout, &private, request_id, &request);
+        return tune(&layout, private, request_id, &request);
     }
     if request.lesson.is_some() || request.kind == Some(ChangeKind::Lesson) {
         return super::lesson::change(&layout, request_id, &request);
     }
-    propose(&layout, &private, request_id, &request)
+    propose(&layout, private, request_id, &request)
 }
 
 /// Without `--request-id`, the id is derived from what the change says, so the
@@ -103,7 +104,7 @@ fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String
 
 fn propose(
     layout: &ProjectLayout,
-    private: &RecordStore,
+    private: &dyn RecordStore,
     request_id: String,
     request: &ChangeRequest,
 ) -> ServiceResponse {
@@ -345,7 +346,7 @@ fn narrative_json(
     })
 }
 
-fn mission_owner(private: &RecordStore) -> Option<String> {
+fn mission_owner(private: &dyn RecordStore) -> Option<String> {
     RecordId::new(crate::projection::MISSION_ID)
         .ok()
         .and_then(|id| private.latest(&id).ok().flatten())
@@ -356,7 +357,7 @@ fn mission_owner(private: &RecordStore) -> Option<String> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_draft(
     layout: &ProjectLayout,
-    private: &RecordStore,
+    private: &dyn RecordStore,
     record_id: &RecordId,
     idempotency_key: String,
     body: RecordBody,
@@ -390,7 +391,7 @@ pub(crate) fn write_draft(
 /// Record one draft with its proposal in a single call, idempotently by key.
 pub(crate) fn draft_with_proposal(
     layout: &ProjectLayout,
-    private: &RecordStore,
+    private: &dyn RecordStore,
     key: &str,
     record_id: &RecordId,
     body: RecordBody,
@@ -914,7 +915,7 @@ fn answer_hand(
 /// nothing is rewritten.
 fn migrate(
     layout: &ProjectLayout,
-    private: &RecordStore,
+    private: &dyn RecordStore,
     request_id: String,
     request: &ChangeRequest,
 ) -> ServiceResponse {
@@ -1060,7 +1061,7 @@ fn migrate(
 /// list hardening candidates for the skill to write as mechanical rules.
 fn tune(
     layout: &ProjectLayout,
-    private: &RecordStore,
+    private: &dyn RecordStore,
     request_id: String,
     request: &ChangeRequest,
 ) -> ServiceResponse {
@@ -1155,7 +1156,7 @@ fn tune(
 
 pub(crate) fn review_draft(
     layout: &ProjectLayout,
-    private: &RecordStore,
+    private: &dyn RecordStore,
     request_id: String,
     review: &ReviewRequest,
     request: &ChangeRequest,
@@ -1357,7 +1358,7 @@ pub(crate) fn review_draft(
 /// stays in history.
 pub(crate) fn retire_record(
     layout: &ProjectLayout,
-    private: &RecordStore,
+    private: &dyn RecordStore,
     request_id: String,
     target: &str,
     request: &ChangeRequest,

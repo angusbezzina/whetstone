@@ -14,7 +14,7 @@ use crate::domain::{
 };
 use crate::onboarding;
 use crate::projection::{LegacyItem, Onboarding, OnboardingStep, StarterView};
-use crate::storage::{AppendRequest, ProjectLayout, RecordStore, StorageError, StoreKind};
+use crate::storage::{AppendRequest, ProjectLayout, RecordStore, StorageError};
 
 use super::record::{agreement_record, ChangeNarrative};
 use super::{
@@ -253,7 +253,7 @@ pub(super) fn init(request: InitRequest) -> ServiceResponse {
         InitAction::Import => return crate::skill::import(&layout, request_id, &request),
         InitAction::Setup => return setup(&layout, request_id, &request),
         InitAction::Exemplar => return exemplar(&layout, request_id, &request),
-        InitAction::Memory => return memory_switch(&layout, request_id, &request),
+        InitAction::Store => return store_switch(&layout, request_id, &request),
         _ => {}
     }
     let setup_plan = match onboarding::inspect(layout.project_root()) {
@@ -302,9 +302,46 @@ pub(super) fn init(request: InitRequest) -> ServiceResponse {
             });
             response
         }
-        InitAction::Inspect => inspection_response(request_id, resume, setup_plan, progress),
+        InitAction::Inspect => {
+            let mut response = inspection_response(request_id, resume, setup_plan, progress);
+            propose_store(&layout, &mut response);
+            response
+        }
         _ => agree(&layout, request_id, &request, progress, resume),
     }
+}
+
+/// Bare `wh init` names the record store, and when no switch is written yet
+/// on a checkout attached to Virgil, proposes the virgil store first and the
+/// beads store second.
+fn propose_store(layout: &ProjectLayout, response: &mut ServiceResponse) {
+    use crate::storage::{SwitchSource, STORE_CONFIG};
+    let switch = crate::storage::read_switch(layout.project_root());
+    let unchosen = switch
+        .as_ref()
+        .is_ok_and(|switch| switch.source != SwitchSource::Store);
+    let proposed = if unchosen {
+        proposed_stores(layout.project_root())
+    } else {
+        Vec::new()
+    };
+    if proposed.first() == Some(&"virgil") {
+        response.summary.push_str(&format!(
+            " This checkout is attached to Virgil and {STORE_CONFIG} names no store yet: choose wh init --action store --store virgil (proposed) or --store beads."
+        ));
+        let mut actions = proposed
+            .iter()
+            .map(|store| format!("wh init --action store --store {store}"))
+            .collect::<Vec<_>>();
+        actions.append(&mut response.permitted_actions);
+        response.permitted_actions = actions;
+    }
+    response.data["store"] = json!({
+        "kind": switch.as_ref().ok().map(|switch| switch.config.backend()),
+        "switch": STORE_CONFIG,
+        "chosen": !unchosen && switch.is_ok(),
+        "proposed": proposed,
+    });
 }
 
 fn inspection_response(
@@ -383,10 +420,9 @@ fn agree(
     let current_revision = progress.agreement_revision;
     // Read what exists without creating anything: a stale or invalid request
     // must leave no trace.
-    let existing_store =
-        RecordStore::open_existing(&layout.private_store(), StoreKind::Private).ok();
+    let existing_store = crate::storage::open_private(layout).ok();
     let stored = match existing_store
-        .as_ref()
+        .as_deref()
         .map(RecordStore::all_records)
         .transpose()
     {
@@ -672,12 +708,10 @@ fn agree(
         return response;
     }
     if !missing.is_empty() {
-        if let Some(shared) = layout.shared_store() {
-            if let Err(error) = RecordStore::initialize(&shared, StoreKind::Shareable) {
-                return storage_error("init", request_id, error);
-            }
+        if let Err(error) = crate::storage::prepare_shared(layout) {
+            return storage_error("init", request_id, error);
         }
-        let private = match RecordStore::initialize(&layout.private_store(), StoreKind::Private) {
+        let private = match crate::storage::initialize_private(layout) {
             Ok(store) => store,
             Err(error) => return storage_error("init", request_id, error),
         };
@@ -852,10 +886,11 @@ fn exemplar(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
             json!({"exemplar": opened, "proposals": proposals, "dry_run": request.dry_run});
         return response;
     }
-    let private = match RecordStore::initialize(&layout.private_store(), StoreKind::Private) {
+    let private = match crate::storage::initialize_private(layout) {
         Ok(store) => store,
         Err(error) => return storage_error("init", request_id, error),
     };
+    let private: &dyn RecordStore = &*private;
     let mut drafts = Vec::new();
     for proposal in &proposals {
         let Ok(id) = RecordId::new(proposal.id.as_str()) else {
@@ -876,7 +911,7 @@ fn exemplar(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
         let key = format!("exemplar:{request_id}:{}", proposal.id);
         match super::change::draft_with_proposal(
             layout,
-            &private,
+            private,
             &key,
             &id,
             RecordBody::Rule(proposal.rule.clone()),
@@ -900,103 +935,427 @@ fn exemplar(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
     response
 }
 
-/// Set where lessons live. The switch changes where admitted lessons are
-/// written and read, never what they mean. Flipping to Virgil needs the
-/// checkout attached to a Virgil repository in that group; when Whetstone's
-/// own store holds admitted lessons, it writes them as the file
-/// `virgil lessons import-beads` reads and flips only when a person confirms
-/// (`--yes`) that the reviewed apply read back, re-anchoring what the import
-/// could not carry. Proposals stay in Whetstone's store either way.
-fn memory_switch(
+/// The stores to offer, best first: Virgil when this checkout is attached
+/// to a Virgil repository (`.virgil/repo.toml`), then Beads.
+pub(crate) fn proposed_stores(project_root: &std::path::Path) -> Vec<&'static str> {
+    if project_root.join(".virgil/repo.toml").is_file() {
+        vec!["virgil", "beads"]
+    } else {
+        vec!["beads"]
+    }
+}
+
+/// Choose the record store for every record kind (`whetstone/store.json`).
+/// Choosing Virgil needs the checkout attached to a Virgil repository and
+/// the daemon answering; when Beads holds records, they are exported in the
+/// shape `virgil agreements import-beads` reads (and admitted lessons in the
+/// shape `virgil lessons import-beads` reads), and the switch flips only
+/// when a person confirms (`--yes`) that every exported revision read back
+/// with its digest. Drafts and receipts then move to the private file store.
+/// Choosing Beads needs `bd`; records already in Virgil stay there. Nothing
+/// in Beads or Git history is rewritten.
+fn store_switch(
     layout: &ProjectLayout,
     request_id: String,
     request: &InitRequest,
 ) -> ServiceResponse {
-    use crate::memory::{self, MemoryConfig};
-    let current = memory::read_config(layout.project_root()).ok();
-    let wanted = match (request.memory_store.as_deref(), request.memory_group.clone()) {
-        (None, _) => {
-            let mut response = ServiceResponse::new(
-                request_id,
-                "init",
-                ServiceState::Success,
-                format!(
-                    "Lessons live in the {} store. Choose with --store beads, or --store virgil --group <ULID>.",
-                    current.as_ref().map_or("(unreadable)", MemoryConfig::backend)
-                ),
-            );
-            response.data = json!({"memory": current, "switch": memory::MEMORY_CONFIG, "read_only": true});
-            return response;
+    use crate::storage::{self, StoreConfig, SwitchSource, STORE_CONFIG};
+    let root = layout.project_root();
+    let current = storage::read_switch(root);
+    let notice = current.as_ref().ok().and_then(storage::StoreSwitch::notice);
+    let group_ignored = request.group.as_ref().map(|group| {
+        format!("--group {group} is no longer read: the Virgil scope is this checkout's attachment (.virgil/repo.toml).")
+    });
+    let describe = |switch: &Result<storage::StoreSwitch, String>| match switch {
+        Ok(switch) => json!({
+            "kind": switch.config.backend(),
+            "lessons": switch.lessons.backend(),
+            "source": switch.source,
+        }),
+        Err(error) => json!({"kind": null, "error": error}),
+    };
+    let Some(name) = request.store.as_deref() else {
+        let proposed = proposed_stores(root);
+        let mut response = ServiceResponse::new(
+            request_id,
+            "init",
+            ServiceState::Success,
+            format!(
+                "Records live in the {} store. Choose with --store {}.{}",
+                current
+                    .as_ref()
+                    .map_or("(unreadable)", |switch| switch.config.backend()),
+                proposed.join(" or --store "),
+                notice
+                    .as_ref()
+                    .map(|notice| format!(" {notice}"))
+                    .unwrap_or_default()
+            ),
+        );
+        response.data = json!({
+            "store": describe(&current),
+            "switch": STORE_CONFIG,
+            "notice": notice,
+            "proposed": proposed,
+            "read_only": true,
+        });
+        return response;
+    };
+    let wanted = match StoreConfig::parse(name) {
+        Ok(wanted) => wanted,
+        Err(message) => return needs_input("init", request_id, 0, String::new(), message),
+    };
+    let records_in_beads = current
+        .as_ref()
+        .map_or(true, |switch| switch.config == StoreConfig::Beads);
+    let lessons_in_beads = current
+        .as_ref()
+        .map_or(true, |switch| switch.lessons == StoreConfig::Beads);
+    let changed = current.as_ref().map_or(true, |switch| {
+        switch.config != wanted
+            || switch.lessons != wanted
+            || switch.source != SwitchSource::Store
+            || switch.legacy_ignored
+    });
+    let mut migration = json!(null);
+    match wanted {
+        StoreConfig::Virgil if changed || request.yes => {
+            match virgil_store_migration(
+                layout,
+                &request_id,
+                request,
+                (records_in_beads, lessons_in_beads),
+            ) {
+                Ok(data) => migration = data,
+                Err(response) => return *response,
+            }
         }
-        (Some("beads"), None) => MemoryConfig::Beads,
-        (Some("virgil"), Some(group)) => MemoryConfig::Virgil { group },
-        (Some("virgil"), None) => {
-            return needs_input(
+        StoreConfig::Beads if changed && !crate::setup::bd_ready() => {
+            let mut response = needs_input(
                 "init",
                 request_id,
                 0,
                 String::new(),
-                "Name the Virgil group lessons live in: --group <ULID>.".into(),
-            )
+                format!(
+                    "The beads store needs bd {} or later, which is not installed; {} was not changed.",
+                    crate::setup::MIN_BD_VERSION,
+                    STORE_CONFIG
+                ),
+            );
+            response.permitted_actions = vec![
+                crate::setup::bd_install_command(),
+                "wh init --action store --store beads".into(),
+            ];
+            return response;
         }
-        (Some(store), _) => {
-            return unknown_response(
-                "init",
-                request_id,
-                format!("{store} is not a lesson store; use beads or virgil (with --group only for virgil)."),
-            )
-        }
-    };
-    let changed = current.as_ref() != Some(&wanted);
-    let mut migration = json!(null);
-    if let (MemoryConfig::Virgil { group }, true) = (&wanted, changed || request.yes) {
-        match virgil_migration(layout, &request_id, request, group) {
-            Ok(Ok(data)) => migration = data,
-            Ok(Err(response)) => return response,
-            Err(response) => return *response,
-        }
+        _ => {}
     }
     let mut response = ServiceResponse::new(
         request_id,
         "init",
-        if request.dry_run {
+        if request.dry_run && changed {
             ServiceState::NeedsDecision
         } else {
             ServiceState::Success
         },
         match (request.dry_run, changed) {
-            (_, false) => format!("Lessons already live in the {} store; nothing changed.", wanted.backend()),
+            (_, false) => format!("Records already live in the {} store; nothing changed.", wanted.backend()),
             (true, true) => format!(
-                "{} would name the {} store; nothing was written.",
-                memory::MEMORY_CONFIG,
+                "{STORE_CONFIG} would name the {} store; nothing was written.",
                 wanted.backend()
             ),
             (false, true) => format!(
-                "Lessons now live in the {} store ({} records the switch; commit it so the team shares it).{}",
+                "Every record now lives in the {} store ({STORE_CONFIG} records the switch; commit it so the team shares it).{}",
                 wanted.backend(),
-                memory::MEMORY_CONFIG,
-                match &wanted {
-                    MemoryConfig::Virgil { .. } => " Proposals stay in Whetstone's store until a person admits them, which writes them to Virgil.",
-                    MemoryConfig::Beads => " Lessons already in Virgil stay there; Whetstone reads its own store from now on.",
+                match wanted {
+                    StoreConfig::Virgil => " Accepted records reach the group's Records when they are accepted; drafts and receipts stay on this machine; wh push and wh pull are the daemon's now.",
+                    StoreConfig::Beads => " Records already in Virgil stay there; wh dash lists them.",
                 }
             ),
         },
     );
+    if let Some(ignored) = &group_ignored {
+        response.summary.push(' ');
+        response.summary.push_str(ignored);
+    }
+    let mut legacy_removed = false;
     if changed && !request.dry_run {
-        if let Err(error) = memory::write_config(layout.project_root(), &wanted) {
-            return unknown_response("init", response.request_id, error);
+        match storage::write_config(root, wanted) {
+            Ok(removed) => legacy_removed = removed,
+            Err(error) => return unknown_response("init", response.request_id, error),
         }
     }
     response.permitted_actions = vec!["wh dash".into()];
     response.data = json!({
-        "memory": wanted,
-        "previous": current,
-        "switch": memory::MEMORY_CONFIG,
-        "migrated": migration["imported"].as_u64().unwrap_or(0),
+        "store": {"kind": wanted.backend()},
+        "previous": describe(&current),
+        "switch": STORE_CONFIG,
+        "migrated": migration["agreements"]["confirmed"].as_u64().unwrap_or(0),
         "migration": migration,
         "written": changed && !request.dry_run,
+        "legacy_removed": legacy_removed,
     });
     response
+}
+
+/// Before the switch names Virgil: the checkout must be attached and the
+/// daemon must answer `virgil agreements`; records Beads holds must have
+/// been imported and read back, and so must admitted lessons. `Ok(data)`
+/// lets the flip go ahead (after the private records moved to files).
+fn virgil_store_migration(
+    layout: &ProjectLayout,
+    request_id: &str,
+    request: &InitRequest,
+    (records_in_beads, lessons_in_beads): (bool, bool),
+) -> Result<serde_json::Value, Box<ServiceResponse>> {
+    use crate::memory::virgil;
+    use crate::store::export;
+    let root = layout.project_root();
+    let stop =
+        |state: ServiceState, summary: String, actions: Vec<String>, data: serde_json::Value| {
+            let mut response = ServiceResponse::new(request_id.to_string(), "init", state, summary);
+            response.permitted_actions = actions;
+            response.data = json!({
+                "store": {"kind": "virgil"},
+                "switch": crate::storage::STORE_CONFIG,
+                "migration": data,
+                "written": false,
+            });
+            Box::new(response)
+        };
+    let (group, repository) = match virgil::attachment(root) {
+        Ok(Some(attached)) => attached,
+        Ok(None) => {
+            return Err(stop(
+                ServiceState::NeedsInput,
+                "This checkout is not attached to a Virgil repository, so records have nowhere to live; the switch was not flipped. An admin registers the repository, a developer binds it to the group's channel, then attach this checkout (it writes .virgil/repo.toml; commit it).".into(),
+                vec![
+                    "virgil repos register --group <group> --name <name> --origin-source <git URL> (an admin)".into(),
+                    "virgil repos bind <repository> --group <group> --channel <channel>".into(),
+                    "virgil repos attach <repository> --group <group>".into(),
+                    "wh init --action store --store virgil".into(),
+                ],
+                json!({"attached": null, "missing": ".virgil/repo.toml (virgil repos attach)"}),
+            ))
+        }
+        Err(refusal) => {
+            return Err(stop(
+                if refusal.code == "store_unavailable" {
+                    ServiceState::Unavailable
+                } else {
+                    ServiceState::Conflict
+                },
+                format!("Virgil could not say which repository this checkout is attached to ({}): {}; the switch was not flipped.", refusal.code, refusal.message),
+                vec!["virgil status".into(), "virgil repos show".into()],
+                json!({"refusal": refusal, "missing": "a reachable virgil daemon"}),
+            ))
+        }
+    };
+    let virgil_store = crate::store::virgil::VirgilStore::new(root);
+    if let Err(error) = virgil_store.probe() {
+        let (state, missing) = match &error {
+            StorageError::Virgil { code, .. } if code == "store_contract" => (
+                ServiceState::Conflict,
+                format!(
+                    "virgil agreements ({})",
+                    crate::store::virgil::AGREEMENTS_API
+                ),
+            ),
+            _ => (
+                ServiceState::Unavailable,
+                "a reachable virgil daemon".to_string(),
+            ),
+        };
+        return Err(stop(
+            state,
+            format!("The Virgil daemon does not answer virgil agreements ({error}); the switch was not flipped. This needs {missing}."),
+            vec!["virgil status".into(), "virgil agreements --help".into()],
+            json!({"missing": missing, "attached": {"group": group, "repository": repository}}),
+        ));
+    }
+    let confirm = "wh init --action store --store virgil --yes".to_string();
+    let mut agreements = json!({"exported": 0, "confirmed": 0});
+    // What the person reviews before confirming: (summary, commands).
+    let mut review: Vec<(String, Vec<String>)> = Vec::new();
+    if records_in_beads {
+        let built = export::build(layout).map_err(|error| {
+            stop(
+                ServiceState::Unavailable,
+                format!("The records in Beads could not be read for the export: {error}; the switch was not flipped."),
+                vec!["wh dash".into()],
+                json!({"error": error.to_string()}),
+            )
+        })?;
+        let file = export::path(layout)
+            .map_err(|error| stop(ServiceState::Unknown, error, vec![], json!(null)))?;
+        let import = |apply: bool| {
+            format!(
+                "echo '{{\"file\":\"{}\",\"apply\":{apply}}}' | virgil agreements import-beads --input -",
+                file.display()
+            )
+        };
+        agreements = json!({
+            "file": file.display().to_string(),
+            "exported": built.entries.len(),
+            "records": built.references(),
+            "blocked": built.blocked,
+            "collisions": built.collisions,
+            "confirmed": 0,
+        });
+        if !built.collisions.is_empty() {
+            return Err(stop(
+                ServiceState::Conflict,
+                format!(
+                    "{} accepted revision{} here collide{} with the shared Beads database's ({}); rebase {} with wh change before moving to Virgil. The switch was not flipped.",
+                    built.collisions.len(),
+                    if built.collisions.len() == 1 { "" } else { "s" },
+                    if built.collisions.len() == 1 { "s" } else { "" },
+                    built.collisions.join(", "),
+                    if built.collisions.len() == 1 { "it" } else { "them" },
+                ),
+                vec!["wh pull".into(), "wh dash".into()],
+                json!({"agreements": agreements}),
+            ));
+        }
+        if !built.entries.is_empty()
+            && request.yes
+            && !request.dry_run
+            && request.actor != crate::domain::ActorKind::Person
+        {
+            return Err(stop(
+                ServiceState::Conflict,
+                "Confirming the move to Virgil is a person's: it moves every record the team reads. A person runs this at a terminal.".into(),
+                vec![confirm.clone()],
+                json!({"agreements": agreements}),
+            ));
+        }
+        if !built.entries.is_empty() {
+            if !request.yes || request.dry_run {
+                if !request.dry_run {
+                    export::write(layout, &built, &repository).map_err(|error| {
+                        stop(
+                            ServiceState::Unknown,
+                            format!("The export could not be written: {error}"),
+                            vec![],
+                            json!(null),
+                        )
+                    })?;
+                }
+                review.push((
+                    format!(
+                        "{} record revision{} in Beads must reach Virgil before the switch flips. {} the export at {}; review it with the dry run and apply it.",
+                        built.entries.len(),
+                        if built.entries.len() == 1 { "" } else { "s" },
+                        if request.dry_run { "Nothing was written; it would write" } else { "Wrote" },
+                        file.display(),
+                    ),
+                    vec![import(false), import(true)],
+                ));
+            } else if !export::written(layout, &built, &repository) {
+                return Err(stop(
+                    ServiceState::NeedsInput,
+                    format!(
+                        "No export of the records Beads holds now is at {}, so there is nothing to confirm; the switch was not flipped. Run wh init --action store --store virgil to write it, import it, then confirm.",
+                        file.display()
+                    ),
+                    vec!["wh init --action store --store virgil".into()],
+                    json!({"agreements": agreements}),
+                ));
+            }
+        }
+        if !built.entries.is_empty() && request.yes && !request.dry_run {
+            let confirmation = export::confirm(root, &built).map_err(|error| {
+                stop(
+                    ServiceState::Unavailable,
+                    format!("The export could not be read back from Virgil: {error}; the switch was not flipped."),
+                    vec![import(true), confirm.clone()],
+                    json!({"agreements": agreements}),
+                )
+            })?;
+            if !confirmation.complete() {
+                let mut named = confirmation
+                    .missing
+                    .iter()
+                    .map(|id| format!("{id} (missing)"))
+                    .collect::<Vec<_>>();
+                named.extend(
+                    confirmation
+                        .mismatched
+                        .iter()
+                        .map(|id| format!("{id} (different digest)")),
+                );
+                agreements["missing"] = json!(confirmation.missing);
+                agreements["mismatched"] = json!(confirmation.mismatched);
+                return Err(stop(
+                    if confirmation.mismatched.is_empty() {
+                        ServiceState::NeedsInput
+                    } else {
+                        ServiceState::Conflict
+                    },
+                    format!(
+                        "{} exported revision{} did not read back from Virgil as exported: {}; the switch was not flipped.",
+                        named.len(),
+                        if named.len() == 1 { "" } else { "s" },
+                        named.join(", ")
+                    ),
+                    vec![import(true), confirm],
+                    json!({"agreements": agreements}),
+                ));
+            }
+            agreements["confirmed"] = json!(confirmation.confirmed);
+        }
+    }
+    let lessons = if lessons_in_beads {
+        match virgil_migration(layout, request_id, request, &group) {
+            Ok(Ok(data)) => data,
+            Ok(Err(response)) if response.state == ServiceState::NeedsDecision => {
+                review.push((response.summary.clone(), response.permitted_actions.clone()));
+                response.data["migration"]["lessons"].clone()
+            }
+            Ok(Err(response)) => return Err(Box::new(response)),
+            Err(response) => return Err(response),
+        }
+    } else {
+        json!({"imported": 0, "already_in_virgil": true})
+    };
+    if !review.is_empty() {
+        let mut actions = Vec::new();
+        let mut summary = Vec::new();
+        for (text, commands) in review {
+            summary.push(text);
+            actions.extend(
+                commands
+                    .into_iter()
+                    .filter(|command| !command.starts_with("wh init")),
+            );
+        }
+        actions.push(confirm);
+        summary.push("Confirm as a person with --yes once everything has read back; nothing flips until then.".into());
+        return Err(stop(
+            ServiceState::NeedsDecision,
+            summary.join(" "),
+            actions,
+            json!({"agreements": agreements, "lessons": lessons}),
+        ));
+    }
+    let carried = if records_in_beads && !request.dry_run {
+        export::carry_private(layout).map_err(|error| {
+            stop(
+                ServiceState::Unavailable,
+                format!("The private drafts and receipts could not be moved to the file store: {error}; the switch was not flipped."),
+                vec![confirm.clone()],
+                json!({"agreements": agreements}),
+            )
+        })?
+    } else {
+        0
+    };
+    Ok(json!({
+        "attached": {"group": group, "repository": repository},
+        "agreements": agreements,
+        "lessons": lessons,
+        "carried_private": carried,
+    }))
 }
 
 /// Before the switch names Virgil: the checkout must be attached to a
@@ -1015,9 +1374,9 @@ fn virgil_migration(
             let mut response = ServiceResponse::new(request_id.to_string(), "init", state, summary);
             response.permitted_actions = actions;
             response.data = json!({
-                "memory": {"store": "virgil", "group": group},
-                "switch": crate::memory::MEMORY_CONFIG,
-                "migration": data,
+                "store": {"kind": "virgil"},
+                "switch": crate::storage::STORE_CONFIG,
+                "migration": {"lessons": data},
                 "written": false,
             });
             response
@@ -1040,7 +1399,7 @@ fn virgil_migration(
                     format!("virgil repos register --group {group} --name <name> --origin-source <git URL> (an admin)"),
                     format!("virgil repos bind <repository> --group {group} --channel <channel>"),
                     format!("virgil repos attach <repository> --group {group}"),
-                    format!("wh init --action memory --store virgil --group {group}"),
+                    "wh init --action store --store virgil".into(),
                 ],
                 json!({"attached": null, "missing": ".virgil/repo.toml (virgil repos attach)", "written": false}),
             )))
@@ -1112,7 +1471,7 @@ fn virgil_migration(
         "virgil lessons import-beads --repo {repository} --file {} --manifest <reviewed manifest> --apply --json",
         file.display()
     );
-    let confirm = format!("wh init --action memory --store virgil --group {group} --yes");
+    let confirm = "wh init --action store --store virgil --yes".to_string();
     if !request.yes || request.dry_run {
         return Ok(Err(stop(
             ServiceState::NeedsDecision,

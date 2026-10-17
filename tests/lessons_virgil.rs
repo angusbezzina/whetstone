@@ -239,9 +239,8 @@ fn memory_init(root: &Path, request_id: &str, actor: ActorKind, yes: bool) -> Se
     CommandService.execute(ServiceRequest::Init(InitRequest {
         project_dir: root.to_path_buf(),
         request_id: Some(request_id.into()),
-        action: InitAction::Memory,
-        memory_store: Some("virgil".into()),
-        memory_group: Some(GROUP.into()),
+        action: InitAction::Store,
+        store: Some("virgil".into()),
         yes,
         actor,
         ..InitRequest::default()
@@ -443,7 +442,7 @@ fn lessons_live_in_virgil_through_the_shipped_cli() {
         .iter()
         .any(|action| action.starts_with("virgil repos attach")));
     assert!(
-        !root.join("whetstone/memory.json").exists(),
+        !root.join("whetstone/store.json").exists(),
         "the switch did not flip"
     );
 
@@ -457,10 +456,14 @@ fn lessons_live_in_virgil_through_the_shipped_cli() {
         exported.summary
     );
     assert!(
-        !root.join("whetstone/memory.json").exists(),
+        !root.join("whetstone/store.json").exists(),
         "no flip before the import"
     );
-    let file = PathBuf::from(exported.data["migration"]["file"].as_str().expect("file"));
+    let file = PathBuf::from(
+        exported.data["migration"]["lessons"]["file"]
+            .as_str()
+            .expect("file"),
+    );
     assert!(
         !file.starts_with(root),
         "the importer refuses exports inside the repository"
@@ -506,7 +509,7 @@ fn lessons_live_in_virgil_through_the_shipped_cli() {
     assert!(header("old-transport-retries").starts_with("OBSOLETE "));
     let proposals: Value = serde_json::from_str(
         &std::fs::read_to_string(
-            exported.data["migration"]["proposals_file"]
+            exported.data["migration"]["lessons"]["proposals_file"]
                 .as_str()
                 .expect("proposals"),
         )
@@ -518,7 +521,7 @@ fn lessons_live_in_virgil_through_the_shipped_cli() {
         "{proposals}"
     );
     assert_eq!(
-        exported.data["migration"]["personal"],
+        exported.data["migration"]["lessons"]["personal"],
         json!(["prefer-short-answers"])
     );
     assert!(exported.permitted_actions.iter().any(|action| action
@@ -533,7 +536,8 @@ fn lessons_live_in_virgil_through_the_shipped_cli() {
     );
 
     // Until the import is applied, a switch flipped by hand reports what was
-    // left behind.
+    // left behind. (The retired lessons-only memory.json still reads: lessons
+    // in Virgil, records still in Beads.)
     std::fs::create_dir_all(root.join("whetstone")).expect("dir");
     std::fs::write(
         root.join("whetstone/memory.json"),
@@ -595,12 +599,12 @@ fn lessons_live_in_virgil_through_the_shipped_cli() {
         ],
     );
     assert_eq!(agent_confirm["state"], "conflict", "{agent_confirm}");
-    assert!(!root.join("whetstone/memory.json").exists());
+    assert!(!root.join("whetstone/store.json").exists());
     let confirmed = memory_init(root, "flip-4", ActorKind::Person, true);
     ok(&confirmed);
-    assert_eq!(confirmed.data["migrated"], 4);
+    assert_eq!(confirmed.data["migration"]["lessons"]["imported"], 4);
     assert_eq!(
-        confirmed.data["migration"]["re_anchored"],
+        confirmed.data["migration"]["lessons"]["re_anchored"],
         json!(["values-are-integers"])
     );
     let reanchor = fake.ops("lessons", "remember");
@@ -615,11 +619,12 @@ fn lessons_live_in_virgil_through_the_shipped_cli() {
     );
     assert_eq!(
         serde_json::from_str::<Value>(
-            &std::fs::read_to_string(root.join("whetstone/memory.json")).expect("switch")
+            &std::fs::read_to_string(root.join("whetstone/store.json")).expect("switch")
         )
         .expect("json"),
-        json!({"store": "virgil", "group": GROUP})
+        json!({"store": "virgil"})
     );
+    assert!(!root.join("whetstone/memory.json").exists());
     let memory = dash_memory(root, &fake);
     assert!(memory["not_migrated"].is_null(), "{memory}");
     assert_eq!(
@@ -1095,12 +1100,13 @@ fn lessons_live_in_virgil_through_the_shipped_cli() {
         .expect("the hand is listed");
     assert_eq!(request["question"], "Floats everywhere?");
 
-    // Backend b never calls anything but `virgil lessons`, `tasks`, `repos`.
+    // Backend b never calls anything but `virgil lessons`, `tasks`, `repos`
+    // and `agreements` (every other record), and setup's `--version` probe.
     for call in fake.calls() {
         assert!(
             matches!(
                 call["argv"][0].as_str(),
-                Some("lessons" | "tasks" | "repos")
+                Some("lessons" | "tasks" | "repos" | "agreements" | "--version")
             ),
             "{call}"
         );

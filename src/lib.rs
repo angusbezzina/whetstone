@@ -29,6 +29,7 @@ pub mod setup;
 pub mod skill;
 pub mod starter;
 pub mod storage;
+pub mod store;
 pub mod sync;
 mod types;
 pub mod verification;

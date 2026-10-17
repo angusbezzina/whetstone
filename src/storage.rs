@@ -1,6 +1,24 @@
-//! Project layout, store kinds and storage errors. Records live in Beads
-//! (see [`crate::beads`]): a private database under `.git/whetstone` that
-//! never has a remote, and the repository's shared Beads database.
+//! Project layout, the record store port, the store switch and storage
+//! errors.
+//!
+//! Every record revision lives behind one port, [`RecordStore`]. Which
+//! adapters sit behind it is chosen once per repository by the committed
+//! switch `whetstone/store.json` ([`StoreConfig`]), for every record kind
+//! together:
+//!
+//! - **Beads** (the default): a private Beads database under `.git/whetstone`
+//!   that never has a remote, and the repository's shared Beads database
+//!   ([`crate::beads`]). `wh push` and `wh pull` wrap `bd dolt push` and
+//!   `bd dolt pull`.
+//! - **Virgil**: drafts and receipts in a file store under `.git/whetstone`
+//!   ([`crate::store::file`]), accepted records and decisions in the
+//!   attached group's Records `agreement` collection, reached only through
+//!   `virgil agreements` ([`crate::store::virgil`]). Sync is the daemon's, so
+//!   `wh push` and `wh pull` are refused by name and `bd` is never needed.
+//!
+//! The kernel (in-force resolution, digests, the draft-never-displaces-
+//! accepted invariant) is the same whichever adapter is underneath; adapters
+//! only keep exact revisions and refuse what would break them.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -8,9 +26,9 @@ use std::process::{Command, Output};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::domain::{AgreementRecord, DomainError, RecordId, RecordRef};
-
-pub use crate::beads::RecordStore;
+use crate::domain::{
+    AgreementHistory, AgreementRecord, DomainError, RecordBody, RecordId, RecordRef,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -27,6 +45,785 @@ impl StoreKind {
         }
     }
 }
+
+/// Which adapter holds a store's records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StoreBackend {
+    Beads,
+    Files,
+    Virgil,
+}
+
+impl StoreBackend {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Beads => "beads",
+            Self::Files => "files",
+            Self::Virgil => "virgil",
+        }
+    }
+}
+
+/// A batch whose completion marker is missing: some of its records exist.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IncompleteBatch {
+    pub marker_key: String,
+    pub present: Vec<String>,
+    pub missing: Vec<String>,
+}
+
+/// One record in a multi-record append.
+///
+/// `expected_revision` is the latest revision the caller observed for this
+/// record ID before this item is applied. For two consecutive revisions of the
+/// same ID in one batch, the second item therefore expects the first item's
+/// revision.
+#[derive(Debug, Clone, Copy)]
+pub struct AppendRequest<'a> {
+    pub record: &'a AgreementRecord,
+    pub expected_revision: Option<u64>,
+}
+
+/// The record store port: exact, digest-verified, append-only revisions.
+///
+/// Every adapter keeps the same invariants: a record is read back exactly as
+/// it was written and its digest is verified on every read (a body that does
+/// not verify is reported with where it lives and never repaired); an append
+/// names the revision it expects and repeats of the same idempotency key
+/// return what was recorded; a multi-record append is a sequence of
+/// idempotent appends closed by a completion marker, so repeating it after an
+/// interruption writes only what is missing; writes are serialized by the
+/// adapter.
+pub trait RecordStore: std::fmt::Debug {
+    fn backend(&self) -> StoreBackend;
+
+    fn kind(&self) -> StoreKind;
+
+    /// Where the records live, for people (a directory or a Virgil scope);
+    /// two handles on the same store have the same location.
+    fn location(&self) -> String;
+
+    /// Every record revision, by id then revision.
+    fn all_records(&self) -> Result<Vec<AgreementRecord>, StorageError>;
+
+    fn get(&self, reference: &RecordRef) -> Result<Option<AgreementRecord>, StorageError> {
+        Ok(self
+            .all_records()?
+            .into_iter()
+            .find(|record| record.reference().is_ok_and(|found| &found == reference)))
+    }
+
+    fn by_idempotency_key(&self, key: &str) -> Result<Option<AgreementRecord>, StorageError> {
+        Ok(self
+            .all_records()?
+            .into_iter()
+            .find(|record| record.idempotency_key == key))
+    }
+
+    fn latest(&self, id: &RecordId) -> Result<Option<AgreementRecord>, StorageError> {
+        Ok(self
+            .all_records()?
+            .into_iter()
+            .filter(|record| &record.id == id)
+            .max_by_key(|record| record.revision))
+    }
+
+    fn history(&self, id: &RecordId) -> Result<Vec<AgreementRecord>, StorageError> {
+        Ok(self
+            .all_records()?
+            .into_iter()
+            .filter(|record| &record.id == id)
+            .collect())
+    }
+
+    /// Where one revision lives inside the store (a bead id, a file, a
+    /// Virgil record id), for people and the adapter's own tools.
+    fn locator(&self, reference: &RecordRef) -> Result<Option<String>, StorageError>;
+
+    /// Batches that started but never wrote their completion marker.
+    fn incomplete_batches(&self) -> Result<Vec<IncompleteBatch>, StorageError>;
+
+    fn append(
+        &self,
+        record: &AgreementRecord,
+        expected_revision: Option<u64>,
+    ) -> Result<RecordRef, StorageError>;
+
+    /// Append several records as one logical operation (see the trait).
+    fn append_batch(&self, requests: &[AppendRequest<'_>]) -> Result<Vec<RecordRef>, StorageError>;
+
+    /// Bring the stored lifecycle view in line with the kernel's resolution.
+    /// The view is for people browsing the store; nothing reads it back.
+    fn sync_lifecycle_labels(
+        &self,
+        state: &crate::agreement::AgreementState,
+    ) -> Result<usize, StorageError>;
+
+    /// The lifecycle view stored beside a revision (`pending`, `accepted`,
+    /// `superseded`, ...), as [`RecordStore::sync_lifecycle_labels`] left it.
+    fn lifecycle_view(&self, reference: &RecordRef) -> Result<Option<String>, StorageError>;
+
+    /// Write exact revisions copied from another store, in the order given:
+    /// a revision already present is skipped, a different revision under the
+    /// same id and number is a conflict. Only [`RecordStore::copy_to`] and
+    /// migration call this.
+    fn receive(&self, records: &[AgreementRecord]) -> Result<Vec<RecordRef>, StorageError>;
+
+    /// Remote transport, when the adapter has its own (Beads' `bd dolt`).
+    /// `None` means sync is not Whetstone's to run.
+    fn remote(&self) -> Option<&dyn RemoteSync> {
+        None
+    }
+
+    /// Copy exact record revisions into a shareable store (the sharing
+    /// path). Each copy keeps its canonical bytes; records already present
+    /// are skipped. Operational records never cross, and no canary may
+    /// appear in any copied record.
+    fn copy_to(
+        &self,
+        destination: &dyn RecordStore,
+        selected: &[RecordRef],
+        private_canaries: &[&str],
+    ) -> Result<Vec<RecordRef>, StorageError> {
+        if self.location() == destination.location() || destination.kind() != StoreKind::Shareable {
+            return Err(StorageError::InvalidProjectionBoundary);
+        }
+        let mut records = Vec::new();
+        for reference in selected {
+            let record = self
+                .get(reference)?
+                .ok_or_else(|| StorageError::UnknownReference(reference.clone()))?;
+            if record_class(&record.body) == "receipt" {
+                return Err(StorageError::InvalidProjectionBoundary);
+            }
+            // Retired kinds stay where they were; they are never written anew.
+            if matches!(record.body, RecordBody::Retired(_)) {
+                return Err(StorageError::Domain(DomainError::RetiredKind(
+                    record.body.type_name().to_string(),
+                )));
+            }
+            let canonical = record.canonical_json().map_err(StorageError::Domain)?;
+            for canary in private_canaries {
+                if !canary.is_empty()
+                    && canonical
+                        .windows(canary.len())
+                        .any(|window| window == canary.as_bytes())
+                {
+                    return Err(StorageError::PrivateCanaryFound((*canary).to_string()));
+                }
+            }
+            records.push(record);
+        }
+        records.sort_by(|left, right| {
+            logical_stage(left)
+                .cmp(&logical_stage(right))
+                .then_with(|| left.id.cmp(&right.id))
+                .then_with(|| left.revision.cmp(&right.revision))
+        });
+        destination.receive(&records)
+    }
+}
+
+/// An adapter's own remote transport.
+pub trait RemoteSync {
+    fn remotes(&self) -> Result<Vec<String>, StorageError>;
+    fn push_remote(&self) -> Result<String, StorageError>;
+    fn pull_remote(&self) -> Result<String, StorageError>;
+}
+
+// ---------- the switch ----------
+
+/// The committed switch that names the record store for every record kind.
+pub const STORE_CONFIG: &str = "whetstone/store.json";
+/// The lessons-only switch `store.json` replaced; read for one release.
+pub const LEGACY_MEMORY_CONFIG: &str = "whetstone/memory.json";
+
+/// Where every record lives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(tag = "store", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StoreConfig {
+    /// Beads: no network and no Virgil.
+    #[default]
+    Beads,
+    /// The attached Virgil group's Records, through the `virgil` CLI only;
+    /// the scope is the repository attachment (`.virgil/repo.toml`).
+    Virgil,
+}
+
+impl StoreConfig {
+    pub fn backend(self) -> &'static str {
+        match self {
+            Self::Beads => "beads",
+            Self::Virgil => "virgil",
+        }
+    }
+
+    pub fn parse(name: &str) -> Result<Self, String> {
+        match name {
+            "beads" => Ok(Self::Beads),
+            "virgil" => Ok(Self::Virgil),
+            other => Err(format!(
+                "{other:?} is not a record store; the stores are beads and virgil."
+            )),
+        }
+    }
+}
+
+/// The legacy lessons switch, whose Virgil arm named a group.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "store", rename_all = "snake_case", deny_unknown_fields)]
+enum LegacyMemoryConfig {
+    Beads,
+    Virgil {
+        #[allow(dead_code)]
+        group: Option<String>,
+    },
+}
+
+/// Which file named the store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SwitchSource {
+    /// Neither file exists: Beads.
+    Default,
+    Store,
+    /// Only the legacy `memory.json` exists.
+    LegacyMemory,
+}
+
+/// The switch as read, with where it came from.
+///
+/// `config` is the record store. `lessons` is where lessons (and raised
+/// hands) go: the same store, except under a legacy `memory.json` naming
+/// Virgil, which only ever moved lessons. Its records stay in Beads until
+/// `wh init --action store --store virgil` moves them, so no rule ever
+/// silently disappears from a check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoreSwitch {
+    pub config: StoreConfig,
+    pub lessons: StoreConfig,
+    pub source: SwitchSource,
+    /// `memory.json` exists beside `store.json` and is ignored.
+    pub legacy_ignored: bool,
+}
+
+impl StoreSwitch {
+    /// What a person should know about the switch file, if anything.
+    pub fn notice(&self) -> Option<String> {
+        match (self.source, self.legacy_ignored) {
+            (SwitchSource::LegacyMemory, _) => Some(match self.lessons {
+                StoreConfig::Beads => format!(
+                    "{LEGACY_MEMORY_CONFIG} is now {STORE_CONFIG}; run wh init --action store --store beads to rewrite it."
+                ),
+                StoreConfig::Virgil => format!(
+                    "{LEGACY_MEMORY_CONFIG} is now {STORE_CONFIG}, which names the store for every record: lessons live in Virgil, but rules and decisions still live in Beads until wh init --action store --store virgil moves them (its group field is no longer read; the scope is the attachment)."
+                ),
+            }),
+            (_, true) => Some(format!(
+                "{LEGACY_MEMORY_CONFIG} is ignored because {STORE_CONFIG} names the store; delete it."
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// Read the switch. Neither file means Beads; a file that does not parse
+/// fails closed rather than silently falling back to another store.
+pub fn read_switch(project_root: &Path) -> Result<StoreSwitch, String> {
+    let read = |relative: &str| match std::fs::read_to_string(project_root.join(relative)) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("{relative} could not be read: {error}")),
+    };
+    let legacy = read(LEGACY_MEMORY_CONFIG)?;
+    if let Some(text) = read(STORE_CONFIG)? {
+        let config = parse_switch(&text).map_err(|reason| {
+            format!(
+                "{STORE_CONFIG} is not a store switch ({reason}); write {{\"store\":\"beads\"}} or {{\"store\":\"virgil\"}}."
+            )
+        })?;
+        return Ok(StoreSwitch {
+            config,
+            lessons: config,
+            source: SwitchSource::Store,
+            legacy_ignored: legacy.is_some(),
+        });
+    }
+    let Some(text) = legacy else {
+        return Ok(StoreSwitch {
+            config: StoreConfig::Beads,
+            lessons: StoreConfig::Beads,
+            source: SwitchSource::Default,
+            legacy_ignored: false,
+        });
+    };
+    let lessons = serde_json::from_str::<LegacyMemoryConfig>(&text)
+        .map(|legacy| match legacy {
+            LegacyMemoryConfig::Beads => StoreConfig::Beads,
+            LegacyMemoryConfig::Virgil { .. } => StoreConfig::Virgil,
+        })
+        .or_else(|_| parse_switch(&text))
+        .map_err(|reason| {
+            format!(
+                "{LEGACY_MEMORY_CONFIG} is not a store switch ({reason}); write {STORE_CONFIG} with {{\"store\":\"beads\"}} or {{\"store\":\"virgil\"}}."
+            )
+        })?;
+    Ok(StoreSwitch {
+        config: StoreConfig::Beads,
+        lessons,
+        source: SwitchSource::LegacyMemory,
+        legacy_ignored: false,
+    })
+}
+
+fn parse_switch(text: &str) -> Result<StoreConfig, String> {
+    let value =
+        serde_json::from_str::<serde_json::Value>(text).map_err(|error| error.to_string())?;
+    if let Some(name) = value.get("store").and_then(serde_json::Value::as_str) {
+        StoreConfig::parse(name)?;
+    }
+    // Serde lets an internally tagged unit variant carry unknown fields.
+    if let Some(extra) = value
+        .as_object()
+        .and_then(|object| object.keys().find(|key| *key != "store"))
+    {
+        return Err(format!(
+            "unknown field `{extra}`; the switch holds only `store`"
+        ));
+    }
+    serde_json::from_value::<StoreConfig>(value).map_err(|error| error.to_string())
+}
+
+/// The record store the switch names.
+pub fn read_config(project_root: &Path) -> Result<StoreConfig, String> {
+    read_switch(project_root).map(|switch| switch.config)
+}
+
+/// Where lessons and raised hands go (see [`StoreSwitch`]).
+pub fn read_lesson_config(project_root: &Path) -> Result<StoreConfig, String> {
+    read_switch(project_root).map(|switch| switch.lessons)
+}
+
+/// Write `store.json` (pretty JSON, one trailing newline) and retire the
+/// legacy `memory.json`; returns whether a legacy file was removed.
+pub fn write_config(project_root: &Path, config: StoreConfig) -> Result<bool, String> {
+    let path = project_root.join(STORE_CONFIG);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let mut text = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
+    text.push('\n');
+    let staged = path.with_extension("json.tmp");
+    std::fs::write(&staged, text).map_err(|error| error.to_string())?;
+    std::fs::rename(&staged, &path).map_err(|error| error.to_string())?;
+    let legacy = project_root.join(LEGACY_MEMORY_CONFIG);
+    if legacy.is_file() {
+        std::fs::remove_file(&legacy).map_err(|error| error.to_string())?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+// ---------- the factory ----------
+
+fn switch_of(layout: &ProjectLayout) -> Result<StoreConfig, StorageError> {
+    read_config(layout.project_root()).map_err(StorageError::Config)
+}
+
+/// Open the private store the switch names, without creating anything.
+pub fn open_private(layout: &ProjectLayout) -> Result<Box<dyn RecordStore>, StorageError> {
+    match switch_of(layout)? {
+        StoreConfig::Beads => Ok(Box::new(crate::beads::BeadsStore::open_existing(
+            &layout.private_store(),
+            StoreKind::Private,
+        )?)),
+        StoreConfig::Virgil => Ok(Box::new(crate::store::file::FileStore::open_existing(
+            &layout.private_records(),
+        )?)),
+    }
+}
+
+/// Open the private store the switch names, creating it when absent.
+pub fn initialize_private(layout: &ProjectLayout) -> Result<Box<dyn RecordStore>, StorageError> {
+    match switch_of(layout)? {
+        StoreConfig::Beads => Ok(Box::new(crate::beads::BeadsStore::initialize(
+            &layout.private_store(),
+            StoreKind::Private,
+        )?)),
+        StoreConfig::Virgil => Ok(Box::new(crate::store::file::FileStore::initialize(
+            &layout.private_records(),
+        )?)),
+    }
+}
+
+/// Open the shared store the switch names, without creating anything:
+/// `None` when the Beads arm has no shared database. Under Virgil the store
+/// is the attachment's Records, which exist whenever Virgil answers.
+pub fn open_shared(layout: &ProjectLayout) -> Result<Option<Box<dyn RecordStore>>, StorageError> {
+    match switch_of(layout)? {
+        StoreConfig::Beads => match layout.shared_store() {
+            Some(dir) => Ok(Some(Box::new(crate::beads::BeadsStore::open_existing(
+                &dir,
+                StoreKind::Shareable,
+            )?))),
+            None => Ok(None),
+        },
+        StoreConfig::Virgil => Ok(Some(Box::new(crate::store::virgil::VirgilStore::new(
+            layout.project_root(),
+        )))),
+    }
+}
+
+/// Make the shared store ready for writes where Whetstone owns it: under
+/// Beads, register Whetstone's bead types in the repository's database when
+/// one exists; under Virgil, nothing (the daemon owns Records).
+pub fn prepare_shared(layout: &ProjectLayout) -> Result<(), StorageError> {
+    match switch_of(layout)? {
+        StoreConfig::Beads => {
+            if let Some(dir) = layout.shared_store() {
+                crate::beads::BeadsStore::initialize(&dir, StoreKind::Shareable)?;
+            }
+            Ok(())
+        }
+        StoreConfig::Virgil => Ok(()),
+    }
+}
+
+// ---------- shared helpers for adapters ----------
+
+/// Canonical JSON with every non-ASCII character escaped, so no store's JSON
+/// column ever sees characters (such as U+2028) that break its reads.
+pub fn ascii_json(canonical: &[u8]) -> Result<String, StorageError> {
+    let text = std::str::from_utf8(canonical)
+        .map_err(|error| StorageError::Serialization(error.to_string()))?;
+    let mut out = String::with_capacity(text.len());
+    for character in text.chars() {
+        if character.is_ascii() {
+            out.push(character);
+        } else {
+            let mut units = [0_u16; 2];
+            for unit in character.encode_utf16(&mut units) {
+                out.push_str(&format!("\\u{unit:04x}"));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The class of a record: agreement content (`record`), a decision on it
+/// (`decision`), or evidence (`receipt`). Receipts never cross stores.
+pub fn record_class(body: &RecordBody) -> &'static str {
+    match body {
+        RecordBody::Mission(_)
+        | RecordBody::Principle(_)
+        | RecordBody::Rule(_)
+        | RecordBody::Standard(_)
+        | RecordBody::Guidance(_)
+        | RecordBody::Feature(_)
+        | RecordBody::VerificationMap(_)
+        | RecordBody::Lesson(_) => "record",
+        RecordBody::Proposal(_)
+        | RecordBody::LocalReview(_)
+        | RecordBody::Retirement(_)
+        | RecordBody::FlagDecision(_)
+        | RecordBody::HandAnswer(_) => "decision",
+        RecordBody::VerificationReceipt(_)
+        | RecordBody::Judgment(_)
+        | RecordBody::Attestation(_)
+        | RecordBody::Brief(_)
+        | RecordBody::HandRaise(_)
+        | RecordBody::LessonCheck(_) => "receipt",
+        RecordBody::Retired(retired) => match retired.record_type.as_str() {
+            "core_value"
+            | "implementation_philosophy"
+            | "metric_definition"
+            | "source_snapshot"
+            | "policy_exception" => "record",
+            "decision" | "mandate" | "activation" => "decision",
+            _ => "receipt",
+        },
+    }
+}
+
+/// `id@revision#digest`.
+pub fn reference_text(reference: &RecordRef) -> String {
+    format!(
+        "{}@{}#{}",
+        reference.id.as_str(),
+        reference.revision,
+        reference.digest.as_str()
+    )
+}
+
+/// The lifecycle view a revision starts with.
+pub fn initial_lifecycle(record: &AgreementRecord) -> &'static str {
+    if crate::agreement::is_agreement_body(&record.body)
+        || matches!(record.body, RecordBody::Retirement(_))
+    {
+        "pending"
+    } else {
+        "operational"
+    }
+}
+
+/// The lifecycle view the kernel's resolution gives a revision.
+pub fn resolved_lifecycle(
+    state: &crate::agreement::AgreementState,
+    record: &AgreementRecord,
+) -> &'static str {
+    use crate::agreement::Lifecycle;
+    match &record.body {
+        body if crate::agreement::is_agreement_body(body)
+            || matches!(body, RecordBody::Retirement(_)) =>
+        {
+            let lifecycle = state.lifecycle_of(record);
+            if lifecycle == Lifecycle::Accepted
+                && state.is_retired(&record.id)
+                && state.in_force(&record.id).is_none()
+            {
+                "retired"
+            } else if lifecycle == Lifecycle::Accepted && state.is_superseded(record) {
+                "superseded"
+            } else {
+                lifecycle.label()
+            }
+        }
+        _ => "operational",
+    }
+}
+
+/// The batch an onboarding key belongs to.
+pub fn batch_of(key: &str) -> Option<String> {
+    // Onboarding writes keys `<request>:base-<revision>:<part>`.
+    key.find(":base-")
+        .map(|index| format!("batch:{}", &key[..index]))
+}
+
+/// The completion marker's key for a batch of appends.
+pub fn batch_marker_key(requests: &[AppendRequest<'_>]) -> String {
+    let first = &requests[0].record.idempotency_key;
+    batch_of(first).unwrap_or_else(|| {
+        let mut hasher = Sha256::new();
+        for request in requests {
+            hasher.update(request.record.idempotency_key.as_bytes());
+            hasher.update([0]);
+        }
+        format!("batch:{:x}", hasher.finalize())
+    })
+}
+
+/// Batches with members present but no completion marker among `completed`.
+pub fn pending_batches(
+    records: &[AgreementRecord],
+    completed: &std::collections::BTreeSet<String>,
+) -> Vec<IncompleteBatch> {
+    let mut pending = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for record in records {
+        if let Some(batch) = batch_of(&record.idempotency_key) {
+            if !completed.contains(&batch) {
+                pending
+                    .entry(batch)
+                    .or_default()
+                    .push(record.idempotency_key.clone());
+            }
+        }
+    }
+    pending
+        .into_iter()
+        .map(|(marker_key, present)| IncompleteBatch {
+            marker_key,
+            present,
+            missing: Vec::new(),
+        })
+        .collect()
+}
+
+/// Write order that keeps every link resolvable: agreement content first,
+/// then proposals, then the reviews and decisions on them, then receipts.
+pub fn logical_stage(record: &AgreementRecord) -> u8 {
+    match &record.body {
+        RecordBody::Proposal(_) => 1,
+        RecordBody::LocalReview(_) => 2,
+        body if body.is_receipt() => 3,
+        RecordBody::FlagDecision(_) | RecordBody::HandAnswer(_) => 4,
+        _ => 0,
+    }
+}
+
+pub fn map_append_domain_error(error: DomainError) -> StorageError {
+    match error {
+        DomainError::StaleRevision { expected, actual } => {
+            StorageError::StaleRevision { expected, actual }
+        }
+        DomainError::IllegalRevision { expected, actual } => {
+            StorageError::IllegalRevision { expected, actual }
+        }
+        DomainError::IdempotencyConflict(key) => StorageError::IdempotencyConflict(key),
+        other => StorageError::Domain(other),
+    }
+}
+
+/// Validate a record before any adapter writes it.
+pub fn validate_for_append(record: &AgreementRecord) -> Result<RecordRef, StorageError> {
+    record.validate().map_err(StorageError::Domain)?;
+    if matches!(record.body, RecordBody::Retired(_)) {
+        return Err(StorageError::Domain(DomainError::RetiredKind(
+            record.body.type_name().to_string(),
+        )));
+    }
+    record.reference().map_err(StorageError::Domain)
+}
+
+/// One append checked against everything the store holds (read under the
+/// adapter's write lock): `Ok(Some(reference))` when the idempotency key
+/// already recorded exactly this revision, `Ok(None)` when it may be written.
+pub fn check_append(
+    existing: &[AgreementRecord],
+    record: &AgreementRecord,
+    reference: &RecordRef,
+    expected_revision: Option<u64>,
+) -> Result<Option<RecordRef>, StorageError> {
+    if let Some(found) = existing
+        .iter()
+        .find(|item| item.idempotency_key == record.idempotency_key)
+    {
+        return if found.reference().map_err(StorageError::Domain)? == *reference {
+            Ok(Some(reference.clone()))
+        } else {
+            Err(StorageError::IdempotencyConflict(
+                record.idempotency_key.clone(),
+            ))
+        };
+    }
+    let actual = existing
+        .iter()
+        .filter(|item| item.id == record.id)
+        .map(|item| item.revision)
+        .max();
+    if actual != expected_revision {
+        return Err(StorageError::StaleRevision {
+            expected: expected_revision,
+            actual,
+        });
+    }
+    let required = actual.map_or(1, |revision| revision + 1);
+    if record.revision != required {
+        return Err(StorageError::IllegalRevision {
+            expected: required,
+            actual: record.revision,
+        });
+    }
+    Ok(None)
+}
+
+/// Validate a whole batch against everything the store holds before any of
+/// it is written: the store's history replays, and every request either
+/// repeats exactly what its key recorded or appends cleanly.
+pub fn check_batch(
+    existing: &[AgreementRecord],
+    requests: &[AppendRequest<'_>],
+) -> Result<(), StorageError> {
+    let mut keys = std::collections::BTreeSet::new();
+    for request in requests {
+        request.record.validate().map_err(StorageError::Domain)?;
+        if !keys.insert(request.record.idempotency_key.clone()) {
+            return Err(StorageError::IdempotencyConflict(
+                request.record.idempotency_key.clone(),
+            ));
+        }
+    }
+    let mut history = AgreementHistory::default();
+    let mut records = existing.to_vec();
+    records.sort_by(|left, right| {
+        logical_stage(left)
+            .cmp(&logical_stage(right))
+            .then_with(|| left.id.cmp(&right.id))
+            .then_with(|| left.revision.cmp(&right.revision))
+    });
+    for record in records {
+        let expected = history.latest(&record.id).map(|current| current.revision);
+        history
+            .replay(record, expected)
+            .map_err(StorageError::Domain)?;
+    }
+    for request in requests {
+        let already = existing
+            .iter()
+            .find(|item| item.idempotency_key == request.record.idempotency_key);
+        match already {
+            Some(item) => {
+                if item.reference().map_err(StorageError::Domain)?
+                    != request.record.reference().map_err(StorageError::Domain)?
+                {
+                    return Err(StorageError::IdempotencyConflict(
+                        request.record.idempotency_key.clone(),
+                    ));
+                }
+            }
+            None => {
+                history
+                    .append(request.record.clone(), request.expected_revision)
+                    .map_err(map_append_domain_error)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The metadata every adapter stores beside a revision: the record as an
+/// ASCII-escaped canonical JSON string with its id, revision, digest,
+/// supersedes reference and idempotency key.
+pub const METADATA_SCHEMA: u64 = 1;
+
+pub fn record_metadata(
+    record: &AgreementRecord,
+    reference: &RecordRef,
+) -> Result<serde_json::Value, StorageError> {
+    let canonical = record.canonical_json().map_err(StorageError::Domain)?;
+    Ok(serde_json::json!({
+        "wh_schema": METADATA_SCHEMA,
+        "wh_kind": record_class(&record.body),
+        "wh_type": record.body.type_name(),
+        "wh_id": record.id.as_str(),
+        "wh_revision": record.revision,
+        "wh_digest": reference.digest.as_str(),
+        "wh_key": record.idempotency_key,
+        "wh_supersedes": record.supersedes.as_ref().map(reference_text),
+        "wh_record": ascii_json(&canonical)?,
+    }))
+}
+
+/// Decode and verify a revision's metadata; `Err(reason)` when it does not
+/// verify (the adapter reports it with where it lives).
+pub fn decode_metadata(metadata: &serde_json::Value) -> Result<AgreementRecord, String> {
+    use serde_json::Value;
+    if metadata.get("wh_schema").and_then(Value::as_u64) != Some(METADATA_SCHEMA) {
+        return Err("missing or unsupported Whetstone metadata schema".into());
+    }
+    let text = metadata
+        .get("wh_record")
+        .and_then(Value::as_str)
+        .ok_or("missing wh_record")?;
+    let record: AgreementRecord =
+        serde_json::from_str(text).map_err(|error| format!("wh_record: {error}"))?;
+    record
+        .validate()
+        .map_err(|error| format!("record: {error}"))?;
+    let digest = record.digest().map_err(|error| error.to_string())?;
+    if metadata.get("wh_digest").and_then(Value::as_str) != Some(digest.as_str()) {
+        return Err("the record does not match its digest (edited or corrupted metadata)".into());
+    }
+    if metadata.get("wh_id").and_then(Value::as_str) != Some(record.id.as_str())
+        || metadata.get("wh_revision").and_then(Value::as_u64) != Some(record.revision)
+        || metadata.get("wh_key").and_then(Value::as_str) != Some(record.idempotency_key.as_str())
+    {
+        return Err("metadata fields disagree with the record".into());
+    }
+    Ok(record)
+}
+
+// ---------- the layout ----------
 
 #[derive(Debug, Clone)]
 pub struct ProjectLayout {
@@ -84,8 +881,21 @@ impl ProjectLayout {
         self.state_root.join(StoreKind::Private.as_str())
     }
 
+    /// The private file store the Virgil arm keeps drafts and receipts in.
+    pub fn private_records(&self) -> PathBuf {
+        self.private_store().join("records")
+    }
+
+    /// Whether the private store the switch names exists. An unreadable
+    /// switch answers for either store, so opening it reports the switch.
     pub fn private_store_exists(&self) -> bool {
-        crate::beads::is_initialized(&self.private_store())
+        let beads = || crate::beads::is_initialized(&self.private_store());
+        let files = || crate::store::file::is_initialized(&self.private_records());
+        match read_config(&self.project_root) {
+            Ok(StoreConfig::Beads) => beads(),
+            Ok(StoreConfig::Virgil) => files(),
+            Err(_) => beads() || files(),
+        }
     }
 
     /// The repository's shared Beads database directory, when one exists.
@@ -106,18 +916,6 @@ fn git_output(cwd: &Path, args: &[&str]) -> Result<String, StorageError> {
         .output()
         .map_err(StorageError::Io)?;
     checked_output("git", output)
-}
-
-/// One record in a multi-record append.
-///
-/// `expected_revision` is the latest revision the caller observed for this
-/// record ID before this item is applied. For two consecutive revisions of the
-/// same ID in one batch, the second item therefore expects the first item's
-/// revision.
-#[derive(Debug, Clone, Copy)]
-pub struct AppendRequest<'a> {
-    pub record: &'a AgreementRecord,
-    pub expected_revision: Option<u64>,
 }
 
 fn checked_output(command: &'static str, output: Output) -> Result<String, StorageError> {
@@ -160,6 +958,12 @@ pub enum StorageError {
         bead: String,
         reason: String,
     },
+    /// A stored revision (a file, a Virgil record) that does not verify,
+    /// named by where it lives.
+    MalformedRecord {
+        locator: String,
+        reason: String,
+    },
     /// Two beads claim the same revision of a record with different content.
     ConflictingRevision {
         id: RecordId,
@@ -187,6 +991,14 @@ pub enum StorageError {
     UnexpectedData(String),
     InvalidProjectionBoundary,
     PrivateCanaryFound(String),
+    /// The store switch could not be read.
+    Config(String),
+    /// Virgil refused or could not answer, with Whetstone's refusal code
+    /// (`unattached`, `store_unavailable`, `not_permitted`, ...).
+    Virgil {
+        code: String,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for StorageError {
@@ -196,3 +1008,113 @@ impl std::fmt::Display for StorageError {
 }
 
 impl std::error::Error for StorageError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(root: &Path, relative: &str, text: &str) {
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        std::fs::write(path, text).expect("write");
+    }
+
+    #[test]
+    fn no_switch_is_beads_and_store_json_names_every_record() {
+        let temp = tempfile::tempdir().expect("temp");
+        let switch = read_switch(temp.path()).expect("read");
+        assert_eq!(switch.config, StoreConfig::Beads);
+        assert_eq!(switch.source, SwitchSource::Default);
+        assert_eq!(switch.notice(), None);
+        for (text, config) in [
+            ("{\"store\":\"beads\"}", StoreConfig::Beads),
+            ("{\"store\":\"virgil\"}", StoreConfig::Virgil),
+        ] {
+            write(temp.path(), STORE_CONFIG, text);
+            let switch = read_switch(temp.path()).expect("read");
+            assert_eq!((switch.config, switch.lessons), (config, config));
+            assert_eq!(switch.source, SwitchSource::Store);
+        }
+    }
+
+    #[test]
+    fn an_unknown_store_or_field_is_refused_by_name() {
+        let temp = tempfile::tempdir().expect("temp");
+        write(temp.path(), STORE_CONFIG, "{\"store\":\"linear\"}");
+        let refused = read_switch(temp.path()).expect_err("unknown store");
+        assert!(
+            refused.contains("\"linear\" is not a record store"),
+            "{refused}"
+        );
+        write(
+            temp.path(),
+            STORE_CONFIG,
+            "{\"store\":\"virgil\",\"group\":\"01J8Z0000000000000000000AD\"}",
+        );
+        assert!(read_switch(temp.path()).is_err(), "store.json has no group");
+        write(temp.path(), STORE_CONFIG, "not json");
+        assert!(read_switch(temp.path()).is_err());
+        assert!(matches!(
+            open_private(&ProjectLayout {
+                project_root: temp.path().to_path_buf(),
+                state_root: temp.path().join("state"),
+                project_id: "x".repeat(64),
+            }),
+            Err(StorageError::Config(_))
+        ));
+    }
+
+    #[test]
+    fn a_legacy_memory_json_moves_lessons_only_and_says_so() {
+        let temp = tempfile::tempdir().expect("temp");
+        write(
+            temp.path(),
+            LEGACY_MEMORY_CONFIG,
+            "{\"store\":\"virgil\",\"group\":\"01J8Z0000000000000000000AD\"}",
+        );
+        let switch = read_switch(temp.path()).expect("read");
+        assert_eq!(switch.source, SwitchSource::LegacyMemory);
+        assert_eq!(switch.lessons, StoreConfig::Virgil);
+        assert_eq!(
+            switch.config,
+            StoreConfig::Beads,
+            "rules never silently move out of Beads"
+        );
+        let notice = switch.notice().expect("notice");
+        assert!(
+            notice.contains("memory.json is now whetstone/store.json"),
+            "{notice}"
+        );
+        assert!(
+            notice.contains("wh init --action store --store virgil"),
+            "{notice}"
+        );
+        assert_eq!(read_lesson_config(temp.path()), Ok(StoreConfig::Virgil));
+        assert_eq!(read_config(temp.path()), Ok(StoreConfig::Beads));
+        write(temp.path(), LEGACY_MEMORY_CONFIG, "{\"store\":\"beads\"}");
+        assert_eq!(
+            read_switch(temp.path()).expect("read").lessons,
+            StoreConfig::Beads
+        );
+        write(temp.path(), LEGACY_MEMORY_CONFIG, "{\"store\":\"recall\"}");
+        assert!(read_switch(temp.path()).is_err(), "fails closed");
+    }
+
+    #[test]
+    fn store_json_wins_over_and_retires_memory_json() {
+        let temp = tempfile::tempdir().expect("temp");
+        write(temp.path(), LEGACY_MEMORY_CONFIG, "{\"store\":\"beads\"}");
+        write(temp.path(), STORE_CONFIG, "{\"store\":\"virgil\"}");
+        let switch = read_switch(temp.path()).expect("read");
+        assert_eq!(switch.config, StoreConfig::Virgil);
+        assert!(switch.legacy_ignored);
+        assert!(switch.notice().expect("notice").contains("is ignored"));
+        assert_eq!(write_config(temp.path(), StoreConfig::Beads), Ok(true));
+        assert!(!temp.path().join(LEGACY_MEMORY_CONFIG).exists());
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join(STORE_CONFIG)).expect("read"),
+            "{\n  \"store\": \"beads\"\n}\n"
+        );
+        assert_eq!(write_config(temp.path(), StoreConfig::Beads), Ok(false));
+    }
+}

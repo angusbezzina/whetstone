@@ -235,7 +235,7 @@ pub(super) fn record_attestation(
         Ok(record) => record,
         Err(error) => return domain_response("check", request_id, error),
     };
-    let already = RecordStore::open_existing(&layout.private_store(), StoreKind::Private)
+    let already = crate::storage::open_private(layout)
         .ok()
         .and_then(|store| {
             store
@@ -370,7 +370,7 @@ pub(crate) fn raise_hand(
         digest_bytes(question.as_bytes()).as_str()
     );
     // An exact retry returns the hand already raised; one question, one issue.
-    if let Ok(store) = RecordStore::open_existing(&layout.private_store(), StoreKind::Private) {
+    if let Ok(store) = crate::storage::open_private(layout) {
         if let Ok(Some(existing)) = store.by_idempotency_key(&key) {
             if let RecordBody::HandRaise(body) = &existing.body {
                 let mut response = ServiceResponse::new(

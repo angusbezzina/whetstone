@@ -17,7 +17,7 @@ use crate::domain::{
     ActorKind, AgreementRecord, ContentDigest, Enforcer, HandRaiseTrigger, HandTrigger, Privacy,
     RecordId, Reviewer, RuleExample, RuleSource, Strength, SweepClass, Trust,
 };
-use crate::storage::{ProjectLayout, RecordStore, StorageError, StoreKind};
+use crate::storage::{ProjectLayout, StorageError};
 
 mod change;
 mod check;
@@ -105,8 +105,8 @@ pub enum InitAction {
     Setup,
     /// Read an exemplar codebase and draft rules from it, with provenance.
     Exemplar,
-    /// Set where lessons live: Whetstone's Beads store or a Virgil group.
-    Memory,
+    /// Choose the record store for every record kind: Beads or Virgil.
+    Store,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -139,11 +139,12 @@ pub struct InitRequest {
     pub ci: bool,
     /// Run the install commands setup found (setup).
     pub yes: bool,
-    /// Where lessons live (memory): `beads` or `virgil`.
-    pub memory_store: Option<String>,
-    /// The Virgil group lessons live in (memory, with `virgil`).
-    pub memory_group: Option<String>,
-    /// Who asked: confirming an import into Virgil is a person's (memory).
+    /// The record store (store): `beads` or `virgil`.
+    pub store: Option<String>,
+    /// A Virgil group from the retired lessons switch; accepted and not
+    /// read (the scope is the attachment).
+    pub group: Option<String>,
+    /// Who asked: confirming an import into Virgil is a person's (store).
     pub actor: crate::domain::ActorKind,
 }
 
@@ -636,15 +637,12 @@ pub(crate) fn shared_refs(
 /// Read both stores without creating either.
 pub fn load_records(layout: &ProjectLayout) -> Result<LoadedRecords, StorageError> {
     let private = if layout.private_store_exists() {
-        Some(
-            RecordStore::open_existing(&layout.private_store(), StoreKind::Private)?
-                .all_records()?,
-        )
+        Some(crate::storage::open_private(layout)?.all_records()?)
     } else {
         None
     };
-    let shared = match layout.shared_store() {
-        Some(dir) => Some(RecordStore::open_existing(&dir, StoreKind::Shareable)?.all_records()?),
+    let shared = match crate::storage::open_shared(layout)? {
+        Some(store) => Some(store.all_records()?),
         None => None,
     };
     Ok(LoadedRecords { private, shared })
@@ -657,9 +655,19 @@ impl CommandService {
     pub fn execute(&self, request: ServiceRequest) -> ServiceResponse {
         match request {
             ServiceRequest::Orientation => orientation(),
-            ServiceRequest::Init(request) => init::init(request),
+            ServiceRequest::Init(request) => {
+                let project_dir = request.project_dir.clone();
+                let mut response = init::init(request);
+                crate::sync::attach_publication(&mut response, &project_dir);
+                response
+            }
             ServiceRequest::Dash(request) => dash::dash(request),
-            ServiceRequest::Change(request) => change::change(request),
+            ServiceRequest::Change(request) => {
+                let project_dir = request.project_dir.clone();
+                let mut response = change::change(request);
+                crate::sync::attach_publication(&mut response, &project_dir);
+                response
+            }
             ServiceRequest::Check(request) => {
                 let host = request.host.clone();
                 let project_dir = request.project_dir.clone();
@@ -888,6 +896,11 @@ pub(crate) fn storage_error(
             ServiceState::Unavailable
         }
         StorageError::ConflictingRevision { .. } => ServiceState::Conflict,
+        StorageError::Virgil { ref code, .. } => match code.as_str() {
+            "store_unavailable" | "unattached" => ServiceState::Unavailable,
+            "not_permitted" | "refused_content" | "read_again" => ServiceState::Conflict,
+            _ => ServiceState::Unknown,
+        },
         _ => ServiceState::Unknown,
     };
     let mut response = ServiceResponse::new(

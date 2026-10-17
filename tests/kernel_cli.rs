@@ -1,10 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use whetstone::beads::BeadsStore;
 use whetstone::domain::{
     AgreementRecord, AuthorizationAxis, FlagVerdict, JudgmentOutcome, RecordBody, VerificationAxis,
 };
-use whetstone::storage::{ProjectLayout, RecordStore, StoreKind};
+use whetstone::storage::{ProjectLayout, StoreKind};
 
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_whetstone"))
@@ -231,7 +232,7 @@ impl Repo {
 
     fn records(&self) -> Vec<AgreementRecord> {
         let layout = ProjectLayout::resolve(&self.root).expect("layout");
-        RecordStore::open_existing(&layout.private_store(), StoreKind::Private)
+        BeadsStore::open_existing(&layout.private_store(), StoreKind::Private)
             .expect("private store")
             .all_records()
             .expect("records")
@@ -563,7 +564,7 @@ fn init_is_resumable_and_duplicate_requests_never_duplicate_records() {
     let layout = ProjectLayout::resolve(temp.path()).expect("project layout");
     assert!(layout.shared_store().is_none());
     assert!(git_status(temp.path()).is_empty());
-    let private = RecordStore::open_existing(&layout.private_store(), StoreKind::Private)
+    let private = BeadsStore::open_existing(&layout.private_store(), StoreKind::Private)
         .expect("private store");
     let count = private.all_records().expect("records").len();
     // Onboarding records are the owner's own words: in force, no drafts.
@@ -836,7 +837,7 @@ fn init_agree_resumes_after_interruption_between_store_bootstrap_and_records() {
     let token = handoff["resume_token"].as_str().expect("token").to_string();
     let layout = ProjectLayout::resolve(&repo.root).expect("layout");
     // Model a process stop right after the private Beads store was created.
-    RecordStore::initialize(&layout.private_store(), StoreKind::Private)
+    BeadsStore::initialize(&layout.private_store(), StoreKind::Private)
         .expect("model the bootstrapped, empty store");
     assert!(repo.records().is_empty());
 
@@ -890,8 +891,8 @@ fn init_agree_completes_a_partly_written_batch() {
     let handoff = repo.wh_json(&["init", "--request-id", "partial"]);
     let token = handoff["resume_token"].as_str().expect("token").to_string();
     let layout = ProjectLayout::resolve(&repo.root).expect("layout");
-    let private = RecordStore::initialize(&layout.private_store(), StoreKind::Private)
-        .expect("private store");
+    let private =
+        BeadsStore::initialize(&layout.private_store(), StoreKind::Private).expect("private store");
     // The first record of the batch landed before the process stopped.
     let mission = whetstone::service::agreement_record(
         &layout,
@@ -1740,7 +1741,7 @@ fn check_persists_one_idempotent_private_receipt_when_storage_exists() {
     write_rule_project(temp.path(), "def read_config():\n    pass\n");
     let project = temp.path().to_string_lossy();
     let layout = ProjectLayout::resolve(temp.path()).expect("resolve receipt fixture");
-    RecordStore::initialize(&layout.private_store(), StoreKind::Private)
+    BeadsStore::initialize(&layout.private_store(), StoreKind::Private)
         .expect("initialize receipt store explicitly");
 
     let args = [
@@ -1764,7 +1765,7 @@ fn check_persists_one_idempotent_private_receipt_when_storage_exists() {
         second["data"]["receipt_record"]
     );
 
-    let private = RecordStore::initialize(&layout.private_store(), StoreKind::Private)
+    let private = BeadsStore::initialize(&layout.private_store(), StoreKind::Private)
         .expect("open private store");
     let receipts = private
         .all_records()
@@ -2561,7 +2562,7 @@ fn a_recorded_brief_satisfies_a_brief_rule_for_the_change_it_covers() {
 fn seed_legacy_records(root: &Path, indices: &[usize]) {
     let layout = ProjectLayout::resolve(root).expect("layout");
     let dir = layout.private_store();
-    RecordStore::initialize(&dir, StoreKind::Private).expect("private store");
+    BeadsStore::initialize(&dir, StoreKind::Private).expect("private store");
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("fixtures/legacy/records.json")).expect("fixture");
     for index in indices {

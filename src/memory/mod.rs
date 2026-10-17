@@ -1,7 +1,7 @@
 //! Memory as the softest rung of the rule ladder: Whetstone owns the lesson
 //! contract (who may admit, what a lesson may be about, how it is anchored
-//! and when it may be stale); where lessons live is a backend behind one
-//! switch (`whetstone/memory.json`).
+//! and when it may be stale); where lessons live is a backend behind the
+//! record store switch (`whetstone/store.json`).
 //!
 //! - Standalone (the default): Whetstone's own private Beads store.
 //! - Inside Virgil: the Records `lesson` collection, reached only through the
@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::Command;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::agreement::{AgreementState, Lifecycle};
@@ -35,84 +35,11 @@ pub mod virgil;
 
 pub use store::{open_store, open_store_as, LessonStore, StoredLesson};
 
-/// The switch that names where lessons live, committed with the repository
-/// so the whole team uses the same store.
-pub const MEMORY_CONFIG: &str = "whetstone/memory.json";
-
-/// Where lessons live.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(tag = "store", rename_all = "snake_case", deny_unknown_fields)]
-pub enum MemoryConfig {
-    /// Whetstone's own Beads records; no network and no Virgil.
-    #[default]
-    Beads,
-    /// Virgil's Records `lesson` collection for one group, through
-    /// `virgil lessons` only.
-    Virgil { group: String },
-}
-
-impl MemoryConfig {
-    pub fn backend(&self) -> &'static str {
-        match self {
-            Self::Beads => "beads",
-            Self::Virgil { .. } => "virgil",
-        }
-    }
-
-    pub fn group(&self) -> Option<&str> {
-        match self {
-            Self::Beads => None,
-            Self::Virgil { group } => Some(group),
-        }
-    }
-
-    fn validate(&self) -> Result<(), String> {
-        if let Self::Virgil { group } = self {
-            let valid = (1..=64).contains(&group.len())
-                && group.chars().all(|character| {
-                    character.is_ascii_alphanumeric() || "-_:".contains(character)
-                });
-            if !valid {
-                return Err(format!(
-                    "{MEMORY_CONFIG} names Virgil group {group:?}; a group is its ULID (letters and digits)."
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Read the switch. No file means standalone; a file that does not parse
-/// fails closed rather than silently falling back to another store.
-pub fn read_config(project_root: &Path) -> Result<MemoryConfig, String> {
-    let path = project_root.join(MEMORY_CONFIG);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(MemoryConfig::Beads)
-        }
-        Err(error) => return Err(format!("{MEMORY_CONFIG} could not be read: {error}")),
-    };
-    let config = serde_json::from_str::<MemoryConfig>(&text).map_err(|error| {
-        format!(
-            "{MEMORY_CONFIG} is not a memory switch ({error}); write {{\"store\":\"beads\"}} or {{\"store\":\"virgil\",\"group\":\"<ULID>\"}}."
-        )
-    })?;
-    config.validate()?;
-    Ok(config)
-}
-
-/// Write the switch (pretty JSON, one trailing newline).
-pub fn write_config(project_root: &Path, config: &MemoryConfig) -> Result<(), String> {
-    config.validate()?;
-    let path = project_root.join(MEMORY_CONFIG);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let mut text = serde_json::to_string_pretty(config).map_err(|error| error.to_string())?;
-    text.push('\n');
-    std::fs::write(&path, text).map_err(|error| error.to_string())
-}
+/// The switch that names where lessons live is the record store switch
+/// ([`crate::storage::StoreConfig`], `whetstone/store.json`): lessons live
+/// wherever every other record does (a legacy `memory.json` moved lessons
+/// alone; see [`crate::storage::StoreSwitch`]).
+pub use crate::storage::{read_lesson_config as read_config, StoreConfig};
 
 /// Environment variables agent hosts set in the shells they run. Any of them
 /// makes the caller an agent, whatever else is true.
@@ -270,13 +197,19 @@ pub fn record_id(key: &str) -> Result<RecordId, crate::domain::DomainError> {
     RecordId::new(format!("lesson.{key}"))
 }
 
-/// The default audience: the Virgil group inside Virgil, the repository's
-/// team standalone.
-pub fn default_audience(config: &MemoryConfig, project_label: &str) -> Audience {
+/// The default audience: the attached Virgil group inside Virgil, the
+/// repository's team standalone.
+pub fn default_audience(
+    config: &StoreConfig,
+    project_root: &Path,
+    project_label: &str,
+) -> Audience {
+    let group = match config {
+        StoreConfig::Beads => None,
+        StoreConfig::Virgil => virgil::attached_group(project_root),
+    };
     Audience::Group {
-        name: config
-            .group()
-            .map_or_else(|| project_label.to_string(), str::to_owned),
+        name: group.unwrap_or_else(|| project_label.to_string()),
     }
 }
 
@@ -614,21 +547,20 @@ mod tests {
     #[test]
     fn a_missing_switch_is_standalone_and_a_broken_one_fails_closed() {
         let temp = tempfile::tempdir().expect("temp");
-        assert_eq!(read_config(temp.path()), Ok(MemoryConfig::Beads));
+        assert_eq!(read_config(temp.path()), Ok(StoreConfig::Beads));
         std::fs::create_dir_all(temp.path().join("whetstone")).expect("dir");
-        std::fs::write(temp.path().join(MEMORY_CONFIG), "{\"store\":\"recall\"}").expect("write");
-        assert!(read_config(temp.path()).is_err());
-        write_config(
-            temp.path(),
-            &MemoryConfig::Virgil {
-                group: "01J8Z0000000000000000000AD".into(),
-            },
+        std::fs::write(
+            temp.path().join(crate::storage::STORE_CONFIG),
+            "{\"store\":\"recall\"}",
         )
         .expect("write");
-        assert_eq!(
-            read_config(temp.path()).expect("read").group(),
-            Some("01J8Z0000000000000000000AD")
+        let refused = read_config(temp.path()).expect_err("unknown store");
+        assert!(
+            refused.contains("\"recall\" is not a record store"),
+            "{refused}"
         );
+        crate::storage::write_config(temp.path(), StoreConfig::Virgil).expect("write");
+        assert_eq!(read_config(temp.path()), Ok(StoreConfig::Virgil));
     }
 
     #[test]

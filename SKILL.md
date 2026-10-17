@@ -55,7 +55,7 @@ Stop and ask instead of guessing when:
 
 File the question with `wh check --raise-hand` (below): standalone it is a
 Beads issue labelled `human` (the owner sees it in `bd human list`); with the
-memory switch naming a Virgil group it is a task in the group's channel. Include what you were asked,
+store switch naming Virgil it is a task in the attached group's channel. Include what you were asked,
 what you tried, what you recommend, and the one decision needed. Then take other ready
 work (`bd ready`). A second agent may advise but cannot decide for the owner.
 
@@ -78,18 +78,19 @@ treat one marked "may be stale" as a lead to check, never as a rule. A
 lesson that keeps holding can become a rule only as a draft in shadow:
 `wh change --kind rule --from-lesson <key> ...`.
 
-Where admitted lessons live is one switch, `whetstone/memory.json`: Whetstone's
-own Beads store (standalone), or a Virgil group's lessons (`wh init --action
-memory --store virgil --group <ULID>`). Proposals stay in Whetstone's store
-either way; inside Virgil a person's admit is their `virgil lessons
+Where every record lives, lessons included, is one switch,
+`whetstone/store.json`: Beads (standalone), or the attached Virgil group's
+Records (`wh init --action store --store virgil`), where accepted records
+reach the group when they are accepted and `wh push` and `wh pull` are the
+daemon's. Proposals stay on this machine either way; inside Virgil a person's admit is their `virgil lessons
 remember`, Virgil derives trust from the writer (`--trust` is refused there),
 and a correction rewrites the lesson in place. Flipping to Virgil needs the
-checkout attached to a Virgil repository (`virgil repos attach`); when
-Whetstone's store holds admitted lessons it writes them, outside the
-repository, as the file `virgil lessons import-beads` reads, prints the dry-run
-and apply commands, and flips only when a person runs the same command with
-`--yes` after the apply: every key must read back, and anchored lessons are
-re-anchored. Never run `--yes` or the import yourself; raise a hand.
+checkout attached to a Virgil repository (`virgil repos attach`); when Beads
+holds records or admitted lessons it writes them, outside the repository, as
+the files `virgil agreements import-beads` and `virgil lessons import-beads`
+read, prints the dry-run and apply commands, and flips only when a person runs
+the same command with `--yes` after the apply: every revision must read back
+with its digest, and anchored lessons are re-anchored. Never run `--yes` or the import yourself; raise a hand.
 
 ## Using the CLI
 

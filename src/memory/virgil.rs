@@ -52,15 +52,15 @@ fn program() -> PathBuf {
 }
 
 /// One answer: the last JSON line, the exit code and stderr's last line.
-struct Answer {
-    line: Value,
-    exit: i32,
-    stderr: String,
+pub(crate) struct Answer {
+    pub(crate) line: Value,
+    pub(crate) exit: i32,
+    pub(crate) stderr: String,
 }
 
 /// Run `virgil` once. `via` is set on the child only, never in Whetstone's
 /// own environment, so a person's call that follows an agent's carries none.
-fn invoke(
+pub(crate) fn invoke(
     root: &Path,
     args: &[String],
     stdin: Option<&str>,
@@ -84,7 +84,7 @@ fn invoke(
     let mut child = command.spawn().map_err(|error| {
         Refusal::new(
             "store_unavailable",
-            format!("virgil is not available ({error}); the memory switch names Virgil, so nothing was written. Install or start Virgil, or switch back with wh init --action memory --store beads."),
+            format!("virgil is not available ({error}); the store switch names Virgil, so nothing was written. Install or start Virgil, or switch back with wh init --action store --store beads."),
         )
     })?;
     if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
@@ -785,20 +785,17 @@ pub fn audience(lesson: &Lesson) -> &'static str {
 /// admits them.
 pub struct VirgilLessons {
     root: PathBuf,
-    group: String,
+    /// The attached group, asked of Virgil once, when first needed.
+    group: std::cell::OnceCell<String>,
     cli: VirgilCli,
     local: BeadsLessons,
 }
 
 impl VirgilLessons {
     pub fn new(layout: &ProjectLayout, actor: ActorKind) -> Self {
-        let group = super::read_config(layout.project_root())
-            .ok()
-            .and_then(|config| config.group().map(str::to_owned))
-            .unwrap_or_default();
         Self {
             root: layout.project_root().to_path_buf(),
-            group,
+            group: std::cell::OnceCell::new(),
             cli: VirgilCli::new(layout.project_root(), actor),
             local: BeadsLessons {
                 layout: layout.clone(),
@@ -810,12 +807,17 @@ impl VirgilLessons {
         &self.cli
     }
 
+    fn group(&self) -> &str {
+        self.group
+            .get_or_init(|| attached_group(&self.root).unwrap_or_default())
+    }
+
     fn virgil(&self, key: &str) -> Result<Option<(WireLesson, StoredLesson)>, Refusal> {
         let Some(value) = self.cli.get(key, false)? else {
             return Ok(None);
         };
         let wire = WireLesson::read(&value)?;
-        let stored = wire.stored(&self.group, false, &BTreeMap::new())?;
+        let stored = wire.stored(self.group(), false, &BTreeMap::new())?;
         Ok(Some((wire, stored)))
     }
 
@@ -914,7 +916,7 @@ impl LessonStore for VirgilLessons {
             .collect::<BTreeMap<_, _>>();
         let mut found = BTreeMap::new();
         for wire in &wires {
-            let stored = wire.stored(&self.group, changed.contains(&wire.key), &keys_by_id)?;
+            let stored = wire.stored(self.group(), changed.contains(&wire.key), &keys_by_id)?;
             found.insert(wire.key.clone(), stored);
         }
         for local in self.local.find()? {
@@ -1242,6 +1244,14 @@ impl LessonStore for VirgilLessons {
             .map(|stored| stored.lesson.key)
             .collect())
     }
+}
+
+/// The Virgil group this checkout is attached to, if Virgil can say.
+pub fn attached_group(project_root: &Path) -> Option<String> {
+    attachment(project_root)
+        .ok()
+        .flatten()
+        .map(|(group, _)| group)
 }
 
 /// The repository this checkout is attached to (`virgil repos show`), as

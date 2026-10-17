@@ -11,7 +11,7 @@ use std::process::Command;
 use serde_json::{json, Value};
 use whetstone::agreement::AgreementState;
 use whetstone::beads::{
-    ascii_json, ensure_bd_version, RecordStore, METADATA_SCHEMA, MINIMUM_BD_VERSION, MIN_BD_VERSION,
+    ascii_json, ensure_bd_version, BeadsStore, METADATA_SCHEMA, MINIMUM_BD_VERSION, MIN_BD_VERSION,
 };
 use whetstone::domain::{
     AgreementRecord, Attestation, AttestationVerdict, AuthorizationAxis, Brief, ContentDigest,
@@ -23,7 +23,9 @@ use whetstone::domain::{
     Scope, Strength, VerificationAxis, VerificationReceipt, DEFAULT_JEV_MODEL,
     LOCAL_REVIEW_ASSURANCE, RETIRED_KINDS, RULE_SCHEMA_V2, SCHEMA_VERSION_V1,
 };
-use whetstone::storage::{AppendRequest, StorageError, StoreKind};
+use whetstone::storage::{AppendRequest, RecordStore, StorageError, StoreKind};
+
+mod conformance;
 
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 
@@ -218,7 +220,7 @@ fn the_pinned_bd_floor_is_one_point_one_point_two_and_is_met() {
 fn records_round_trip_byte_for_byte_and_tampering_names_the_bead() {
     let temp = tempfile::tempdir().expect("temp");
     let dir = temp.path().join("private");
-    let store = RecordStore::initialize(&dir, StoreKind::Private).expect("store");
+    let store = BeadsStore::initialize(&dir, StoreKind::Private).expect("store");
 
     // Characters that break Beads' metadata column when stored raw.
     let tricky = record(
@@ -230,7 +232,7 @@ fn records_round_trip_byte_for_byte_and_tampering_names_the_bead() {
     let reference = store.append(&tricky, None).expect("append");
     assert_eq!(store.append(&tricky, None).expect("replay"), reference);
 
-    let fresh = RecordStore::open_existing(&dir, StoreKind::Private).expect("reopen");
+    let fresh = BeadsStore::open_existing(&dir, StoreKind::Private).expect("reopen");
     let stored = fresh.get(&reference).expect("get").expect("present");
     assert_eq!(
         stored.canonical_json().expect("canonical"),
@@ -268,7 +270,7 @@ fn records_round_trip_byte_for_byte_and_tampering_names_the_bead() {
             &format!("wh_record={edited}"),
         ],
     );
-    let tampered = RecordStore::open_existing(&dir, StoreKind::Private).expect("reopen");
+    let tampered = BeadsStore::open_existing(&dir, StoreKind::Private).expect("reopen");
     match tampered.all_records() {
         Err(StorageError::MalformedBead {
             bead: named,
@@ -288,7 +290,7 @@ fn records_round_trip_byte_for_byte_and_tampering_names_the_bead() {
 fn appends_are_idempotent_revisioned_and_batches_resume() {
     let temp = tempfile::tempdir().expect("temp");
     let dir = temp.path().join("private");
-    let store = RecordStore::initialize(&dir, StoreKind::Private).expect("store");
+    let store = BeadsStore::initialize(&dir, StoreKind::Private).expect("store");
     let v1 = record("rule.tests", 1, "v1", rule("Run the tests"));
     let v1_ref = store.append(&v1, None).expect("v1");
     // Same key, different content: conflict.
@@ -361,7 +363,7 @@ fn appends_are_idempotent_revisioned_and_batches_resume() {
         principle("Evidence before assertion."),
     );
     store.append(&a, None).expect("first half");
-    let partial = RecordStore::open_existing(&dir, StoreKind::Private).expect("reopen");
+    let partial = BeadsStore::open_existing(&dir, StoreKind::Private).expect("reopen");
     let pending = partial.incomplete_batches().expect("batches");
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].marker_key, "batch:init-9");
@@ -387,7 +389,7 @@ fn appends_are_idempotent_revisioned_and_batches_resume() {
             b.reference().expect("reference")
         ]
     );
-    let settled = RecordStore::open_existing(&dir, StoreKind::Private).expect("reopen");
+    let settled = BeadsStore::open_existing(&dir, StoreKind::Private).expect("reopen");
     assert!(settled.incomplete_batches().expect("batches").is_empty());
     // The marker is not a record: two rule revisions, the mission and the principle.
     assert_eq!(settled.all_records().expect("records").len(), 4);
@@ -423,7 +425,7 @@ fn appends_are_idempotent_revisioned_and_batches_resume() {
 fn every_record_kind_lands_in_its_bead_type_with_its_digest() {
     let temp = tempfile::tempdir().expect("temp");
     let dir = temp.path().join("private");
-    let store = RecordStore::initialize(&dir, StoreKind::Private).expect("store");
+    let store = BeadsStore::initialize(&dir, StoreKind::Private).expect("store");
     let rule_ref = store
         .append(
             &record("rule.tests", 1, "rule", rule("Run the tests")),
@@ -600,7 +602,7 @@ fn every_record_kind_lands_in_its_bead_type_with_its_digest() {
         let reference = store.append(record, None).expect("append kind");
         expected.push((reference, record.body.type_name(), bead_type));
     }
-    let fresh = RecordStore::open_existing(&dir, StoreKind::Private).expect("reopen");
+    let fresh = BeadsStore::open_existing(&dir, StoreKind::Private).expect("reopen");
     for (reference, type_name, bead_type) in expected {
         let bead = fresh.bead_for(&reference).expect("bead").expect("bead id");
         let shown = show(&dir, &bead);
@@ -631,7 +633,7 @@ fn retired_kinds_are_read_back_byte_exact_but_never_appended() {
         serde_json::from_str(include_str!("fixtures/legacy/records.json")).expect("fixture");
     let temp = tempfile::tempdir().expect("temp");
     let dir = temp.path().join("private");
-    let store = RecordStore::initialize(&dir, StoreKind::Private).expect("store");
+    let store = BeadsStore::initialize(&dir, StoreKind::Private).expect("store");
 
     // Retired kinds cannot be written, alone or in a batch.
     let retired_record = |record_type: &str| {
@@ -675,7 +677,7 @@ fn retired_kinds_are_read_back_byte_exact_but_never_appended() {
             digest,
         ));
     }
-    let reopened = RecordStore::open_existing(&dir, StoreKind::Private).expect("reopen");
+    let reopened = BeadsStore::open_existing(&dir, StoreKind::Private).expect("reopen");
     let records = reopened.all_records().expect("legacy records are readable");
     assert_eq!(records.len(), fixtures.len());
     let mut retired_seen = 0;
@@ -726,7 +728,7 @@ fn a_store_holding_retired_history_still_accepts_new_records_and_batches() {
         serde_json::from_str(include_str!("fixtures/legacy/records.json")).expect("fixture");
     let temp = tempfile::tempdir().expect("temp");
     let dir = temp.path().join("private");
-    RecordStore::initialize(&dir, StoreKind::Private).expect("store");
+    BeadsStore::initialize(&dir, StoreKind::Private).expect("store");
     for fixture in &fixtures {
         plant_legacy_bead(
             &dir,
@@ -734,7 +736,7 @@ fn a_store_holding_retired_history_still_accepts_new_records_and_batches() {
             fixture["digest"].as_str().expect("digest"),
         );
     }
-    let store = RecordStore::open_existing(&dir, StoreKind::Private).expect("reopen");
+    let store = BeadsStore::open_existing(&dir, StoreKind::Private).expect("reopen");
     let single = record(
         "rule.after-legacy",
         1,
@@ -780,7 +782,7 @@ fn a_store_holding_retired_history_still_accepts_new_records_and_batches() {
 fn lifecycle_labels_follow_the_kernel() {
     let temp = tempfile::tempdir().expect("temp");
     let dir = temp.path().join("private");
-    let store = RecordStore::initialize(&dir, StoreKind::Private).expect("store");
+    let store = BeadsStore::initialize(&dir, StoreKind::Private).expect("store");
     let candidate = record("rule.small-diffs", 1, "change-1", rule("Keep diffs small"));
     let candidate_ref = store.append(&candidate, None).expect("candidate");
     let proposal = record(
@@ -874,7 +876,7 @@ fn the_private_store_never_inherits_the_team_remote_or_its_data() {
         ],
     );
     git(&team, &["push", "-q", "origin", "HEAD:main"]);
-    let shared = RecordStore::initialize(&team, StoreKind::Shareable).expect("shared");
+    let shared = BeadsStore::initialize(&team, StoreKind::Shareable).expect("shared");
     let url = format!("git+file://{}", origin.display());
     let status = Command::new("bd")
         .args(["dolt", "remote", "add", "origin", &url])
@@ -902,7 +904,7 @@ fn the_private_store_never_inherits_the_team_remote_or_its_data() {
         ],
     );
     let private_dir = me.join(".git/whetstone/v1/fixture/private");
-    let private = RecordStore::initialize(&private_dir, StoreKind::Private).expect("private");
+    let private = BeadsStore::initialize(&private_dir, StoreKind::Private).expect("private");
     assert!(private.remotes().expect("remotes").is_empty(), "no remote");
     assert!(
         private.all_records().expect("records").is_empty(),
@@ -920,7 +922,7 @@ fn record_refs_in_the_store_match_their_domain_digest() {
     // the domain's id, revision and digest of the canonical bytes.
     let temp = tempfile::tempdir().expect("temp");
     let dir = temp.path().join("private");
-    let store = RecordStore::initialize(&dir, StoreKind::Private).expect("store");
+    let store = BeadsStore::initialize(&dir, StoreKind::Private).expect("store");
     let principle = record(
         "principle.custom-honest",
         1,
@@ -944,3 +946,71 @@ fn record_refs_in_the_store_match_their_domain_digest() {
         principle
     );
 }
+
+/// The Beads adapter through the shared conformance suite: a private
+/// database, reopened by directory, copied into a shareable one, and
+/// tampered with through `bd update` the way a person might.
+struct BeadsHarness {
+    temp: tempfile::TempDir,
+    store: BeadsStore,
+    shareable: std::cell::OnceCell<BeadsStore>,
+}
+
+impl BeadsHarness {
+    fn boxed() -> Box<dyn conformance::Harness> {
+        let temp = tempfile::tempdir().expect("temp");
+        let store = BeadsStore::initialize(&temp.path().join("private"), StoreKind::Private)
+            .expect("store");
+        Box::new(Self {
+            temp,
+            store,
+            shareable: std::cell::OnceCell::new(),
+        })
+    }
+}
+
+impl conformance::Harness for BeadsHarness {
+    fn store(&self) -> &dyn RecordStore {
+        &self.store
+    }
+
+    fn reopen(&self) -> Box<dyn RecordStore> {
+        Box::new(
+            BeadsStore::open_existing(&self.temp.path().join("private"), StoreKind::Private)
+                .expect("reopen"),
+        )
+    }
+
+    fn copy_pair(&self) -> (&dyn RecordStore, &dyn RecordStore) {
+        let shareable = self.shareable.get_or_init(|| {
+            BeadsStore::initialize(&self.temp.path().join("team"), StoreKind::Shareable)
+                .expect("shareable")
+        });
+        (&self.store, shareable)
+    }
+
+    fn corrupt(&self, reference: &whetstone::domain::RecordRef) -> String {
+        let dir = self.temp.path().join("private");
+        let bead = self
+            .store
+            .bead_for(reference)
+            .expect("bead")
+            .expect("bead id");
+        let raw = show(&dir, &bead)["metadata"]["wh_record"]
+            .as_str()
+            .expect("wh_record")
+            .replace("Intact", "Broken");
+        bd(
+            &dir,
+            &[
+                "update",
+                &bead,
+                "--set-metadata",
+                &format!("wh_record={raw}"),
+            ],
+        );
+        bead
+    }
+}
+
+conformance_tests!(BeadsHarness::boxed);

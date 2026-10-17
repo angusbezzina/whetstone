@@ -17,7 +17,7 @@ use crate::domain::{
     Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, RecordRef, Scope,
     VerificationAxis, VerificationReceipt, SCHEMA_VERSION_V1,
 };
-use crate::storage::{ProjectLayout, RecordStore, StorageError, StoreKind};
+use crate::storage::{ProjectLayout, RecordStore, StorageError};
 use crate::verification::{self, Finding, SnapshotBinding, VerificationReport, VerificationState};
 
 use super::{
@@ -104,7 +104,7 @@ pub(crate) fn append_private(
     layout: &ProjectLayout,
     record: &AgreementRecord,
 ) -> Result<RecordRef, StorageError> {
-    let store = RecordStore::initialize(&layout.private_store(), StoreKind::Private)?;
+    let store = crate::storage::initialize_private(layout)?;
     if let Some(existing) = store.by_idempotency_key(&record.idempotency_key)? {
         return existing.reference().map_err(StorageError::Domain);
     }
@@ -136,7 +136,7 @@ impl ChangeNarrative {
 }
 
 pub(crate) fn ensure_local_change_proposal(
-    repository: &RecordStore,
+    repository: &dyn RecordStore,
     candidate: &AgreementRecord,
     candidate_reference: &crate::domain::RecordRef,
     narrative: &ChangeNarrative,
@@ -495,11 +495,10 @@ pub(crate) fn persist_verification_receipt(
     report: &VerificationReport,
     checked_at: &str,
 ) -> Result<Option<crate::domain::RecordRef>, StorageError> {
-    let store_path = layout.private_store();
-    if !crate::beads::is_initialized(&store_path) {
+    if !layout.private_store_exists() {
         return Ok(None);
     }
-    let repository = RecordStore::initialize(&store_path, StoreKind::Private)?;
+    let repository = crate::storage::initialize_private(layout)?;
     // Two checks of one snapshot that ran different gates are different
     // receipts; only an exact replay (same request, snapshot and results)
     // returns the existing one.
@@ -711,7 +710,7 @@ pub(crate) fn attach_host_checkpoint(
     };
     let recorded = layout
         .private_store_exists()
-        .then(|| RecordStore::open_existing(&layout.private_store(), StoreKind::Private))
+        .then(|| crate::storage::open_private(&layout))
         .and_then(Result::ok)
         .map(|store| store.append(&record, None).is_ok())
         .unwrap_or(false);
@@ -940,7 +939,7 @@ pub(crate) fn record_maintain_outcome(
             evidence: evidence_ref.into_iter().collect(),
         }),
     };
-    let store = match RecordStore::initialize(&layout.private_store(), StoreKind::Private) {
+    let store = match crate::storage::initialize_private(layout) {
         Ok(store) => store,
         Err(error) => return storage_error("check", request_id, error),
     };

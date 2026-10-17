@@ -12,7 +12,7 @@ use crate::domain::{
     ActorKind, EvidenceRef, ForgetProposal, LessonCheck, LessonDecision, LessonStatus, LessonVerb,
     ProvenanceKind, RecordBody, RecordId, Rule, RuleSource, RuleSourceKind, Trust,
 };
-use crate::memory::{self, LessonDraft, LessonStore, MemoryConfig, Refusal, StoredLesson};
+use crate::memory::{self, LessonDraft, LessonStore, Refusal, StoreConfig, StoredLesson};
 use crate::storage::ProjectLayout;
 
 use super::record::{append_private, key_suffix, receipt_record};
@@ -54,7 +54,7 @@ pub(crate) fn refused(request_id: String, refusal: Refusal) -> ServiceResponse {
     response
 }
 
-fn config(layout: &ProjectLayout) -> Result<MemoryConfig, Refusal> {
+fn config(layout: &ProjectLayout) -> Result<StoreConfig, Refusal> {
     memory::read_config(layout.project_root())
         .map_err(|message| Refusal::new("memory_switch_invalid", message))
 }
@@ -142,7 +142,7 @@ fn text_of(request: &ChangeRequest) -> Result<String, Refusal> {
 /// The draft a writer asked for, before stamping.
 fn draft(
     layout: &ProjectLayout,
-    config: &MemoryConfig,
+    config: &StoreConfig,
     request: &ChangeRequest,
     base: Option<&crate::domain::Lesson>,
     supersedes: Option<String>,
@@ -178,7 +178,11 @@ fn draft(
             .clone()
             .or_else(|| base.map(|lesson| lesson.audience.clone()))
             .unwrap_or_else(|| {
-                memory::default_audience(config, &project_label(layout.project_root()))
+                memory::default_audience(
+                    config,
+                    layout.project_root(),
+                    &project_label(layout.project_root()),
+                )
             }),
         // A correction keeps the anchors of the lesson it corrects unless the
         // writer names others (inside Virgil a rewrite replaces them whole).
@@ -267,7 +271,7 @@ pub(crate) fn change(
 
 fn remember(
     layout: &ProjectLayout,
-    config: &MemoryConfig,
+    config: &StoreConfig,
     store: &dyn LessonStore,
     request_id: &str,
     request: &ChangeRequest,
@@ -284,11 +288,11 @@ fn remember(
         "change",
         ServiceState::Success,
         match config {
-            MemoryConfig::Beads => format!(
+            StoreConfig::Beads => format!(
                 "Lesson {} was proposed (inferred) in the beads store. A person admits it; nothing is delivered until then.",
                 stored.lesson.key
             ),
-            MemoryConfig::Virgil { .. } => format!(
+            StoreConfig::Virgil => format!(
                 "Lesson {} was proposed (inferred) and waits in Whetstone's store; nothing reaches Virgil until a person admits it, which writes it to the group's lessons.",
                 stored.lesson.key
             ),
@@ -348,7 +352,7 @@ fn person_decision(
 
 fn admit(
     layout: &ProjectLayout,
-    config: &MemoryConfig,
+    config: &StoreConfig,
     store: &dyn LessonStore,
     request_id: &str,
     request: &ChangeRequest,
@@ -361,7 +365,7 @@ fn admit(
             format!("An agent proposes lessons and never admits them, by any route. {key} stays proposed (inferred) until a person admits it at a terminal or in wh dash."),
         ));
     }
-    if let (MemoryConfig::Virgil { .. }, Some(trust)) = (config, trust) {
+    if let (StoreConfig::Virgil, Some(trust)) = (config, trust) {
         return Err(Refusal::new(
             "trust_not_chosen",
             format!("Inside Virgil trust is derived from the writer, never chosen: a person's admit lands validated and nothing writes authoritative. Repeat without --trust {}.", trust.label()),
@@ -421,7 +425,7 @@ fn admit(
 
 fn supersede(
     layout: &ProjectLayout,
-    config: &MemoryConfig,
+    config: &StoreConfig,
     store: &dyn LessonStore,
     request_id: &str,
     request: &ChangeRequest,
@@ -761,8 +765,7 @@ pub(crate) fn dash_section(layout: &ProjectLayout, state: &AgreementState) -> Va
         "detail": detail,
         "rules_to_review": if store_state == "available" { reviews_for(state, &lessons, config.backend()) } else { Vec::new() },
         "backend": config.backend(),
-        "group": config.group(),
-        "switch": memory::MEMORY_CONFIG,
+        "switch": crate::storage::STORE_CONFIG,
         "lessons": views,
         "proposals": proposals,
         "may_be_stale": stale,
@@ -771,7 +774,7 @@ pub(crate) fn dash_section(layout: &ProjectLayout, state: &AgreementState) -> Va
             "backend": "beads",
             "lessons": left_behind.len(),
             "keys": left_behind,
-            "note": "Admitted lessons still only in Whetstone's Beads store. Export and import them with wh init --action memory --store virgil (it prints the virgil lessons import-beads commands), then confirm with --yes.",
+            "note": "Admitted lessons still only in Whetstone's Beads store. Export and import them with wh init --action store --store virgil (it prints the virgil lessons import-beads commands), then confirm with --yes.",
         })),
     })
 }

@@ -10,18 +10,17 @@ use crate::agreement::AgreementState;
 use crate::domain::{RecordBody, RecordId};
 use crate::feature_map;
 use crate::service::{InitRequest, ServiceResponse, ServiceState};
-use crate::storage::{ProjectLayout, RecordStore, StoreKind};
+use crate::storage::{ProjectLayout, RecordStore};
 
 use super::render::map_conventions;
 use super::{app_slug, digest, interview, DRIVER_CONFIG_RELATIVE, MAP_ID};
 
 /// Every private record, or none when no private store exists yet.
 fn private_records(layout: &ProjectLayout) -> Result<Vec<crate::domain::AgreementRecord>, String> {
-    let store = layout.private_store();
-    if !crate::beads::is_initialized(&store) {
+    if !layout.private_store_exists() {
         return Ok(Vec::new());
     }
-    RecordStore::open_existing(&store, StoreKind::Private)
+    crate::storage::open_private(layout)
         .and_then(|repository| repository.all_records())
         .map_err(|error| error.to_string())
 }
@@ -410,15 +409,13 @@ pub fn import(
         });
         return response;
     }
-    let private = match crate::storage::RecordStore::initialize(
-        &layout.private_store(),
-        StoreKind::Private,
-    ) {
+    let private = match crate::storage::initialize_private(layout) {
         Ok(private) => private,
         Err(error) => {
             return crate::service::record_storage_error("init", request_id, error);
         }
     };
+    let private: &dyn RecordStore = &*private;
     let mut drafts = Vec::new();
     for candidate in &candidates {
         let key = format!("import:{request_id}:{}", candidate.id.as_str());
@@ -486,7 +483,7 @@ pub fn import(
             conflicts: Vec::new(),
         };
         let proposal = match crate::service::record::ensure_local_change_proposal(
-            &private,
+            private,
             &record,
             &reference,
             &narrative,

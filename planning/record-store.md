@@ -137,6 +137,50 @@ untouched. The `dolt` binary is still not a requirement.
 | Migration | round trip: export, import, read back, digests equal, for every record kind |
 | Virgil repo | `wh push` there is refused, and no rule revision lands in `.beads` after the flip |
 
+## Settled while building the Whetstone side (2026-10-17)
+
+These follow from the design above; the owner confirms them with the
+amended decision.
+
+- **Sharing under Virgil happens at acceptance.** With `wh push` refused, the
+  accepted package `wh push` would build (accepted revisions with the
+  proposals and reviews that accepted them; never receipts, draft ancestry or
+  lessons) is copied into Records after every `wh init` and `wh change`.
+  It is idempotent; a failure leaves the records on the machine, says so,
+  and the next `wh change` shares them.
+- **A legacy `memory.json` naming Virgil moves lessons only.** Reading it as
+  a full `store.json` would hide every rule from `wh check` until a
+  migration ran. Its records stay in Beads, `wh dash` says so, and
+  `wh init --action store --store virgil` moves them.
+- **The contract Whetstone pins** (`virgil.agreements/v1`, in
+  `src/store/virgil.rs` and `tests/fake_virgil.py`): `put` (with
+  `expected_revision`, or `copy` for exact revisions), `get`, `latest`,
+  `history`, `list` (paged, filterable by idempotency key), `mark` and
+  `markers` (batch completion markers), `lifecycle` (the lifecycle view) and
+  `import-beads` (`{"file","apply"}`), all on `--input -`. `mark`, `markers`
+  and `lifecycle` are additions to the verbs listed above; the Virgil plan
+  should carry them or say what replaces them.
+- **No canaries on the Virgil arm.** `wh push --canary` has no equivalent
+  when sharing happens at acceptance; private text is kept out by keeping it
+  out of accepted records (or out of the rule with `privacy`).
+- **Copies only go into a shareable store.** The port's `copy_to` refuses a
+  private destination as well as the same store; no caller ever copied into
+  a private store, so the Beads arm is unchanged.
+- **Migration refuses collisions and needs a person.** An accepted private
+  revision whose id and revision the shared Beads database holds with other
+  content is named and the flip refused until it is rebased; confirming
+  with `--yes` is a person's, as it moves every record the team reads. The
+  export carries each revision's resolved lifecycle view.
+- **Migration also moves the private store.** After the read-back, the
+  private Beads store's revisions (drafts, receipts) are copied exactly into
+  the private file store, so nothing local is left behind.
+
+Still open: the Virgil-side collection and verbs, the staging-daemon checks,
+the direction documents (after the owner's written confirmation) and the
+Virgil repository's own flip. A CI runner under the Virgil store needs a
+daemon to read Records from; until one exists there, keep CI repositories on
+Beads.
+
 ## Order
 
 1. The port: `trait RecordStore`, Beads behind it, all tests green (no

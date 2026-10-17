@@ -94,12 +94,12 @@ enum Command {
         /// Run the install commands setup found (setup): the one confirmation.
         #[arg(long)]
         yes: bool,
-        /// Where lessons live (memory): beads (standalone) or virgil.
+        /// Where every record lives (store): beads (standalone) or virgil.
         #[arg(long = "store", value_parser = ["beads", "virgil"])]
-        memory_store: Option<String>,
-        /// The Virgil group (its ULID) lessons live in (memory, with --store virgil).
-        #[arg(long = "group")]
-        memory_group: Option<String>,
+        store: Option<String>,
+        /// Retired: the Virgil scope is the checkout's attachment.
+        #[arg(long = "group", hide = true)]
+        group: Option<String>,
     },
 
     /// Open the inspectable local dashboard.
@@ -421,7 +421,9 @@ enum InitActionArg {
     Import,
     Setup,
     Exemplar,
-    Memory,
+    /// `memory` is the retired name, kept one release.
+    #[value(alias = "memory")]
+    Store,
 }
 
 impl From<InitActionArg> for InitAction {
@@ -434,7 +436,7 @@ impl From<InitActionArg> for InitAction {
             InitActionArg::Import => Self::Import,
             InitActionArg::Setup => Self::Setup,
             InitActionArg::Exemplar => Self::Exemplar,
-            InitActionArg::Memory => Self::Memory,
+            InitActionArg::Store => Self::Store,
         }
     }
 }
@@ -564,8 +566,8 @@ pub fn run() -> i32 {
             hooks,
             ci,
             yes,
-            memory_store,
-            memory_group,
+            store,
+            group,
         }) => {
             // A person inspecting a project with no agreement is walked through
             // it in the dashboard. Machine callers always get the envelope.
@@ -591,8 +593,8 @@ pub fn run() -> i32 {
                 hooks,
                 ci,
                 yes,
-                memory_store,
-                memory_group,
+                store,
+                group,
                 actor: crate::memory::detect_actor(),
             }));
             if guided && needs_onboarding(&response) {

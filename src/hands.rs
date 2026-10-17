@@ -85,7 +85,7 @@ pub struct FiledHand {
 }
 
 /// The one routing point for a raised hand: `bd human` standalone, a task
-/// in the group's channel when the memory switch names a Virgil group.
+/// in the attached group's channel when the store switch names Virgil.
 /// `virgil tasks` records every task as the daemon's principal's whoever
 /// asked, so an agent's hand (`raised_by` names its host) says so in the
 /// task's first line.
@@ -95,12 +95,17 @@ pub fn route(
     description: &str,
     raised_by: Option<&str>,
 ) -> Result<FiledHand, String> {
-    match crate::memory::read_config(project_root)? {
-        crate::memory::MemoryConfig::Beads => Ok(FiledHand {
+    match crate::storage::read_lesson_config(project_root)? {
+        crate::storage::StoreConfig::Beads => Ok(FiledHand {
             issue: file_issue(project_root, title, description)?,
             route: None,
         }),
-        crate::memory::MemoryConfig::Virgil { group } => {
+        crate::storage::StoreConfig::Virgil => {
+            let group = match crate::memory::virgil::attachment(project_root) {
+                Ok(Some((group, _))) => group,
+                Ok(None) => return Err("This checkout is not attached to a Virgil repository, so the hand has no channel to go to. Attach it with virgil repos attach <repository> --group <group>.".into()),
+                Err(refusal) => return Err(refusal.message),
+            };
             let title = title.chars().take(200).collect::<String>();
             let description = match raised_by {
                 Some(host) => {

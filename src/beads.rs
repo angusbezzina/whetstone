@@ -32,12 +32,15 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use fs2::FileExt;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::domain::{AgreementHistory, AgreementRecord, RecordBody, RecordId, RecordRef};
-use crate::storage::{AppendRequest, StorageError, StoreKind};
+pub use crate::storage::{ascii_json, IncompleteBatch, METADATA_SCHEMA};
+use crate::storage::{
+    batch_marker_key, logical_stage, map_append_domain_error, record_class, reference_text,
+    AppendRequest, RecordStore, RemoteSync, StorageError, StoreBackend, StoreKind,
+};
 
 /// The oldest `bd` whose JSON shapes Whetstone is tested against.
 pub const MINIMUM_BD_VERSION: (u64, u64, u64) = (1, 1, 2);
@@ -45,7 +48,6 @@ pub const MINIMUM_BD_VERSION: (u64, u64, u64) = (1, 1, 2);
 pub const MIN_BD_VERSION: &str = "1.1.2";
 pub const WHETSTONE_LABEL: &str = "whetstone";
 pub const LIFECYCLE_LABEL_PREFIX: &str = "wh:lifecycle:";
-pub const METADATA_SCHEMA: u64 = 1;
 pub const PRIVATE_PREFIX: &str = "whp";
 const CUSTOM_TYPES: [&str; 2] = ["record", "receipt"];
 
@@ -128,56 +130,8 @@ pub fn ensure_bd_version() -> Result<String, StorageError> {
     Ok(found)
 }
 
-/// Canonical JSON with every non-ASCII character escaped, so Beads' JSON
-/// column never sees characters (such as U+2028) that break its reads.
-pub fn ascii_json(canonical: &[u8]) -> Result<String, StorageError> {
-    let text = std::str::from_utf8(canonical)
-        .map_err(|error| StorageError::Serialization(error.to_string()))?;
-    let mut out = String::with_capacity(text.len());
-    for character in text.chars() {
-        if character.is_ascii() {
-            out.push(character);
-        } else {
-            let mut units = [0_u16; 2];
-            for unit in character.encode_utf16(&mut units) {
-                out.push_str(&format!("\\u{unit:04x}"));
-            }
-        }
-    }
-    Ok(out)
-}
-
 fn bead_type(body: &RecordBody) -> &'static str {
-    match body {
-        RecordBody::Mission(_)
-        | RecordBody::Principle(_)
-        | RecordBody::Rule(_)
-        | RecordBody::Standard(_)
-        | RecordBody::Guidance(_)
-        | RecordBody::Feature(_)
-        | RecordBody::VerificationMap(_)
-        | RecordBody::Lesson(_) => "record",
-        RecordBody::Proposal(_)
-        | RecordBody::LocalReview(_)
-        | RecordBody::Retirement(_)
-        | RecordBody::FlagDecision(_)
-        | RecordBody::HandAnswer(_) => "decision",
-        RecordBody::VerificationReceipt(_)
-        | RecordBody::Judgment(_)
-        | RecordBody::Attestation(_)
-        | RecordBody::Brief(_)
-        | RecordBody::HandRaise(_)
-        | RecordBody::LessonCheck(_) => "receipt",
-        RecordBody::Retired(retired) => match retired.record_type.as_str() {
-            "core_value"
-            | "implementation_philosophy"
-            | "metric_definition"
-            | "source_snapshot"
-            | "policy_exception" => "record",
-            "decision" | "mandate" | "activation" => "decision",
-            _ => "receipt",
-        },
-    }
+    record_class(body)
 }
 
 /// Titles are plain text for people browsing `bd list`; never the record.
@@ -196,29 +150,12 @@ fn bead_title(record: &AgreementRecord) -> String {
     )
 }
 
-fn reference_text(reference: &RecordRef) -> String {
-    format!(
-        "{}@{}#{}",
-        reference.id.as_str(),
-        reference.revision,
-        reference.digest.as_str()
-    )
-}
-
 #[derive(Debug, Clone)]
 struct StoredBead {
     bead: String,
     record: AgreementRecord,
     reference: RecordRef,
     labels: Vec<String>,
-}
-
-/// A batch whose completion marker is missing: some of its records exist.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IncompleteBatch {
-    pub marker_key: String,
-    pub present: Vec<String>,
-    pub missing: Vec<String>,
 }
 
 /// A listing and the storage fingerprint it was read at.
@@ -233,7 +170,7 @@ struct Cached {
 type SharedCache = Arc<Mutex<Option<Cached>>>;
 
 #[derive(Debug, Clone)]
-pub struct RecordStore {
+pub struct BeadsStore {
     dir: PathBuf,
     kind: StoreKind,
     write_guard: Arc<Mutex<()>>,
@@ -242,7 +179,7 @@ pub struct RecordStore {
     remote_free: Arc<std::sync::atomic::AtomicBool>,
 }
 
-impl RecordStore {
+impl BeadsStore {
     /// Open an initialized store without creating or repairing anything.
     pub fn open_existing(dir: &Path, kind: StoreKind) -> Result<Self, StorageError> {
         reject_symlink(dir)?;
@@ -733,25 +670,11 @@ impl RecordStore {
             .filter_map(|marker| marker.get("wh_key").and_then(Value::as_str))
             .map(str::to_owned)
             .collect::<std::collections::BTreeSet<_>>();
-        let mut pending = std::collections::BTreeMap::<String, Vec<String>>::new();
-        for item in &beads {
-            if let Some(batch) = batch_of(&item.record.idempotency_key) {
-                if !completed.contains(&batch) {
-                    pending
-                        .entry(batch)
-                        .or_default()
-                        .push(item.record.idempotency_key.clone());
-                }
-            }
-        }
-        Ok(pending
+        let records = beads
             .into_iter()
-            .map(|(marker_key, present)| IncompleteBatch {
-                marker_key,
-                present,
-                missing: Vec::new(),
-            })
-            .collect())
+            .map(|item| item.record)
+            .collect::<Vec<_>>();
+        Ok(crate::storage::pending_batches(&records, &completed))
     }
 
     // ---------- writes ----------
@@ -850,30 +773,13 @@ impl RecordStore {
         supersedes_bead: Option<&str>,
         status: Option<&str>,
     ) -> Result<StoredBead, StorageError> {
-        let canonical = record.canonical_json().map_err(StorageError::Domain)?;
-        let metadata = json!({
-            "wh_schema": METADATA_SCHEMA,
-            "wh_kind": bead_type(&record.body),
-            "wh_type": record.body.type_name(),
-            "wh_id": record.id.as_str(),
-            "wh_revision": record.revision,
-            "wh_digest": reference.digest.as_str(),
-            "wh_key": record.idempotency_key,
-            "wh_supersedes": record.supersedes.as_ref().map(reference_text),
-            "wh_record": ascii_json(&canonical)?,
-        });
+        let metadata = crate::storage::record_metadata(record, reference)?;
         let file = self.dir.join(format!(
             ".whetstone-metadata-{}.json",
             &format!("{:x}", Sha256::digest(reference_text(reference).as_bytes()))[..16]
         ));
         write_private(&file, metadata.to_string().as_bytes())?;
-        let lifecycle = if crate::agreement::is_agreement_body(&record.body)
-            || matches!(record.body, RecordBody::Retirement(_))
-        {
-            "pending"
-        } else {
-            "operational"
-        };
+        let lifecycle = crate::storage::initial_lifecycle(record);
         let labels = format!(
             "{WHETSTONE_LABEL},wh:{},{LIFECYCLE_LABEL_PREFIX}{lifecycle}",
             record.body.type_name()
@@ -1088,26 +994,7 @@ impl RecordStore {
         let beads = self.snapshot()?;
         let mut changed = 0;
         for item in beads {
-            let wanted = match &item.record.body {
-                body if crate::agreement::is_agreement_body(body)
-                    || matches!(body, RecordBody::Retirement(_)) =>
-                {
-                    let lifecycle = state.lifecycle_of(&item.record);
-                    if lifecycle == crate::agreement::Lifecycle::Accepted
-                        && state.is_retired(&item.record.id)
-                        && state.in_force(&item.record.id).is_none()
-                    {
-                        "retired"
-                    } else if lifecycle == crate::agreement::Lifecycle::Accepted
-                        && state.is_superseded(&item.record)
-                    {
-                        "superseded"
-                    } else {
-                        lifecycle.label()
-                    }
-                }
-                _ => "operational",
-            };
+            let wanted = crate::storage::resolved_lifecycle(state, &item.record);
             let label = format!("{LIFECYCLE_LABEL_PREFIX}{wanted}");
             if item.labels.iter().any(|existing| existing == &label) {
                 continue;
@@ -1135,58 +1022,17 @@ impl RecordStore {
         Ok(changed)
     }
 
-    /// Copy exact record revisions into another store (the push path). Each
-    /// copy keeps its canonical bytes; records already present are skipped.
-    /// Operational records never cross, and no canary may appear in any
-    /// copied record.
-    pub fn copy_to(
-        &self,
-        destination: &RecordStore,
-        selected: &[RecordRef],
-        private_canaries: &[&str],
-    ) -> Result<Vec<RecordRef>, StorageError> {
-        if self.dir == destination.dir {
-            return Err(StorageError::InvalidProjectionBoundary);
-        }
-        let mut records = Vec::new();
-        for reference in selected {
-            let record = self
-                .get(reference)?
-                .ok_or_else(|| StorageError::UnknownReference(reference.clone()))?;
-            if bead_type(&record.body) == "receipt" {
-                return Err(StorageError::InvalidProjectionBoundary);
-            }
-            // Retired kinds stay where they were; they are never written anew.
-            if matches!(record.body, RecordBody::Retired(_)) {
-                return Err(StorageError::Domain(
-                    crate::domain::DomainError::RetiredKind(record.body.type_name().to_string()),
-                ));
-            }
-            let canonical = record.canonical_json().map_err(StorageError::Domain)?;
-            for canary in private_canaries {
-                if !canary.is_empty()
-                    && canonical
-                        .windows(canary.len())
-                        .any(|window| window == canary.as_bytes())
-                {
-                    return Err(StorageError::PrivateCanaryFound((*canary).to_string()));
-                }
-            }
-            records.push(record);
-        }
-        records.sort_by(|left, right| {
-            logical_stage(left)
-                .cmp(&logical_stage(right))
-                .then_with(|| left.id.cmp(&right.id))
-                .then_with(|| left.revision.cmp(&right.revision))
-        });
+    /// Write exact revisions copied from another store (see
+    /// [`RecordStore::receive`]); copies into the shared store are pinned.
+    fn receive_exact(&self, records: &[AgreementRecord]) -> Result<Vec<RecordRef>, StorageError> {
+        self.before_write()?;
         let mut copied = Vec::new();
-        let _guard = destination
+        let _guard = self
             .write_guard
             .lock()
             .map_err(|_| StorageError::LockPoisoned)?;
-        let _lock = destination.write_lock()?;
-        let mut present = destination.refresh()?;
+        let _lock = self.write_lock()?;
+        let mut present = self.refresh()?;
         for record in records {
             let reference = record.reference().map_err(StorageError::Domain)?;
             if present.iter().any(|item| item.reference == reference) {
@@ -1208,11 +1054,12 @@ impl RecordStore {
                     .find(|item| &item.reference == previous)
                     .map(|item| item.bead.clone())
             });
-            let status = (bead_type(&record.body) != "receipt").then_some("pinned");
-            let stored =
-                destination.create(&record, &reference, supersedes_bead.as_deref(), status)?;
+            let status = (self.kind == StoreKind::Shareable
+                && bead_type(&record.body) != "receipt")
+                .then_some("pinned");
+            let stored = self.create(record, &reference, supersedes_bead.as_deref(), status)?;
             present.push(stored.clone());
-            destination.remember(stored)?;
+            self.remember(stored)?;
             copied.push(reference);
         }
         Ok(copied)
@@ -1237,85 +1084,109 @@ impl RecordStore {
     }
 }
 
+impl RecordStore for BeadsStore {
+    fn backend(&self) -> StoreBackend {
+        StoreBackend::Beads
+    }
+
+    fn kind(&self) -> StoreKind {
+        self.kind
+    }
+
+    fn location(&self) -> String {
+        self.dir.display().to_string()
+    }
+
+    fn all_records(&self) -> Result<Vec<AgreementRecord>, StorageError> {
+        BeadsStore::all_records(self)
+    }
+
+    fn get(&self, reference: &RecordRef) -> Result<Option<AgreementRecord>, StorageError> {
+        BeadsStore::get(self, reference)
+    }
+
+    fn by_idempotency_key(&self, key: &str) -> Result<Option<AgreementRecord>, StorageError> {
+        BeadsStore::by_idempotency_key(self, key)
+    }
+
+    fn latest(&self, id: &RecordId) -> Result<Option<AgreementRecord>, StorageError> {
+        BeadsStore::latest(self, id)
+    }
+
+    fn history(&self, id: &RecordId) -> Result<Vec<AgreementRecord>, StorageError> {
+        BeadsStore::history(self, id)
+    }
+
+    fn locator(&self, reference: &RecordRef) -> Result<Option<String>, StorageError> {
+        self.bead_for(reference)
+    }
+
+    fn incomplete_batches(&self) -> Result<Vec<IncompleteBatch>, StorageError> {
+        BeadsStore::incomplete_batches(self)
+    }
+
+    fn append(
+        &self,
+        record: &AgreementRecord,
+        expected_revision: Option<u64>,
+    ) -> Result<RecordRef, StorageError> {
+        BeadsStore::append(self, record, expected_revision)
+    }
+
+    fn append_batch(&self, requests: &[AppendRequest<'_>]) -> Result<Vec<RecordRef>, StorageError> {
+        BeadsStore::append_batch(self, requests)
+    }
+
+    fn sync_lifecycle_labels(
+        &self,
+        state: &crate::agreement::AgreementState,
+    ) -> Result<usize, StorageError> {
+        BeadsStore::sync_lifecycle_labels(self, state)
+    }
+
+    fn lifecycle_view(&self, reference: &RecordRef) -> Result<Option<String>, StorageError> {
+        Ok(self
+            .snapshot()?
+            .into_iter()
+            .find(|item| &item.reference == reference)
+            .and_then(|item| {
+                item.labels.iter().find_map(|label| {
+                    label
+                        .strip_prefix(LIFECYCLE_LABEL_PREFIX)
+                        .map(str::to_owned)
+                })
+            }))
+    }
+
+    fn receive(&self, records: &[AgreementRecord]) -> Result<Vec<RecordRef>, StorageError> {
+        self.receive_exact(records)
+    }
+
+    fn remote(&self) -> Option<&dyn RemoteSync> {
+        Some(self)
+    }
+}
+
+impl RemoteSync for BeadsStore {
+    fn remotes(&self) -> Result<Vec<String>, StorageError> {
+        BeadsStore::remotes(self)
+    }
+
+    fn push_remote(&self) -> Result<String, StorageError> {
+        BeadsStore::push_remote(self)
+    }
+
+    fn pull_remote(&self) -> Result<String, StorageError> {
+        BeadsStore::pull_remote(self)
+    }
+}
+
 /// Decode and verify one bead's Whetstone metadata.
 fn decode_bead(bead: &str, metadata: &Value) -> Result<AgreementRecord, StorageError> {
-    let malformed = |reason: &str| StorageError::MalformedBead {
+    crate::storage::decode_metadata(metadata).map_err(|reason| StorageError::MalformedBead {
         bead: bead.to_string(),
-        reason: reason.to_string(),
-    };
-    if metadata.get("wh_schema").and_then(Value::as_u64) != Some(METADATA_SCHEMA) {
-        return Err(malformed(
-            "missing or unsupported Whetstone metadata schema",
-        ));
-    }
-    let text = metadata
-        .get("wh_record")
-        .and_then(Value::as_str)
-        .ok_or_else(|| malformed("missing wh_record"))?;
-    let record: AgreementRecord =
-        serde_json::from_str(text).map_err(|error| malformed(&format!("wh_record: {error}")))?;
-    record
-        .validate()
-        .map_err(|error| malformed(&format!("record: {error}")))?;
-    let digest = record
-        .digest()
-        .map_err(|error| malformed(&error.to_string()))?;
-    if metadata.get("wh_digest").and_then(Value::as_str) != Some(digest.as_str()) {
-        return Err(malformed(
-            "the record does not match its digest (edited or corrupted metadata)",
-        ));
-    }
-    if metadata.get("wh_id").and_then(Value::as_str) != Some(record.id.as_str())
-        || metadata.get("wh_revision").and_then(Value::as_u64) != Some(record.revision)
-        || metadata.get("wh_key").and_then(Value::as_str) != Some(record.idempotency_key.as_str())
-    {
-        return Err(malformed("metadata fields disagree with the record"));
-    }
-    Ok(record)
-}
-
-fn batch_of(key: &str) -> Option<String> {
-    // Onboarding writes keys `<request>:base-<revision>:<part>`.
-    key.find(":base-")
-        .map(|index| format!("batch:{}", &key[..index]))
-}
-
-fn batch_marker_key(requests: &[AppendRequest<'_>]) -> String {
-    let first = &requests[0].record.idempotency_key;
-    batch_of(first).unwrap_or_else(|| {
-        let mut hasher = Sha256::new();
-        for request in requests {
-            hasher.update(request.record.idempotency_key.as_bytes());
-            hasher.update([0]);
-        }
-        format!("batch:{:x}", hasher.finalize())
+        reason,
     })
-}
-
-/// Write order that keeps every link resolvable: agreement content first,
-/// then proposals, then the reviews and decisions on them, then receipts.
-fn logical_stage(record: &AgreementRecord) -> u8 {
-    match &record.body {
-        RecordBody::Proposal(_) => 1,
-        RecordBody::LocalReview(_) => 2,
-        body if body.is_receipt() => 3,
-        RecordBody::FlagDecision(_) | RecordBody::HandAnswer(_) => 4,
-        _ => 0,
-    }
-}
-
-fn map_append_domain_error(error: crate::domain::DomainError) -> StorageError {
-    use crate::domain::DomainError;
-    match error {
-        DomainError::StaleRevision { expected, actual } => {
-            StorageError::StaleRevision { expected, actual }
-        }
-        DomainError::IllegalRevision { expected, actual } => {
-            StorageError::IllegalRevision { expected, actual }
-        }
-        DomainError::IdempotencyConflict(key) => StorageError::IdempotencyConflict(key),
-        other => StorageError::Domain(other),
-    }
 }
 
 fn reject_symlink(path: &Path) -> Result<(), StorageError> {
@@ -1426,6 +1297,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::batch_of;
 
     #[test]
     fn ascii_json_escapes_everything_beads_would_choke_on() {

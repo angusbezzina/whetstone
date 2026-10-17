@@ -27,7 +27,7 @@ use crate::domain::{
 use crate::gates::{BriefView, FileSet, GateOutcome};
 use crate::judgment::{self, Answer, UnitSource};
 use crate::proof::ArtifactFailure;
-use crate::storage::{ProjectLayout, RecordStore, StorageError, StoreKind};
+use crate::storage::{ProjectLayout, StorageError};
 use crate::verification::{
     self, AttestationState, EvidencePointer, Finding, RequirementKind, TrustedEvidenceSet,
     VerificationEvidence, VerificationPlan, VerificationRequirement,

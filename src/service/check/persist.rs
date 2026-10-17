@@ -102,11 +102,10 @@ pub(super) fn persist_gate_receipt(
     checked_at: &str,
     binding: &DriveBinding<'_>,
 ) -> Result<Option<RecordRef>, StorageError> {
-    let store_path = layout.private_store();
-    if !crate::beads::is_initialized(&store_path) {
+    if !layout.private_store_exists() {
         return Ok(None);
     }
-    let repository = RecordStore::initialize(&store_path, StoreKind::Private)?;
+    let repository = crate::storage::initialize_private(layout)?;
     let idempotency_key = format!("gate:{run_id}:{}", selected.id.as_str());
     if let Some(existing) = repository.by_idempotency_key(&idempotency_key)? {
         return existing.reference().map(Some).map_err(StorageError::Domain);
@@ -231,7 +230,7 @@ pub(super) fn persist_mutation_receipt(
     selected: &SelectedRule,
     run: &crate::gates::MutationOutcome,
 ) -> Result<Option<RecordRef>, StorageError> {
-    if !crate::beads::is_initialized(&layout.private_store()) {
+    if !layout.private_store_exists() {
         return Ok(None);
     }
     let checked_at = utc_now();
@@ -288,7 +287,7 @@ pub(super) fn persist_all(
     layout: &ProjectLayout,
     records: &[AgreementRecord],
 ) -> Result<Vec<RecordRef>, StorageError> {
-    if records.is_empty() || !crate::beads::is_initialized(&layout.private_store()) {
+    if records.is_empty() || !layout.private_store_exists() {
         return Ok(Vec::new());
     }
     records

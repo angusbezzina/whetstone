@@ -20,9 +20,10 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::agreement::{AgreementState, Lifecycle};
+use crate::beads::BeadsStore;
 use crate::domain::{AgreementRecord, Enforcement, RecordBody, RecordId, RecordRef};
 use crate::service::{ServiceResponse, ServiceState};
-use crate::storage::{ProjectLayout, RecordStore, StorageError, StoreKind};
+use crate::storage::{ProjectLayout, RecordStore, StorageError, StoreConfig, StoreKind};
 
 #[derive(Debug, Clone, Default)]
 pub struct PushRequest {
@@ -56,6 +57,56 @@ fn response(
 
 fn storage_failure(request_id: String, workflow: &str, error: StorageError) -> ServiceResponse {
     crate::service::storage_error(workflow, request_id, error)
+}
+
+/// The refusal `wh push` and `wh pull` answer under the Virgil store.
+pub const SYNCED_BY_DAEMON: &str = "records_sync_through_the_daemon";
+
+/// The store the switch names, or the response that stops the workflow.
+fn store_switch(
+    layout: &ProjectLayout,
+    request_id: &str,
+    workflow: &str,
+) -> Result<StoreConfig, Box<ServiceResponse>> {
+    crate::storage::read_config(layout.project_root()).map_err(|error| {
+        Box::new(storage_failure(
+            request_id.to_string(),
+            workflow,
+            StorageError::Config(error),
+        ))
+    })
+}
+
+/// Under Virgil there is nothing for `wh push` or `wh pull` to move: the
+/// daemon syncs the group's Records. Refused by name; a dry run says the
+/// same sentence and succeeds.
+fn synced_by_daemon(request_id: String, workflow: &str, dry_run: bool) -> ServiceResponse {
+    let sentence = format!(
+        "Records sync through the Virgil daemon, so there is nothing to {workflow}: {} names the virgil store, and accepted records reach the group's Records when they are accepted.",
+        crate::storage::STORE_CONFIG
+    );
+    let mut response = response(
+        request_id,
+        workflow,
+        if dry_run {
+            ServiceState::Success
+        } else {
+            ServiceState::Conflict
+        },
+        if dry_run {
+            format!("Dry run: {sentence}")
+        } else {
+            sentence
+        },
+    );
+    response.permitted_actions = vec!["wh dash".into()];
+    response.data = json!({
+        "refusal": SYNCED_BY_DAEMON,
+        "store": "virgil",
+        "dry_run": dry_run,
+        "executes": false,
+    });
+    response
 }
 
 fn reference_text(reference: &RecordRef) -> String {
@@ -315,6 +366,11 @@ pub fn push(request: PushRequest) -> ServiceResponse {
         Err(error) => return storage_failure(fallback, "push", error),
     };
     let request_id = fallback;
+    match store_switch(&layout, &request_id, "push") {
+        Ok(StoreConfig::Beads) => {}
+        Ok(StoreConfig::Virgil) => return synced_by_daemon(request_id, "push", request.dry_run),
+        Err(response) => return *response,
+    }
     if !layout.private_store_exists() {
         let mut response = response(
             request_id,
@@ -338,11 +394,11 @@ pub fn push(request: PushRequest) -> ServiceResponse {
         response.permitted_actions = vec!["keep working locally".into()];
         return response;
     };
-    let private = match RecordStore::open_existing(&layout.private_store(), StoreKind::Private) {
+    let private = match BeadsStore::open_existing(&layout.private_store(), StoreKind::Private) {
         Ok(store) => store,
         Err(error) => return storage_failure(request_id, "push", error),
     };
-    let shared = match RecordStore::initialize(&shared_dir, StoreKind::Shareable) {
+    let shared = match BeadsStore::initialize(&shared_dir, StoreKind::Shareable) {
         Ok(store) => store,
         Err(error) => return storage_failure(request_id, "push", error),
     };
@@ -359,8 +415,10 @@ pub fn push(request: PushRequest) -> ServiceResponse {
         .map(|record| record.id.clone())
         .collect::<BTreeSet<_>>();
     let state = AgreementState::from_records(private_records);
-    let share_lessons = crate::memory::read_config(layout.project_root())
-        .is_ok_and(|config| config == crate::memory::MemoryConfig::Beads);
+    // Inside Virgil, lessons live in the group's collection and never
+    // travel through Beads (a legacy memory.json may still say so).
+    let share_lessons = crate::storage::read_lesson_config(layout.project_root())
+        .is_ok_and(|config| config == StoreConfig::Beads);
     let package = build_package(&state, &shared_refs, &shared_ids, &request, share_lessons);
     let remotes = shared.remotes().unwrap_or_default();
     let destination = json!({
@@ -554,6 +612,11 @@ pub fn pull(request: PullRequest) -> ServiceResponse {
         Ok(layout) => layout,
         Err(error) => return storage_failure(request_id, "pull", error),
     };
+    match store_switch(&layout, &request_id, "pull") {
+        Ok(StoreConfig::Beads) => {}
+        Ok(StoreConfig::Virgil) => return synced_by_daemon(request_id, "pull", request.dry_run),
+        Err(response) => return *response,
+    }
     let Some(shared_dir) = layout.shared_store() else {
         let mut response = response(
             request_id,
@@ -564,7 +627,7 @@ pub fn pull(request: PullRequest) -> ServiceResponse {
         response.permitted_actions = vec!["keep working locally".into()];
         return response;
     };
-    let shared = match RecordStore::open_existing(&shared_dir, StoreKind::Shareable) {
+    let shared = match BeadsStore::open_existing(&shared_dir, StoreKind::Shareable) {
         Ok(store) => store,
         Err(error) => return storage_failure(request_id, "pull", error),
     };
@@ -653,4 +716,119 @@ pub fn pull(request: PullRequest) -> ServiceResponse {
         "local_drafts_preserved": true,
     });
     response
+}
+
+/// Under the Virgil store, share what has been accepted: the same package
+/// `wh push` would build (accepted revisions with the proposals and reviews
+/// that accepted them, never receipts, never draft ancestry, never lessons),
+/// copied into the group's Records. `None` under Beads, where sharing waits
+/// for `wh push`. Idempotent: what Records already holds is never copied.
+pub fn publish_accepted(layout: &ProjectLayout) -> Result<Option<Value>, StorageError> {
+    if crate::storage::read_config(layout.project_root()).map_err(StorageError::Config)?
+        != StoreConfig::Virgil
+        || !layout.private_store_exists()
+    {
+        return Ok(None);
+    }
+    let private = crate::storage::open_private(layout)?;
+    let Some(shared) = crate::storage::open_shared(layout)? else {
+        return Ok(None);
+    };
+    let private_records = private.all_records()?;
+    let shared_records = shared.all_records()?;
+    let shared_refs = shared_records
+        .iter()
+        .filter_map(|record| record.reference().ok())
+        .collect::<BTreeSet<_>>();
+    let shared_ids = shared_records
+        .iter()
+        .map(|record| record.id.clone())
+        .collect::<BTreeSet<_>>();
+    let state = AgreementState::from_records(private_records);
+    let (package, blocked) = accepted_package(&state, &shared_refs, &shared_ids);
+    let copied = if package.is_empty() {
+        Vec::new()
+    } else {
+        private.copy_to(&*shared, &package, &[])?
+    };
+    if !copied.is_empty() {
+        // The lifecycle view in Records is for people browsing it.
+        let mut union = state.records().to_vec();
+        union.extend(shared_records);
+        shared.sync_lifecycle_labels(&AgreementState::from_records(union))?;
+    }
+    Ok(Some(json!({
+        "store": "virgil",
+        "published": copied.iter().map(reference_text).collect::<Vec<_>>(),
+        "blocked": blocked,
+    })))
+}
+
+/// Every accepted revision (with the proposals and reviews that accepted it)
+/// the shared store does not hold yet, in apply order, and what is held back
+/// with why: the package `wh push` builds with nothing selected, lessons
+/// left out. Under Virgil there is no `wh push --include-ancestry`, so a
+/// record held back for its draft ancestry says what does work there.
+pub fn accepted_package(
+    state: &AgreementState,
+    shared: &BTreeSet<RecordRef>,
+    shared_ids: &BTreeSet<RecordId>,
+) -> (Vec<RecordRef>, Vec<Value>) {
+    let mut package = build_package(state, shared, shared_ids, &PushRequest::default(), false);
+    for item in &mut package.blocked {
+        let record = item["record"].as_str().unwrap_or_default().to_string();
+        if item["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("--include-ancestry"))
+        {
+            item["reason"] = json!(format!(
+                "its revision history includes unshared draft or withdrawn revisions, which never leave this machine; retire {record} with wh change --retire and author a shareable replacement"
+            ));
+        }
+    }
+    (package.records, package.blocked)
+}
+
+/// Attach [`publish_accepted`]'s outcome to an `init` or `change` response,
+/// whatever its state: the write may have accepted something even when the
+/// workflow asks for a next step, and publishing is idempotent. A failure
+/// leaves the accepted records private and says so; the next `wh change`
+/// shares them.
+pub fn attach_publication(response: &mut ServiceResponse, project_dir: &std::path::Path) {
+    let Ok(layout) = ProjectLayout::resolve(project_dir) else {
+        return;
+    };
+    let outcome = match publish_accepted(&layout) {
+        Ok(None) => return,
+        Ok(Some(outcome)) => outcome,
+        Err(error) => {
+            response.summary.push_str(&format!(
+                " The accepted records could not reach Virgil yet ({error}); they stay on this machine and are shared by the next wh change."
+            ));
+            json!({"store": "virgil", "published": [], "error": error.to_string()})
+        }
+    };
+    if let Some(blocked) = outcome["blocked"]
+        .as_array()
+        .filter(|blocked| !blocked.is_empty())
+    {
+        response.summary.push_str(&format!(
+            " {} accepted record{} cannot reach Virgil: {}.",
+            blocked.len(),
+            if blocked.len() == 1 { "" } else { "s" },
+            blocked
+                .iter()
+                .map(|item| format!(
+                    "{} ({})",
+                    item["record"].as_str().unwrap_or("?"),
+                    item["reason"].as_str().unwrap_or("held back")
+                ))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ));
+    }
+    if !response.data.is_object() {
+        response.data = json!({});
+    }
+    response.data["shared"] = outcome;
 }

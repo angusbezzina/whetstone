@@ -5,6 +5,8 @@
 //! Detection is read-only. Offline, or without a tool, the answer is
 //! `missing` or `unknown` with a command, never a guess.
 
+pub use crate::beads::MIN_BD_VERSION;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -144,6 +146,11 @@ fn find_skill_in(project_root: &Path, host: &str, skill: &str, home: Option<&Pat
     }
 }
 
+/// Whether `bd` is installed at the pinned minimum.
+pub fn bd_ready() -> bool {
+    crate::beads::ensure_bd_version().is_ok()
+}
+
 /// The installed `bd` version, if any.
 pub fn bd_version() -> Option<String> {
     crate::beads::ensure_bd_version().ok().or_else(|| {
@@ -234,7 +241,15 @@ pub fn detect_in(project_root: &Path, hosts: &[String], home: Option<&Path>) -> 
     let lock = read_lock(project_root);
     let mut tools = Vec::new();
     let mut fixes = Vec::new();
+    // The virgil store keeps every record in Virgil (and drafts in files),
+    // so bd is never needed there and never offered.
+    let virgil_store = crate::storage::read_config(project_root)
+        .is_ok_and(|config| config == crate::storage::StoreConfig::Virgil);
+    if virgil_store {
+        tools.push(virgil_tool());
+    }
     match bd_version() {
+        _ if virgil_store => {}
         Some(version) if crate::beads::ensure_bd_version().is_ok() => tools.push(ToolState {
             tool: "bd".into(),
             state: "ok".into(),
@@ -346,13 +361,51 @@ pub fn detect_in(project_root: &Path, hosts: &[String], home: Option<&Path>) -> 
     }
 }
 
+/// The `virgil` CLI the virgil store reaches Records through.
+fn virgil_tool() -> ToolState {
+    let found = Command::new("virgil")
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .split_whitespace()
+                .find(|word| word.chars().next().is_some_and(|c| c.is_ascii_digit()))
+                .unwrap_or("unknown")
+                .to_string()
+        });
+    match found {
+        Some(version) => ToolState {
+            tool: "virgil".into(),
+            state: "ok".into(),
+            found: Some(version),
+            detail: "The store switch names Virgil; records reach the group's Records through the virgil CLI, and bd is not needed.".into(),
+            fix: None,
+        },
+        None => ToolState {
+            tool: "virgil".into(),
+            state: "missing".into(),
+            found: None,
+            detail: "The store switch names Virgil, but the virgil CLI does not answer. Install or start Virgil, or switch back with wh init --action store --store beads.".into(),
+            fix: None,
+        },
+    }
+}
+
 /// The lock for what is installed now.
 pub fn lock_for(setup: &Setup) -> Option<Lock> {
-    let bd = setup
-        .tools
-        .iter()
-        .find(|tool| tool.tool == "bd" && tool.state == "ok")
-        .and_then(|tool| tool.found.clone())?;
+    let tool = |name: &str| {
+        setup
+            .tools
+            .iter()
+            .find(|tool| tool.tool == name && tool.state == "ok")
+    };
+    // Under the virgil store no bd is pinned.
+    let bd = match tool("bd") {
+        Some(tool) => tool.found.clone()?,
+        None => tool("virgil").map(|_| "none".to_string())?,
+    };
     let mut skills = BTreeMap::new();
     for skill in &setup.skills {
         if let Some(digest) = &skill.digest {

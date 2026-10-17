@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use whetstone::beads::RecordStore;
+use whetstone::beads::BeadsStore;
 use whetstone::dashboard::{BackendResponse, DashboardBackend, DashboardHandle, DashboardMode};
 use whetstone::dashboard_service::CommandDashboardBackend;
 use whetstone::domain::{RecordBody, RecordId};
@@ -1210,7 +1210,7 @@ fn a_rule_change_is_drafted_accepted_checked_flagged_and_dismissed() {
 /// store by its `gate:<rule>` subject.
 fn gate_receipt_for(project: &Path, check: &Value, rule: &str) -> String {
     let layout = ProjectLayout::resolve(project).expect("layout");
-    let store = RecordStore::open_existing(&layout.private_store(), StoreKind::Private)
+    let store = BeadsStore::open_existing(&layout.private_store(), StoreKind::Private)
         .expect("private store");
     let receipts = check["data"]["gate_receipts"]
         .as_array()

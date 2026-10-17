@@ -8,9 +8,9 @@ use crate::domain::{
     ActorKind, AgreementRecord, EvidenceRef, ForgetProposal, Lesson, LessonDecision, LessonStamp,
     LessonStatus, LessonVerb, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordRef, Trust,
 };
-use crate::storage::{ProjectLayout, RecordStore, StoreKind};
+use crate::storage::{ProjectLayout, RecordStore};
 
-use super::{MemoryConfig, Refusal};
+use super::{Refusal, StoreConfig};
 
 /// A lesson as a store holds it: its latest revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,7 +119,7 @@ pub trait LessonStore {
 }
 
 /// Open the store the switch names, for reads (and an agent's writes).
-pub fn open_store(layout: &ProjectLayout, config: &MemoryConfig) -> Box<dyn LessonStore> {
+pub fn open_store(layout: &ProjectLayout, config: &StoreConfig) -> Box<dyn LessonStore> {
     open_store_as(layout, config, ActorKind::Agent)
 }
 
@@ -127,14 +127,14 @@ pub fn open_store(layout: &ProjectLayout, config: &MemoryConfig) -> Box<dyn Less
 /// agent's writes carry `VIRGIL_VIA=agent:<host>` so they land inferred.
 pub fn open_store_as(
     layout: &ProjectLayout,
-    config: &MemoryConfig,
+    config: &StoreConfig,
     actor: ActorKind,
 ) -> Box<dyn LessonStore> {
     match config {
-        MemoryConfig::Beads => Box::new(BeadsLessons {
+        StoreConfig::Beads => Box::new(BeadsLessons {
             layout: layout.clone(),
         }),
-        MemoryConfig::Virgil { .. } => Box::new(super::virgil::VirgilLessons::new(layout, actor)),
+        StoreConfig::Virgil => Box::new(super::virgil::VirgilLessons::new(layout, actor)),
     }
 }
 
@@ -163,9 +163,8 @@ impl BeadsLessons {
             .collect())
     }
 
-    fn store(&self) -> Result<RecordStore, Refusal> {
-        RecordStore::initialize(&self.layout.private_store(), StoreKind::Private)
-            .map_err(storage_refusal)
+    fn store(&self) -> Result<Box<dyn RecordStore>, Refusal> {
+        crate::storage::initialize_private(&self.layout).map_err(storage_refusal)
     }
 
     fn latest_record(&self, key: &str) -> Result<Option<AgreementRecord>, Refusal> {
