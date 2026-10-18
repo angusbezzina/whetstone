@@ -18,11 +18,12 @@ if [ "$1" = init ] && ! git rev-parse --git-dir >/dev/null 2>&1; then
   mkdir -p "$templates"
   if [ ! -f "$template/.beads/metadata.json" ]; then
     if mkdir "$template.lock" 2>/dev/null; then
-      stage="$template.stage"
-      rm -rf "$stage" && mkdir "$stage"
-      (cd "$stage" && BEADS_DIR="$stage/.beads" GIT_CEILING_DIRECTORIES="$templates" "$real" "$@") \
-        && mv "$stage" "$template"
-      rm -rf "$stage" "$template.lock"
+      # Built outside the repository: bd init adopts any ancestor .beads.
+      stage=$(mktemp -d)
+      rm -rf "$template.build" && mkdir "$template.build"
+      (cd "$stage" && BEADS_DIR="$stage/.beads" GIT_CEILING_DIRECTORIES="$(dirname "$stage")" "$real" "$@") \
+        && cp -R "$stage/.beads" "$template.build/" && mv "$template.build" "$template"
+      rm -rf "$stage" "$template.build" "$template.lock"
     else
       waited=0
       while [ ! -f "$template/.beads/metadata.json" ] && [ -d "$template.lock" ] && [ "$waited" -lt 120 ]; do
@@ -51,11 +52,11 @@ pub fn path_with_bd_template() -> OsString {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join("bd-template");
     let bin = root.join("bin");
     let shim = bin.join("bd");
-    if !shim.is_file() {
+    let text = SHIM
+        .replace("@REAL@", &real_bd(&bin).display().to_string())
+        .replace("@TEMPLATES@", &root.join("templates").display().to_string());
+    if std::fs::read_to_string(&shim).ok().as_deref() != Some(text.as_str()) {
         std::fs::create_dir_all(&bin).expect("bd template dir");
-        let text = SHIM
-            .replace("@REAL@", &real_bd(&bin).display().to_string())
-            .replace("@TEMPLATES@", &root.join("templates").display().to_string());
         let staged = bin.join(format!("bd.{}", std::process::id()));
         std::fs::write(&staged, text).expect("bd shim");
         #[cfg(unix)]
