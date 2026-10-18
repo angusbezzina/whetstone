@@ -974,3 +974,45 @@ impl conformance::Harness for BeadsHarness {
 }
 
 conformance_tests!(BeadsHarness::boxed);
+
+#[test]
+fn a_store_whose_custom_types_were_unregistered_registers_them_on_the_next_write() {
+    let temp = tempfile::tempdir().expect("temp");
+    let dir = temp.path().join("private");
+    BeadsStore::initialize(&dir, StoreKind::Private).expect("store");
+    let custom_types = || {
+        let output = Command::new("bd")
+            .args(["config", "get", "types.custom"])
+            .current_dir(&dir)
+            .env("BEADS_DIR", dir.join(".beads"))
+            .env("GIT_CEILING_DIRECTORIES", dir.parent().expect("parent"))
+            .env("BD_NON_INTERACTIVE", "1")
+            .env_remove("BEADS_DB")
+            .output()
+            .expect("bd");
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+    bd(&dir, &["config", "set", "types.custom", "gate"]);
+    assert_eq!(custom_types(), "gate");
+    // Opening an existing store does not ask bd for its types.
+    let store = BeadsStore::initialize(&dir, StoreKind::Private).expect("reopen");
+    assert_eq!(custom_types(), "gate");
+    let single = record("rule.after-reset", 1, "after-reset", rule("Still enforced"));
+    store
+        .append(&single, None)
+        .expect("the refused create registers the types and retries");
+    let mission = record(
+        "mission.project",
+        1,
+        "init-reset:base-0:mission",
+        mission("Make intent inspectable."),
+    );
+    store
+        .append_batch(&[AppendRequest {
+            record: &mission,
+            expected_revision: None,
+        }])
+        .expect("a batch and its receipt-typed marker");
+    assert_eq!(custom_types(), "gate,record,receipt");
+    assert_eq!(store.all_records().expect("records").len(), 2);
+}

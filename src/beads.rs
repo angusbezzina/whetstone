@@ -56,6 +56,15 @@ pub fn is_initialized(dir: &Path) -> bool {
     dir.join(".beads").join("metadata.json").is_file()
 }
 
+/// The JSON document in a `bd` reply, skipping any notice printed before it.
+fn parse_json(output: &str) -> Result<Value, StorageError> {
+    let start = output
+        .find(['[', '{'])
+        .ok_or_else(|| StorageError::UnexpectedData("bd returned no JSON".into()))?;
+    serde_json::from_str(&output[start..])
+        .map_err(|error| StorageError::Serialization(format!("bd JSON: {error}")))
+}
+
 /// The repository's shared Beads database directory (the one holding
 /// `.beads`), as `bd where` resolves it from the project root.
 pub fn shared_dir(project_root: &Path) -> Option<PathBuf> {
@@ -222,8 +231,8 @@ impl BeadsStore {
                     "bd init did not create a database".into(),
                 ));
             }
+            store.ensure_custom_types()?;
         }
-        store.ensure_custom_types()?;
         if kind == StoreKind::Private {
             store.ensure_no_remote()?;
         }
@@ -352,12 +361,22 @@ impl BeadsStore {
     }
 
     fn bd_json(&self, args: &[&str]) -> Result<Value, StorageError> {
-        let output = self.bd(args)?;
-        let start = output
-            .find(['[', '{'])
-            .ok_or_else(|| StorageError::UnexpectedData("bd returned no JSON".into()))?;
-        serde_json::from_str(&output[start..])
-            .map_err(|error| StorageError::Serialization(format!("bd JSON: {error}")))
+        parse_json(&self.bd(args)?)
+    }
+
+    /// `bd create`. A store opened without registering Whetstone's custom
+    /// bead types (they are registered when the store is created) has them
+    /// registered on the first create that bd refuses for its type.
+    fn bd_create(&self, args: &[&str]) -> Result<String, StorageError> {
+        match self.bd(args) {
+            Err(StorageError::CommandFailed { message, .. })
+                if message.contains("invalid issue type") =>
+            {
+                self.ensure_custom_types()?;
+                self.bd(args)
+            }
+            result => result,
+        }
     }
 
     fn ensure_custom_types(&self) -> Result<(), StorageError> {
@@ -804,7 +823,7 @@ impl BeadsStore {
         if let Some(deps) = deps.as_deref() {
             args.extend(["--deps", deps]);
         }
-        let created = self.bd_json(&args);
+        let created = self.bd_create(&args).and_then(|output| parse_json(&output));
         let _ = fs::remove_file(&file);
         let created = created?;
         let created = created
@@ -956,7 +975,7 @@ impl BeadsStore {
         let metadata_arg = format!("@{}", file.display());
         let title = format!("whetstone batch complete ({} records)", requests.len());
         let labels = format!("{WHETSTONE_LABEL},wh:batch,{LIFECYCLE_LABEL_PREFIX}operational");
-        let result = self.bd(&[
+        let result = self.bd_create(&[
             "create",
             "--silent",
             "--type",
