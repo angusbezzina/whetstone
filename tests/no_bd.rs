@@ -1,9 +1,10 @@
 //! The virgil store needs no `bd`: with `whetstone/store.json` naming
 //! Virgil and a PATH holding only the fake `virgil` (tests/fake_virgil.py)
-//! and the basic tools, init, change, check and dash run end to end, drafts
-//! and receipts land in the private file store, accepted records reach the
-//! group's Records when they are accepted, `wh push` and `wh pull` are
-//! refused by name (their dry runs succeed), and no `.beads` appears.
+//! and the basic tools, init, change, check (with the sweep) and dash run end
+//! to end, drafts and receipts land in the rulebook's private scope,
+//! accepted records reach its repository scope when they are accepted, `wh
+//! push` and `wh pull` are refused by name (their dry runs succeed), and no
+//! `.beads` appears.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -102,6 +103,12 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
         "{\"store\":\"virgil\"}\n",
     )
     .expect("switch");
+    fs::create_dir_all(root.join(".virgil")).expect("attachment");
+    fs::write(
+        root.join(".virgil/repo.toml"),
+        format!("group = \"{GROUP}\"\nrepository = \"{REPOSITORY}\"\n"),
+    )
+    .expect("attachment");
     fs::create_dir_all(root.join(".fake-virgil")).expect("fake state");
     fs::write(
         root.join(".fake-virgil/state.json"),
@@ -197,17 +204,22 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
         )
         .expect("json")
     };
-    let shared_ids = |root: &Path| -> Vec<String> {
-        state(root)["agreements"]
+    let scope_ids = |root: &Path, scope: &str| -> Vec<String> {
+        state(root)["rulebook"][scope]
             .as_array()
-            .map(|agreements| {
-                agreements
+            .map(|records| {
+                records
                     .iter()
-                    .filter_map(|agreement| agreement["record_id"].as_str().map(str::to_owned))
+                    .filter_map(|record| record["record_id"].as_str().map(str::to_owned))
                     .collect()
             })
             .unwrap_or_default()
     };
+    let shared_ids = |root: &Path| scope_ids(root, "repository");
+    assert!(
+        scope_ids(&root, "private").contains(&"rule.git-answers".to_string()),
+        "the draft is in the private scope"
+    );
     assert!(
         !shared_ids(&root).contains(&"rule.git-answers".to_string()),
         "a draft never leaves the machine"
@@ -232,6 +244,13 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
 
     let checked = json_of(&wh(&["check", "--json", "--rule", "rule.git-answers"]));
     assert_eq!(checked["state"], "success", "{checked}");
+    let swept = wh(&["check", "--sweep", "--format", "findings"]);
+    assert_eq!(
+        swept.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&swept.stderr)
+    );
     let dash = json_of(&wh(&["dash", "--json"]));
     assert_eq!(dash["state"], "success", "{dash}");
     assert_eq!(dash["data"]["current"]["established"], true);
@@ -247,38 +266,34 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
     );
     assert_eq!(dash["data"]["store"]["left_behind"], json!([]));
 
-    // Drafts and receipts are files in the private store; receipts never
-    // reach Records.
-    let common = root.join(".git/whetstone/v1");
-    let revision_files = files_under(&common)
-        .into_iter()
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "json")
-                && path.components().any(|part| part.as_os_str() == "records")
-                && !path
-                    .file_name()
-                    .is_some_and(|name| name.to_string_lossy().starts_with('.'))
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        revision_files
-            .iter()
-            .any(|path| path.to_string_lossy().contains("rule.git-still-answers")),
-        "the draft is a file: {revision_files:?}"
-    );
-    let kinds = revision_files
-        .iter()
-        .filter_map(|path| fs::read_to_string(path).ok())
-        .filter_map(|text| serde_json::from_str::<Value>(&text).ok())
-        .map(|value| value["wh_kind"].as_str().unwrap_or_default().to_string())
-        .collect::<Vec<_>>();
-    assert!(kinds.iter().any(|kind| kind == "receipt"), "{kinds:?}");
-    assert!(state(&root)["agreements"]
+    // Drafts and receipts live in the private scope; receipts never reach
+    // the repository scope, and nothing is kept as a local revision file.
+    let private = state(&root)["rulebook"]["private"]
         .as_array()
-        .expect("agreements")
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        private
+            .iter()
+            .any(|record| record["record_id"] == "rule.git-still-answers"),
+        "the draft is in the private scope"
+    );
+    assert!(
+        private.iter().any(|record| record["kind"] == "receipt"),
+        "the check's receipts are private"
+    );
+    assert!(state(&root)["rulebook"]["repository"]
+        .as_array()
+        .expect("repository scope")
         .iter()
-        .all(|agreement| agreement["kind"] != "receipt"));
+        .all(|record| record["kind"] != "receipt"));
+    let common = root.join(".git/whetstone");
+    assert!(
+        !files_under(&common)
+            .iter()
+            .any(|path| path.components().any(|part| part.as_os_str() == "records")),
+        "no local revision files"
+    );
 
     // Sync is the daemon's: refused by name, dry runs succeed.
     for workflow in ["push", "pull"] {
@@ -335,7 +350,7 @@ fn choosing_virgil_without_virgil_names_what_is_missing() {
         .expect("git")
         .success());
     let output = run(
-        &["init", "--json", "--action", "store", "--store", "virgil"],
+        &["init", "--json", "--action", "setup", "--store", "virgil"],
         &root,
         &tools,
         &home,
@@ -369,4 +384,98 @@ fn choosing_virgil_without_virgil_names_what_is_missing() {
     );
     assert_ne!(unknown.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("linear"));
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_with_store_virgil_flips_an_attached_checkout_and_never_offers_bd() {
+    let temp = tempfile::tempdir().expect("temp");
+    let tools = temp.path().join("bin");
+    fs::create_dir(&tools).expect("bin");
+    for program in ["git", "date", "sh", "env", "python3"] {
+        let found = which(program).unwrap_or_else(|| panic!("{program} is required"));
+        std::os::unix::fs::symlink(found, tools.join(program)).expect("link");
+    }
+    let fake = tools.join("virgil");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake_virgil.py"),
+        &fake,
+    )
+    .expect("fake");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    let home = temp.path().join("home");
+    fs::create_dir(&home).expect("home");
+    let root = temp.path().join("project");
+    fs::create_dir(&root).expect("project");
+    assert!(Command::new(tools.join("git"))
+        .args(["init", "-q"])
+        .current_dir(&root)
+        .status()
+        .expect("git")
+        .success());
+    let root = root.canonicalize().expect("root");
+    fs::create_dir_all(root.join(".virgil")).expect("attachment");
+    fs::write(
+        root.join(".virgil/repo.toml"),
+        format!("group = \"{GROUP}\"\nrepository = \"{REPOSITORY}\"\n"),
+    )
+    .expect("attachment");
+    fs::create_dir_all(root.join(".fake-virgil")).expect("fake state");
+    fs::write(
+        root.join(".fake-virgil/state.json"),
+        json!({"knobs": {"attached": [GROUP, REPOSITORY], "fail": {}, "stale_get": false, "page": 100}})
+            .to_string(),
+    )
+    .expect("state");
+
+    // A dry run names the switch and writes nothing.
+    let dry = json_of(&run(
+        &[
+            "init",
+            "--json",
+            "--action",
+            "setup",
+            "--store",
+            "virgil",
+            "--dry-run",
+        ],
+        &root,
+        &tools,
+        &home,
+    ));
+    assert_eq!(dry["state"], "needs_decision", "{dry}");
+    assert!(!root.join("whetstone/store.json").exists());
+
+    // Nothing in Beads to move: the switch flips, and setup's tools are the
+    // virgil CLI, never bd.
+    let output = run(
+        &["init", "--json", "--action", "setup", "--store", "virgil"],
+        &root,
+        &tools,
+        &home,
+    );
+    let flipped = json_of(&output);
+    assert_eq!(
+        fs::read_to_string(root.join("whetstone/store.json")).expect("switch"),
+        "{\n  \"store\": \"virgil\"\n}\n"
+    );
+    assert_eq!(flipped["data"]["store"]["written"], true, "{flipped}");
+    assert_eq!(flipped["data"]["store"]["store"]["kind"], "virgil");
+    let tools_seen = flipped["data"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .filter_map(|tool| tool["tool"].as_str())
+        .collect::<Vec<_>>();
+    assert!(tools_seen.contains(&"virgil"), "{tools_seen:?}");
+    assert!(!tools_seen.contains(&"bd"), "{tools_seen:?}");
+    let text = flipped.to_string();
+    assert!(
+        !text.contains("brew install beads") && !text.contains("releases/download"),
+        "never offers to install bd under Virgil: {text}"
+    );
+    assert!(!root.join(".beads").exists());
 }

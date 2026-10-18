@@ -94,7 +94,7 @@ enum Command {
         /// Run the install commands setup found (setup): the one confirmation.
         #[arg(long)]
         yes: bool,
-        /// Where every record lives (store): beads (standalone) or virgil.
+        /// Where every record lives (setup, store): beads (standalone) or virgil.
         #[arg(long = "store", value_parser = ["beads", "virgil"])]
         store: Option<String>,
         /// Retired: the Virgil scope is the checkout's attachment.

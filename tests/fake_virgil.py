@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """A stand-in for the shipped `virgil` CLI (lessons, tasks, repos) and the
-proposed `virgil agreements` verbs, for tests/lessons_virgil.rs and the
+proposed `virgil rulebook` verbs, for tests/lessons_virgil.rs and the
 record store tests. It speaks the flags, JSON lines and exit codes of
 Virgil's crates/virgil-cli/src/handlers/{lessons,tasks,repos}.rs, and for
-agreements the contract src/store/virgil.rs pins (virgil.agreements/v1, one
-JSON request on --input -, one JSON line out), keeps its state in
-FAKE_VIRGIL_STATE, and logs every call with the VIRGIL_VIA it saw.
+the rulebook the contract src/store/virgil.rs pins (virgil.rulebook/v1, one
+JSON request on --input -, one JSON line out, every request naming its
+"scope": "repository" or "private"), keeps its state in FAKE_VIRGIL_STATE,
+and logs every call with the VIRGIL_VIA it saw. The rulebook's records live
+in state["rulebook"][scope] and its batch markers in
+state["rulebook_markers"][scope].
 
 Knobs (in the state file's "knobs"): "attached" ([group, repository] or
-null), "fail" ({op: [exit, landed]}) for the next call of an op (agreements
-ops are named "agreements.<op>"), "stale_get" (get answers one revision
-behind), "page" (list page size), "agreements_api" (the api_version
-agreements answer with), "no_agreements" (agreements is an unknown family,
-as on a Virgil without the collection).
+null), "fail" ({op: [exit, landed]}) for the next call of an op (rulebook
+ops are named "rulebook.<op>"), "stale_get" (get answers one revision
+behind), "page" (list page size), "rulebook_api" (the api_version the
+rulebook answers with), "no_rulebook" (rulebook is an unknown family, as on
+a Virgil without the collection).
 """
 
 import hashlib
@@ -35,8 +38,8 @@ state.setdefault("lessons", {})
 state.setdefault("tasks", {})
 state.setdefault("seen", {})
 state.setdefault("n", 0)
-state.setdefault("agreements", [])
-state.setdefault("markers", {})
+state.setdefault("rulebook", {"repository": [], "private": []})
+state.setdefault("rulebook_markers", {"repository": {}, "private": {}})
 knobs = state.setdefault(
     "knobs", {"attached": None, "fail": {}, "stale_get": False, "page": 100}
 )
@@ -362,23 +365,29 @@ if family == "--version":
     print("virgil 0.0.0-fake")
     sys.exit(0)
 
-if family == "agreements" and knobs.get("no_agreements"):
+if family == "rulebook" and knobs.get("no_rulebook"):
     # A Virgil without the collection: clap refuses the subcommand.
     save()
-    sys.stderr.write("error: unrecognized subcommand 'agreements'\n")
+    sys.stderr.write("error: unrecognized subcommand 'rulebook'\n")
     sys.exit(2)
 
-if family == "agreements":
-    api = knobs.get("agreements_api", "virgil.agreements/v1")
+if family == "rulebook":
+    api = knobs.get("rulebook_api", "virgil.rulebook/v1")
     op = args[1]
     if args[2:] != ["--input", "-"]:
-        error(api, "invalid_request", "agreements verbs read --input -", 2)
+        error(api, "invalid_request", "rulebook verbs read --input -", 2)
     request = json.loads(sys.stdin.read() or "{}")
+    scope = request.get("scope")
+    if scope not in ("repository", "private"):
+        error(api, "invalid_request", "scope must be repository or private", 2)
+    if op == "import-beads" and scope != "repository":
+        error(api, "invalid_request", "import-beads writes the repository scope", 2)
     if knobs["attached"] is None:
         error(api, "unattached", "use virgil repos attach to select a repository", 6)
     group, repository = knobs["attached"]
-    agreements = state["agreements"]
-    failing = knobs["fail"].pop("agreements." + op, None)
+    records = state["rulebook"][scope]
+    markers = state["rulebook_markers"][scope]
+    failing = knobs["fail"].pop("rulebook." + op, None)
     codes = {
         3: "read_again",
         4: "refused_content",
@@ -393,7 +402,7 @@ if family == "agreements":
         error(api, "invalid_request", "expected agent:<client>", 2)
 
     def find(record_id, revision=None):
-        found = [a for a in agreements if a["record_id"] == record_id]
+        found = [a for a in records if a["record_id"] == record_id]
         if revision is not None:
             found = [a for a in found if a["revision"] == revision]
         return sorted(found, key=lambda a: a["revision"])
@@ -402,7 +411,7 @@ if family == "agreements":
         state["n"] += 1
         stored = dict(agreement, id="01JA%022d" % state["n"])
         stored.pop("evidence", None)
-        agreements.append(stored)
+        records.append(stored)
         return stored
 
     def landed(stored, replayed):
@@ -423,7 +432,7 @@ if family == "agreements":
         )
 
     if op == "put":
-        agreement = request.get("agreement") or {}
+        agreement = request.get("record") or {}
         for field in (
             "record_id",
             "revision",
@@ -432,9 +441,9 @@ if family == "agreements":
             "wh_record",
         ):
             if field not in agreement:
-                error(api, "invalid_request", "agreement needs " + field, 2)
+                error(api, "invalid_request", "record needs " + field, 2)
         key = agreement["idempotency_key"]
-        same_key = [a for a in agreements if a["idempotency_key"] == key]
+        same_key = [a for a in records if a["idempotency_key"] == key]
         if same_key:
             if (
                 same_key[0]["digest"] == agreement["digest"]
@@ -471,20 +480,20 @@ if family == "agreements":
     if op == "get":
         found = find(request.get("record_id"), request.get("revision"))
         if not found:
-            error(api, "not_found", "agreement is missing at the confirmed cut", 6)
-        out(api, {"result": {"agreement": found[0]}})
+            error(api, "not_found", "record is missing at the confirmed cut", 6)
+        out(api, {"result": {"record": found[0]}})
 
     if op == "latest":
         found = find(request.get("record_id"))
         if not found:
-            error(api, "not_found", "no agreement with that record id", 6)
-        out(api, {"result": {"agreement": found[-1]}})
+            error(api, "not_found", "no record with that record id", 6)
+        out(api, {"result": {"record": found[-1]}})
 
     if op == "history":
-        out(api, {"result": {"agreements": find(request.get("record_id"))}})
+        out(api, {"result": {"records": find(request.get("record_id"))}})
 
     if op == "list":
-        found = sorted(agreements, key=lambda a: (a["record_id"], a["revision"]))
+        found = sorted(records, key=lambda a: (a["record_id"], a["revision"]))
         if request.get("idempotency_key"):
             found = [
                 a for a in found if a["idempotency_key"] == request["idempotency_key"]
@@ -493,10 +502,10 @@ if family == "agreements":
         size = min(int(request.get("limit", 100)), knobs["page"])
         page = found[start : start + size]
         cursor = str(start + size) if start + size < len(found) else ""
-        out(api, {"result": {"agreements": page, "cursor": cursor}})
+        out(api, {"result": {"records": page, "cursor": cursor}})
 
     if op == "mark":
-        state["markers"][request["marker"]] = request.get("members", [])
+        markers[request["marker"]] = request.get("members", [])
         out(api, {"result": {"marker": request["marker"]}})
 
     if op == "markers":
@@ -506,7 +515,7 @@ if family == "agreements":
                 "result": {
                     "markers": [
                         {"marker": k, "members": v}
-                        for k, v in sorted(state["markers"].items())
+                        for k, v in sorted(markers.items())
                     ]
                 }
             },
@@ -515,7 +524,7 @@ if family == "agreements":
     if op == "lifecycle":
         found = find(request.get("record_id"), request.get("revision"))
         if not found:
-            error(api, "not_found", "agreement is missing at the confirmed cut", 6)
+            error(api, "not_found", "record is missing at the confirmed cut", 6)
         found[0]["lifecycle"] = request["lifecycle"]
         out(
             api,
@@ -533,10 +542,10 @@ if family == "agreements":
         if source.startswith(os.path.realpath(os.getcwd()) + os.sep):
             error(api, "invalid_request", "export is inside the repository", 2)
         exported = json.load(open(source))
-        if exported.get("schema") != "whetstone.agreements-export/v1":
-            error(api, "invalid_request", "not a Whetstone agreements export", 2)
+        if exported.get("schema") != "whetstone.rulebook-export/v1":
+            error(api, "invalid_request", "not a Whetstone rulebook export", 2)
         entries = []
-        for agreement in exported["agreements"]:
+        for agreement in exported["records"]:
             slot = find(agreement["record_id"], agreement["revision"])
             if slot:
                 disposition = (

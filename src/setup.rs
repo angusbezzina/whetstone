@@ -241,12 +241,12 @@ pub fn detect_in(project_root: &Path, hosts: &[String], home: Option<&Path>) -> 
     let lock = read_lock(project_root);
     let mut tools = Vec::new();
     let mut fixes = Vec::new();
-    // The virgil store keeps every record in Virgil (and drafts in files),
+    // The virgil store keeps every record in Virgil (drafts in its private scope),
     // so bd is never needed there and never offered.
     let virgil_store = crate::storage::read_config(project_root)
         .is_ok_and(|config| config == crate::storage::StoreConfig::Virgil);
     if virgil_store {
-        tools.push(virgil_tool());
+        tools.push(virgil_tool(project_root));
     }
     match bd_version() {
         _ if virgil_store => {}
@@ -361,10 +361,12 @@ pub fn detect_in(project_root: &Path, hosts: &[String], home: Option<&Path>) -> 
     }
 }
 
-/// The `virgil` CLI the virgil store reaches Records through.
-fn virgil_tool() -> ToolState {
+/// The `virgil` CLI the virgil store reaches Records through, asked from
+/// the checkout, as every store call asks it.
+fn virgil_tool(project_root: &Path) -> ToolState {
     let found = Command::new("virgil")
         .arg("--version")
+        .current_dir(project_root)
         .output()
         .ok()
         .filter(|output| output.status.success())
@@ -387,7 +389,7 @@ fn virgil_tool() -> ToolState {
             tool: "virgil".into(),
             state: "missing".into(),
             found: None,
-            detail: "The store switch names Virgil, but the virgil CLI does not answer. Install or start Virgil, or switch back with wh init --action store --store beads.".into(),
+            detail: "The store switch names Virgil, but the virgil CLI does not answer. Install or start Virgil, or switch back with wh init --action setup --store beads.".into(),
             fix: None,
         },
     }

@@ -1,11 +1,10 @@
-//! The record store conformance suite against the private file store, and
-//! the suite's positive control: an in-memory adapter that keeps every
-//! invariant passes it, and the same adapter with its append checks removed
-//! fails it.
+//! The record store conformance suite's positive control: an in-memory
+//! adapter that keeps every invariant passes it, and the same adapter with
+//! its append checks removed fails it. The real adapters run the suite in
+//! tests/beads_store.rs and tests/virgil_store.rs.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 
 use whetstone::agreement::AgreementState;
 use whetstone::domain::{AgreementRecord, RecordRef};
@@ -14,7 +13,6 @@ use whetstone::storage::{
     reference_text, resolved_lifecycle, validate_for_append, AppendRequest, IncompleteBatch,
     RecordStore, StorageError, StoreBackend, StoreKind,
 };
-use whetstone::store::file::FileStore;
 
 mod conformance;
 
@@ -46,7 +44,8 @@ impl MemoryStore {
 
 impl RecordStore for MemoryStore {
     fn backend(&self) -> StoreBackend {
-        StoreBackend::Files
+        // A test double; nothing reads the backend of a store under test.
+        StoreBackend::Beads
     }
 
     fn kind(&self) -> StoreKind {
@@ -239,60 +238,14 @@ impl conformance::Harness for MemoryHarness {
     }
 }
 
-/// The file store: a private directory, copied into an in-memory shareable
-/// store, corrupted by editing one revision file by hand.
-struct FileHarness {
-    _temp: tempfile::TempDir,
-    dir: PathBuf,
-    store: FileStore,
-    shareable: MemoryStore,
-}
-
-impl FileHarness {
-    fn boxed() -> Box<dyn conformance::Harness> {
-        let temp = tempfile::tempdir().expect("temp");
-        let dir = temp.path().join("private").join("records");
-        let store = FileStore::initialize(&dir).expect("store");
-        Box::new(Self {
-            dir,
-            store,
-            shareable: MemoryStore::new("shareable", StoreKind::Shareable, false),
-            _temp: temp,
-        })
-    }
-}
-
-impl conformance::Harness for FileHarness {
-    fn store(&self) -> &dyn RecordStore {
-        &self.store
-    }
-    fn reopen(&self) -> Box<dyn RecordStore> {
-        Box::new(FileStore::open_existing(&self.dir).expect("reopen"))
-    }
-    fn copy_pair(&self) -> (&dyn RecordStore, &dyn RecordStore) {
-        (&self.store, &self.shareable)
-    }
-    fn corrupt(&self, reference: &RecordRef) -> String {
-        let path = self.store.path_of(&reference.id, reference.revision);
-        let text = std::fs::read_to_string(&path).expect("revision file");
-        std::fs::write(&path, text.replace("Intact", "Broken")).expect("tamper");
-        path.display().to_string()
-    }
-}
-
-mod files {
-    use super::*;
-    conformance_tests!(FileHarness::boxed);
-}
-
 mod memory {
     use super::*;
     conformance_tests!(|| MemoryHarness::boxed(false));
 }
 
 #[test]
-fn the_suite_runs_end_to_end_over_the_file_store() {
-    conformance::run_conformance(&FileHarness::boxed);
+fn the_suite_runs_end_to_end_over_a_store_that_keeps_every_invariant() {
+    conformance::run_conformance(&|| MemoryHarness::boxed(false));
 }
 
 #[test]
@@ -314,52 +267,4 @@ fn a_store_that_skips_its_append_checks_fails_the_suite() {
     // The positive control's control: the same adapter with its checks
     // passes every invariant.
     conformance::run_conformance(&|| MemoryHarness::boxed(false));
-}
-
-#[test]
-fn a_corrupted_revision_file_names_its_path_and_stays_corrupted() {
-    let harness = FileHarness::boxed();
-    let first = conformance::record(
-        "rule.tamper",
-        1,
-        "tamper",
-        conformance::rule("Intact text."),
-    );
-    let written = harness.store().append(&first, None).expect("append");
-    let path = harness.corrupt(&written);
-    let reopened = harness.reopen();
-    match reopened.all_records() {
-        Err(StorageError::MalformedRecord { locator, reason }) => {
-            assert_eq!(locator, path);
-            assert!(reason.contains("digest"), "{reason}");
-        }
-        other => panic!("corruption was not reported: {other:?}"),
-    }
-    assert!(
-        std::fs::read_to_string(&path)
-            .expect("file")
-            .contains("Broken"),
-        "never repaired"
-    );
-}
-
-#[test]
-fn the_file_layout_is_one_file_per_revision_under_the_encoded_id() {
-    let harness = FileHarness::boxed();
-    let first = conformance::record("Rule.Mixed:Case", 1, "layout", conformance::rule("Layout."));
-    let written = harness.store().append(&first, None).expect("append");
-    let locator = harness
-        .store()
-        .locator(&written)
-        .expect("locator")
-        .expect("present");
-    assert!(
-        locator.ends_with("records/%52ule.%4dixed%3a%43ase/1.json"),
-        "{locator}"
-    );
-    let text = std::fs::read_to_string(&locator).expect("file");
-    let value: serde_json::Value = serde_json::from_str(&text).expect("json");
-    assert_eq!(value["wh_id"], "Rule.Mixed:Case");
-    assert_eq!(value["wh_revision"], 1);
-    assert!(value["wh_record"].as_str().expect("record").is_ascii());
 }

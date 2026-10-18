@@ -1,7 +1,8 @@
 //! The Virgil record store adapter against the fake `virgil`
-//! (tests/fake_virgil.py), which speaks the `virgil agreements` contract
-//! Whetstone pins: the conformance suite, every exit code, the pinned API
-//! version, a Virgil without the collection, paging and `VIRGIL_VIA`.
+//! (tests/fake_virgil.py), which speaks the `virgil rulebook` contract
+//! Whetstone pins: the conformance suite in both scopes, the scopes kept
+//! apart, every exit code, the pinned API version, a Virgil without the
+//! collection, paging and `VIRGIL_VIA`.
 //!
 //! The fake keeps its state in each test's own checkout, so the tests run
 //! in parallel; PATH is set once, for the whole binary.
@@ -14,7 +15,6 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 use whetstone::domain::RecordRef;
 use whetstone::storage::{RecordStore, StorageError, StoreKind};
-use whetstone::store::file::FileStore;
 use whetstone::store::virgil::VirgilStore;
 
 mod conformance;
@@ -110,27 +110,56 @@ impl Checkout {
     }
 
     fn store(&self) -> VirgilStore {
-        VirgilStore::new(&self.root())
+        VirgilStore::shared(&self.root())
+    }
+
+    fn private(&self) -> VirgilStore {
+        VirgilStore::private(&self.root())
+    }
+
+    /// The records the fake holds in one scope.
+    fn records(&self, scope: &str) -> Vec<Value> {
+        self.state()["rulebook"][scope]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
     }
 }
 
+/// The conformance harness for one scope; the copy pair is always the
+/// private scope into the repository scope (the accept path).
 struct VirgilHarness {
     checkout: Checkout,
+    scope: &'static str,
     store: VirgilStore,
-    private: FileStore,
+    private: VirgilStore,
+    shared: VirgilStore,
 }
 
 impl VirgilHarness {
-    fn boxed() -> Box<dyn conformance::Harness> {
+    fn boxed(scope: &'static str) -> Box<dyn conformance::Harness> {
         let checkout = Checkout::new(true);
-        let store = checkout.store();
-        let private =
-            FileStore::initialize(&checkout.temp.path().join("private/records")).expect("files");
+        let (private, shared) = (checkout.private(), checkout.store());
+        let store = if scope == "private" {
+            private.clone()
+        } else {
+            shared.clone()
+        };
         Box::new(Self {
             checkout,
+            scope,
             store,
             private,
+            shared,
         })
+    }
+
+    fn repository() -> Box<dyn conformance::Harness> {
+        Self::boxed("repository")
+    }
+
+    fn private_scope() -> Box<dyn conformance::Harness> {
+        Self::boxed("private")
     }
 }
 
@@ -140,18 +169,22 @@ impl conformance::Harness for VirgilHarness {
     }
 
     fn reopen(&self) -> Box<dyn RecordStore> {
-        Box::new(self.checkout.store())
+        Box::new(if self.scope == "private" {
+            self.checkout.private()
+        } else {
+            self.checkout.store()
+        })
     }
 
     fn copy_pair(&self) -> (&dyn RecordStore, &dyn RecordStore) {
-        (&self.private, &self.store)
+        (&self.private, &self.shared)
     }
 
     fn corrupt(&self, reference: &RecordRef) -> String {
         let mut state = self.checkout.state();
-        let agreement = state["agreements"]
+        let agreement = state["rulebook"][self.scope]
             .as_array_mut()
-            .expect("agreements")
+            .expect("records")
             .iter_mut()
             .find(|agreement| {
                 agreement["record_id"] == reference.id.as_str()
@@ -169,7 +202,83 @@ impl conformance::Harness for VirgilHarness {
     }
 }
 
-conformance_tests!(VirgilHarness::boxed);
+mod repository_scope {
+    use super::*;
+    conformance_tests!(VirgilHarness::repository);
+}
+
+mod private_scope {
+    use super::*;
+    conformance_tests!(VirgilHarness::private_scope);
+}
+
+#[test]
+fn the_scopes_are_kept_apart_and_named_on_every_request() {
+    let checkout = Checkout::new(true);
+    let (private, shared) = (checkout.private(), checkout.store());
+    assert_eq!(private.kind(), StoreKind::Private);
+    assert_eq!(shared.kind(), StoreKind::Shareable);
+    assert_ne!(private.location(), shared.location());
+    let draft = a_rule("rule.virgil-draft", "virgil:draft");
+    let written = private.append(&draft, None).expect("draft");
+    assert_eq!(checkout.records("private").len(), 1);
+    assert!(checkout.records("repository").is_empty());
+    assert_eq!(shared.get(&written).expect("get"), None);
+    assert!(shared.all_records().expect("shared").is_empty());
+    // Accepting copies the exact revision into the repository scope.
+    private
+        .copy_to(&shared, std::slice::from_ref(&written), &[])
+        .expect("copy");
+    assert_eq!(shared.get(&written).expect("get").as_ref(), Some(&draft));
+    assert_eq!(
+        checkout.records("repository")[0]["wh_record"],
+        checkout.records("private")[0]["wh_record"]
+    );
+    // Nothing copies from the repository scope into the private one.
+    assert!(matches!(
+        shared.copy_to(&private, &[written], &[]),
+        Err(StorageError::InvalidProjectionBoundary)
+    ));
+}
+
+#[test]
+fn an_append_reads_the_key_and_the_history_never_the_whole_scope() {
+    let checkout = Checkout::new(true);
+    checkout.knob("page", json!(1));
+    let store = checkout.store();
+    for index in 0..4 {
+        store
+            .append(
+                &a_rule(
+                    &format!("rule.virgil-narrow-{index}"),
+                    &format!("narrow:{index}"),
+                ),
+                None,
+            )
+            .expect("append");
+    }
+    let before = checkout.calls().len();
+    store
+        .append(&a_rule("rule.virgil-narrow-last", "narrow:last"), None)
+        .expect("append");
+    let lists = checkout.calls()[before..]
+        .iter()
+        .filter(|call| call["argv"][1] == "list")
+        .count();
+    // One filtered page for the key, never a page per stored record.
+    assert_eq!(lists, 1);
+}
+
+#[test]
+fn import_beads_is_the_repository_scopes_alone() {
+    let checkout = Checkout::new(true);
+    let file = checkout.temp.path().join("rulebook.json");
+    std::fs::write(&file, "{}").expect("file");
+    assert!(matches!(
+        checkout.private().import_beads(&file, false),
+        Err(StorageError::InvalidProjectionBoundary)
+    ));
+}
 
 fn a_rule(id: &str, key: &str) -> whetstone::domain::AgreementRecord {
     conformance::record(id, 1, key, conformance::rule("Keep Virgil honest."))
@@ -192,7 +301,7 @@ fn the_store_is_shareable_and_writes_through_input_with_the_pinned_api() {
     let puts = checkout
         .calls()
         .into_iter()
-        .filter(|call| call["argv"] == json!(["agreements", "put", "--input", "-"]))
+        .filter(|call| call["argv"] == json!(["rulebook", "put", "--input", "-"]))
         .collect::<Vec<_>>();
     assert_eq!(puts.len(), 1, "one put");
     // Tests run without a terminal, so the write is an agent's.
@@ -208,7 +317,7 @@ fn the_store_is_shareable_and_writes_through_input_with_the_pinned_api() {
         .iter()
         .filter(|call| call["argv"][1] == "list")
         .all(|call| call["via"].is_null()));
-    let stored = &checkout.state()["agreements"][0];
+    let stored = &checkout.records("repository")[0];
     assert_eq!(stored["record_id"], "rule.virgil-api");
     assert_eq!(stored["kind"], "record");
     assert_eq!(stored["type"], "rule");
@@ -229,15 +338,13 @@ fn every_exit_code_maps_to_a_named_refusal() {
     ];
     for (exit, code) in cases {
         let checkout = Checkout::new(true);
-        checkout.knob("fail", json!({"agreements.put": [exit, false]}));
+        checkout.knob("fail", json!({"rulebook.put": [exit, false]}));
         let error = checkout
             .store()
             .append(&a_rule("rule.virgil-exit", "virgil:exit"), None)
             .expect_err("refused");
         assert_eq!(virgil_code(error), code, "exit {exit}");
-        assert!(checkout.state()["agreements"]
-            .as_array()
-            .map_or(true, Vec::is_empty));
+        assert!(checkout.records("repository").is_empty());
     }
 }
 
@@ -245,7 +352,7 @@ fn every_exit_code_maps_to_a_named_refusal() {
 fn a_write_that_carries_an_id_landed_whatever_the_exit() {
     for exit in [3, 4, 5, 7] {
         let checkout = Checkout::new(true);
-        checkout.knob("fail", json!({"agreements.put": [exit, true]}));
+        checkout.knob("fail", json!({"rulebook.put": [exit, true]}));
         let record = a_rule("rule.virgil-landed", "virgil:landed");
         let written = checkout
             .store()
@@ -270,13 +377,13 @@ fn an_unattached_checkout_is_refused_by_name() {
 #[test]
 fn another_api_version_or_no_collection_is_a_contract_failure() {
     let checkout = Checkout::new(true);
-    checkout.knob("agreements_api", json!("virgil.agreements/v2"));
+    checkout.knob("rulebook_api", json!("virgil.rulebook/v2"));
     assert_eq!(
         virgil_code(checkout.store().all_records().expect_err("api")),
         "store_contract"
     );
     let checkout = Checkout::new(true);
-    checkout.knob("no_agreements", json!(true));
+    checkout.knob("no_rulebook", json!(true));
     assert_eq!(
         virgil_code(checkout.store().probe().expect_err("no collection")),
         "store_contract"
@@ -303,13 +410,14 @@ fn a_racing_writer_is_refused_never_merged() {
     // Even when the client's read was stale, Virgil checks again.
     let mut state = checkout.state();
     let request = json!({
-        "agreement": whetstone::store::virgil::wire(&ours, "pending").expect("wire"),
+        "scope": "repository",
+        "record": whetstone::store::virgil::wire(&ours, "pending").expect("wire"),
         "expected_revision": 1,
     });
     state["knobs"]["fail"] = json!({});
     checkout.write_state(state);
     let output = Command::new("virgil")
-        .args(["agreements", "put", "--input", "-"])
+        .args(["rulebook", "put", "--input", "-"])
         .current_dir(checkout.root())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -362,11 +470,11 @@ fn import_beads_reports_each_revision_and_applies_only_when_asked() {
     let checkout = Checkout::new(true);
     let record = a_rule("rule.virgil-import", "virgil:import");
     let export = json!({
-        "schema": "whetstone.agreements-export/v1",
+        "schema": "whetstone.rulebook-export/v1",
         "scope": {"repository": REPOSITORY},
-        "agreements": [whetstone::store::virgil::wire(&record, "accepted").expect("wire")],
+        "records": [whetstone::store::virgil::wire(&record, "accepted").expect("wire")],
     });
-    let file = checkout.temp.path().join("agreements.json");
+    let file = checkout.temp.path().join("rulebook.json");
     std::fs::write(&file, export.to_string()).expect("export");
     let store = checkout.store();
     let dry = store.import_beads(&file, false).expect("dry run");
@@ -384,7 +492,7 @@ fn import_beads_reports_each_revision_and_applies_only_when_asked() {
         record.reference().expect("reference")
     );
     // An export inside the checkout is refused, as the lessons import is.
-    let inside = checkout.root().join("agreements.json");
+    let inside = checkout.root().join("rulebook.json");
     std::fs::write(&inside, export.to_string()).expect("export");
     assert_eq!(
         virgil_code(store.import_beads(&inside, false).expect_err("inside")),

@@ -1,42 +1,53 @@
-//! The Virgil adapter: accepted records and decisions in the attached
-//! group's Records `agreement` collection, reached only through
-//! `virgil agreements` on the daemon socket. The daemon stamps provenance and
-//! syncs; Whetstone never talks to a door or a database.
+//! The Virgil adapter: every record in the attached repository's `rulebook`
+//! Records collection, reached only through `virgil rulebook` on the daemon
+//! socket. The daemon stamps provenance and syncs; Whetstone never talks to a
+//! door or a database, and never needs `bd`.
 //!
-//! The contract Whetstone pins (`virgil.agreements/v1`): every verb reads one
+//! One adapter serves both store kinds through the collection's two scopes:
+//! `repository` (accepted records and their decisions, shared with the group
+//! through the repository attachment) and `private` (drafts and receipts,
+//! owned by the signed-in principal for this repository and visible to no one
+//! else). Accepting a draft copies it from `private` to `repository`; nothing
+//! copies the other way except migration.
+//!
+//! The contract Whetstone pins (`virgil.rulebook/v1`): every verb reads one
 //! JSON request on `--input -` and answers one JSON line,
 //! `{"api_version","result"}` or `{"api_version","error":{"code","message",
 //! "hint"}}`, with Virgil's exit codes (0 ok, 1 internal, 2 invalid, 3 read
 //! again, 4 refused, 5 not permitted, 6 not found or unattached, 7
-//! unavailable). The scope is the repository attachment found from the
-//! checkout (`.virgil/repo.toml`); no verb names a group.
+//! unavailable). Every request names its `"scope"` (`repository` or
+//! `private`); the repository is the attachment found from the checkout
+//! (`.virgil/repo.toml`), and no verb names a group.
 //!
-//! - `put` `{"agreement", "expected_revision"?, "copy"?}`: one revision,
-//!   unique on `record_id`+`revision` and on `idempotency_key` per
-//!   repository, answered `{"id","record_id","revision","digest",
-//!   "replayed","replication_pending"}`; Whetstone requires `id` and the
-//!   stored `digest` and treats a landed write whose digest differs as a
-//!   mismatch. `expected_revision` is the latest revision the writer saw,
-//!   `null` meaning none may exist yet (it is never "skip the check"); a
-//!   stale one is exit 3 with `error.code` `stale_revision` and the current
-//!   revision as `error.actual` (a number or `null`). A repeated key answers
-//!   what it recorded (`replayed`); a reused key or revision with other
-//!   content is exit 4 `idempotency_conflict` or `conflicting_revision`.
-//!   `copy: true` writes an exact revision without the expected-revision
-//!   check (migration and sharing) and is the only way to skip it.
-//! - `get` `{"record_id","revision"}`, `latest` `{"record_id"}`: one
-//!   `agreement`, exit 6 `not_found` when there is none.
-//! - `history` `{"record_id"}`: `agreements`, by revision.
-//! - `list` `{"limit","cursor","idempotency_key"?}`: a page of `agreements`
-//!   and the next `cursor`; the first request sends `"cursor": ""` and an
-//!   empty cursor in the answer ends the listing.
-//! - `mark` `{"marker","members"}` and `markers` `{}`: batch completion
-//!   markers.
-//! - `lifecycle` `{"record_id","revision","lifecycle"}`: the lifecycle view.
-//! - `import-beads` `{"file","apply"}`: the export Whetstone writes
-//!   ([`crate::store::export`]), answered with one entry per revision.
+//! - `put` `{"scope","record","expected_revision"?,"copy"?}`: one revision,
+//!   unique on `record_id`+`revision` and on `idempotency_key` per scope,
+//!   answered `{"id","record_id","revision","digest","replayed",
+//!   "replication_pending"}`; Whetstone requires `id` and the stored `digest`
+//!   and treats a landed write whose digest differs as a mismatch.
+//!   `expected_revision` is the latest revision the writer saw, `null`
+//!   meaning none may exist yet (it is never "skip the check"); a stale one
+//!   is exit 3 with `error.code` `stale_revision` and the current revision as
+//!   `error.actual` (a number or `null`). A repeated key answers what it
+//!   recorded (`replayed`); a reused key or revision with other content is
+//!   exit 4 `idempotency_conflict` or `conflicting_revision`. `copy: true`
+//!   writes an exact revision without the expected-revision check
+//!   (accepting, sharing and migration) and is the only way to skip it.
+//! - `get` `{"scope","record_id","revision"}`, `latest`
+//!   `{"scope","record_id"}`: one `record`, exit 6 `not_found` when there is
+//!   none.
+//! - `history` `{"scope","record_id"}`: `records`, by revision.
+//! - `list` `{"scope","limit","cursor","idempotency_key"?}`: a page of
+//!   `records` and the next `cursor`; the first request sends `"cursor": ""`
+//!   and an empty cursor in the answer ends the listing.
+//! - `mark` `{"scope","marker","members"}` and `markers` `{"scope"}`: batch
+//!   completion markers.
+//! - `lifecycle` `{"scope","record_id","revision","lifecycle"}`: the
+//!   lifecycle view.
+//! - `import-beads` `{"scope":"repository","file","apply"}`: the export
+//!   Whetstone writes ([`crate::store::export`]), answered with one entry per
+//!   revision.
 //!
-//! An agreement on the wire is `{"id","record_id","revision","digest",
+//! A record on the wire is `{"id","record_id","revision","digest",
 //! "supersedes","idempotency_key","kind","type","lifecycle","wh_record"}`;
 //! `wh_record` is the ASCII-escaped canonical JSON, verified against
 //! `digest` on every read. Exit codes are mapped to Whetstone's errors, never
@@ -56,13 +67,13 @@ use crate::storage::{
     METADATA_SCHEMA,
 };
 
-pub const AGREEMENTS_API: &str = "virgil.agreements/v1";
+pub const RULEBOOK_API: &str = "virgil.rulebook/v1";
 const PAGE: u64 = 100;
 const MAX_PAGES: usize = 100;
 
-/// One agreement as Virgil holds it, verified.
+/// One rulebook record as Virgil holds it, verified.
 #[derive(Debug, Clone)]
-pub struct WireAgreement {
+pub struct WireRecord {
     /// Virgil's record id.
     pub id: String,
     pub record: AgreementRecord,
@@ -87,8 +98,8 @@ pub fn wire(record: &AgreementRecord, lifecycle: &str) -> Result<Value, StorageE
     }))
 }
 
-/// Read and verify one wire agreement.
-pub fn read_wire(value: &Value) -> Result<WireAgreement, StorageError> {
+/// Read and verify one wire record.
+pub fn read_wire(value: &Value) -> Result<WireRecord, StorageError> {
     let id = value["id"].as_str().unwrap_or_default().to_string();
     let locator = if id.is_empty() {
         format!(
@@ -119,7 +130,7 @@ pub fn read_wire(value: &Value) -> Result<WireAgreement, StorageError> {
         ));
     }
     let reference = record.reference().map_err(StorageError::Domain)?;
-    Ok(WireAgreement {
+    Ok(WireRecord {
         id,
         lifecycle: value["lifecycle"]
             .as_str()
@@ -158,32 +169,65 @@ fn failure(op: &str, answer: &crate::memory::virgil::Answer) -> StorageError {
     match (answer.exit, code) {
         (6, "unattached" | "repository_missing") => virgil(
             "unattached",
-            format!("This checkout is not attached to a Virgil repository ({message}), and the store switch names Virgil. Attach it (virgil repos attach <repository> --group <group> writes .virgil/repo.toml), or switch back with wh init --action store --store beads. Nothing was written."),
+            format!("This checkout is not attached to a Virgil repository ({message}), and the store switch names Virgil. Attach it (virgil repos attach <repository> --group <group> writes .virgil/repo.toml), or switch back with wh init --action setup --store beads. Nothing was written."),
         ),
-        (6, _) => virgil("not_found", format!("virgil agreements {op}: {message}")),
-        (2, _) => virgil("invalid_request", format!("virgil agreements {op}: {message}{hint}")),
+        (6, _) => virgil("not_found", format!("virgil rulebook {op}: {message}")),
+        (2, _) => virgil("invalid_request", format!("virgil rulebook {op}: {message}{hint}")),
         (3, _) => virgil(
             "read_again",
-            format!("virgil agreements {op}: the record moved since it was read ({message}); read it again and repeat. Nothing was retried."),
+            format!("virgil rulebook {op}: the record moved since it was read ({message}); read it again and repeat. Nothing was retried."),
         ),
-        (4, _) => virgil("refused_content", format!("virgil agreements {op}: {message}{hint}")),
-        (5, _) => virgil("not_permitted", format!("virgil agreements {op}: {message}{hint}")),
-        (7, _) => virgil("store_unavailable", format!("virgil agreements {op}: {message}{hint}")),
-        _ => virgil("store_refused", format!("virgil agreements {op} failed: {message}{hint}")),
+        (4, _) => virgil("refused_content", format!("virgil rulebook {op}: {message}{hint}")),
+        (5, _) => virgil("not_permitted", format!("virgil rulebook {op}: {message}{hint}")),
+        (7, _) => virgil("store_unavailable", format!("virgil rulebook {op}: {message}{hint}")),
+        _ => virgil("store_refused", format!("virgil rulebook {op} failed: {message}{hint}")),
     }
 }
 
-/// The record store in the attached group's Records.
+/// Which scope of the `rulebook` collection a store reads and writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VirgilScope {
+    /// Accepted records and decisions, shared through the attachment.
+    Repository,
+    /// Drafts and receipts, the signed-in principal's own.
+    Private,
+}
+
+impl VirgilScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Repository => "repository",
+            Self::Private => "private",
+        }
+    }
+}
+
+/// One scope of the attached repository's `rulebook` collection.
 #[derive(Debug, Clone)]
 pub struct VirgilStore {
     root: PathBuf,
+    scope: VirgilScope,
 }
 
 impl VirgilStore {
-    pub fn new(project_root: &Path) -> Self {
+    /// The shared store: the repository scope.
+    pub fn shared(project_root: &Path) -> Self {
         Self {
             root: project_root.to_path_buf(),
+            scope: VirgilScope::Repository,
         }
+    }
+
+    /// The private store: the signed-in principal's scope.
+    pub fn private(project_root: &Path) -> Self {
+        Self {
+            root: project_root.to_path_buf(),
+            scope: VirgilScope::Private,
+        }
+    }
+
+    pub fn scope(&self) -> VirgilScope {
+        self.scope
     }
 
     /// `VIRGIL_VIA` for an agent's writes, none for a person's.
@@ -205,12 +249,14 @@ impl VirgilStore {
         write: bool,
     ) -> Result<crate::memory::virgil::Answer, StorageError> {
         let args = [
-            "agreements".to_string(),
+            "rulebook".to_string(),
             op.to_string(),
             "--input".into(),
             "-".into(),
         ];
         let via = if write { Self::via() } else { None };
+        let mut request = request.clone();
+        request["scope"] = json!(self.scope.as_str());
         let answer = crate::memory::virgil::invoke(
             &self.root,
             &args,
@@ -225,16 +271,16 @@ impl VirgilStore {
             return Err(StorageError::Virgil {
                 code: "store_contract".into(),
                 message: format!(
-                    "virgil agreements {op} answered no JSON line (exit {}: {}); this Virgil may not have the agreements collection ({AGREEMENTS_API})",
+                    "virgil rulebook {op} answered no JSON line (exit {}: {}); this Virgil may not have the rulebook collection ({RULEBOOK_API})",
                     answer.exit, answer.stderr
                 ),
             });
         }
-        if answer.line.is_object() && answer.line["api_version"].as_str() != Some(AGREEMENTS_API) {
+        if answer.line.is_object() && answer.line["api_version"].as_str() != Some(RULEBOOK_API) {
             return Err(StorageError::Virgil {
                 code: "store_contract".into(),
                 message: format!(
-                    "virgil agreements {op} answered {} where Whetstone pins {AGREEMENTS_API}",
+                    "virgil rulebook {op} answered {} where Whetstone pins {RULEBOOK_API}",
                     answer.line["api_version"]
                 ),
             });
@@ -259,12 +305,12 @@ impl VirgilStore {
             .map(Some)
             .ok_or_else(|| StorageError::Virgil {
                 code: "store_contract".into(),
-                message: format!("virgil agreements {op} answered without a result line"),
+                message: format!("virgil rulebook {op} answered without a result line"),
             })
     }
 
-    /// Every agreement in scope (all pages), optionally one idempotency key.
-    pub fn listing(&self, key: Option<&str>) -> Result<Vec<WireAgreement>, StorageError> {
+    /// Every record in scope (all pages), optionally one idempotency key.
+    pub fn listing(&self, key: Option<&str>) -> Result<Vec<WireRecord>, StorageError> {
         let mut agreements = Vec::new();
         let mut cursor = String::new();
         for _ in 0..MAX_PAGES {
@@ -273,11 +319,11 @@ impl VirgilStore {
                 request["idempotency_key"] = json!(key);
             }
             let page = self.read("list", &request)?.unwrap_or_else(|| json!({}));
-            let items = page["agreements"]
+            let items = page["records"]
                 .as_array()
                 .ok_or_else(|| StorageError::Virgil {
                     code: "store_contract".into(),
-                    message: "virgil agreements list returned no agreements".into(),
+                    message: "virgil rulebook list returned no records".into(),
                 })?;
             for item in items {
                 agreements.push(read_wire(item)?);
@@ -290,7 +336,7 @@ impl VirgilStore {
                         .cmp(&right.record.id)
                         .then_with(|| left.record.revision.cmp(&right.record.revision))
                 });
-                // One revision of one record is one agreement.
+                // One revision of one record is one Virgil record.
                 for pair in agreements.windows(2) {
                     if pair[0].record.id == pair[1].record.id
                         && pair[0].record.revision == pair[1].record.revision
@@ -307,32 +353,26 @@ impl VirgilStore {
         }
         Err(StorageError::Virgil {
             code: "store_contract".into(),
-            message: format!("more than {MAX_PAGES} pages of agreements; the list stopped"),
+            message: format!("more than {MAX_PAGES} pages of rulebook records; the list stopped"),
         })
     }
 
-    fn one(&self, op: &str, request: &Value) -> Result<Option<WireAgreement>, StorageError> {
+    fn one(&self, op: &str, request: &Value) -> Result<Option<WireRecord>, StorageError> {
         match self.read(op, request)? {
-            Some(result) if !result["agreement"].is_null() => {
-                read_wire(&result["agreement"]).map(Some)
-            }
+            Some(result) if !result["record"].is_null() => read_wire(&result["record"]).map(Some),
             _ => Ok(None),
         }
     }
 
     /// One revision as Virgil confirms it.
-    pub fn fetch(
-        &self,
-        id: &RecordId,
-        revision: u64,
-    ) -> Result<Option<WireAgreement>, StorageError> {
+    pub fn fetch(&self, id: &RecordId, revision: u64) -> Result<Option<WireRecord>, StorageError> {
         self.one(
             "get",
             &json!({"record_id": id.as_str(), "revision": revision}),
         )
     }
 
-    /// Put one revision; the landed agreement's Virgil id.
+    /// Put one revision; the landed record's Virgil id.
     fn put(
         &self,
         record: &AgreementRecord,
@@ -340,7 +380,7 @@ impl VirgilStore {
         expected_revision: Option<u64>,
         copy: bool,
     ) -> Result<String, StorageError> {
-        let mut request = json!({"agreement": wire(record, initial_lifecycle(record))?});
+        let mut request = json!({"record": wire(record, initial_lifecycle(record))?});
         if copy {
             request["copy"] = json!(true);
         } else {
@@ -357,7 +397,7 @@ impl VirgilStore {
         if answer.exit == 0 {
             return Err(StorageError::Virgil {
                 code: "store_contract".into(),
-                message: "virgil agreements put answered without a record id".into(),
+                message: "virgil rulebook put answered without a record id".into(),
             });
         }
         let error = &answer.line["error"];
@@ -386,7 +426,7 @@ impl VirgilStore {
         Ok(())
     }
 
-    /// Whether the daemon answers the pinned agreements contract.
+    /// Whether the daemon answers the pinned rulebook contract.
     pub fn probe(&self) -> Result<(), StorageError> {
         self.markers().map(|_| ())
     }
@@ -406,9 +446,12 @@ impl VirgilStore {
             .unwrap_or_default())
     }
 
-    /// `virgil agreements import-beads`: what the export would do (or did,
+    /// `virgil rulebook import-beads`: what the export would do (or did,
     /// with `apply`), one entry per revision.
     pub fn import_beads(&self, file: &Path, apply: bool) -> Result<Vec<Value>, StorageError> {
+        if self.scope != VirgilScope::Repository {
+            return Err(StorageError::InvalidProjectionBoundary);
+        }
         let request = json!({"file": file.display().to_string(), "apply": apply});
         let answer = self.invoke("import-beads", &request, apply)?;
         if answer.exit != 0 || answer.line.get("error").is_some() {
@@ -427,11 +470,14 @@ impl RecordStore for VirgilStore {
     }
 
     fn kind(&self) -> StoreKind {
-        StoreKind::Shareable
+        match self.scope {
+            VirgilScope::Repository => StoreKind::Shareable,
+            VirgilScope::Private => StoreKind::Private,
+        }
     }
 
     fn location(&self) -> String {
-        format!("virgil:{}", self.root.display())
+        format!("virgil:{}:{}", self.scope.as_str(), self.root.display())
     }
 
     fn all_records(&self) -> Result<Vec<AgreementRecord>, StorageError> {
@@ -466,8 +512,8 @@ impl RecordStore for VirgilStore {
     fn history(&self, id: &RecordId) -> Result<Vec<AgreementRecord>, StorageError> {
         let result = self
             .read("history", &json!({"record_id": id.as_str()}))?
-            .unwrap_or_else(|| json!({"agreements": []}));
-        let mut records = result["agreements"]
+            .unwrap_or_else(|| json!({"records": []}));
+        let mut records = result["records"]
             .as_array()
             .into_iter()
             .flatten()
@@ -495,7 +541,15 @@ impl RecordStore for VirgilStore {
         expected_revision: Option<u64>,
     ) -> Result<RecordRef, StorageError> {
         let reference = validate_for_append(record)?;
-        let existing = self.all_records()?;
+        // check_append reads only the key's record and the id's history, so
+        // a write never lists the whole scope.
+        let mut existing = self
+            .listing(Some(&record.idempotency_key))?
+            .into_iter()
+            .map(|item| item.record)
+            .filter(|item| item.idempotency_key == record.idempotency_key)
+            .collect::<Vec<_>>();
+        existing.extend(self.history(&record.id)?);
         if let Some(already) = check_append(&existing, record, &reference, expected_revision)? {
             return Ok(already);
         }
@@ -592,7 +646,7 @@ impl RecordStore for VirgilStore {
                 });
             }
             let id = self.put(record, &reference, None, true)?;
-            present.push(WireAgreement {
+            present.push(WireRecord {
                 id,
                 record: record.clone(),
                 reference: reference.clone(),

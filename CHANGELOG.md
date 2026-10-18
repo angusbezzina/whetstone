@@ -13,28 +13,32 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 - One record store switch, `whetstone/store.json` (`{"store":"beads"}` or
   `{"store":"virgil"}`), for every record kind together, chosen with
-  `wh init --action store --store beads|virgil` (`--action memory` is kept
-  as an alias for one release). Every caller reaches storage through one
-  `RecordStore` port with a conformance suite any adapter runs.
-- The Virgil store: accepted records and the decisions that accepted them
-  live in the attached group's Records through `virgil agreements`
-  (`virgil.agreements/v1`, tested against the fake until the Virgil side
-  lands); they reach Records when they are accepted. Drafts and receipts stay
-  on the machine in a file store under `.git/whetstone`, so the Virgil arm
-  never needs `bd`, and `wh push` and `wh pull` are refused by name there
-  (their dry runs succeed).
+  `wh init --action setup --store beads|virgil` (`--action store`, and
+  `--action memory` for one release, choose it without the tool setup).
+  Every caller reaches storage through one `RecordStore` port with a
+  conformance suite any adapter runs.
+- The Virgil store: every record lives in the attached repository's
+  `rulebook` Records collection through `virgil rulebook`
+  (`virgil.rulebook/v1`, tested against the fake until the Virgil side
+  lands). Drafts and receipts live in its private scope, owned by the
+  signed-in person and visible to no one else; accepted records and the
+  decisions that accepted them live in its repository scope and reach the
+  group when they are accepted. The Virgil arm never needs `bd`, and `wh
+  push` and `wh pull` are refused by name there (their dry runs succeed).
 - Moving to Virgil exports Beads' records as the file
-  `virgil agreements import-beads` reads (with admitted lessons through the
-  lessons import) and flips only after every exported revision reads back
-  with its digest, naming any that is missing or differs. `wh dash` names the
-  store and reports records left in the store the switch no longer names.
+  `virgil rulebook import-beads` reads (with admitted lessons through the
+  lessons import), flips only after every exported revision reads back with
+  its digest (naming any that is missing or differs), and then copies the
+  private Beads store into the private scope. `wh dash` names the store and
+  the attachment, and reports records left in the store the switch no longer
+  names.
 
 ### Changed
 
 - `whetstone/memory.json` is read for one release with a notice: a Virgil
   `memory.json` moves lessons and raised hands only, and its `group` is no
   longer read (the scope is the attachment). Rules stay in Beads until
-  `wh init --action store --store virgil` moves them.
+  `wh init --action setup --store virgil` moves them.
 
 ### Fixed
 

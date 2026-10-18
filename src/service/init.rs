@@ -327,11 +327,11 @@ fn propose_store(layout: &ProjectLayout, response: &mut ServiceResponse) {
     };
     if proposed.first() == Some(&"virgil") {
         response.summary.push_str(&format!(
-            " This checkout is attached to Virgil and {STORE_CONFIG} names no store yet: choose wh init --action store --store virgil (proposed) or --store beads."
+            " This checkout is attached to Virgil and {STORE_CONFIG} names no store yet: choose wh init --action setup --store virgil (proposed) or --store beads."
         ));
         let mut actions = proposed
             .iter()
-            .map(|store| format!("wh init --action store --store {store}"))
+            .map(|store| format!("wh init --action setup --store {store}"))
             .collect::<Vec<_>>();
         actions.append(&mut response.permitted_actions);
         response.permitted_actions = actions;
@@ -763,6 +763,39 @@ fn agree(
 
 /// Detect, then (with `--yes`) install and pin, Beads and pstack.
 fn setup(layout: &ProjectLayout, request_id: String, request: &InitRequest) -> ServiceResponse {
+    // `--store` chooses the record store first (and moves records into it),
+    // so the tools detected next are the ones that store needs: under
+    // Virgil, the virgil CLI and never bd. Its `--yes` confirms the store
+    // alone: the installs it detects are listed, never run, because the
+    // person reviewed only the move; `wh init --action setup --yes` runs
+    // them.
+    let switched = match request.store {
+        Some(_) => {
+            let switched = store_switch(layout, request_id.clone(), request);
+            if switched.state != ServiceState::Success || request.dry_run {
+                return switched;
+            }
+            Some(switched)
+        }
+        None => None,
+    };
+    let tools_request = InitRequest {
+        yes: request.yes && switched.is_none(),
+        ..request.clone()
+    };
+    let mut response = setup_tools(layout, request_id, &tools_request);
+    if let Some(switched) = switched {
+        response.summary = format!("{} {}", switched.summary, response.summary);
+        response.data["store"] = switched.data;
+    }
+    response
+}
+
+fn setup_tools(
+    layout: &ProjectLayout,
+    request_id: String,
+    request: &InitRequest,
+) -> ServiceResponse {
     let root = layout.project_root();
     let detected = crate::setup::detect(root, &request.hosts);
     let mut ran = Vec::new();
@@ -811,11 +844,12 @@ fn setup(layout: &ProjectLayout, request_id: String, request: &InitRequest) -> S
         if after.ready {
             if lock_written {
                 format!(
-                    "Beads and pstack are ready; versions are pinned in {}.",
+                    "{} and pstack are ready; versions are pinned in {}.",
+                    store_tool(root),
                     crate::setup::LOCK_RELATIVE
                 )
             } else {
-                "Beads and pstack are ready.".to_string()
+                format!("{} and pstack are ready.", store_tool(root))
             }
         } else if request.yes {
             "Some tools could not be installed here; run the listed commands yourself.".to_string()
@@ -935,6 +969,14 @@ fn exemplar(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
     response
 }
 
+/// The tool the record store the switch names needs, for people.
+fn store_tool(root: &std::path::Path) -> &'static str {
+    match crate::storage::read_config(root) {
+        Ok(crate::storage::StoreConfig::Virgil) => "The virgil CLI",
+        _ => "Beads",
+    }
+}
+
 /// The stores to offer, best first: Virgil when this checkout is attached
 /// to a Virgil repository (`.virgil/repo.toml`), then Beads.
 pub(crate) fn proposed_stores(project_root: &std::path::Path) -> Vec<&'static str> {
@@ -948,10 +990,10 @@ pub(crate) fn proposed_stores(project_root: &std::path::Path) -> Vec<&'static st
 /// Choose the record store for every record kind (`whetstone/store.json`).
 /// Choosing Virgil needs the checkout attached to a Virgil repository and
 /// the daemon answering; when Beads holds records, they are exported in the
-/// shape `virgil agreements import-beads` reads (and admitted lessons in the
+/// shape `virgil rulebook import-beads` reads (and admitted lessons in the
 /// shape `virgil lessons import-beads` reads), and the switch flips only
 /// when a person confirms (`--yes`) that every exported revision read back
-/// with its digest. Drafts and receipts then move to the private file store.
+/// with its digest. Drafts and receipts then move to the private scope.
 /// Choosing Beads needs `bd`; records already in Virgil stay there. Nothing
 /// in Beads or Git history is rewritten.
 fn store_switch(
@@ -1044,7 +1086,7 @@ fn store_switch(
             );
             response.permitted_actions = vec![
                 crate::setup::bd_install_command(),
-                "wh init --action store --store beads".into(),
+                "wh init --action setup --store beads".into(),
             ];
             return response;
         }
@@ -1068,7 +1110,7 @@ fn store_switch(
                 "Every record now lives in the {} store ({STORE_CONFIG} records the switch; commit it so the team shares it).{}",
                 wanted.backend(),
                 match wanted {
-                    StoreConfig::Virgil => " Accepted records reach the group's Records when they are accepted; drafts and receipts stay on this machine; wh push and wh pull are the daemon's now.",
+                    StoreConfig::Virgil => " Drafts live in your private scope of the repository's rulebook, visible to no one else; accepted records reach the group's Records when they are accepted; wh push and wh pull are the daemon's now.",
                     StoreConfig::Beads => " Records already in Virgil stay there; wh dash lists them.",
                 }
             ),
@@ -1090,7 +1132,7 @@ fn store_switch(
         "store": {"kind": wanted.backend()},
         "previous": describe(&current),
         "switch": STORE_CONFIG,
-        "migrated": migration["agreements"]["confirmed"].as_u64().unwrap_or(0),
+        "migrated": migration["rulebook"]["confirmed"].as_u64().unwrap_or(0),
         "migration": migration,
         "written": changed && !request.dry_run,
         "legacy_removed": legacy_removed,
@@ -1099,9 +1141,9 @@ fn store_switch(
 }
 
 /// Before the switch names Virgil: the checkout must be attached and the
-/// daemon must answer `virgil agreements`; records Beads holds must have
+/// daemon must answer `virgil rulebook` in both scopes; records Beads holds must have
 /// been imported and read back, and so must admitted lessons. `Ok(data)`
-/// lets the flip go ahead (after the private records moved to files).
+/// lets the flip go ahead (after the private records moved to the private scope).
 fn virgil_store_migration(
     layout: &ProjectLayout,
     request_id: &str,
@@ -1133,7 +1175,7 @@ fn virgil_store_migration(
                     "virgil repos register --group <group> --name <name> --origin-source <git URL> (an admin)".into(),
                     "virgil repos bind <repository> --group <group> --channel <channel>".into(),
                     "virgil repos attach <repository> --group <group>".into(),
-                    "wh init --action store --store virgil".into(),
+                    "wh init --action setup --store virgil".into(),
                 ],
                 json!({"attached": null, "missing": ".virgil/repo.toml (virgil repos attach)"}),
             ))
@@ -1151,15 +1193,14 @@ fn virgil_store_migration(
             ))
         }
     };
-    let virgil_store = crate::store::virgil::VirgilStore::new(root);
-    if let Err(error) = virgil_store.probe() {
+    let probed = crate::store::virgil::VirgilStore::shared(root)
+        .probe()
+        .and_then(|()| crate::store::virgil::VirgilStore::private(root).probe());
+    if let Err(error) = probed {
         let (state, missing) = match &error {
             StorageError::Virgil { code, .. } if code == "store_contract" => (
                 ServiceState::Conflict,
-                format!(
-                    "virgil agreements ({})",
-                    crate::store::virgil::AGREEMENTS_API
-                ),
+                format!("virgil rulebook ({})", crate::store::virgil::RULEBOOK_API),
             ),
             _ => (
                 ServiceState::Unavailable,
@@ -1168,13 +1209,13 @@ fn virgil_store_migration(
         };
         return Err(stop(
             state,
-            format!("The Virgil daemon does not answer virgil agreements ({error}); the switch was not flipped. This needs {missing}."),
-            vec!["virgil status".into(), "virgil agreements --help".into()],
+            format!("The Virgil daemon does not answer virgil rulebook ({error}); the switch was not flipped. This needs {missing}."),
+            vec!["virgil status".into(), "virgil rulebook --help".into()],
             json!({"missing": missing, "attached": {"group": group, "repository": repository}}),
         ));
     }
-    let confirm = "wh init --action store --store virgil --yes".to_string();
-    let mut agreements = json!({"exported": 0, "confirmed": 0});
+    let confirm = "wh init --action setup --store virgil --yes".to_string();
+    let mut rulebook = json!({"exported": 0, "confirmed": 0});
     // What the person reviews before confirming: (summary, commands).
     let mut review: Vec<(String, Vec<String>)> = Vec::new();
     if records_in_beads {
@@ -1190,11 +1231,11 @@ fn virgil_store_migration(
             .map_err(|error| stop(ServiceState::Unknown, error, vec![], json!(null)))?;
         let import = |apply: bool| {
             format!(
-                "echo '{{\"file\":\"{}\",\"apply\":{apply}}}' | virgil agreements import-beads --input -",
+                "echo '{{\"scope\":\"repository\",\"file\":\"{}\",\"apply\":{apply}}}' | virgil rulebook import-beads --input -",
                 file.display()
             )
         };
-        agreements = json!({
+        rulebook = json!({
             "file": file.display().to_string(),
             "exported": built.entries.len(),
             "records": built.references(),
@@ -1214,7 +1255,7 @@ fn virgil_store_migration(
                     if built.collisions.len() == 1 { "it" } else { "them" },
                 ),
                 vec!["wh pull".into(), "wh dash".into()],
-                json!({"agreements": agreements}),
+                json!({"rulebook": rulebook}),
             ));
         }
         if !built.entries.is_empty()
@@ -1226,7 +1267,7 @@ fn virgil_store_migration(
                 ServiceState::Conflict,
                 "Confirming the move to Virgil is a person's: it moves every record the team reads. A person runs this at a terminal.".into(),
                 vec![confirm.clone()],
-                json!({"agreements": agreements}),
+                json!({"rulebook": rulebook}),
             ));
         }
         if !built.entries.is_empty() {
@@ -1255,11 +1296,11 @@ fn virgil_store_migration(
                 return Err(stop(
                     ServiceState::NeedsInput,
                     format!(
-                        "No export of the records Beads holds now is at {}, so there is nothing to confirm; the switch was not flipped. Run wh init --action store --store virgil to write it, import it, then confirm.",
+                        "No export of the records Beads holds now is at {}, so there is nothing to confirm; the switch was not flipped. Run wh init --action setup --store virgil to write it, import it, then confirm.",
                         file.display()
                     ),
-                    vec!["wh init --action store --store virgil".into()],
-                    json!({"agreements": agreements}),
+                    vec!["wh init --action setup --store virgil".into()],
+                    json!({"rulebook": rulebook}),
                 ));
             }
         }
@@ -1269,7 +1310,7 @@ fn virgil_store_migration(
                     ServiceState::Unavailable,
                     format!("The export could not be read back from Virgil: {error}; the switch was not flipped."),
                     vec![import(true), confirm.clone()],
-                    json!({"agreements": agreements}),
+                    json!({"rulebook": rulebook}),
                 )
             })?;
             if !confirmation.complete() {
@@ -1284,8 +1325,8 @@ fn virgil_store_migration(
                         .iter()
                         .map(|id| format!("{id} (different digest)")),
                 );
-                agreements["missing"] = json!(confirmation.missing);
-                agreements["mismatched"] = json!(confirmation.mismatched);
+                rulebook["missing"] = json!(confirmation.missing);
+                rulebook["mismatched"] = json!(confirmation.mismatched);
                 return Err(stop(
                     if confirmation.mismatched.is_empty() {
                         ServiceState::NeedsInput
@@ -1299,10 +1340,10 @@ fn virgil_store_migration(
                         named.join(", ")
                     ),
                     vec![import(true), confirm],
-                    json!({"agreements": agreements}),
+                    json!({"rulebook": rulebook}),
                 ));
             }
-            agreements["confirmed"] = json!(confirmation.confirmed);
+            rulebook["confirmed"] = json!(confirmation.confirmed);
         }
     }
     let lessons = if lessons_in_beads {
@@ -1335,16 +1376,16 @@ fn virgil_store_migration(
             ServiceState::NeedsDecision,
             summary.join(" "),
             actions,
-            json!({"agreements": agreements, "lessons": lessons}),
+            json!({"rulebook": rulebook, "lessons": lessons}),
         ));
     }
     let carried = if records_in_beads && !request.dry_run {
         export::carry_private(layout).map_err(|error| {
             stop(
                 ServiceState::Unavailable,
-                format!("The private drafts and receipts could not be moved to the file store: {error}; the switch was not flipped."),
+                format!("The private drafts and receipts could not be moved to the private scope: {error}; the switch was not flipped."),
                 vec![confirm.clone()],
-                json!({"agreements": agreements}),
+                json!({"rulebook": rulebook}),
             )
         })?
     } else {
@@ -1352,7 +1393,7 @@ fn virgil_store_migration(
     };
     Ok(json!({
         "attached": {"group": group, "repository": repository},
-        "agreements": agreements,
+        "rulebook": rulebook,
         "lessons": lessons,
         "carried_private": carried,
     }))
@@ -1399,7 +1440,7 @@ fn virgil_migration(
                     format!("virgil repos register --group {group} --name <name> --origin-source <git URL> (an admin)"),
                     format!("virgil repos bind <repository> --group {group} --channel <channel>"),
                     format!("virgil repos attach <repository> --group {group}"),
-                    "wh init --action store --store virgil".into(),
+                    "wh init --action setup --store virgil".into(),
                 ],
                 json!({"attached": null, "missing": ".virgil/repo.toml (virgil repos attach)", "written": false}),
             )))
@@ -1471,7 +1512,7 @@ fn virgil_migration(
         "virgil lessons import-beads --repo {repository} --file {} --manifest <reviewed manifest> --apply --json",
         file.display()
     );
-    let confirm = "wh init --action store --store virgil --yes".to_string();
+    let confirm = "wh init --action setup --store virgil --yes".to_string();
     if !request.yes || request.dry_run {
         return Ok(Err(stop(
             ServiceState::NeedsDecision,

@@ -1,6 +1,6 @@
 //! Moving a repository's records from Beads into Virgil without losing or
 //! changing one: Whetstone writes its accepted records and the decisions
-//! that accepted them as exactly the file `virgil agreements import-beads`
+//! that accepted them as exactly the file `virgil rulebook import-beads`
 //! reads, and flips the switch only after every exported revision reads back
 //! from Records with its digest.
 //!
@@ -27,8 +27,8 @@ use crate::storage::{
 
 use super::virgil::{wire, VirgilStore};
 
-pub const AGREEMENTS_FILE: &str = "agreements.json";
-pub const EXPORT_SCHEMA: &str = "whetstone.agreements-export/v1";
+pub const RULEBOOK_FILE: &str = "rulebook.json";
+pub const EXPORT_SCHEMA: &str = "whetstone.rulebook-export/v1";
 
 /// One exported revision and where it came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,9 +55,9 @@ pub struct Export {
 }
 
 impl Export {
-    /// The file `virgil agreements import-beads` reads.
+    /// The file `virgil rulebook import-beads` reads.
     pub fn file(&self, repository: &str) -> Result<Value, StorageError> {
-        let agreements = self
+        let records = self
             .entries
             .iter()
             .map(|entry| {
@@ -69,7 +69,7 @@ impl Export {
         Ok(json!({
             "schema": EXPORT_SCHEMA,
             "scope": {"repository": repository},
-            "agreements": agreements,
+            "records": records,
         }))
     }
 
@@ -171,7 +171,7 @@ pub fn build(layout: &ProjectLayout) -> Result<Export, StorageError> {
 
 /// Where the export is written.
 pub fn path(layout: &ProjectLayout) -> Result<PathBuf, String> {
-    crate::memory::export::directory(layout).map(|directory| directory.join(AGREEMENTS_FILE))
+    crate::memory::export::directory(layout).map(|directory| directory.join(RULEBOOK_FILE))
 }
 
 /// Write the export (private, outside the repository); the same records
@@ -235,7 +235,7 @@ impl Confirmation {
 
 /// Read every exported revision back from Records and compare digests.
 pub fn confirm(project_root: &Path, export: &Export) -> Result<Confirmation, StorageError> {
-    let virgil = VirgilStore::new(project_root);
+    let virgil = VirgilStore::shared(project_root);
     let mut confirmation = Confirmation::default();
     for entry in &export.entries {
         let reference = entry.record.reference().map_err(StorageError::Domain)?;
@@ -254,8 +254,9 @@ pub fn confirm(project_root: &Path, export: &Export) -> Result<Confirmation, Sto
 }
 
 /// After the flip's read-back: the private Beads store's revisions (drafts,
-/// receipts, accepted records) copied exactly into the private file store,
-/// so nothing local is left behind. Returns how many were copied.
+/// receipts, accepted records) copied exactly into the private scope of the
+/// repository's rulebook, so nothing local is left behind. Returns how many
+/// were copied.
 pub fn carry_private(layout: &ProjectLayout) -> Result<usize, StorageError> {
     if !crate::beads::is_initialized(&layout.private_store()) {
         return Ok(0);
@@ -269,16 +270,17 @@ pub fn carry_private(layout: &ProjectLayout) -> Result<usize, StorageError> {
             .then_with(|| left.id.cmp(&right.id))
             .then_with(|| left.revision.cmp(&right.revision))
     });
-    let files = super::file::FileStore::initialize(&layout.private_records())?;
-    Ok(files.receive(&records)?.len())
+    Ok(VirgilStore::private(layout.project_root())
+        .receive(&records)?
+        .len())
 }
 
 /// Records left in the store the switch no longer names, with their ids and
 /// kinds: under Virgil, revisions still only in Beads (the shared database's
-/// shareable records, and anything in the private Beads store the file store
-/// lacks); under Beads, revisions still only in Virgil or in the private file
-/// store (a flip back). A store that cannot be read here (no `bd`, no
-/// daemon) is skipped: this is a report, never a gate.
+/// shareable records against the repository scope, the private Beads store
+/// against the private scope); under Beads, revisions still only in Virgil
+/// (a flip back). A store that cannot be read here (no `bd`, no daemon) is
+/// skipped: this is a report, never a gate.
 pub fn left_behind(layout: &ProjectLayout) -> Vec<Value> {
     use crate::storage::StoreConfig;
     let Ok(config) = crate::storage::read_config(layout.project_root()) else {
@@ -318,50 +320,38 @@ pub fn left_behind(layout: &ProjectLayout) -> Vec<Value> {
             })
             .flatten()
     };
-    let files_private = || {
-        super::file::is_initialized(&layout.private_records())
-            .then(|| {
-                super::file::FileStore::open_existing(&layout.private_records())
-                    .and_then(|store| store.all_records())
-                    .ok()
-            })
-            .flatten()
+    let beads_shared = || {
+        layout
+            .shared_store()
+            .and_then(|dir| BeadsStore::open_existing(&dir, StoreKind::Shareable).ok())
+            .and_then(|store| store.all_records().ok())
     };
+    let root = layout.project_root();
     let mut left = Vec::new();
     match config {
         StoreConfig::Virgil => {
-            if let Some(beads) = layout
-                .shared_store()
-                .and_then(|dir| BeadsStore::open_existing(&dir, StoreKind::Shareable).ok())
-                .and_then(|store| store.all_records().ok())
-            {
-                if let Ok(virgil) = VirgilStore::new(layout.project_root()).all_records() {
+            if let Some(beads) = beads_shared() {
+                if let Ok(virgil) = VirgilStore::shared(root).all_records() {
                     let beads = beads.into_iter().filter(travels).collect();
                     left.extend(report(beads, &refs(&virgil), "beads"));
                 }
             }
             if let Some(beads) = beads_private() {
-                let files = files_private().unwrap_or_default();
-                left.extend(report(beads, &refs(&files), "beads"));
+                if let Ok(virgil) = VirgilStore::private(root).all_records() {
+                    left.extend(report(beads, &refs(&virgil), "beads"));
+                }
             }
         }
         StoreConfig::Beads => {
-            let private = beads_private().unwrap_or_default();
-            let mut current = refs(&private);
-            if let Some(shared) = layout
-                .shared_store()
-                .and_then(|dir| BeadsStore::open_existing(&dir, StoreKind::Shareable).ok())
-                .and_then(|store| store.all_records().ok())
-            {
-                current.extend(refs(&shared));
+            if !layout.virgil_attached() {
+                return left;
             }
-            if layout.project_root().join(".virgil/repo.toml").is_file() {
-                if let Ok(virgil) = VirgilStore::new(layout.project_root()).all_records() {
+            let mut current = refs(&beads_private().unwrap_or_default());
+            current.extend(refs(&beads_shared().unwrap_or_default()));
+            for store in [VirgilStore::shared(root), VirgilStore::private(root)] {
+                if let Ok(virgil) = store.all_records() {
                     left.extend(report(virgil, &current, "virgil"));
                 }
-            }
-            if let Some(files) = files_private() {
-                left.extend(report(files, &refs(&private), "files"));
             }
         }
     }

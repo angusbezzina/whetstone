@@ -774,7 +774,7 @@ pub(crate) fn dash_section(layout: &ProjectLayout, state: &AgreementState) -> Va
             "backend": "beads",
             "lessons": left_behind.len(),
             "keys": left_behind,
-            "note": "Admitted lessons still only in Whetstone's Beads store. Export and import them with wh init --action store --store virgil (it prints the virgil lessons import-beads commands), then confirm with --yes.",
+            "note": "Admitted lessons still only in Whetstone's Beads store. Export and import them with wh init --action setup --store virgil (it prints the virgil lessons import-beads commands), then confirm with --yes.",
         })),
     })
 }

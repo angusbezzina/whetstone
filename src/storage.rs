@@ -10,11 +10,12 @@
 //!   that never has a remote, and the repository's shared Beads database
 //!   ([`crate::beads`]). `wh push` and `wh pull` wrap `bd dolt push` and
 //!   `bd dolt pull`.
-//! - **Virgil**: drafts and receipts in a file store under `.git/whetstone`
-//!   ([`crate::store::file`]), accepted records and decisions in the
-//!   attached group's Records `agreement` collection, reached only through
-//!   `virgil agreements` ([`crate::store::virgil`]). Sync is the daemon's, so
-//!   `wh push` and `wh pull` are refused by name and `bd` is never needed.
+//! - **Virgil**: every record in the attached repository's `rulebook`
+//!   Records collection, reached only through `virgil rulebook`
+//!   ([`crate::store::virgil`]): drafts and receipts in its private scope
+//!   (the signed-in principal's own), accepted records and decisions in its
+//!   repository scope. Sync is the daemon's, so `wh push` and `wh pull` are
+//!   refused by name and `bd` is never needed.
 //!
 //! The kernel (in-force resolution, digests, the draft-never-displaces-
 //! accepted invariant) is the same whichever adapter is underneath; adapters
@@ -51,7 +52,6 @@ impl StoreKind {
 #[serde(rename_all = "snake_case")]
 pub enum StoreBackend {
     Beads,
-    Files,
     Virgil,
 }
 
@@ -59,7 +59,6 @@ impl StoreBackend {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Beads => "beads",
-            Self::Files => "files",
             Self::Virgil => "virgil",
         }
     }
@@ -236,6 +235,8 @@ pub trait RemoteSync {
 
 /// The committed switch that names the record store for every record kind.
 pub const STORE_CONFIG: &str = "whetstone/store.json";
+/// The Virgil repository attachment a checkout carries.
+pub const VIRGIL_ATTACHMENT: &str = ".virgil/repo.toml";
 /// The lessons-only switch `store.json` replaced; read for one release.
 pub const LEGACY_MEMORY_CONFIG: &str = "whetstone/memory.json";
 
@@ -297,7 +298,7 @@ pub enum SwitchSource {
 /// `config` is the record store. `lessons` is where lessons (and raised
 /// hands) go: the same store, except under a legacy `memory.json` naming
 /// Virgil, which only ever moved lessons. Its records stay in Beads until
-/// `wh init --action store --store virgil` moves them, so no rule ever
+/// `wh init --action setup --store virgil` moves them, so no rule ever
 /// silently disappears from a check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StoreSwitch {
@@ -314,10 +315,10 @@ impl StoreSwitch {
         match (self.source, self.legacy_ignored) {
             (SwitchSource::LegacyMemory, _) => Some(match self.lessons {
                 StoreConfig::Beads => format!(
-                    "{LEGACY_MEMORY_CONFIG} is now {STORE_CONFIG}; run wh init --action store --store beads to rewrite it."
+                    "{LEGACY_MEMORY_CONFIG} is now {STORE_CONFIG}; run wh init --action setup --store beads to rewrite it."
                 ),
                 StoreConfig::Virgil => format!(
-                    "{LEGACY_MEMORY_CONFIG} is now {STORE_CONFIG}, which names the store for every record: lessons live in Virgil, but rules and decisions still live in Beads until wh init --action store --store virgil moves them (its group field is no longer read; the scope is the attachment)."
+                    "{LEGACY_MEMORY_CONFIG} is now {STORE_CONFIG}, which names the store for every record: lessons live in Virgil, but rules and decisions still live in Beads until wh init --action setup --store virgil moves them (its group field is no longer read; the scope is the attachment)."
                 ),
             }),
             (_, true) => Some(format!(
@@ -438,22 +439,23 @@ pub fn open_private(layout: &ProjectLayout) -> Result<Box<dyn RecordStore>, Stor
             &layout.private_store(),
             StoreKind::Private,
         )?)),
-        StoreConfig::Virgil => Ok(Box::new(crate::store::file::FileStore::open_existing(
-            &layout.private_records(),
-        )?)),
+        StoreConfig::Virgil => Ok(Box::new(crate::store::virgil::VirgilStore::private(
+            layout.project_root(),
+        ))),
     }
 }
 
-/// Open the private store the switch names, creating it when absent.
+/// Open the private store the switch names, creating it when absent. Under
+/// Virgil the private scope exists whenever the daemon answers.
 pub fn initialize_private(layout: &ProjectLayout) -> Result<Box<dyn RecordStore>, StorageError> {
     match switch_of(layout)? {
         StoreConfig::Beads => Ok(Box::new(crate::beads::BeadsStore::initialize(
             &layout.private_store(),
             StoreKind::Private,
         )?)),
-        StoreConfig::Virgil => Ok(Box::new(crate::store::file::FileStore::initialize(
-            &layout.private_records(),
-        )?)),
+        StoreConfig::Virgil => Ok(Box::new(crate::store::virgil::VirgilStore::private(
+            layout.project_root(),
+        ))),
     }
 }
 
@@ -469,7 +471,7 @@ pub fn open_shared(layout: &ProjectLayout) -> Result<Option<Box<dyn RecordStore>
             )?))),
             None => Ok(None),
         },
-        StoreConfig::Virgil => Ok(Some(Box::new(crate::store::virgil::VirgilStore::new(
+        StoreConfig::Virgil => Ok(Some(Box::new(crate::store::virgil::VirgilStore::shared(
             layout.project_root(),
         )))),
     }
@@ -881,20 +883,22 @@ impl ProjectLayout {
         self.state_root.join(StoreKind::Private.as_str())
     }
 
-    /// The private file store the Virgil arm keeps drafts and receipts in.
-    pub fn private_records(&self) -> PathBuf {
-        self.private_store().join("records")
+    /// Whether the checkout carries a Virgil repository attachment
+    /// (`.virgil/repo.toml`); answered from the file, never the daemon.
+    pub fn virgil_attached(&self) -> bool {
+        self.project_root.join(VIRGIL_ATTACHMENT).is_file()
     }
 
-    /// Whether the private store the switch names exists. An unreadable
-    /// switch answers for either store, so opening it reports the switch.
+    /// Whether the private store the switch names exists: under Beads the
+    /// private database, under Virgil the attachment whose private scope
+    /// holds the drafts. An unreadable switch answers for either store, so
+    /// opening it reports the switch.
     pub fn private_store_exists(&self) -> bool {
         let beads = || crate::beads::is_initialized(&self.private_store());
-        let files = || crate::store::file::is_initialized(&self.private_records());
         match read_config(&self.project_root) {
             Ok(StoreConfig::Beads) => beads(),
-            Ok(StoreConfig::Virgil) => files(),
-            Err(_) => beads() || files(),
+            Ok(StoreConfig::Virgil) => self.virgil_attached(),
+            Err(_) => beads() || self.virgil_attached(),
         }
     }
 
@@ -1086,7 +1090,7 @@ mod tests {
             "{notice}"
         );
         assert!(
-            notice.contains("wh init --action store --store virgil"),
+            notice.contains("wh init --action setup --store virgil"),
             "{notice}"
         );
         assert_eq!(read_lesson_config(temp.path()), Ok(StoreConfig::Virgil));

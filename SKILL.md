@@ -79,15 +79,16 @@ lesson that keeps holding can become a rule only as a draft in shadow:
 `wh change --kind rule --from-lesson <key> ...`.
 
 Where every record lives, lessons included, is one switch,
-`whetstone/store.json`: Beads (standalone), or the attached Virgil group's
-Records (`wh init --action store --store virgil`), where accepted records
-reach the group when they are accepted and `wh push` and `wh pull` are the
-daemon's. Proposals stay on this machine either way; inside Virgil a person's admit is their `virgil lessons
+`whetstone/store.json`: Beads (standalone), or the attached Virgil
+repository's `rulebook` Records (`wh init --action setup --store virgil`),
+where drafts live in your private scope, accepted records reach the group
+when they are accepted, and `wh push` and `wh pull` are the daemon's.
+Proposals are never shared until accepted either way; inside Virgil a person's admit is their `virgil lessons
 remember`, Virgil derives trust from the writer (`--trust` is refused there),
 and a correction rewrites the lesson in place. Flipping to Virgil needs the
 checkout attached to a Virgil repository (`virgil repos attach`); when Beads
 holds records or admitted lessons it writes them, outside the repository, as
-the files `virgil agreements import-beads` and `virgil lessons import-beads`
+the files `virgil rulebook import-beads` and `virgil lessons import-beads`
 read, prints the dry-run and apply commands, and flips only when a person runs
 the same command with `--yes` after the apply: every revision must read back
 with its digest, and anchored lessons are re-anchored. Never run `--yes` or the import yourself; raise a hand.

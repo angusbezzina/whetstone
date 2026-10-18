@@ -84,7 +84,7 @@ pub(crate) fn invoke(
     let mut child = command.spawn().map_err(|error| {
         Refusal::new(
             "store_unavailable",
-            format!("virgil is not available ({error}); the store switch names Virgil, so nothing was written. Install or start Virgil, or switch back with wh init --action store --store beads."),
+            format!("virgil is not available ({error}); the store switch names Virgil, so nothing was written. Install or start Virgil, or switch back with wh init --action setup --store beads."),
         )
     })?;
     if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {

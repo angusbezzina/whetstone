@@ -448,6 +448,12 @@ fn lessons_live_in_virgil_through_the_shipped_cli() {
 
     // ── Attached: the export is the importer's file, outside the repo. ──
     fake.knob("attached", json!([GROUP, REPOSITORY]));
+    std::fs::create_dir_all(root.join(".virgil")).expect("attachment");
+    std::fs::write(
+        root.join(".virgil/repo.toml"),
+        format!("group = \"{GROUP}\"\nrepository = \"{REPOSITORY}\"\n"),
+    )
+    .expect("attachment");
     let exported = memory_init(root, "flip-2", ActorKind::Person, false);
     assert_eq!(
         exported.state,
@@ -1101,12 +1107,12 @@ fn lessons_live_in_virgil_through_the_shipped_cli() {
     assert_eq!(request["question"], "Floats everywhere?");
 
     // Backend b never calls anything but `virgil lessons`, `tasks`, `repos`
-    // and `agreements` (every other record), and setup's `--version` probe.
+    // and `rulebook` (every other record), and setup's `--version` probe.
     for call in fake.calls() {
         assert!(
             matches!(
                 call["argv"][0].as_str(),
-                Some("lessons" | "tasks" | "repos" | "agreements" | "--version")
+                Some("lessons" | "tasks" | "repos" | "rulebook" | "--version")
             ),
             "{call}"
         );

@@ -1,5 +1,5 @@
 //! Moving a repository's records from Beads into Virgil, against the fake
-//! `virgil` (tests/fake_virgil.py): `wh init --action store --store virgil`
+//! `virgil` (tests/fake_virgil.py): `wh init --action setup --store virgil`
 //! exports every accepted record kind and the decisions that accepted it
 //! (with admitted lessons through the lessons import), refuses to confirm
 //! without an export, refuses to flip while any revision is missing or
@@ -144,11 +144,11 @@ fn virgil(root: &Path, args: &[&str], request: Option<&Value>) -> Value {
     serde_json::from_slice(&output.stdout).expect("json")
 }
 
-fn import_agreements(root: &Path, file: &Path) {
-    let request = json!({"file": file.display().to_string(), "apply": true});
+fn import_rulebook(root: &Path, file: &Path) {
+    let request = json!({"scope": "repository", "file": file.display().to_string(), "apply": true});
     virgil(
         root,
-        &["agreements", "import-beads", "--input", "-"],
+        &["rulebook", "import-beads", "--input", "-"],
         Some(&request),
     );
 }
@@ -377,7 +377,7 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
     let checked = wh(root, &["check", "--json", "--rule", "rule.git-answers"]);
     assert_eq!(checked["state"], "success", "{checked}");
     assert!(
-        fake_state(root)["agreements"]
+        fake_state(root)["rulebook"]["repository"]
             .as_array()
             .map_or(true, Vec::is_empty),
         "nothing reaches Virgil before the flip"
@@ -393,12 +393,12 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
         "{bare}"
     );
     assert_eq!(
-        bare["permitted_actions"][0], "wh init --action store --store virgil",
+        bare["permitted_actions"][0], "wh init --action setup --store virgil",
         "{bare}"
     );
     assert_eq!(
         bare["permitted_actions"][1],
-        "wh init --action store --store beads"
+        "wh init --action setup --store beads"
     );
 
     // ── Each refusal names what is missing; nothing flips. ──
@@ -417,7 +417,7 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
         ".virgil/repo.toml (virgil repos attach)"
     );
     state["knobs"]["attached"] = json!([GROUP, REPOSITORY]);
-    state["knobs"]["no_agreements"] = json!(true);
+    state["knobs"]["no_rulebook"] = json!(true);
     write_fake_state(root, &state);
     let old_virgil = store_init(root, "s0b", "virgil", false);
     assert_eq!(
@@ -427,11 +427,11 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
         old_virgil.summary
     );
     assert!(
-        old_virgil.summary.contains("virgil agreements"),
+        old_virgil.summary.contains("virgil rulebook"),
         "{}",
         old_virgil.summary
     );
-    state["knobs"]["no_agreements"] = json!(false);
+    state["knobs"]["no_rulebook"] = json!(false);
     write_fake_state(root, &state);
     let without_export = store_init(root, "s1", "virgil", true);
     assert_eq!(
@@ -459,23 +459,23 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
         !root.join("whetstone/store.json").exists(),
         "no flip before the import"
     );
-    let agreements_file = PathBuf::from(
-        reviewed.data["migration"]["agreements"]["file"]
+    let rulebook_file = PathBuf::from(
+        reviewed.data["migration"]["rulebook"]["file"]
             .as_str()
-            .expect("agreements file"),
+            .expect("rulebook file"),
     );
     let lessons_file = PathBuf::from(
         reviewed.data["migration"]["lessons"]["file"]
             .as_str()
             .expect("lessons file"),
     );
-    assert!(!agreements_file.starts_with(root) && !lessons_file.starts_with(root));
+    assert!(!rulebook_file.starts_with(root) && !lessons_file.starts_with(root));
     let export: Value =
-        serde_json::from_str(&std::fs::read_to_string(&agreements_file).expect("export"))
+        serde_json::from_str(&std::fs::read_to_string(&rulebook_file).expect("export"))
             .expect("json");
-    assert_eq!(export["schema"], "whetstone.agreements-export/v1");
+    assert_eq!(export["schema"], "whetstone.rulebook-export/v1");
     assert_eq!(export["scope"]["repository"], REPOSITORY);
-    let exported = export["agreements"].as_array().expect("agreements").clone();
+    let exported = export["records"].as_array().expect("records").clone();
     let types = exported
         .iter()
         .map(|agreement| agreement["type"].as_str().expect("type").to_string())
@@ -522,18 +522,18 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
     assert!(reviewed
         .permitted_actions
         .iter()
-        .any(|action| action.contains("virgil agreements import-beads --input -")));
+        .any(|action| action.contains("virgil rulebook import-beads --input -")));
     assert!(reviewed
         .permitted_actions
         .iter()
         .any(|action| action.contains("virgil lessons import-beads")));
     assert_eq!(
         reviewed.permitted_actions.last().map(String::as_str),
-        Some("wh init --action store --store virgil --yes")
+        Some("wh init --action setup --store virgil --yes")
     );
 
     // The person applies both imports (Virgil's commands, faked).
-    import_agreements(root, &agreements_file);
+    import_rulebook(root, &rulebook_file);
     let output = Command::new("virgil")
         .args([
             "lessons",
@@ -550,9 +550,9 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
 
     // ── One revision missing: refused, named. ──
     let mut state = fake_state(root);
-    let removed = state["agreements"]
+    let removed = state["rulebook"]["repository"]
         .as_array_mut()
-        .expect("agreements")
+        .expect("repository scope")
         .remove(0);
     write_fake_state(root, &state);
     let missing = store_init(root, "s3", "virgil", true);
@@ -569,21 +569,22 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
     );
     assert!(missing.summary.contains(&named), "{}", missing.summary);
     assert!(!root.join("whetstone/store.json").exists());
-    import_agreements(root, &agreements_file);
+    import_rulebook(root, &rulebook_file);
 
     // ── One revision with another body: refused, named. ──
     let mut state = fake_state(root);
-    let original = state["agreements"][0]["wh_record"].clone();
+    let original = state["rulebook"]["repository"][0]["wh_record"].clone();
     let tampered_id = format!(
         "{}@{}",
-        state["agreements"][0]["record_id"].as_str().expect("id"),
-        state["agreements"][0]["revision"]
+        state["rulebook"]["repository"][0]["record_id"]
+            .as_str()
+            .expect("id"),
+        state["rulebook"]["repository"][0]["revision"]
     );
-    state["agreements"][0]["wh_record"] = json!(original.as_str().expect("record").replacen(
-        "\"statement\":\"",
-        "\"statement\":\"Edited ",
-        1
-    ));
+    state["rulebook"]["repository"][0]["wh_record"] = json!(original
+        .as_str()
+        .expect("record")
+        .replacen("\"statement\":\"", "\"statement\":\"Edited ", 1));
     write_fake_state(root, &state);
     let mismatched = store_init(root, "s4", "virgil", true);
     assert_eq!(
@@ -601,7 +602,7 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
     );
     assert!(!root.join("whetstone/store.json").exists());
     let mut state = fake_state(root);
-    state["agreements"][0]["wh_record"] = original;
+    state["rulebook"]["repository"][0]["wh_record"] = original;
     write_fake_state(root, &state);
 
     // ── Everything reads back, but an agent cannot confirm the move. ──
@@ -611,8 +612,39 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
     assert!(!root.join("whetstone/store.json").exists());
 
     // ── Everything reads back: the switch flips. ──
-    let flipped = store_init(root, "s5", "virgil", true);
-    ok(&flipped);
+    // The confirmation is the spelling Whetstone prints: setup with --store
+    // and --yes. Its --yes confirms the move and nothing else: the tool
+    // installs setup detects are listed, never run.
+    let flipped = CommandService.execute(ServiceRequest::Init(InitRequest {
+        project_dir: root.to_path_buf(),
+        request_id: Some("s5".into()),
+        action: InitAction::Setup,
+        store: Some("virgil".into()),
+        yes: true,
+        actor: ActorKind::Person,
+        ..InitRequest::default()
+    }));
+    // An install that ran lands in `ran`, one that was tried and failed in
+    // `failed`; the move's --yes may do neither.
+    assert_eq!(
+        (&flipped.data["ran"], &flipped.data["failed"]),
+        (&json!([]), &json!([])),
+        "the move's --yes tried no install: {}",
+        flipped.data
+    );
+    // Tool setup may still need a person (pstack is not installed here), so
+    // the move is read from the switch's own answer inside setup's.
+    assert!(
+        matches!(
+            flipped.state,
+            ServiceState::Success | ServiceState::NeedsDecision
+        ),
+        "{}: {}",
+        flipped.summary,
+        flipped.data
+    );
+    let flipped = flipped.data["store"].clone();
+    assert_eq!(flipped["written"], true, "{flipped}");
     assert_eq!(
         serde_json::from_str::<Value>(
             &std::fs::read_to_string(root.join("whetstone/store.json")).expect("switch")
@@ -621,19 +653,19 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
         json!({"store": "virgil"})
     );
     assert_eq!(
-        flipped.data["migration"]["agreements"]["confirmed"],
+        flipped["migration"]["rulebook"]["confirmed"],
         exported.len(),
         "{}",
-        flipped.data
+        flipped
     );
-    assert_eq!(flipped.data["migration"]["lessons"]["imported"], 1);
+    assert_eq!(flipped["migration"]["lessons"]["imported"], 1);
     assert!(
-        flipped.data["migration"]["carried_private"]
+        flipped["migration"]["carried_private"]
             .as_u64()
             .expect("carried")
             > 0
     );
-    let virgil_store = VirgilStore::new(root);
+    let virgil_store = VirgilStore::shared(root);
     for agreement in &exported {
         let id = whetstone::domain::RecordId::new(agreement["record_id"].as_str().expect("id"))
             .expect("id");
@@ -650,8 +682,14 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
         );
     }
 
-    // After the flip: the draft moved to files, the rules still check, and
-    // nothing is left behind.
+    // After the flip: the draft moved to the private scope, the rules still
+    // check, and nothing is left behind.
+    assert!(
+        fake_state(root)["rulebook"]["private"]
+            .as_array()
+            .is_some_and(|records| !records.is_empty()),
+        "the private Beads store was carried into the private scope"
+    );
     let dash = wh(root, &["dash", "--json"]);
     assert_eq!(dash["data"]["store"]["kind"], "virgil");
     assert_eq!(
@@ -713,12 +751,28 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
     virgil_store
         .append(&only_virgil, None)
         .expect("virgil only");
+    let only_private = conformance::record(
+        "rule.only-in-private-scope",
+        1,
+        "stray:private",
+        conformance::rule("Only in my private scope."),
+    );
+    VirgilStore::private(root)
+        .append(&only_private, None)
+        .expect("private only");
     let left = wh(root, &["dash", "--json"])["data"]["store"]["left_behind"].clone();
     assert!(
         left.as_array()
             .expect("left")
             .iter()
             .any(|item| item["record"] == "rule.only-in-virgil" && item["store"] == "virgil"),
+        "{left}"
+    );
+    assert!(
+        left.as_array()
+            .expect("left")
+            .iter()
+            .any(|item| item["record"] == "rule.only-in-private-scope" && item["store"] == "virgil"),
         "{left}"
     );
     assert!(

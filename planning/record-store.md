@@ -79,22 +79,31 @@ the reverse is refused.
 A `rulebook` Records collection in `packages/virgil-schema`, registered in
 both the repository-attachment scope and private scope: fields `wh_record`
 (canonical JSON, ASCII-escaped string), `record_id`, `revision`, `digest`,
-`supersedes`, `idempotency_key`, `lifecycle`; keyed by `record_id` and
-`revision`; `idempotency_key` unique per scope. CLI `virgil rulebook
-put|get|latest|history|list|import-beads --input -` (one JSON request in,
-one JSON line out, `api_version` `virgil.rulebook/v1`, Virgil's exit codes).
-This is a records schema addition, so the door is newer than the clients:
-name `writersFrom`, run `task records:released:check`, release the door to
-staging before the adapter is verified against it. Planned and cut in the
-Virgil repository; tracked here as a dependency.
+`supersedes`, `idempotency_key`, `kind`, `type`, `lifecycle`; keyed by
+`record_id` and `revision`; `idempotency_key` unique per scope. A private
+row belongs to the signed-in principal and to the repository it was written
+from, and never reaches the group. CLI `virgil rulebook
+put|get|latest|history|list|lifecycle|mark|markers|import-beads --input -`:
+one JSON request in, one JSON line out, `api_version` `virgil.rulebook/v1`,
+Virgil's exit codes, and every request names its `"scope"` (`repository` or
+`private`; there is no default). `mark` and `markers` hold batch completion
+markers per scope; `lifecycle` updates the lifecycle view of one revision.
+`src/store/virgil.rs` documents each verb's request and answer, and
+`tests/fake_virgil.py` implements them; the Virgil side builds to that
+contract. This is a records schema addition, so the door is newer than the
+clients: name `writersFrom`, run `task records:released:check`, release the
+door to staging before the adapter is verified against it. Planned and cut
+in the Virgil repository; tracked here as a dependency.
 
 ### Migration
 
-`wh init --action setup --store virgil` on a repository that already holds
+`wh init --action setup --store virgil` (or `--action store`, which skips
+the tool setup) on a repository that already holds
 Beads records exports the shared store's accepted records and decisions in
 the shape `virgil rulebook import-beads` reads, prints the import command,
 and flips the switch only on `--yes` after reading every record back from
-Records and comparing digests. Flipping migrates nothing by itself; `wh
+Records and comparing digests, then copies the private Beads store into the
+private scope. Flipping migrates nothing by itself; `wh
 dash` reports records left in the other store. Nothing in Beads or Git
 history is rewritten. The Virgil repository itself has no Beads records to
 migrate: its init on the Virgil store is a fresh rulebook.
