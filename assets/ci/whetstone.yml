@@ -55,3 +55,45 @@ jobs:
         run: |
           set -euo pipefail
           wh check --ci --base "$BASE_REF" --format annotations
+
+  # The night sweep: on a push to main, every rule below must runs over the
+  # whole repository, and the Whetstone runner turns each finding into work by
+  # its class (a draft pull request, an issue to approve, an issue to discuss).
+  # Off until the repository variable WHETSTONE_SWEEP is set to "on".
+  sweep:
+    name: whetstone/sweep
+    if: github.event_name == 'push' && vars.WHETSTONE_SWEEP == 'on'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install pinned bd and wh
+        shell: bash
+        env:
+          BD_VERSION: "__BD_VERSION__"
+          WHETSTONE_VERSION: "__WHETSTONE_VERSION__"
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/bd.tar.gz"
+          curl -fsSL -o "$archive" "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION}/beads_${BD_VERSION}_linux_amd64.tar.gz"
+          mkdir -p "$RUNNER_TEMP/bin" && tar -xzf "$archive" -C "$RUNNER_TEMP/bin" bd
+          curl -fsSL "https://raw.githubusercontent.com/angusbezzina/whetstone/v${WHETSTONE_VERSION}/install.sh" \
+            | INSTALL_DIR="$RUNNER_TEMP/bin" sh -s -- --version "v${WHETSTONE_VERSION}"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Receive the team's shared rules (read-only)
+        run: bd bootstrap --yes
+      - name: Sweep
+        run: wh check --sweep --format findings > findings.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scan-findings
+          path: findings.json
+      - name: Open work by class
+        uses: angusbezzina/whetstone@v__WHETSTONE_VERSION__
+        with:
+          findings: findings.json
