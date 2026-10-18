@@ -1,0 +1,56 @@
+# Validation of the value epic on a real pull request; never merged.
+name: whetstone-demo
+
+on:
+  pull_request:
+    paths: ["demo/**", ".github/workflows/whetstone-demo.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build wh from this branch
+        run: |
+          cargo build --release --quiet
+          mkdir -p "$RUNNER_TEMP/bin"
+          ln -s "$PWD/target/release/whetstone" "$RUNNER_TEMP/bin/wh"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Install pinned bd
+        env:
+          BD_VERSION: "1.3.0"
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/bd.tgz" "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION}/beads_${BD_VERSION}_linux_amd64.tar.gz"
+          tar -xzf "$RUNNER_TEMP/bd.tgz" -C "$RUNNER_TEMP/bin" bd
+          git config --global user.name "whetstone-demo"
+          git config --global user.email "demo@whetstone.invalid"
+      - name: Record two probed rules
+        run: demo/setup.sh
+      - name: Annotate the pull request
+        id: annotate
+        continue-on-error: true
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: wh check --base "$BASE" --format annotations
+      - name: Sweep findings
+        run: wh check --sweep --format findings > findings.json && cat findings.json
+      - name: Runner action (dry run)
+        id: act
+        uses: ./
+        with:
+          findings: findings.json
+          base: ${{ github.head_ref }}
+          dry-run: "true"
+      - name: The must rule blocked the change
+        env:
+          OUTCOME: ${{ steps.annotate.outcome }}
+          REPORT: ${{ steps.act.outputs.report }}
+        run: |
+          echo "$REPORT"
+          test "$OUTCOME" = failure
