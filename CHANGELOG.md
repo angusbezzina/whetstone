@@ -107,6 +107,13 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   prints its findings by default; `--format json` gives the envelope.
   Stored features, feature maps and rules or standards held by a drive are
   read as retired history.
+- Check receipts: `wh check` writes no record. Its report (now
+  `whetstone.check-report.v1`, each finding's repair route in
+  `recheck_command`) is the result, and a sweep's `findings.json` is the
+  record a night sweep keeps. Gone with them: the dashboard's Checks view and
+  its check runner, `/api/evidence`, the hosted dashboard mode and the
+  receipt rows in the changelog and decision trail. Stored check receipts
+  are read as retired history.
 
 ## [0.13.0] - 2026-10-15
 

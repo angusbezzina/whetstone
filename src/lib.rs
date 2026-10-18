@@ -14,7 +14,6 @@ pub mod history;
 pub mod onboarding;
 mod output;
 pub mod projection;
-pub mod proof;
 pub(crate) mod rules;
 pub mod service;
 pub mod setup;
@@ -23,7 +22,6 @@ pub mod storage;
 pub mod store;
 pub mod sync;
 mod types;
-pub mod verification;
 pub mod wire;
 
 pub fn run() -> i32 {

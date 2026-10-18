@@ -8,8 +8,8 @@ use serde::Deserialize;
 use crate::dashboard::{BackendResponse, DashboardBackend};
 use crate::domain::ContentDigest;
 use crate::service::{
-    ChangeDefinition, ChangeKind, ChangeRequest, CheckRequest, CommandService, DashRequest,
-    InitAction, InitRequest, ServiceRequest, ServiceResponse,
+    ChangeDefinition, ChangeKind, ChangeRequest, CommandService, DashRequest, InitAction,
+    InitRequest, ServiceRequest, ServiceResponse,
 };
 
 /// Keeps the dashboard's project authority fixed at process startup.
@@ -99,52 +99,6 @@ impl DashboardBackend for CommandDashboardBackend {
             expected_snapshot: query.expected_snapshot,
             trail: false,
         })))
-    }
-
-    fn evidence(&self, locator: &str) -> BackendResponse {
-        let not_found = || BackendResponse {
-            status: 404,
-            content_type: "text/plain; charset=utf-8",
-            body: b"not_found".to_vec(),
-        };
-        let safe = !locator.is_empty()
-            && locator.len() <= 300
-            && !locator.starts_with('/')
-            && !locator.contains("..")
-            && locator.split('/').count() <= 4
-            && locator
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || "._-/".contains(character));
-        if !safe {
-            return not_found();
-        }
-        let content_type = match locator.rsplit('.').next() {
-            Some("png") => "image/png",
-            Some("json") => "application/json; charset=utf-8",
-            Some("log" | "txt") => "text/plain; charset=utf-8",
-            _ => return not_found(),
-        };
-        let Ok(layout) = crate::storage::ProjectLayout::resolve(&self.project_dir) else {
-            return not_found();
-        };
-        let root = crate::gates::evidence_root(&layout);
-        let path = root.join(locator);
-        let (Ok(root), Ok(real)) = (root.canonicalize(), path.canonicalize()) else {
-            return not_found();
-        };
-        let is_file = std::fs::symlink_metadata(&path)
-            .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= 8 * 1024 * 1024);
-        if !real.starts_with(&root) || !is_file {
-            return not_found();
-        }
-        match std::fs::read(&real) {
-            Ok(body) => BackendResponse {
-                status: 200,
-                content_type,
-                body,
-            },
-            Err(_) => not_found(),
-        }
     }
 
     fn trail(&self) -> BackendResponse {
@@ -267,18 +221,6 @@ enum DashboardCommand {
         #[serde(default)]
         migrate: bool,
     },
-    Check {
-        #[serde(default)]
-        request_id: Option<String>,
-        #[serde(default)]
-        paths: Vec<PathBuf>,
-        #[serde(default)]
-        language: Option<String>,
-        #[serde(default)]
-        rules: Vec<String>,
-        #[serde(default)]
-        mode: DashboardCheckMode,
-    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -293,16 +235,6 @@ struct DashboardReview {
 enum DashboardVerdict {
     Accept,
     Withdraw,
-}
-
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum DashboardCheckMode {
-    #[default]
-    All,
-    Changed,
-    Staged,
-    Sweep,
 }
 
 impl DashboardCommand {
@@ -394,26 +326,6 @@ impl DashboardCommand {
                 migrate,
                 // The backend sets who is asking; a request cannot claim it.
                 actor: crate::domain::ActorKind::Agent,
-            }),
-            Self::Check {
-                request_id,
-                paths,
-                language,
-                rules,
-                mode,
-            } => ServiceRequest::Check(CheckRequest {
-                project_dir,
-                request_id,
-                paths,
-                language,
-                rules,
-                gate_mode: match mode {
-                    DashboardCheckMode::All => crate::service::GateMode::All,
-                    DashboardCheckMode::Changed => crate::service::GateMode::Changed,
-                    DashboardCheckMode::Staged => crate::service::GateMode::Staged,
-                    DashboardCheckMode::Sweep => crate::service::GateMode::Sweep,
-                },
-                ..CheckRequest::default()
             }),
         }
     }

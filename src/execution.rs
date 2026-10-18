@@ -1,12 +1,11 @@
-//! Bounded execution of owner-accepted checkers, and the receipt they leave.
+//! Bounded execution of owner-accepted checkers.
 //!
 //! The runner is deliberately narrow: a literal argv (no shell), a cleared
 //! environment supplied by the caller, a repository working directory, a
 //! process group, a wall-clock bound and bounded output capture. It is not an
-//! OS security boundary; a receipt says so.
+//! OS security boundary.
 
 use std::collections::BTreeMap;
-use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -18,87 +17,12 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const RECEIPT_SCHEMA: &str = "whetstone.execution-receipt.v1";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecutionState {
-    Success,
-    Violated,
-    Unknown,
-    Unavailable,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ExecutionReceipt {
-    pub schema: String,
-    pub checker_id: String,
-    pub checker_version: String,
-    pub manifest_digest: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub execution_grant_reference: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub authority_revision: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub authority_checked_at: Option<String>,
-    pub state: ExecutionState,
-    pub reason_code: String,
-    pub summary: String,
-    pub process_started: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub executable_digest: Option<String>,
-    #[serde(default)]
-    pub consumed_configurations: Vec<ConsumedConfiguration>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i32>,
-    pub elapsed_ms: u64,
-    pub stdout: CapturedOutput,
-    pub stderr: CapturedOutput,
-    pub limits: LimitEvidence,
-    pub process_group_cleanup: String,
-    pub isolation_caveat: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConsumedConfiguration {
-    pub id: String,
-    pub path: String,
-    pub digest: String,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct CapturedOutput {
     pub text: String,
     pub bytes_captured: usize,
     pub truncated: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LimitEvidence {
-    pub timeout_ms: u64,
-    pub stdout_bytes: usize,
-    pub stderr_bytes: usize,
-    pub timeout_mechanism: String,
-    pub output_mechanism: String,
-    pub filesystem_network_memory_process_limits: String,
-}
-
-pub fn file_digest(path: &Path) -> io::Result<String> {
-    let mut file = File::open(path)?;
-    let mut hash = Sha256::new();
-    let mut chunk = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut chunk)?;
-        if read == 0 {
-            break;
-        }
-        hash.update(&chunk[..read]);
-    }
-    Ok(format!("sha256:{:x}", hash.finalize()))
 }
 
 pub(crate) struct RunResult {
@@ -331,16 +255,5 @@ mod tests {
         );
         assert_eq!(result.stdout.text.trim(), "early");
         assert!(began.elapsed() < Duration::from_secs(10));
-    }
-
-    #[test]
-    fn file_digests_are_sha256() {
-        let temp = tempfile::tempdir().expect("temp");
-        let path = temp.path().join("f");
-        std::fs::write(&path, b"abc").expect("write");
-        assert_eq!(
-            file_digest(&path).expect("digest"),
-            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
     }
 }

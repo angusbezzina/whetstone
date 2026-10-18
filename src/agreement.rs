@@ -269,6 +269,11 @@ impl AgreementState {
             .collect()
     }
 
+    /// Ids of every rule record (v2 rules and earlier standards), in id order.
+    pub fn rule_ids(&self) -> Vec<RecordId> {
+        self.agreement_ids(|body| body.rule_view().is_some())
+    }
+
     /// In-force records of a kind, in id order.
     pub fn in_force_matching(
         &self,

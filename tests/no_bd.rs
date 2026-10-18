@@ -1,7 +1,7 @@
 //! The virgil store needs no `bd`: with `whetstone/store.json` naming
 //! Virgil and a PATH holding only the fake `virgil` (tests/fake_virgil.py)
 //! and the basic tools, init, change, check (with the sweep) and dash run end
-//! to end, drafts and receipts land in the rulebook's private scope,
+//! to end, drafts land in the rulebook's private scope,
 //! accepted records reach its repository scope when they are accepted, `wh
 //! push` and `wh pull` are refused by name (their dry runs succeed), and no
 //! `.beads` appears.
@@ -266,8 +266,8 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
     );
     assert_eq!(dash["data"]["store"]["left_behind"], json!([]));
 
-    // Drafts and receipts live in the private scope; receipts never reach
-    // the repository scope, and nothing is kept as a local revision file.
+    // Drafts live in the private scope, a check adds no record anywhere, and
+    // nothing is kept as a local revision file.
     let private = state(&root)["rulebook"]["private"]
         .as_array()
         .cloned()
@@ -279,8 +279,8 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
         "the draft is in the private scope"
     );
     assert!(
-        private.iter().any(|record| record["kind"] == "receipt"),
-        "the check's receipts are private"
+        private.iter().all(|record| record["kind"] != "receipt"),
+        "a check writes no receipt"
     );
     assert!(state(&root)["rulebook"]["repository"]
         .as_array()

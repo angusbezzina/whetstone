@@ -35,15 +35,6 @@ pub trait DashboardBackend: Send + Sync + 'static {
     /// Read-only query body. An empty body requests the default project view.
     fn inspect(&self, request_body: &[u8]) -> BackendResponse;
     fn mutate(&self, request_body: &[u8]) -> BackendResponse;
-    /// One evidence file (screenshot, log, gate artifact) from the private
-    /// evidence directory; read-only and path-checked.
-    fn evidence(&self, _locator: &str) -> BackendResponse {
-        BackendResponse {
-            status: 404,
-            content_type: "text/plain; charset=utf-8",
-            body: b"not_found".to_vec(),
-        }
-    }
     /// The decision trail as show-me-your-work TSV; read-only.
     fn trail(&self) -> BackendResponse {
         BackendResponse {
@@ -73,6 +64,7 @@ impl BackendResponse {
     }
 }
 
+/// The dashboard serves on loopback only.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardMode {
     Local {
@@ -80,19 +72,10 @@ pub enum DashboardMode {
         /// session to explicitly enter edit mode.
         allow_mutations: bool,
     },
-    Hosted {
-        /// The adapter must be reachable only from this authenticated proxy.
-        bind: SocketAddr,
-        expected_host: String,
-        public_origin: String,
-        authenticated_tls_boundary: bool,
-        read_only: bool,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardError {
-    InvalidHostedConfiguration(String),
     EntropyUnavailable(String),
     BindFailed(String),
     StartupFailed(String),
@@ -101,8 +84,7 @@ pub enum DashboardError {
 impl fmt::Display for DashboardError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidHostedConfiguration(message)
-            | Self::EntropyUnavailable(message)
+            Self::EntropyUnavailable(message)
             | Self::BindFailed(message)
             | Self::StartupFailed(message) => formatter.write_str(message),
         }
@@ -133,32 +115,8 @@ impl DashboardHandle {
         mode: DashboardMode,
         backend: Arc<dyn DashboardBackend>,
     ) -> Result<Self, DashboardError> {
-        let (bind, host, origin, allow_mutations, hosted) = match mode {
-            DashboardMode::Local { allow_mutations } => {
-                let bind = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-                (bind, String::new(), String::new(), allow_mutations, false)
-            }
-            DashboardMode::Hosted {
-                bind,
-                expected_host,
-                public_origin,
-                authenticated_tls_boundary,
-                read_only,
-            } => {
-                if !bind.ip().is_loopback()
-                    || !authenticated_tls_boundary
-                    || !read_only
-                    || !public_origin.starts_with("https://")
-                    || expected_host.is_empty()
-                    || public_origin.trim_end_matches('/').ends_with('/')
-                {
-                    return Err(DashboardError::InvalidHostedConfiguration(
-                        "hosted mode requires a loopback proxy target, exact host, HTTPS origin, configured authentication/TLS, and read-only operation".into(),
-                    ));
-                }
-                (bind, expected_host, public_origin, false, true)
-            }
-        };
+        let DashboardMode::Local { allow_mutations } = mode;
+        let bind = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
         let listener = TcpListener::bind(bind).map_err(|error| {
             DashboardError::BindFailed(format!("dashboard bind failed: {error}"))
         })?;
@@ -168,16 +126,8 @@ impl DashboardHandle {
         let address = listener
             .local_addr()
             .map_err(|error| DashboardError::StartupFailed(error.to_string()))?;
-        let expected_host = if hosted {
-            host
-        } else {
-            format!("127.0.0.1:{}", address.port())
-        };
-        let public_origin = if hosted {
-            origin
-        } else {
-            format!("http://{expected_host}")
-        };
+        let expected_host = format!("127.0.0.1:{}", address.port());
+        let public_origin = format!("http://{expected_host}");
         let bootstrap = random_secret().map_err(DashboardError::EntropyUnavailable)?;
         let state = Arc::new(Mutex::new(ServerState {
             bootstrap: Some(bootstrap.clone()),
@@ -201,7 +151,6 @@ impl DashboardHandle {
                                 stream,
                                 &expected_host,
                                 &worker_origin,
-                                hosted,
                                 allow_mutations,
                                 &state,
                                 backend.as_ref(),
@@ -273,7 +222,6 @@ fn handle_connection(
     mut stream: TcpStream,
     expected_host: &str,
     expected_origin: &str,
-    hosted: bool,
     mutations_enabled: bool,
     state: &Mutex<ServerState>,
     backend: &dyn DashboardBackend,
@@ -294,13 +242,6 @@ fn handle_connection(
     };
     if request.header("host") != Some(expected_host) {
         let _ = deny(&mut stream, 403, "invalid_host");
-        return;
-    }
-    if hosted
-        && (request.header("x-forwarded-proto") != Some("https")
-            || request.header("x-whetstone-authenticated") != Some("true"))
-    {
-        let _ = deny(&mut stream, 401, "host_authentication_required");
         return;
     }
     if request
@@ -388,12 +329,8 @@ fn handle_connection(
             }
         }
         // Local inspection is intentionally credential-free. It is
-        // loopback-only, exact-host checked, and cannot mutate state. Hosted
-        // inspection passed the authenticated proxy checks above.
+        // loopback-only, exact-host checked, and cannot mutate state.
         ("GET", "/api/inspect") => backend.inspect(&[]),
-        ("GET", path) if path.starts_with("/api/evidence/") => {
-            backend.evidence(&path["/api/evidence/".len()..])
-        }
         ("GET", "/api/trail.tsv") => {
             extra_headers.push((
                 "Content-Disposition",
@@ -411,7 +348,7 @@ fn handle_connection(
             }
         }
         ("POST", "/session/edit") => match authorized_mutation(&request, expected_origin, state) {
-            Ok(session_id) if mutations_enabled && !hosted => {
+            Ok(session_id) if mutations_enabled => {
                 if let Ok(mut locked) = state.lock() {
                     if let Some(session) = locked.sessions.get_mut(&session_id) {
                         session.can_mutate = true;
@@ -434,7 +371,7 @@ fn handle_connection(
                             .map(|session| session.can_mutate)
                     })
                     .unwrap_or(false);
-                if !mutations_enabled || hosted || !permitted {
+                if !mutations_enabled || !permitted {
                     denied("read_only")
                 } else {
                     backend.mutate(&request.body)

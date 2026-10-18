@@ -1,27 +1,19 @@
 //! Typed, human-labelled projection of the agreement for the dashboard's
-//! views: Home, Rules, Checks and Changelog, plus onboarding.
+//! views: Home, Rules and Changelog, plus onboarding.
 //!
 //! The browser renders these fields verbatim. Every state carries a human
 //! label and a tone so the UI never invents state or shows raw enum names,
-//! and unknown, stale, not-run and draft states can never read as a pass.
+//! and draft states can never read as accepted.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::agreement::{AgreementState, Lifecycle};
-use crate::domain::{
-    AgreementRecord, Freshness, PrincipleSource, RecordBody, RecordId, RecordRef, Rule,
-    VerificationAxis,
-};
-use crate::proof::{latest_gate_receipt, read_artifact, rule_ids, EVIDENCE_SYSTEM};
+use crate::domain::{AgreementRecord, PrincipleSource, RecordBody, RecordId, RecordRef, Rule};
 
-mod checks;
 mod journal;
-
-use checks::*;
 
 pub use journal::{
     decision_trail, journal, journal_from_items, proposal_candidates, search_journal, JournalEntry,
@@ -147,7 +139,6 @@ pub struct RuleEntry {
     pub source: String,
     pub paths: Vec<String>,
     pub examples: Vec<Value>,
-    pub result: StateLabel,
     /// How a night sweep works this rule's flags: draft_pr, confirm_first or
     /// discuss (the default).
     pub sweep_class: &'static str,
@@ -155,60 +146,6 @@ pub struct RuleEntry {
     pub sweep_priority: u8,
     /// Where its own flags are doubtful, with the reason each says.
     pub sweep_unsure: Vec<crate::domain::SweepUnsure>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Failure {
-    pub location: String,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct EvidenceSummary {
-    pub kind: String,
-    pub locator: String,
-    pub digest: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct GateRun {
-    pub id: String,
-    pub name: String,
-    pub strength: &'static str,
-    pub mechanism: String,
-    pub command: String,
-    pub eligible: bool,
-    pub result: StateLabel,
-    pub last_run: Option<String>,
-    pub current: bool,
-    pub summary: Option<String>,
-    pub failures: Vec<Failure>,
-    pub recheck: String,
-    pub brief: Option<String>,
-    pub evidence: Vec<EvidenceSummary>,
-    /// Accepted here versus shared with the team through `wh push`:
-    /// "shared", "shared at another revision" or "private".
-    pub team: &'static str,
-}
-
-#[derive(Debug, Clone, Serialize, Default)]
-pub struct Tally {
-    pub pass: usize,
-    pub fail: usize,
-    pub unknown: usize,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LastCheck {
-    pub at: String,
-    pub tally: Tally,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ChecksView {
-    pub last_complete: Option<LastCheck>,
-    pub gates: Vec<GateRun>,
-    pub receipts: Vec<EvidenceSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -241,19 +178,15 @@ pub struct DashboardView {
     pub mission: Option<Entry>,
     pub principles: Vec<Entry>,
     pub rules: Vec<RuleEntry>,
-    pub checks: ChecksView,
     pub attention: Vec<Attention>,
     pub latest_change: Option<LatestChange>,
 }
 
 /// Inputs the service computes before projecting.
-pub struct ProjectionInput<'a> {
+pub struct ProjectionInput {
     pub project_label: String,
-    pub project_root: &'a Path,
-    pub evidence_root: &'a Path,
     pub agreement_complete: bool,
     pub onboarding: Onboarding,
-    pub fingerprint: Option<&'a str>,
     /// Shared record refs (id -> `id@revision#digest`) in the team's store:
     /// what `wh push` already shared and CI enforces.
     pub shared: BTreeMap<String, String>,
@@ -449,38 +382,6 @@ pub(crate) fn entry(state: &AgreementState, id: &RecordId) -> Option<Entry> {
     })
 }
 
-pub fn gate_brief(
-    name: &str,
-    version: u64,
-    strength: &str,
-    command: &str,
-    failures: &[Failure],
-    recheck: &str,
-    owner: &str,
-) -> String {
-    let mut lines = vec![
-        format!("rule      {name} (v{version}, {strength})"),
-        format!("command   {command}"),
-    ];
-    if !failures.is_empty() {
-        lines.push(format!(
-            "failures  {}",
-            failures
-                .iter()
-                .take(8)
-                .map(|failure| failure.location.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
-    lines.push("repair    within the current task; do not change or weaken the rule".into());
-    lines.push(format!("recheck   {recheck}"));
-    lines.push(format!(
-        "stop      if the same finding survives a second repair, or the fix needs a rule change, ask {owner}"
-    ));
-    lines.join("\n")
-}
-
 fn strength_order(strength: &str) -> u8 {
     u8::from(strength != "must")
 }
@@ -495,10 +396,10 @@ pub fn reference_text(reference: &RecordRef) -> String {
     )
 }
 
-fn rule_entries(state: &AgreementState, runs: &[GateRun]) -> Vec<RuleEntry> {
+fn rule_entries(state: &AgreementState) -> Vec<RuleEntry> {
     let mut rules = Vec::new();
-    for id in rule_ids(state) {
-        let Some(mut base) = entry(state, &id) else {
+    for id in state.rule_ids() {
+        let Some(base) = entry(state, &id) else {
             continue;
         };
         let Some(record) = state.in_force(&id).or_else(|| state.pending(&id)) else {
@@ -508,11 +409,6 @@ fn rule_entries(state: &AgreementState, runs: &[GateRun]) -> Vec<RuleEntry> {
             continue;
         };
         let (mechanism, command) = crate::gates::mechanism_label(&rule);
-        let result = runs.iter().find(|run| run.id == id.as_str()).map_or_else(
-            || StateLabel::new("warn", "not run"),
-            |run| run.result.clone(),
-        );
-        base.state = Some(result.clone());
         rules.push(RuleEntry {
             entry: base,
             strength: rule.strength.label(),
@@ -533,7 +429,6 @@ fn rule_entries(state: &AgreementState, runs: &[GateRun]) -> Vec<RuleEntry> {
                     })
                 })
                 .collect(),
-            result,
             sweep_class: rule.sweep_class().label(),
             sweep_priority: rule.sweep_priority(),
             sweep_unsure: rule.sweep_unsure.clone(),
@@ -547,7 +442,7 @@ fn rule_entries(state: &AgreementState, runs: &[GateRun]) -> Vec<RuleEntry> {
 }
 
 /// Build the dashboard projection.
-pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> DashboardView {
+pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput) -> DashboardView {
     let mission_id = RecordId::new(MISSION_ID).expect("constant id");
     let mission = entry(state, &mission_id);
     let owner = mission
@@ -560,26 +455,10 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
         .iter()
         .filter_map(|id| entry(state, id))
         .collect::<Vec<_>>();
-    let (gate_runs, last_complete) = gate_runs(state, input, &owner);
-    let rules = rule_entries(state, &gate_runs);
+    let rules = rule_entries(state);
     let pending = state.pending_proposals();
     let drafts = pending.len();
-    let receipts = state
-        .records()
-        .iter()
-        .rev()
-        .filter(|record| record.body.is_receipt())
-        .take(8)
-        .filter_map(|record| {
-            let reference = record.reference().ok()?;
-            Some(EvidenceSummary {
-                kind: record.body.type_name().replace('_', " "),
-                locator: format!("{} · {}", record.id.as_str(), record.provenance.recorded_at),
-                digest: Some(reference.digest.as_str().into()),
-            })
-        })
-        .collect();
-    let attention = attention(&owner, &gate_runs, &rules, drafts);
+    let attention = attention(&owner, &rules, drafts);
     DashboardView {
         established,
         header: Header {
@@ -603,47 +482,13 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
         mission,
         principles,
         rules,
-        checks: ChecksView {
-            last_complete,
-            gates: gate_runs,
-            receipts,
-        },
         attention,
         latest_change: None,
     }
 }
 
-fn attention(owner: &str, gates: &[GateRun], rules: &[RuleEntry], drafts: usize) -> Vec<Attention> {
+fn attention(owner: &str, rules: &[RuleEntry], drafts: usize) -> Vec<Attention> {
     let mut items = Vec::new();
-    for gate in gates
-        .iter()
-        .filter(|gate| gate.eligible && gate.result.tone == "fail")
-    {
-        let count = gate.failures.len();
-        items.push(Attention {
-            priority: if gate.strength == "must" { 0 } else { 2 },
-            tone: "fail",
-            kind: "agent_repair",
-            kind_label: "agent repair",
-            title: format!("Failing rule: {}", gate.name.trim_end_matches('.')),
-            text: format!(
-                "{} in the latest check. The worker that made the change repairs it within task scope, then runs the exact check again.",
-                if count == 1 {
-                    "1 failure".to_string()
-                } else if count > 1 {
-                    format!("{count} failures")
-                } else {
-                    "The rule failed".to_string()
-                }
-            ),
-            actor: "your coding agent".into(),
-            next: "Hand the brief to the agent; return here when it has rerun the check.".into(),
-            route: "checks",
-            focus: Some(gate.id.clone()),
-            action_label: "Open the failing rule",
-            agent_instruction: gate.brief.clone(),
-        });
-    }
     if rules.iter().all(|rule| rule.entry.lifecycle != "accepted") {
         items.push(Attention {
             priority: 1,
@@ -657,30 +502,6 @@ fn attention(owner: &str, gates: &[GateRun], rules: &[RuleEntry], drafts: usize)
             route: "rules",
             focus: None,
             action_label: "Open rules",
-            agent_instruction: None,
-        });
-    }
-    for gate in gates
-        .iter()
-        .filter(|gate| gate.eligible && gate.result.tone == "warn")
-    {
-        items.push(Attention {
-            priority: 1,
-            tone: "warn",
-            kind: "stale_result",
-            kind_label: "not current",
-            title: if gate.last_run.is_some() {
-                format!("Not current: {}", gate.name.trim_end_matches('.'))
-            } else {
-                format!("Never run: {}", gate.name.trim_end_matches('.'))
-            },
-            text: "A result that predates the current code, or no result at all, is not a pass."
-                .into(),
-            actor: "you or your agent".into(),
-            next: format!("Run {} on the current revision.", gate.recheck),
-            route: "checks",
-            focus: Some(gate.id.clone()),
-            action_label: "Open checks",
             agent_instruction: None,
         });
     }

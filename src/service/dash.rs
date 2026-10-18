@@ -114,17 +114,12 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
     };
     let (current, journal, trail) = match agreement_state {
         Ok(state) => {
-            let fingerprint = crate::gates::workspace_fingerprint(layout.project_root()).ok();
-            let evidence_root = crate::gates::evidence_root(&layout);
             let mut view = projection::dashboard_view(
                 &state,
                 &projection::ProjectionInput {
                     project_label: project_label(layout.project_root()),
-                    project_root: layout.project_root(),
-                    evidence_root: &evidence_root,
                     agreement_complete: progress.agreement_complete,
                     onboarding: progress.onboarding.clone(),
-                    fingerprint: fingerprint.as_deref(),
                     shared: shared_refs(loaded.as_ref().ok()),
                 },
             );
@@ -189,7 +184,7 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
         "store": store_section(&layout),
         "workflows": [
             {"name": "init", "state": "available", "effect": "inspect, agree the mission, principles and rules, wire the gates"},
-            {"name": "dash", "state": "available", "effect": "inspect rules, checks, requests and history"},
+            {"name": "dash", "state": "available", "effect": "inspect the rules and their history"},
             {"name": "change", "state": "available", "effect": "draft a change, accept or withdraw it, or retire a record"},
             {"name": "check", "state": "available", "effect": "run the rules and return repair feedback"},
             {"name": "pull", "state": if shared_exists { "available" } else { "unavailable" }, "effect": "receive shared records; nothing runs or is accepted"},

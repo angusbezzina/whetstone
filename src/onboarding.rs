@@ -162,7 +162,7 @@ pub fn inspect(root: &Path) -> Result<SetupPlan, DiscoveryError> {
         known_debt: "not assessed during discovery; run wh check once rules are in force".into(),
         proposed_defaults: vec![
             "starter rules chosen for this repository, each with the cheapest enforcer it supports".into(),
-            "only a mechanical pass or a proof passes a must rule".into(),
+            "only a mechanical pass passes a must rule".into(),
         ],
         platform_footprint: vec![
             "inspection writes nothing".into(),

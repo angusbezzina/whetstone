@@ -122,7 +122,7 @@
       "group": "verification",
       "rule": "Apply after completing a task, before declaring done. Verify against the real artifact (run the feature, read the actual value, inspect the diff), not a proxy, self-report, or 'it compiles.'.",
       "enforceable": "mechanical",
-      "suggestion": "A drive proof of the changed feature, with evidence, before done."
+      "suggestion": "A test command that runs the changed behaviour, before done."
     },
     {
       "id": "fix-root-causes",

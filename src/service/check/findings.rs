@@ -17,8 +17,8 @@ use std::path::Path;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::domain::{Rule, Strength, VerificationAxis};
-use crate::gates::GateOutcome;
+use crate::domain::{Rule, Strength};
+use crate::gates::{GateOutcome, GateState};
 
 use super::SelectedRule;
 
@@ -155,7 +155,7 @@ pub(crate) fn findings(
         .collect::<BTreeMap<_, _>>();
     let mut result = Vec::new();
     for outcome in outcomes {
-        if outcome.state != VerificationAxis::Fail {
+        if outcome.state != GateState::Fail {
             continue;
         }
         let Some(rule) = rules.get(outcome.id.as_str()) else {

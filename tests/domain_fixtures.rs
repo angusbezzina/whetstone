@@ -1,6 +1,6 @@
 //! The direction fixture catalogue (`fixtures/direction_cases.json`) run
 //! against the domain: rule v2 validation (one strength, exactly one
-//! enforcer, examples), receipts, earlier rules and stored rule revisions
+//! enforcer, examples), earlier rules and stored rule revisions
 //! read through their mapping, and retired kinds that are read exactly but
 //! never written. The published schemas are checked against the same types.
 
@@ -34,7 +34,6 @@ fn envelope(case: &Value) -> Value {
         "fixture.{}",
         case["id"].as_str().expect("case id").to_ascii_lowercase()
     );
-    let receipt = matches!(case["record_type"].as_str(), Some("verification_receipt"));
     json!({
         "schema_version": 1,
         "id": id,
@@ -46,7 +45,7 @@ fn envelope(case: &Value) -> Value {
             "recorded_by": {"kind": "local_user", "stable_id": "local:owner"},
             "recorded_at": "2026-09-10T12:00:00Z",
             "sources": [{"system": "fixture", "locator": "direction_cases.json"}],
-            "authority": if receipt { "candidate_only" } else { "owner_authored" },
+            "authority": "owner_authored",
         },
         "idempotency_key": format!("fixture:{id}"),
         "record_type": case["record_type"],

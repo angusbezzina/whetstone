@@ -3,8 +3,8 @@
 
 use tree_sitter::QueryCursor;
 
+use super::ArtifactFailure;
 use crate::ast::{self, AstLang};
-use crate::proof::ArtifactFailure;
 
 use super::files::FileSet;
 

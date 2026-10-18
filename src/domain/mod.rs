@@ -6,9 +6,9 @@
 //! Removed record kinds (values and philosophy, metrics, exceptions,
 //! mandates, activation, observations, repair sessions, team decisions,
 //! raised hands, review attestations, briefs, earlier guidance, Jev
-//! judgments, flag labels, lessons, features and the feature map) stay readable as [`RetiredRecord`]s
-//! with their original bytes and digests, so history is never rewritten;
-//! they can no longer be created.
+//! judgments, flag labels, lessons, features, the feature map and check
+//! receipts) stay readable as [`RetiredRecord`]s with their original bytes
+//! and digests, so history is never rewritten; they can no longer be created.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -18,10 +18,8 @@ use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 
-mod receipt;
 mod rule;
 
-pub use receipt::*;
 pub use rule::*;
 
 pub const SCHEMA_VERSION_V1: u16 = 1;
@@ -78,10 +76,6 @@ impl AgreementRecord {
         self.owner.validate()?;
         self.provenance.validate()?;
         self.body.validate()?;
-        if self.body.is_receipt() && self.provenance.authority != ProvenanceAuthority::CandidateOnly
-        {
-            return Err(DomainError::OperationalRecordCannotGrantAuthority);
-        }
         if let Some(previous) = &self.supersedes {
             previous.validate()?;
             if previous.id != self.id || previous.revision >= self.revision {
@@ -116,19 +110,6 @@ impl AgreementRecord {
         }
         match &self.body {
             RecordBody::Proposal(body) => links.extend(body.proposed_records.clone()),
-            RecordBody::VerificationReceipt(body) => {
-                links.extend(body.related_records.clone());
-                links.extend(
-                    [
-                        body.policy_state.accepted.clone(),
-                        body.policy_state.required.clone(),
-                        body.policy_state.installed.clone(),
-                        body.policy_state.experimental.clone(),
-                    ]
-                    .into_iter()
-                    .flatten(),
-                );
-            }
             RecordBody::Retirement(body) => {
                 links.push(body.target.clone());
                 links.extend(body.replacement.clone());
@@ -423,6 +404,7 @@ pub const RETIRED_KINDS: &[&str] = &[
     "lesson_check",
     "feature",
     "verification_map",
+    "verification_receipt",
 ];
 
 /// A record of a removed kind, kept exactly as stored so its digest still
@@ -474,7 +456,6 @@ pub enum RecordBody {
     Proposal(Proposal),
     LocalReview(LocalReview),
     Retirement(Retirement),
-    VerificationReceipt(VerificationReceipt),
     Retired(RetiredRecord),
 }
 
@@ -488,7 +469,6 @@ enum BodyRef<'a> {
     Proposal(&'a Proposal),
     LocalReview(&'a LocalReview),
     Retirement(&'a Retirement),
-    VerificationReceipt(&'a VerificationReceipt),
 }
 
 #[derive(Deserialize)]
@@ -501,7 +481,6 @@ enum BodyOwned {
     Proposal(Proposal),
     LocalReview(LocalReview),
     Retirement(Retirement),
-    VerificationReceipt(VerificationReceipt),
 }
 
 impl Serialize for RecordBody {
@@ -526,7 +505,6 @@ impl Serialize for RecordBody {
             Self::Proposal(value) => BodyRef::Proposal(value),
             Self::LocalReview(value) => BodyRef::LocalReview(value),
             Self::Retirement(value) => BodyRef::Retirement(value),
-            Self::VerificationReceipt(value) => BodyRef::VerificationReceipt(value),
         };
         body.serialize(serializer)
     }
@@ -585,7 +563,6 @@ impl<'de> Deserialize<'de> for RecordBody {
             BodyOwned::Proposal(value) => Self::Proposal(value),
             BodyOwned::LocalReview(value) => Self::LocalReview(value),
             BodyOwned::Retirement(value) => Self::Retirement(value),
-            BodyOwned::VerificationReceipt(value) => Self::VerificationReceipt(value),
         })
     }
 }
@@ -601,7 +578,6 @@ impl RecordBody {
             Self::Proposal(_) => "proposal",
             Self::LocalReview(_) => "local_review",
             Self::Retirement(_) => "retirement",
-            Self::VerificationReceipt(_) => "verification_receipt",
             Self::Retired(retired) => &retired.record_type,
         }
     }
@@ -619,11 +595,6 @@ impl RecordBody {
         }
     }
 
-    /// Operational evidence rather than agreement content or a decision.
-    pub fn is_receipt(&self) -> bool {
-        matches!(self, Self::VerificationReceipt(_))
-    }
-
     pub(crate) fn validate(&self) -> Result<(), DomainError> {
         match self {
             Self::Mission(value) => require_text(&value.statement),
@@ -637,7 +608,6 @@ impl RecordBody {
                 value.target.validate()?;
                 require_text(&value.reason)
             }
-            Self::VerificationReceipt(value) => value.validate(),
             // History is kept as stored; its digest is verified on read.
             Self::Retired(_) => Ok(()),
         }
@@ -1137,7 +1107,6 @@ pub enum DomainError {
     ImportedContentCannotGrantAuthority,
     InvalidSupersession,
     InvalidProposalBinding,
-    PassRequiresFreshEvidence,
     IdempotencyConflict(String),
     StaleRevision {
         expected: Option<u64>,
@@ -1152,7 +1121,6 @@ pub enum DomainError {
     PrincipalMismatch,
     UnauthorizedScope,
     IllegalProposalTransition,
-    OperationalRecordCannotGrantAuthority,
     InvalidLocalReview,
     /// A kind the delegation plan removed; it can be read, never created.
     RetiredKind(String),

@@ -32,7 +32,7 @@ Two 2026-09-10 decisions still stand:
 - **Beads is the record store.** `src/beads.rs` is the typed layer over
   `bd --json`: one bead per record revision, the typed body as ASCII-escaped
   canonical JSON in metadata (digest verified on every read), lifecycle as a
-  label. Drafts and receipts live in a private Beads database under
+  label. Drafts live in a private Beads database under
   `.git/whetstone/` that is initialized and used with Git discovery fenced off
   and must never have a remote; `wh push` and `wh pull` wrap `bd dolt push`
   and `bd dolt pull` on the repository's shared database. Keep the domain and
@@ -129,7 +129,8 @@ issues, start with `bd doctor` and the non-destructive `bd bootstrap` (bd 1.3).
 local Dolt database from the remote.
 
 Beads is also Whetstone's record store (see the current boundary). Whetstone
-records in Beads are `record`, `decision` and `receipt` beads labelled
+records in Beads are `record` and `decision` beads (and `receipt` beads from
+earlier checks) labelled
 `whetstone` whose JSON metadata is validated on every read; never hand-edit
 their metadata with `bd update`, and never prune, compact or delete them to
 tidy the tracker. Tests use throwaway `bd init` databases only; never point a

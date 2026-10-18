@@ -444,7 +444,6 @@ pub fn record_class(body: &RecordBody) -> &'static str {
         RecordBody::Proposal(_) | RecordBody::LocalReview(_) | RecordBody::Retirement(_) => {
             "decision"
         }
-        RecordBody::VerificationReceipt(_) => "receipt",
         RecordBody::Retired(retired) => match retired.record_type.as_str() {
             "rule"
             | "guidance"
@@ -561,7 +560,7 @@ pub fn logical_stage(record: &AgreementRecord) -> u8 {
     match &record.body {
         RecordBody::Proposal(_) => 1,
         RecordBody::LocalReview(_) => 2,
-        body if body.is_receipt() => 3,
+        body if record_class(body) == "receipt" => 3,
         _ => 0,
     }
 }

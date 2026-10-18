@@ -847,7 +847,7 @@ fn progress_line(response: &ServiceResponse) -> Option<String> {
                 let revision = response.expected_revision.unwrap_or(1);
                 Some(format!(
                     "Agreement recorded · revision {revision} · private, unshared. The dashboard now shows your project.\n\
-                     Next: wh init --action wire --host claude --hooks (or cursor, codex, agents) writes the verification skill and the Git gates; wh check runs the first gate."
+                     Next: wh init --action wire --hooks installs the Git gates; wh check runs the first gate."
                 ))
             } else if response.state == ServiceState::Success {
                 Some(first_sentence(&response.summary))
@@ -1120,7 +1120,7 @@ fn format_human_response(response: &ServiceResponse) -> String {
 }
 
 /// Each finding in a check report, with what was observed, what the rule
-/// expects, why, how to repair it and how to verify the repair.
+/// expects, why, how to repair it and how to recheck the repair.
 fn finding_detail_lines(data: &serde_json::Value) -> Vec<String> {
     let mut lines = Vec::new();
     let Some(results) = data
@@ -1153,7 +1153,7 @@ fn finding_detail_lines(data: &serde_json::Value) -> Vec<String> {
             ("Expected", "expected"),
             ("Why", "rationale"),
             ("Repair", "repair_direction"),
-            ("Verify", "verification_command"),
+            ("Recheck", "recheck_command"),
         ] {
             if let Some(value) = finding.get(field).and_then(serde_json::Value::as_str) {
                 lines.push(format!("{label}: {value}"));
@@ -1437,7 +1437,7 @@ mod tests {
                 "expected": "Use a lowercase function name.",
                 "rationale": "The accepted convention requires it.",
                 "repair_direction": "Rename the function.",
-                "verification_command": "wh check --json"
+                "recheck_command": "wh check --json"
             }]}]}}),
         };
 
@@ -1447,7 +1447,7 @@ mod tests {
             "Finding: src/app.py:7 [team.lowercase-functions]",
             "Expected: Use a lowercase function name.",
             "Repair: Rename the function.",
-            "Verify: wh check --json",
+            "Recheck: wh check --json",
         ] {
             assert!(
                 rendered.contains(expected),

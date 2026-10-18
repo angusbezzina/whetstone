@@ -15,22 +15,12 @@ use sha2::{Digest, Sha256};
 
 use crate::agreement::AgreementState;
 use crate::check;
-use crate::domain::{
-    ContentDigest, Enforcer, EvidenceRef, ExternalRef, ExternalSystem, Freshness,
-    PolicyStateSnapshot, ProvenanceKind, RecordBody, RecordId, RecordRef, Rule, Strength,
-    VerificationAxis, VerificationReceipt,
-};
-use crate::gates::{FileSet, GateOutcome};
-use crate::proof::ArtifactFailure;
-use crate::storage::{ProjectLayout, StorageError};
-use crate::verification::{
-    self, EvidencePointer, Finding, ObservedState, RequirementKind, TrustedEvidenceSet,
-    VerificationEvidence, VerificationPlan, VerificationRequirement,
-};
+use crate::domain::{Enforcer, RecordId, RecordRef, Rule, Strength};
+use crate::gates::{ArtifactFailure, FileSet, GateOutcome, GateState};
+use crate::storage::ProjectLayout;
 
 use super::record::{
-    array_len, compute_check_snapshot, count, digest_bytes, digest_json, key_suffix,
-    persist_verification_receipt, receipt_record, scan_findings, service_state, with_head,
+    array_len, compute_check_snapshot, count, digest_bytes, digest_json, scan_findings,
 };
 use super::{
     bounded_request_id, load_records, storage_error, unix_now, unknown_response, utc_now,
@@ -38,9 +28,10 @@ use super::{
 };
 
 mod findings;
-mod persist;
+mod report;
 
-use persist::*;
+pub(crate) use report::{code_tree_digest, Finding, SnapshotBinding};
+use report::{CheckReport, CheckResult, CheckState, EvidencePointer};
 
 /// An in-force rule chosen for this check.
 pub(crate) struct SelectedRule {
@@ -239,86 +230,63 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     let skipped = array_len(&result, "skipped") - delegated;
     let warnings = array_len(&result, "warnings");
     let native_state = if violations > 0 {
-        ObservedState::Violated
+        CheckState::Violated
     } else if configuration_issues > 0
         || rules_applied == 0
         || files_scanned == 0
         || skipped > 0
         || warnings > 0
     {
-        ObservedState::Unknown
+        CheckState::Unknown
     } else {
-        ObservedState::Success
+        CheckState::Success
     };
     // With accepted rules, a scanner that has no project rules is simply not
     // part of this check rather than an unknown requirement.
     let include_native =
         include_native && (selection.rules.is_empty() || rules_applied > 0 || violations > 0);
     let native_summary = match native_state {
-        ObservedState::Success if delegated > 0 => format!(
+        CheckState::Success if delegated > 0 => format!(
             "The compiled-in scanner applied {rules_applied} rules to {files_scanned} files without violations; {delegated} rule signals are delegated to the linter configuration (binding verified, enforced by the linter, not run here)."
         ),
-        ObservedState::Success => format!(
+        CheckState::Success => format!(
             "The compiled-in scanner applied {rules_applied} rules to {files_scanned} files without violations."
         ),
-        ObservedState::Violated => format!(
+        CheckState::Violated => format!(
             "The compiled-in scanner found {violations} violations; incomplete evidence remains visible in the findings."
         ),
-        ObservedState::Unknown => format!(
+        CheckState::Unknown => format!(
             "The compiled-in scanner could not establish complete evidence ({configuration_issues} configuration issues, {skipped} skipped checks, {warnings} warnings)."
         ),
-        ObservedState::Unavailable => "The compiled-in scanner was unavailable.".into(),
+        CheckState::Unavailable => "The compiled-in scanner was unavailable.".into(),
     };
     let findings = scan_findings(&project, &result);
     let scan_digest = digest_json(&result);
-    let mut requirements = Vec::new();
-    let mut evidence_items = Vec::new();
+    let mut results = Vec::new();
     if include_native {
-        requirements.push(VerificationRequirement {
-            id: "whetstone.native-scan".into(),
-            kind: RequirementKind::NativeCheck,
-            required: true,
-            checker_manifest: Some(snapshot.checker_bundle.clone()),
-            governing_records: Vec::new(),
-            rationale: "Applicable accepted rules require deterministic local verification."
-                .into(),
-            repair_direction: "Repair reported source or checker configuration without changing policy, tests, or baselines to hide the result.".into(),
-            permitted_next_action: "repair within the current task scope, then wh check".into(),
-            verification_command: "wh check --json".into(),
-            freshness_seconds: 300,
-        });
-        evidence_items.push(VerificationEvidence::NativeCheck {
+        results.push(CheckResult {
             requirement_id: "whetstone.native-scan".into(),
-            snapshot: snapshot.clone(),
+            required: true,
             state: native_state,
+            summary: native_summary,
             evidence: EvidencePointer {
                 source: "whetstone-compiled-in-scanner".into(),
                 locator: "local-project".into(),
-                digest: scan_digest.clone(),
+                digest: scan_digest,
             },
-            observed_at_unix: unix_now(),
-            summary: native_summary,
             findings,
+            governing_records: Vec::new(),
+            repair_direction: "Repair reported source or checker configuration without changing policy, tests, or baselines to hide the result.".into(),
+            permitted_next_action: "repair within the current task scope, then wh check".into(),
+            recheck_command: "wh check --json".into(),
         });
     }
-    let fingerprint = match crate::gates::workspace_fingerprint(&project) {
-        Ok(value) => value,
-        Err(error) if !selection.rules.is_empty() => {
-            return unknown_response(
-                "check",
-                request_id,
-                format!("The working tree could not be fingerprinted, so results could not be bound: {error}"),
-            )
-        }
-        Err(_) => String::new(),
-    };
-    // Each check is its own run: the same workspace can get a different
-    // verdict once an accepted rule changes.
+    // Each check is its own run with its own evidence directory.
     let started_at = format!("{}:{}", utc_now(), std::process::id());
     let run_id = {
         let digest = digest_bytes(
             format!(
-                "{request_id}\0{fingerprint}\0{started_at}\0{}\0{:?}",
+                "{request_id}\0{started_at}\0{}\0{:?}",
                 selection
                     .rules
                     .iter()
@@ -354,128 +322,44 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             .cloned()
             .collect::<Vec<_>>();
         for selected in &selection.rules {
-            let rule = &selected.rule;
-            let (outcome, evidence) = {
-                let context = crate::gates::GateContext {
-                    project_root: &project,
-                    run_dir: &run_dir,
-                    run_id: &run_id,
-                    timeout,
-                    files: &files,
-                    changed: &content_changed,
-                };
-                let outcome = crate::gates::run_gate(&context, &selected.id, rule);
-                let evidence = VerificationEvidence::Execution {
-                    requirement_id: format!("gate:{}", selected.id.as_str()),
-                    snapshot: snapshot.clone(),
-                    receipt: Box::new(gate_execution_receipt(selected, &outcome)),
-                    evidence: EvidencePointer {
-                        source: crate::proof::EVIDENCE_SYSTEM.into(),
-                        locator: outcome
-                            .evidence
-                            .last()
-                            .map_or_else(|| run_id.clone(), |evidence| evidence.locator.clone()),
-                        digest: outcome
-                            .evidence
-                            .last()
-                            .and_then(|evidence| evidence.digest.clone())
-                            .unwrap_or_else(|| digest_bytes(outcome.summary.as_bytes())),
-                    },
-                    observed_at_unix: unix_now(),
-                    findings: outcome
-                        .failures
-                        .iter()
-                        .map(|failure| gate_finding(selected, failure))
-                        .collect(),
-                };
-                (outcome, evidence)
+            let context = crate::gates::GateContext {
+                project_root: &project,
+                run_dir: &run_dir,
+                run_id: &run_id,
+                timeout,
+                files: &files,
+                changed: &content_changed,
             };
-            requirements.push(VerificationRequirement {
-                    id: format!("gate:{}", selected.id.as_str()),
-                    kind: RequirementKind::NativeCheck,
-                    required: rule.strength == Strength::Must,
-                    checker_manifest: Some(selected.reference.digest.clone()),
-                    governing_records: vec![selected.reference.clone()],
-                    rationale: rule.rationale.clone(),
-                    repair_direction: "Repair within the current task scope; never change or weaken the rule to pass it.".into(),
-                    permitted_next_action: format!("repair, then wh check --rule {}", selected.id.as_str()),
-                    verification_command: format!("wh check --rule {}", selected.id.as_str()),
-                    freshness_seconds: 3_600,
-                });
-            evidence_items.push(evidence);
+            let outcome = crate::gates::run_gate(&context, &selected.id, &selected.rule);
+            results.push(gate_result(selected, &outcome, &run_id));
             outcomes.push(outcome);
         }
     }
-    let checked_at = utc_now();
-    // CI records nothing, and neither does a staged check: the index is not
-    // a commit yet, so a receipt would bind to the wrong one (pre-push
-    // checks the same content again and records it).
-    let records_receipts = !request.ci && request.gate_mode != GateMode::Staged;
-    let gate_receipts = match layout.as_ref() {
-        Some(layout) if records_receipts => {
-            let mut gate_receipts = Vec::new();
-            for (selected, outcome) in selection.rules.iter().zip(&outcomes) {
-                match persist_gate_receipt(
-                    layout,
-                    &run_id,
-                    selected,
-                    outcome,
-                    &fingerprint,
-                    &checked_at,
-                ) {
-                    Ok(Some(reference)) => gate_receipts.push(reference),
-                    Ok(None) => {}
-                    Err(error) => return storage_error("check", request_id, error),
-                }
-            }
-            gate_receipts
-        }
-        _ => Vec::new(),
-    };
     let sweep_findings = (request.gate_mode == GateMode::Sweep)
         .then(|| findings::findings(&project, &selection.rules, &outcomes));
-    if requirements.is_empty() {
-        let mut response = nothing_ran(request_id, &request, &selection, &outcomes, &gate_receipts);
+    if results.is_empty() {
+        let mut response = nothing_ran(request_id, &request, &selection, &outcomes);
         attach_findings(&mut response, sweep_findings.as_deref());
         return response;
     }
-    let plan = VerificationPlan {
-        subject: format!(
+    let required = results.iter().any(|result| result.required);
+    let report = CheckReport::new(
+        format!(
             "project:{:x}:check",
             Sha256::digest(project.to_string_lossy().as_bytes())
         ),
-        snapshot: snapshot.clone(),
-        requirements,
+        snapshot,
+        results,
+        unix_now(),
+    );
+    let mut state = match report.state {
+        CheckState::Success => ServiceState::Success,
+        CheckState::Violated => ServiceState::Violated,
+        CheckState::Unknown => ServiceState::Unknown,
+        CheckState::Unavailable => ServiceState::Unavailable,
     };
-    let evidence = TrustedEvidenceSet {
-        items: evidence_items,
-    };
-    let report = match verification::aggregate(&plan, &evidence, unix_now(), &[]) {
-        Ok(report) => report,
-        Err(error) => {
-            return unknown_response(
-                "check",
-                request_id,
-                format!("Verification evidence could not be aggregated: {error}"),
-            )
-        }
-    };
-    let receipt_record = match layout.as_ref() {
-        Some(layout) if records_receipts && include_native => {
-            match persist_verification_receipt(layout, &request_id, &report, &checked_at) {
-                Ok(reference) => reference,
-                Err(error) => return storage_error("check", request_id, error),
-            }
-        }
-        _ => None,
-    };
-    let mut state = service_state(report.state);
     let mut summary = report.human_summary();
-    if !plan
-        .requirements
-        .iter()
-        .any(|requirement| requirement.required)
-    {
+    if !required {
         // Only should rules ran: there is no must rule to hold,
         // so the check itself neither passes nor fails a must; its flags are
         // listed below for repair or labelling.
@@ -484,9 +368,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     }
     let flags = outcomes
         .iter()
-        .filter(|outcome| {
-            outcome.state == VerificationAxis::Fail && outcome.strength != Strength::Must
-        })
+        .filter(|outcome| outcome.state == GateState::Fail && outcome.strength != Strength::Must)
         .map(|outcome| outcome.id.clone())
         .collect::<Vec<_>>();
     if !flags.is_empty() {
@@ -508,7 +390,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     response.evidence = vec![ServiceEvidence {
         kind: "deterministic_scan".into(),
         locator: "local-project".into(),
-        digest: Some(report.receipt_id.as_str().into()),
+        digest: Some(report.report_id.as_str().into()),
     }];
     for outcome in &outcomes {
         for evidence in &outcome.evidence {
@@ -527,9 +409,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         "report": report,
         "raw_scan": result,
         "scanner_included": include_native,
-        "receipt_persisted": receipt_record.is_some() || !gate_receipts.is_empty(),
-        "receipt_record": receipt_record,
-        "gate_receipts": gate_receipts,
         "gates": outcomes,
         "flags": flags,
         "run_id": if selection.rules.is_empty() { None } else { Some(run_id) },
@@ -539,6 +418,78 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     });
     attach_findings(&mut response, sweep_findings.as_deref());
     response
+}
+
+/// One gate run as a report result: a must rule is required, a should rule
+/// is not.
+fn gate_result(selected: &SelectedRule, outcome: &GateOutcome, run_id: &str) -> CheckResult {
+    let id = selected.id.as_str();
+    CheckResult {
+        requirement_id: format!("gate:{id}"),
+        required: selected.rule.strength == Strength::Must,
+        state: match outcome.state {
+            GateState::Pass => CheckState::Success,
+            GateState::Fail => CheckState::Violated,
+            GateState::Unknown => CheckState::Unknown,
+        },
+        summary: outcome.summary.clone(),
+        evidence: EvidencePointer {
+            source: crate::gates::EVIDENCE_SYSTEM.into(),
+            locator: outcome
+                .evidence
+                .last()
+                .map_or_else(|| run_id.to_string(), |evidence| evidence.locator.clone()),
+            digest: outcome
+                .evidence
+                .last()
+                .and_then(|evidence| evidence.digest.clone())
+                .unwrap_or_else(|| digest_bytes(outcome.summary.as_bytes())),
+        },
+        findings: outcome
+            .failures
+            .iter()
+            .map(|failure| gate_finding(selected, failure))
+            .collect(),
+        governing_records: vec![selected.reference.clone()],
+        repair_direction:
+            "Repair within the current task scope; never change or weaken the rule to pass it."
+                .into(),
+        permitted_next_action: format!("repair, then wh check --rule {id}"),
+        recheck_command: format!("wh check --rule {id}"),
+    }
+}
+
+fn gate_finding(selected: &SelectedRule, failure: &ArtifactFailure) -> Finding {
+    let (file, line) = match failure.location.rsplit_once(':') {
+        Some((file, line))
+            if line.chars().all(|character| character.is_ascii_digit())
+                && !file.contains(' ')
+                && !file.starts_with('/')
+                && !file.contains("..") =>
+        {
+            (Some(file.to_string()), line.parse::<u32>().ok())
+        }
+        _ if !failure.location.contains(' ')
+            && !failure.location.starts_with('/')
+            && !failure.location.contains("..")
+            && failure.location.contains('.') =>
+        {
+            (Some(failure.location.clone()), None)
+        }
+        _ => (None, None),
+    };
+    Finding {
+        file,
+        line,
+        column: None,
+        rule_id: selected.id.as_str().into(),
+        observed: failure.message.clone(),
+        expected: selected.rule.statement.clone(),
+        rationale: selected.rule.rationale.clone(),
+        repair_direction: "Repair within the current task scope; never weaken the rule.".into(),
+        permitted_next_action: format!("repair, then wh check --rule {}", selected.id.as_str()),
+        recheck_command: format!("wh check --rule {}", selected.id.as_str()),
+    }
 }
 
 /// What a sweep adds beside its gates: its findings.
@@ -568,7 +519,7 @@ fn next_actions(state: ServiceState, outcomes: &[GateOutcome]) -> Vec<String> {
         ServiceState::Violated => {
             let failing = outcomes
                 .iter()
-                .filter(|outcome| outcome.state == VerificationAxis::Fail)
+                .filter(|outcome| outcome.state == GateState::Fail)
                 .map(|outcome| format!("repair, then wh check --rule {}", outcome.id))
                 .collect::<Vec<_>>();
             if failing.is_empty() {
@@ -586,7 +537,6 @@ fn nothing_ran(
     request: &CheckRequest,
     selection: &Selection,
     outcomes: &[GateOutcome],
-    gate_receipts: &[RecordRef],
 ) -> ServiceResponse {
     // Rules are in force, but none runs at pre-commit (command rules run at
     // pre-push): the commit is not blocked on them.
@@ -619,7 +569,6 @@ fn nothing_ran(
     };
     response.data = json!({
         "gates": outcomes,
-        "gate_receipts": gate_receipts,
         "ci": request.ci,
         "selection": selection_json(request, selection),
     });
@@ -676,7 +625,7 @@ pub(crate) fn select_rules(
     let Some(state) = agreement else {
         return Ok(selection);
     };
-    let rule_ids = crate::proof::rule_ids(state);
+    let rule_ids = state.rule_ids();
     for id in &rule_ids {
         selection.rule_ids.insert(id.as_str().to_string());
     }

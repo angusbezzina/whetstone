@@ -1,6 +1,5 @@
-//! The records and receipts the workflows write, and the snapshot and
-//! evidence helpers they bind to. Every receipt carries the commit it ran at,
-//! the rule revision it ran and where its evidence lives.
+//! The records the workflows write, and the snapshot and digest helpers a
+//! check binds its report to.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,15 +9,14 @@ use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use crate::domain::{
-    AgreementRecord, AuthorizationAxis, ContentDigest, EvidenceRef, ExternalRef, ExternalSystem,
-    Freshness, PolicyStateSnapshot, PrincipalKind, PrincipalRef, Proposal, ProposalState,
-    Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, Scope, VerificationAxis,
-    VerificationReceipt, SCHEMA_VERSION_V1,
+    AgreementRecord, ContentDigest, EvidenceRef, PrincipalKind, PrincipalRef, Proposal,
+    ProposalState, Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, Scope,
+    SCHEMA_VERSION_V1,
 };
 use crate::storage::{ProjectLayout, RecordStore, StorageError};
-use crate::verification::{self, Finding, SnapshotBinding, VerificationReport, VerificationState};
 
-use super::{utc_now, ServiceState};
+use super::check::{Finding, SnapshotBinding};
+use super::utc_now;
 
 /// Current UTC time in RFC 3339 form, second precision.
 pub fn utc_timestamp() -> String {
@@ -28,60 +26,6 @@ pub fn utc_timestamp() -> String {
 /// The scope every new record carries: this project only.
 pub(crate) fn project_scope(layout: &ProjectLayout) -> Scope {
     Scope::project(format!("project-{}", &layout.project_id()[..12]))
-}
-
-/// A receipt envelope: candidate-only provenance recorded by a Whetstone
-/// principal, never an agreement.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn receipt_record(
-    layout: &ProjectLayout,
-    id: String,
-    idempotency_key: String,
-    principal: &str,
-    kind: ProvenanceKind,
-    recorded_at: &str,
-    source: EvidenceRef,
-    body: RecordBody,
-) -> Result<AgreementRecord, crate::domain::DomainError> {
-    let principal = PrincipalRef {
-        kind: PrincipalKind::LocalUser,
-        stable_id: principal.into(),
-        display_name: None,
-    };
-    let record = AgreementRecord {
-        schema_version: SCHEMA_VERSION_V1,
-        id: RecordId::new(id)?,
-        revision: 1,
-        scope: project_scope(layout),
-        owner: principal.clone(),
-        provenance: Provenance {
-            kind,
-            recorded_by: principal,
-            recorded_at: recorded_at.into(),
-            sources: vec![source],
-            authority: ProvenanceAuthority::CandidateOnly,
-        },
-        supersedes: None,
-        idempotency_key,
-        body,
-    };
-    record.validate()?;
-    Ok(record)
-}
-
-/// Evidence plus the commit it was produced at, when the repository has one.
-pub(crate) fn with_head(
-    layout: &ProjectLayout,
-    mut evidence: Vec<EvidenceRef>,
-) -> Vec<EvidenceRef> {
-    if let Some(head) = crate::gates::head_commit(layout.project_root()) {
-        evidence.push(EvidenceRef {
-            system: crate::proof::GIT_HEAD_SYSTEM.into(),
-            locator: head,
-            digest: None,
-        });
-    }
-    evidence
 }
 
 /// A short, stable id suffix for a key.
@@ -260,7 +204,7 @@ pub(crate) fn compute_check_snapshot(
             }
         })
         .collect::<Vec<_>>();
-    let code_tree = verification::code_tree_digest(project, &relative_paths)
+    let code_tree = super::check::code_tree_digest(project, &relative_paths)
         .map_err(|error| format!("The code snapshot could not be bound safely: {error}"))?;
     let policy = digest_rule_inputs(project)
         .map_err(|error| error.to_string())
@@ -360,8 +304,8 @@ pub(crate) fn scan_findings(project: &Path, result: &Value) -> Vec<Finding> {
                 expected: description.clone(),
                 rationale: format!("{description} Governing source: {source}."),
                 repair_direction: "Change the reported source within the current task scope so the accepted rule no longer matches.".into(),
-                permitted_next_action: "repair the reported source, then rerun the verification command".into(),
-                verification_command: "wh check --json".into(),
+                permitted_next_action: "repair the reported source, then rerun the check".into(),
+                recheck_command: "wh check --json".into(),
             });
         }
     }
@@ -382,9 +326,8 @@ pub(crate) fn scan_findings(project: &Path, result: &Value) -> Vec<Finding> {
                     "fix",
                     "restore the required checker configuration without weakening the policy",
                 ),
-                permitted_next_action:
-                    "repair checker configuration, then rerun the verification command".into(),
-                verification_command: "wh check --json".into(),
+                permitted_next_action: "repair checker configuration, then rerun the check".into(),
+                recheck_command: "wh check --json".into(),
             });
         }
     }
@@ -399,9 +342,8 @@ pub(crate) fn scan_findings(project: &Path, result: &Value) -> Vec<Finding> {
                 expected: "Every applicable required check must produce current evidence.".into(),
                 rationale: "Skipped required evidence cannot be treated as success.".into(),
                 repair_direction: "Restore a supported deterministic binding for the rule.".into(),
-                permitted_next_action:
-                    "restore the checker binding, then rerun the verification command".into(),
-                verification_command: "wh check --json".into(),
+                permitted_next_action: "restore the checker binding, then rerun the check".into(),
+                recheck_command: "wh check --json".into(),
             });
         }
     }
@@ -418,9 +360,8 @@ pub(crate) fn scan_findings(project: &Path, result: &Value) -> Vec<Finding> {
                 rationale: "Partial scanner evidence cannot establish completion.".into(),
                 repair_direction: "Resolve the warning without narrowing the requested scope."
                     .into(),
-                permitted_next_action: "resolve the warning, then rerun the verification command"
-                    .into(),
-                verification_command: "wh check --json".into(),
+                permitted_next_action: "resolve the warning, then rerun the check".into(),
+                recheck_command: "wh check --json".into(),
             });
         }
     }
@@ -458,127 +399,6 @@ fn finding_path(project: &Path, value: Option<&Value>) -> Option<String> {
     } else {
         Some(relative.to_string_lossy().into_owned())
     }
-}
-
-pub(crate) fn service_state(state: VerificationState) -> ServiceState {
-    match state {
-        VerificationState::Success => ServiceState::Success,
-        VerificationState::Violated => ServiceState::Violated,
-        VerificationState::Unavailable => ServiceState::Unavailable,
-        VerificationState::Unknown => ServiceState::Unknown,
-    }
-}
-
-pub(crate) fn persist_verification_receipt(
-    layout: &ProjectLayout,
-    request_id: &str,
-    report: &VerificationReport,
-    checked_at: &str,
-) -> Result<Option<crate::domain::RecordRef>, StorageError> {
-    if !layout.private_store_exists() {
-        return Ok(None);
-    }
-    let repository = crate::storage::initialize_private(layout)?;
-    // Two checks of one snapshot that ran different gates are different
-    // receipts; only an exact replay (same request, snapshot and results)
-    // returns the existing one.
-    let selection = report
-        .results
-        .iter()
-        .map(|result| format!("{}={:?}", result.requirement_id, result.state))
-        .collect::<Vec<_>>()
-        .join(",");
-    let identity = digest_bytes(
-        format!(
-            "{request_id}\0{selection}\0{}\0{}\0{}\0{}\0{}\0{}",
-            report.snapshot.code_tree.as_str(),
-            report.snapshot.policy.as_str(),
-            report.snapshot.checker_bundle.as_str(),
-            report.snapshot.scope.as_str(),
-            report.snapshot.environment.as_str(),
-            report.snapshot.trust.as_str(),
-        )
-        .as_bytes(),
-    );
-    let suffix = &identity.as_str()["sha256:".len().."sha256:".len() + 32];
-    let idempotency_key = format!("check:{suffix}");
-    if let Some(existing) = repository.by_idempotency_key(&idempotency_key)? {
-        return existing.reference().map(Some).map_err(StorageError::Domain);
-    }
-    let principal = PrincipalRef {
-        kind: PrincipalKind::LocalUser,
-        stable_id: "whetstone:compiled-in-checker".into(),
-        display_name: None,
-    };
-    let verification = match report.state {
-        VerificationState::Success => VerificationAxis::Pass,
-        VerificationState::Violated => VerificationAxis::Fail,
-        VerificationState::Unknown | VerificationState::Unavailable => VerificationAxis::Unknown,
-    };
-    let freshness =
-        if report.results.iter().any(|result| {
-            result.required && result.freshness == verification::EvidenceFreshness::Stale
-        }) {
-            Freshness::Stale
-        } else if report.results.iter().any(|result| {
-            result.required && result.freshness == verification::EvidenceFreshness::Missing
-        }) {
-            Freshness::Missing
-        } else {
-            Freshness::Fresh
-        };
-    let record = AgreementRecord {
-        schema_version: SCHEMA_VERSION_V1,
-        id: RecordId::new(format!("verification.check_{suffix}")).map_err(StorageError::Domain)?,
-        revision: 1,
-        scope: project_scope(layout),
-        owner: principal.clone(),
-        provenance: Provenance {
-            kind: ProvenanceKind::DeterministicCheck,
-            recorded_by: principal,
-            recorded_at: checked_at.into(),
-            sources: vec![EvidenceRef {
-                system: "whetstone_verification_report".into(),
-                locator: report.receipt_id.as_str().into(),
-                digest: Some(report.receipt_id.clone()),
-            }],
-            authority: ProvenanceAuthority::CandidateOnly,
-        },
-        supersedes: None,
-        idempotency_key,
-        body: RecordBody::VerificationReceipt(VerificationReceipt {
-            subject: ExternalRef {
-                system: ExternalSystem::Custom,
-                stable_id: format!("project:{}:check", layout.project_id()),
-                revision: Some(report.receipt_id.as_str().into()),
-            },
-            code_digest: report.snapshot.code_tree.clone(),
-            policy_state: PolicyStateSnapshot {
-                accepted: None,
-                required: None,
-                installed: None,
-                experimental: None,
-            },
-            verification,
-            authorization: AuthorizationAxis::Unknown,
-            freshness,
-            checked_at: checked_at.into(),
-            related_records: report
-                .results
-                .iter()
-                .flat_map(|result| result.governing_records.clone())
-                .collect(),
-            evidence: with_head(
-                layout,
-                vec![EvidenceRef {
-                    system: "whetstone_verification_report".into(),
-                    locator: report.receipt_id.as_str().into(),
-                    digest: Some(report.receipt_id.clone()),
-                }],
-            ),
-        }),
-    };
-    repository.append(&record, None).map(Some)
 }
 
 pub(crate) fn digest_rule_inputs(project: &Path) -> Result<String, std::io::Error> {

@@ -185,45 +185,13 @@ fn proposals_move_forward_only() {
 }
 
 #[test]
-fn imported_notes_and_missing_evidence_cannot_grant_authority_or_pass() {
+fn imported_notes_cannot_grant_authority() {
     let mut imported = record("principle.imported", "100", principle("Blue buttons"));
     imported.provenance.kind = ProvenanceKind::ImportedNote;
     imported.provenance.authority = ProvenanceAuthority::IndependentlyApproved;
     assert_eq!(
         imported.validate(),
         Err(DomainError::ImportedContentCannotGrantAuthority)
-    );
-    let receipt = record(
-        "verification.missing",
-        "100",
-        RecordBody::VerificationReceipt(VerificationReceipt {
-            subject: ExternalRef {
-                system: ExternalSystem::Beads,
-                stable_id: "T-044".into(),
-                revision: Some("4".into()),
-            },
-            code_digest: digest('d'),
-            policy_state: PolicyStateSnapshot {
-                accepted: None,
-                required: None,
-                installed: None,
-                experimental: None,
-            },
-            verification: VerificationAxis::Pass,
-            authorization: AuthorizationAxis::Authorized,
-            freshness: Freshness::Missing,
-            checked_at: "2026-09-09T12:00:00Z".into(),
-            related_records: vec![],
-            evidence: vec![],
-        }),
-    );
-    // Receipts are candidate-only; a pass also needs fresh evidence.
-    assert!(receipt.validate().is_err());
-    let mut candidate = receipt;
-    candidate.provenance.authority = ProvenanceAuthority::CandidateOnly;
-    assert_eq!(
-        candidate.validate(),
-        Err(DomainError::PassRequiresFreshEvidence)
     );
 }
 
@@ -381,6 +349,10 @@ const RETIRED_BODIES: &[(&str, &str)] = &[
     (
         "verification_map",
         r#"{"title":"Feature map","intro":"How the app is driven."}"#,
+    ),
+    (
+        "verification_receipt",
+        r#"{"subject":{"system":"custom","stable_id":"gate:rule.tests"},"verification":"pass","checked_at":"2026-09-09T12:00:00Z"}"#,
     ),
     (
         "rule",

@@ -31,9 +31,9 @@ The public surface is exactly six commands:
 | Command | Purpose |
 | --- | --- |
 | `wh init` | Set up: install what's missing, agree the mission, principles and rules, wire the hooks and CI. |
-| `wh dash` | See rules, checks and the full decision log, and accept or reject drafts. |
+| `wh dash` | See the rules and the full decision log, and accept or reject drafts. |
 | `wh change` | Propose a change to the mission, a principle or a rule as a reviewable draft. |
-| `wh check` | Check work against the rules, return failures to the worker, and record receipts. |
+| `wh check` | Check work against the rules and return failures to the worker. |
 | `wh pull` | Receive the team's shared agreement without touching your drafts. |
 | `wh push` | Share an exact, confirmed selection of accepted records. |
 
@@ -96,7 +96,7 @@ the permitted next actions.
 Records live in Beads (`bd` 1.3.0 or later, embedded Dolt; no `dolt` binary).
 Each record revision is a bead whose metadata carries the typed body, digest,
 supersedes reference and idempotency key; lifecycle is a `wh:lifecycle:*`
-label. Drafts and receipts stay in a private Beads database under
+label. Drafts stay in a private Beads database under
 `.git/whetstone/` that never has a remote. `wh push` copies a confirmed
 package of accepted records into the repository's shared Beads database and
 runs `bd dolt push`. `wh pull` runs `bd dolt pull`. Policy is never committed

@@ -51,8 +51,7 @@
         "standard",
         "proposal",
         "local_review",
-        "retirement",
-        "verification_receipt"
+        "retirement"
       ]
     },
     "record": {
@@ -70,12 +69,6 @@
           "$ref": "#/$defs/standard"
         },
         {
-          "$ref": "#/$defs/feature"
-        },
-        {
-          "$ref": "#/$defs/verification_map"
-        },
-        {
           "$ref": "#/$defs/proposal"
         },
         {
@@ -83,9 +76,6 @@
         },
         {
           "$ref": "#/$defs/retirement"
-        },
-        {
-          "$ref": "#/$defs/verification_receipt"
         }
       ]
     }
@@ -199,22 +189,6 @@
         "properties": {
           "record": {
             "$ref": "#/$defs/retirement"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "record_type": {
-            "const": "verification_receipt"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "record": {
-            "$ref": "#/$defs/verification_receipt"
           }
         }
       }
@@ -378,33 +352,6 @@
         },
         "digest": {
           "$ref": "#/$defs/digest"
-        }
-      }
-    },
-    "external_ref": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "system",
-        "stable_id"
-      ],
-      "properties": {
-        "system": {
-          "enum": [
-            "beads",
-            "github_pull_request",
-            "github_release",
-            "github_check_run",
-            "incident",
-            "deployment",
-            "custom"
-          ]
-        },
-        "stable_id": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "revision": {
-          "type": "string"
         }
       }
     },
@@ -624,84 +571,6 @@
           }
         }
       ]
-    },
-    "policy_state": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "accepted": {
-          "$ref": "#/$defs/record_ref"
-        },
-        "required": {
-          "$ref": "#/$defs/record_ref"
-        },
-        "installed": {
-          "$ref": "#/$defs/record_ref"
-        },
-        "experimental": {
-          "$ref": "#/$defs/record_ref"
-        }
-      }
-    },
-    "verification_receipt": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "subject",
-        "code_digest",
-        "policy_state",
-        "verification",
-        "authorization",
-        "freshness",
-        "checked_at"
-      ],
-      "properties": {
-        "subject": {
-          "$ref": "#/$defs/external_ref"
-        },
-        "code_digest": {
-          "$ref": "#/$defs/digest"
-        },
-        "policy_state": {
-          "$ref": "#/$defs/policy_state"
-        },
-        "verification": {
-          "enum": [
-            "pass",
-            "fail",
-            "unknown"
-          ]
-        },
-        "authorization": {
-          "enum": [
-            "authorized",
-            "denied",
-            "unknown"
-          ]
-        },
-        "freshness": {
-          "enum": [
-            "fresh",
-            "stale",
-            "missing"
-          ]
-        },
-        "checked_at": {
-          "$ref": "#/$defs/timestamp"
-        },
-        "related_records": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/record_ref"
-          }
-        },
-        "evidence": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/evidence_ref"
-          }
-        }
-      }
     },
     "retirement": {
       "type": "object",
@@ -1071,7 +940,8 @@
       "lesson",
       "lesson_check",
       "feature",
-      "verification_map"
+      "verification_map",
+      "verification_receipt"
     ]
   }
 }

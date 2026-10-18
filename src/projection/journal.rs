@@ -7,13 +7,10 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 use crate::agreement::{AgreementState, Lifecycle};
-use crate::domain::{
-    AgreementRecord, LocalReviewVerdict, RecordBody, RecordId, RecordRef, VerificationAxis,
-};
+use crate::domain::{AgreementRecord, LocalReviewVerdict, RecordBody, RecordRef};
 use crate::history::HistoryInspection;
-use crate::proof::{EVIDENCE_SYSTEM, GATE_SUBJECT_PREFIX};
 
-use super::{kind_label, kind_of, record_title, snippet, StateLabel, Tally};
+use super::{kind_label, kind_of, record_title, snippet, StateLabel};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct JournalEntry {
@@ -61,7 +58,6 @@ pub(crate) fn area_of(record: &AgreementRecord) -> &'static str {
         RecordBody::Mission(_) => "mission",
         RecordBody::Principle(_) => "principles",
         RecordBody::Rule(_) | RecordBody::StoredRule(_) | RecordBody::Standard(_) => "rules",
-        RecordBody::VerificationReceipt(_) => "checks",
         RecordBody::Retired(_) => "history",
         _ => "governance",
     }
@@ -180,57 +176,6 @@ fn journal_entry(
             StateLabel::new("muted", "redacted"),
             "governance",
             "This history item is not visible from this boundary.".into(),
-        );
-    }
-    // Check runs: gate receipts and native scans.
-    if records
-        .iter()
-        .all(|record| matches!(record.body, RecordBody::VerificationReceipt(_)))
-    {
-        let mut tally = Tally::default();
-        for record in &records {
-            if let RecordBody::VerificationReceipt(body) = &record.body {
-                match body.verification {
-                    VerificationAxis::Pass => tally.pass += 1,
-                    VerificationAxis::Fail => tally.fail += 1,
-                    VerificationAxis::Unknown => tally.unknown += 1,
-                }
-            }
-        }
-        let status = if tally.fail > 0 {
-            StateLabel::new("fail", "fail")
-        } else if tally.unknown > 0 {
-            StateLabel::new("warn", "unknown")
-        } else {
-            StateLabel::new("pass", "pass")
-        };
-        let rules = records
-            .iter()
-            .filter_map(|record| match &record.body {
-                RecordBody::VerificationReceipt(body) => body
-                    .subject
-                    .stable_id
-                    .strip_prefix(GATE_SUBJECT_PREFIX)
-                    .map(str::to_owned),
-                _ => None,
-            })
-            .collect::<std::collections::BTreeSet<_>>();
-        return base(
-            "verification",
-            format!(
-                "Checks ran: {} pass · {} fail · {} unknown",
-                tally.pass, tally.fail, tally.unknown
-            ),
-            status,
-            "checks",
-            if rules.is_empty() {
-                "Compiled-in scanner run.".into()
-            } else {
-                format!(
-                    "Rules: {}",
-                    rules.into_iter().collect::<Vec<_>>().join(", ")
-                )
-            },
         );
     }
     if let Some(record) = records.first().filter(|_| records.len() == 1) {
@@ -525,12 +470,6 @@ pub fn decision_trail(state: &AgreementState) -> String {
             None => None,
         }
     };
-    let rule_title = |reference: &RecordRef| {
-        state
-            .get(reference)
-            .or_else(|| state.in_force(&reference.id))
-            .map_or_else(|| reference.id.as_str().to_string(), record_title)
-    };
     for record in state.records() {
         let accepted = state.lifecycle_of(record) == Lifecycle::Accepted;
         let id = record.id.as_str().to_string();
@@ -591,60 +530,6 @@ pub fn decision_trail(state: &AgreementState) -> String {
                         body.reason.clone(),
                         format!("whetstone:{}@r{}", record.id.as_str(), record.revision),
                         "retired; history kept".into(),
-                    ],
-                ));
-            }
-            RecordBody::VerificationReceipt(body) => {
-                let gate = body
-                    .subject
-                    .stable_id
-                    .strip_prefix(GATE_SUBJECT_PREFIX)
-                    .map(str::to_owned);
-                let (decision, why) = match &gate {
-                    Some(gate) => {
-                        let statement = body
-                            .policy_state
-                            .accepted
-                            .as_ref()
-                            .map(rule_title)
-                            .or_else(|| {
-                                RecordId::new(gate.as_str())
-                                    .ok()
-                                    .and_then(|id| state.in_force(&id))
-                                    .map(record_title)
-                            })
-                            .unwrap_or_else(|| gate.clone());
-                        (format!("Ran rule {gate}"), statement)
-                    }
-                    None => (
-                        "Ran the compiled-in scanner".into(),
-                        "Applicable deterministic rules.".into(),
-                    ),
-                };
-                let evidence = body
-                    .evidence
-                    .iter()
-                    .filter(|evidence| evidence.system == EVIDENCE_SYSTEM)
-                    .map(|evidence| evidence.locator.clone())
-                    .take(3)
-                    .collect::<Vec<_>>();
-                rows.push((
-                    body.checked_at.clone(),
-                    id.clone(),
-                    [
-                        "checks".into(),
-                        decision,
-                        why,
-                        if evidence.is_empty() {
-                            format!("whetstone:{id}")
-                        } else {
-                            evidence.join(", ")
-                        },
-                        match body.verification {
-                            VerificationAxis::Pass => "pass".into(),
-                            VerificationAxis::Fail => "fail".into(),
-                            VerificationAxis::Unknown => "unknown (not a pass)".into(),
-                        },
                     ],
                 ));
             }

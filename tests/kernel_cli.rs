@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use whetstone::beads::BeadsStore;
-use whetstone::domain::{AgreementRecord, AuthorizationAxis, RecordBody, VerificationAxis};
+use whetstone::domain::{AgreementRecord, RecordBody};
 use whetstone::storage::{ProjectLayout, StoreKind};
 
 mod support;
@@ -1622,7 +1622,7 @@ fn scanner_finds_known_bad_and_accepts_known_good() {
         "expected",
         "repair_direction",
         "permitted_next_action",
-        "verification_command",
+        "recheck_command",
     ] {
         assert!(
             public_bad_json["data"]["report"]["results"][0]["findings"][0][field]
@@ -1630,7 +1630,6 @@ fn scanner_finds_known_bad_and_accepts_known_good() {
                 .is_some_and(|value| !value.is_empty())
         );
     }
-    assert_eq!(public_bad_json["data"]["receipt_persisted"], false);
     let bad_code_digest = public_bad_json["required_snapshot"]["code_digest"]
         .as_str()
         .expect("bad code digest")
@@ -1696,14 +1695,14 @@ fn scanner_finds_known_bad_and_accepts_known_good() {
 }
 
 #[test]
-fn check_persists_one_idempotent_private_receipt_when_storage_exists() {
-    let temp = tempfile::tempdir().expect("create receipt fixture");
+fn a_check_writes_no_record_even_when_storage_exists() {
+    let temp = tempfile::tempdir().expect("create check fixture");
     init_git(temp.path());
     write_rule_project(temp.path(), "def read_config():\n    pass\n");
     let project = temp.path().to_string_lossy();
-    let layout = ProjectLayout::resolve(temp.path()).expect("resolve receipt fixture");
+    let layout = ProjectLayout::resolve(temp.path()).expect("resolve check fixture");
     BeadsStore::initialize(&layout.private_store(), StoreKind::Private)
-        .expect("initialize receipt store explicitly");
+        .expect("initialize the private store explicitly");
 
     let args = [
         "check",
@@ -1720,27 +1719,20 @@ fn check_persists_one_idempotent_private_receipt_when_storage_exists() {
     let first = json(&run(&args, temp.path()));
     let second = json(&run(&args, temp.path()));
     assert_eq!(first["state"], "success");
-    assert_eq!(first["data"]["receipt_persisted"], true);
+    assert_eq!(second["state"], "success");
     assert_eq!(
-        first["data"]["receipt_record"],
-        second["data"]["receipt_record"]
+        first["data"]["report"]["state"],
+        second["data"]["report"]["state"]
     );
-
     let private = BeadsStore::initialize(&layout.private_store(), StoreKind::Private)
         .expect("open private store");
-    let receipts = private
-        .all_records()
-        .expect("read private records")
-        .into_iter()
-        .filter_map(|record| match record.body {
-            RecordBody::VerificationReceipt(receipt) => Some(receipt),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(receipts.len(), 1);
-    assert_eq!(receipts[0].verification, VerificationAxis::Pass);
-    assert_eq!(receipts[0].authorization, AuthorizationAxis::Unknown);
-    assert_eq!(receipts[0].evidence.len(), 1);
+    assert!(
+        private
+            .all_records()
+            .expect("read private records")
+            .is_empty(),
+        "a check is its report, never a record"
+    );
 }
 
 #[test]
@@ -2076,12 +2068,6 @@ fn staged_check_reads_the_index_and_ignores_unstaged_edits() {
     );
     assert_eq!(gate(&staged, "rule.lowercase-functions")["state"], "pass");
     assert_eq!(staged["data"]["scanner_included"], false);
-    // The index is not a commit yet: pre-commit records no receipt.
-    assert_eq!(staged["data"]["gate_receipts"], serde_json::json!([]));
-    assert!(!repo
-        .records()
-        .iter()
-        .any(|record| matches!(record.body, RecordBody::VerificationReceipt(_))));
 
     // The working tree has the violation, and a full check says so.
     let (code, working) = repo.check(&["--rule", "rule.lowercase-functions"]);

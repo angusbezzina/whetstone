@@ -275,7 +275,6 @@ fn record_links(record: &AgreementRecord) -> Vec<RecordRef> {
     let mut links = record.supersedes.iter().cloned().collect::<Vec<_>>();
     match &record.body {
         RecordBody::Proposal(body) => links.extend(body.proposed_records.clone()),
-        RecordBody::VerificationReceipt(body) => links.extend(body.related_records.clone()),
         RecordBody::Retirement(body) => {
             links.push(body.target.clone());
             links.extend(body.replacement.clone());

@@ -20,10 +20,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::domain::{
-    ContentDigest, Enforcer, EvidenceRef, RecordId, Rule, Strength, VerificationAxis,
-};
-use crate::proof::{ArtifactFailure, GateArtifact, EVIDENCE_SYSTEM};
+use crate::domain::{ContentDigest, Enforcer, EvidenceRef, RecordId, Rule, Strength};
 use crate::storage::ProjectLayout;
 
 pub mod ast;
@@ -32,6 +29,8 @@ pub mod lint;
 
 pub use files::{FileSet, Source};
 
+/// Evidence system of artifacts written under the private evidence root.
+pub const EVIDENCE_SYSTEM: &str = "whetstone_evidence";
 pub const DEFAULT_GATE_TIMEOUT: Duration = Duration::from_secs(900);
 const OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
 const MAX_FAILURES: usize = 20;
@@ -400,6 +399,23 @@ pub fn gate_environment(extra: &[(&str, String)]) -> BTreeMap<String, String> {
     environment
 }
 
+/// What one gate run established; anything short of a pass with evidence is
+/// fail or unknown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GateState {
+    Pass,
+    Fail,
+    Unknown,
+}
+
+/// Where a gate failed and what it said.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ArtifactFailure {
+    pub location: String,
+    pub message: String,
+}
+
 /// Everything a gate run needs, prepared once per `wh check`.
 pub struct GateContext<'a> {
     pub project_root: &'a Path,
@@ -419,7 +435,7 @@ pub struct GateOutcome {
     pub strength: Strength,
     pub mechanism: String,
     pub command: String,
-    pub state: VerificationAxis,
+    pub state: GateState,
     pub summary: String,
     pub failures: Vec<ArtifactFailure>,
     pub evidence: Vec<EvidenceRef>,
@@ -438,7 +454,7 @@ impl GateOutcome {
             strength: rule.strength,
             mechanism,
             command,
-            state: VerificationAxis::Unknown,
+            state: GateState::Unknown,
             summary: String::new(),
             failures: Vec::new(),
             evidence: Vec::new(),
@@ -450,7 +466,7 @@ impl GateOutcome {
     }
 
     pub fn unknown(mut self, summary: impl Into<String>) -> Self {
-        self.state = VerificationAxis::Unknown;
+        self.state = GateState::Unknown;
         self.summary = summary.into();
         self
     }
@@ -631,11 +647,6 @@ fn finish(
         .iter()
         .map(|evidence| evidence.locator.clone())
         .collect::<Vec<_>>();
-    let artifact = GateArtifact {
-        summary: outcome.summary.clone(),
-        failures: outcome.failures.clone(),
-        files,
-    };
     let document = json!({
         "schema": "whetstone.gate-run.v1",
         "gate": outcome.id,
@@ -643,9 +654,9 @@ fn finish(
         "mechanism": outcome.mechanism,
         "command": outcome.command,
         "state": outcome.state,
-        "summary": artifact.summary,
-        "failures": artifact.failures,
-        "files": artifact.files,
+        "summary": outcome.summary,
+        "failures": outcome.failures,
+        "files": files,
         "exit_code": outcome.exit_code,
         "elapsed_ms": outcome.elapsed_ms,
         "program": outcome.program,
@@ -660,8 +671,8 @@ fn finish(
         Err(error) => return outcome.unknown(format!("Evidence could not be written: {error}")),
     }
     // A pass requires evidence by construction; make it explicit anyway.
-    if outcome.state == VerificationAxis::Pass && outcome.evidence.is_empty() {
-        outcome.state = VerificationAxis::Unknown;
+    if outcome.state == GateState::Pass && outcome.evidence.is_empty() {
+        outcome.state = GateState::Unknown;
         outcome.summary = "The gate reported success without evidence.".into();
     }
     outcome
@@ -733,7 +744,7 @@ fn run_command_gate(
     } else if let (Some(code), Some(reporter)) = (lint_code, reporter) {
         match lint::findings(reporter, &run.output, code) {
             Ok(found) if !found.is_empty() => {
-                outcome.state = VerificationAxis::Fail;
+                outcome.state = GateState::Fail;
                 outcome.summary = format!(
                     "The linter reported {code} {} time(s) ({}).",
                     found.len(),
@@ -742,7 +753,7 @@ fn run_command_gate(
                 outcome.failures = found;
             }
             Ok(_) if run.exit_code == Some(0) || reporter != lint::Reporter::Text => {
-                outcome.state = VerificationAxis::Pass;
+                outcome.state = GateState::Pass;
                 outcome.summary = format!("The linter reported no {code} ({}).", reporter.label());
             }
             Ok(_) => {
@@ -760,11 +771,11 @@ fn run_command_gate(
     } else {
         match run.exit_code {
             Some(0) => {
-                outcome.state = VerificationAxis::Pass;
+                outcome.state = GateState::Pass;
                 outcome.summary = format!("Passed in {:.1}s.", run.elapsed_ms as f64 / 1000.0);
             }
             Some(code) => {
-                outcome.state = VerificationAxis::Fail;
+                outcome.state = GateState::Fail;
                 outcome.failures = extract_failures(context.project_root, &run.output);
                 if outcome.failures.is_empty() {
                     outcome.failures.push(ArtifactFailure {
@@ -816,7 +827,7 @@ fn run_ast_gate(
             if run.files_checked == 0
                 && (context.files.source == Source::Staged || !context.changed.is_empty()) =>
         {
-            outcome.state = VerificationAxis::Pass;
+            outcome.state = GateState::Pass;
             outcome.summary = format!(
                 "The change touches no {} file in scope, so it cannot break this rule.",
                 run.languages.join(" or ")
@@ -829,7 +840,7 @@ fn run_ast_gate(
             ));
         }
         Ok(run) if !run.failures.is_empty() => {
-            outcome.state = VerificationAxis::Fail;
+            outcome.state = GateState::Fail;
             outcome.summary = format!(
                 "The AST query matched {} time(s) in {} file(s).",
                 run.failures.len(),
@@ -838,7 +849,7 @@ fn run_ast_gate(
             outcome.failures = run.failures;
         }
         Ok(run) => {
-            outcome.state = VerificationAxis::Pass;
+            outcome.state = GateState::Pass;
             outcome.summary = format!(
                 "The AST query found nothing in {} file(s).",
                 run.files_checked
@@ -877,7 +888,7 @@ fn run_scanner_rule_gate(
             "No scanner rule named {scanner_rule} applied; bind the rule to an AST query or an existing rule in whetstone/rules."
         ));
     } else if violations > 0 {
-        outcome.state = VerificationAxis::Fail;
+        outcome.state = GateState::Fail;
         outcome.summary = format!("The scanner rule reported {violations} violation(s).");
         outcome.failures = result
             .get("violations")
@@ -904,7 +915,7 @@ fn run_scanner_rule_gate(
             })
             .unwrap_or_default();
     } else {
-        outcome.state = VerificationAxis::Pass;
+        outcome.state = GateState::Pass;
         outcome.summary = format!("The scanner applied {rules} rule(s) without violations.");
     }
     let log = serde_json::to_string_pretty(&result).unwrap_or_default();
@@ -984,12 +995,8 @@ mod tests {
         };
         let missing = "whetstone-no-such-program-7f3a";
         let clean = files(&[("lib.rs", "pub fn run(a: u8) -> u8 { a }\n")]);
-        let (pass, fail, unknown) = (
-            VerificationAxis::Pass,
-            VerificationAxis::Fail,
-            VerificationAxis::Unknown,
-        );
-        let cases: Vec<(&str, VerificationAxis, VerificationAxis)> = vec![
+        let (pass, fail, unknown) = (GateState::Pass, GateState::Fail, GateState::Unknown);
+        let cases: Vec<(&str, GateState, GateState)> = vec![
             (
                 "ast",
                 run(

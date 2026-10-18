@@ -252,7 +252,7 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
             "--content",
             "The journey is proven",
             "--rationale",
-            "proof over claims",
+            "evidence over claims",
             "--definition",
             r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"git --version"}}"#,
         ],

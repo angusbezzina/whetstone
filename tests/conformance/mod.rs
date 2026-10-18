@@ -14,10 +14,9 @@
 
 use whetstone::agreement::AgreementState;
 use whetstone::domain::{
-    AgreementRecord, AuthorizationAxis, ContentDigest, Enforcer, EvidenceRef, ExternalRef,
-    ExternalSystem, Freshness, PolicyStateSnapshot, PrincipalKind, PrincipalRef, Provenance,
-    ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, RecordRef, Rule, RuleSource, Scope,
-    Strength, VerificationAxis, VerificationReceipt, RULE_SCHEMA_V2, SCHEMA_VERSION_V1,
+    AgreementRecord, Enforcer, EvidenceRef, PrincipalKind, PrincipalRef, Proposal, ProposalState,
+    Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, RecordRef, Rule,
+    RuleSource, Scope, Strength, RULE_SCHEMA_V2, SCHEMA_VERSION_V1,
 };
 use whetstone::storage::{AppendRequest, RecordStore, StorageError, StoreKind};
 
@@ -41,7 +40,6 @@ fn owner() -> PrincipalRef {
 }
 
 pub fn record(id: &str, revision: u64, key: &str, body: RecordBody) -> AgreementRecord {
-    let receipt = body.is_receipt();
     AgreementRecord {
         schema_version: SCHEMA_VERSION_V1,
         id: RecordId::new(id).expect("id"),
@@ -49,11 +47,7 @@ pub fn record(id: &str, revision: u64, key: &str, body: RecordBody) -> Agreement
         scope: Scope::project("fixture"),
         owner: owner(),
         provenance: Provenance {
-            kind: if receipt {
-                ProvenanceKind::DeterministicCheck
-            } else {
-                ProvenanceKind::HumanAuthored
-            },
+            kind: ProvenanceKind::HumanAuthored,
             recorded_by: owner(),
             recorded_at: "2026-10-17T12:00:00Z".into(),
             sources: vec![EvidenceRef {
@@ -61,11 +55,7 @@ pub fn record(id: &str, revision: u64, key: &str, body: RecordBody) -> Agreement
                 locator: "conformance".into(),
                 digest: None,
             }],
-            authority: if receipt {
-                ProvenanceAuthority::CandidateOnly
-            } else {
-                ProvenanceAuthority::OwnerAuthored
-            },
+            authority: ProvenanceAuthority::OwnerAuthored,
         },
         supersedes: None,
         idempotency_key: key.into(),
@@ -91,26 +81,14 @@ pub fn rule(statement: &str) -> RecordBody {
     })
 }
 
-pub fn receipt(subject: &RecordRef) -> RecordBody {
-    RecordBody::VerificationReceipt(VerificationReceipt {
-        subject: ExternalRef {
-            system: ExternalSystem::Custom,
-            stable_id: format!("gate:{}", subject.id.as_str()),
-            revision: None,
-        },
-        code_digest: ContentDigest::new(format!("sha256:{}", "a".repeat(64))).expect("digest"),
-        policy_state: PolicyStateSnapshot {
-            accepted: Some(subject.clone()),
-            required: None,
-            installed: None,
-            experimental: None,
-        },
-        verification: VerificationAxis::Fail,
-        authorization: AuthorizationAxis::Unknown,
-        freshness: Freshness::Fresh,
-        checked_at: "2026-10-17T12:01:00Z".into(),
-        related_records: vec![subject.clone()],
-        evidence: Vec::new(),
+/// A draft proposing `subject`: a decision, whose lifecycle is operational.
+pub fn proposal(subject: &RecordRef) -> RecordBody {
+    RecordBody::Proposal(Proposal {
+        state: ProposalState::Draft,
+        title: format!("Propose {}", subject.id.as_str()),
+        rationale: "Conformance.".into(),
+        proposed_records: vec![subject.clone()],
+        binding: None,
     })
 }
 
@@ -275,12 +253,12 @@ pub fn lifecycle_follows_the_kernel(harness: &dyn Harness) {
     );
     store.append(&first, None).expect("first");
     let check = record(
-        "receipt.conformance-life",
+        "proposal.conformance-life",
         1,
-        "conformance:life:receipt",
-        receipt(&reference(&first)),
+        "conformance:life:proposal",
+        proposal(&reference(&first)),
     );
-    store.append(&check, None).expect("receipt");
+    store.append(&check, None).expect("proposal");
     assert_eq!(
         store
             .lifecycle_view(&reference(&first))
@@ -325,13 +303,6 @@ pub fn copies_cross_from_private_to_shareable(harness: &dyn Harness) {
         rule("Share me."),
     );
     private.append(&first, None).expect("first");
-    let check = record(
-        "receipt.conformance-copy",
-        1,
-        "conformance:copy:receipt",
-        receipt(&reference(&first)),
-    );
-    private.append(&check, None).expect("receipt");
     let copied = private
         .copy_to(shareable, &[reference(&first)], &[])
         .expect("copy");
@@ -344,10 +315,6 @@ pub fn copies_cross_from_private_to_shareable(harness: &dyn Harness) {
         .copy_to(shareable, &[reference(&first)], &[])
         .expect("repeat")
         .is_empty());
-    assert!(matches!(
-        private.copy_to(shareable, &[reference(&check)], &[]),
-        Err(StorageError::InvalidProjectionBoundary)
-    ));
     assert!(matches!(
         shareable.copy_to(private, &[reference(&first)], &[]),
         Err(StorageError::InvalidProjectionBoundary)

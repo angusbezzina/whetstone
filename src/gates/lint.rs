@@ -8,7 +8,7 @@
 
 use serde_json::Value;
 
-use crate::proof::ArtifactFailure;
+use super::ArtifactFailure;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reporter {

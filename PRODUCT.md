@@ -30,7 +30,7 @@ Mechanism that makes it different:
   skill and pstack's skills.
 - Network calls stay in the driver.
 - Deterministic, replayable work (schemas, state transitions, check
-  execution, receipts) stays in typed services.
+  execution) stays in typed services.
 - Only a mechanical pass passes a must rule.
 - Unknown, stale, skipped or unavailable evidence is never reported as
   success.
@@ -57,7 +57,7 @@ console, or CI replacement.
 
 ## Surfaces
 
-The dashboard has four views for the delegation plan
+The dashboard has three views for the delegation plan
 (`planning/direction-demo/index.html` is the reference, built from the
 product's own dashboard files):
 
@@ -70,12 +70,7 @@ product's own dashboard files):
    then rules grouped by strength, each showing its enforcer and where it
    runs. Editing creates a local draft with exact before/after
    review; it never silently overwrites an accepted rule.
-3. **Checks**: execution only. It shows:
-   - the last run per rule (pass, flag, fail, unknown, not checked, stale);
-   - what failed;
-   - the exact recheck route;
-   - the repair brief to hand to the current agent.
-4. **Changelog**: the decision log, newest first, grouped by day. It includes
+3. **Changelog**: the decision log, newest first, grouped by day. It includes
    strength changes and redactions. Exact records sit behind disclosure.
 
 ## Durable constraints
@@ -96,7 +91,7 @@ product's own dashboard files):
 
 Mission, principle (a pstack principle or the owner's own), exemplar codebase,
 rule (one strength must/should and one mechanical enforcer), flag,
-check (a run of rules), receipt, local draft, accepted,
+check (a run of rules), finding, local draft, accepted,
 superseded, owner.
 
 ## Brand commitments

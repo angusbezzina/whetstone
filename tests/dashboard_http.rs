@@ -1,8 +1,7 @@
 //! The dashboard's HTTP service: loopback bootstrap, host, origin, session
-//! and CSRF gates, hosted read-only mode, the static shell's security
-//! headers, and the JSON API over the same command service the CLI uses
-//! (inspection, init agree, rule changes and reviews, checks, flag labels
-//! and Beads task queueing). Asset markup is deliberately not asserted here.
+//! and CSRF gates, the static shell's security headers, and the JSON API over
+//! the same command service the CLI uses (inspection, init agree, rule
+//! changes and reviews). Asset markup is deliberately not asserted here.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -13,15 +12,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use whetstone::beads::BeadsStore;
 use whetstone::dashboard::{BackendResponse, DashboardBackend, DashboardHandle, DashboardMode};
 use whetstone::dashboard_service::CommandDashboardBackend;
-use whetstone::domain::{RecordBody, RecordId};
 use whetstone::service::{
     CommandService, DashRequest, InitAction, InitRequest, ServiceRequest, ServiceResponse,
     ServiceState,
 };
-use whetstone::storage::{ProjectLayout, StoreKind};
+use whetstone::storage::ProjectLayout;
 
 const MISSION: &str = "Make project intent inspectable.";
 const CUSTOM_PRINCIPLE: &str = "Evidence before assertion.";
@@ -499,50 +496,6 @@ fn the_shell_loads_under_its_csp_without_inline_code_or_markup_writes() {
 }
 
 #[test]
-fn hosted_mode_refuses_unsafe_configuration_and_remains_read_only() {
-    let backend = Arc::new(Backend::default());
-    let invalid = DashboardHandle::start(
-        DashboardMode::Hosted {
-            bind: "127.0.0.1:0".parse().expect("address"),
-            expected_host: "dash.example.test".into(),
-            public_origin: "http://dash.example.test".into(),
-            authenticated_tls_boundary: false,
-            read_only: false,
-        },
-        backend.clone(),
-    );
-    assert!(invalid.is_err());
-
-    let handle = DashboardHandle::start(
-        DashboardMode::Hosted {
-            bind: "127.0.0.1:0".parse().expect("address"),
-            expected_host: "dash.example.test".into(),
-            public_origin: "https://dash.example.test".into(),
-            authenticated_tls_boundary: true,
-            read_only: true,
-        },
-        backend.clone(),
-    )
-    .expect("hosted inspection server");
-    let response = send(
-        handle.address(),
-        "GET / HTTP/1.1\r\nHost: dash.example.test\r\nX-Forwarded-Proto: https\r\nX-Whetstone-Authenticated: true\r\n\r\n",
-    );
-    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
-    let inspection = send(
-        handle.address(),
-        "GET /api/inspect HTTP/1.1\r\nHost: dash.example.test\r\nX-Forwarded-Proto: https\r\nX-Whetstone-Authenticated: true\r\n\r\n",
-    );
-    assert!(inspection.contains("shared-service"));
-    let mutation = send(
-        handle.address(),
-        "POST /api/command HTTP/1.1\r\nHost: dash.example.test\r\nOrigin: https://dash.example.test\r\nSec-Fetch-Site: same-origin\r\nX-Forwarded-Proto: https\r\nX-Whetstone-Authenticated: true\r\nContent-Length: 2\r\n\r\n{}",
-    );
-    assert!(!mutation.starts_with("HTTP/1.1 200"), "{mutation}");
-    assert_eq!(backend.mutations.load(Ordering::Relaxed), 0);
-}
-
-#[test]
 fn repeated_launch_and_owned_shutdown_do_not_touch_another_server() {
     let first = DashboardHandle::start(
         DashboardMode::Local {
@@ -961,7 +914,7 @@ fn dashboard_history_query_rejects_unknown_fields_and_marks_invalid_time_unknown
 }
 
 #[test]
-fn a_rule_change_is_drafted_accepted_checked_and_flagged() {
+fn a_rule_change_is_drafted_and_accepted() {
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
     install_private_agreement(temp.path());
@@ -1091,143 +1044,11 @@ fn a_rule_change_is_drafted_accepted_checked_and_flagged() {
     assert_eq!(rule["lifecycle"], "accepted", "{rule}");
     assert_eq!(rule["examples"].as_array().map(Vec::len), Some(1));
 
-    // A check through the dashboard runs every in-force rule; a should-rule
-    // failure is a flag, not a failed check.
-    let check = session.command(&json!({
-        "workflow": "check",
-        "request_id": "dash-check",
-        "mode": "all"
-    }));
-    assert_ne!(check["state"], "violated", "{}", check["summary"]);
-    assert_eq!(check["data"]["selection"]["mode"], "all", "{check}");
-    let selected = check["data"]["selection"]["rules"]
-        .as_array()
-        .expect("rules");
-    assert!(
-        selected.contains(&json!("rule.always-flags")),
-        "{selected:?}"
+    // Checks run from the CLI and the Git gates, never from the dashboard.
+    let check = session.raw_command(
+        &json!({"workflow": "check", "request_id": "dash-check", "mode": "all"}).to_string(),
     );
-    assert!(
-        selected.contains(&json!("rule.prove-it-works")),
-        "{selected:?}"
-    );
-    assert_eq!(
-        check["data"]["flags"],
-        json!(["rule.always-flags"]),
-        "{}",
-        check["data"]
-    );
-    let gate = check["data"]["gates"]
-        .as_array()
-        .expect("gates")
-        .iter()
-        .find(|gate| gate["id"] == "rule.always-flags")
-        .expect("the should rule ran")
-        .clone();
-    assert_eq!(gate["state"], "fail");
-    assert_eq!(gate["strength"], "should");
-
-    assert!(
-        gate_receipt_for(&project, &check, "rule.always-flags").starts_with("verification.gate_")
-    );
-}
-
-/// The gate receipt a check persisted for one rule, read from the private
-/// store by its `gate:<rule>` subject.
-fn gate_receipt_for(project: &Path, check: &Value, rule: &str) -> String {
-    let layout = ProjectLayout::resolve(project).expect("layout");
-    let store = BeadsStore::open_existing(&layout.private_store(), StoreKind::Private)
-        .expect("private store");
-    let receipts = check["data"]["gate_receipts"]
-        .as_array()
-        .expect("gate receipts");
-    let matching = receipts
-        .iter()
-        .filter_map(|reference| {
-            let id = reference["id"].as_str()?;
-            let record = store.latest(&RecordId::new(id).ok()?).ok().flatten()?;
-            match record.body {
-                RecordBody::VerificationReceipt(body)
-                    if body.subject.stable_id == format!("gate:{rule}") =>
-                {
-                    Some(id.to_string())
-                }
-                _ => None,
-            }
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(matching.len(), 1, "one receipt for {rule} in {receipts:?}");
-    matching[0].clone()
-}
-
-#[test]
-fn a_check_of_only_should_rules_still_reports_its_flags() {
-    // "State = must rules only; should-rule failures are listed in
-    // data.flags and do not fail the check" holds even when the selection
-    // has no must rule at all.
-    let temp = tempfile::tempdir().expect("temp project");
-    init_git(temp.path());
-    install_private_agreement(temp.path());
-    let session = Session::open(start(temp.path(), true));
-    let drafted = session.confirmed_change(json!({
-        "workflow": "change",
-        "request_id": "dash-should-only",
-        "kind": "rule",
-        "record_id": "rule.should-only",
-        "content": "The fixture command must succeed.",
-        "rationale": "A should rule whose check always fails.",
-        "definition": {"type": "rule", "strength": "should", "enforcer": {"kind": "test", "command": "false"}}
-    }));
-    let proposal = drafted["data"]["proposal"]["id"].clone();
-    let accepted = session.command(&json!({
-        "workflow": "change",
-        "request_id": "dash-should-only-accept",
-        "review": {"proposal": proposal, "verdict": "accept"}
-    }));
-    assert_eq!(accepted["state"], "success", "{accepted}");
-    let check = session.command(&json!({
-        "workflow": "check",
-        "request_id": "dash-should-only-check",
-        "rules": ["rule.should-only"]
-    }));
-    assert_ne!(check["state"], "violated", "{check}");
-    assert_eq!(
-        check["data"]["flags"],
-        json!(["rule.should-only"]),
-        "{check}"
-    );
-}
-
-#[test]
-fn check_modes_reach_the_service_as_changed_staged_and_sweep() {
-    let temp = tempfile::tempdir().expect("temp project");
-    init_git(temp.path());
-    install_private_agreement(temp.path());
-    let session = Session::open(start(temp.path(), true));
-    for mode in ["all", "changed", "staged", "sweep"] {
-        let check = session.command(&json!({
-            "workflow": "check",
-            "request_id": format!("dash-mode-{mode}"),
-            "mode": mode
-        }));
-        assert_eq!(check["workflow"], "check", "{mode}");
-        assert_eq!(
-            check["data"]["selection"]["mode"], mode,
-            "{mode}: {}",
-            check["data"]
-        );
-    }
-    // Staged runs only content checks: the test-command starter waits for
-    // pre-push.
-    let staged = session.command(&json!({
-        "workflow": "check",
-        "request_id": "dash-mode-staged-2",
-        "mode": "staged"
-    }));
-    let rules = staged["data"]["selection"]["rules"]
-        .as_array()
-        .expect("rules");
-    assert!(rules.is_empty(), "{rules:?}");
+    assert!(check.starts_with("HTTP/1.1 400"), "{check}");
 }
 
 #[test]
@@ -1274,64 +1095,6 @@ fn mutations_are_observed_but_inspections_and_rejected_bodies_are_not() {
         seen.lock().expect("observer").as_slice(),
         ["init:observed-init"]
     );
-}
-
-#[test]
-fn evidence_is_served_only_from_inside_the_evidence_root() {
-    let temp = tempfile::tempdir().expect("temp project");
-    init_git(temp.path());
-    let layout = ProjectLayout::resolve(temp.path()).expect("layout");
-    let root = whetstone::gates::evidence_root(&layout);
-    std::fs::create_dir_all(root.join("run1")).expect("run dir");
-    std::fs::write(root.join("run1/shot.png"), b"\x89PNG proof").expect("shot");
-    std::fs::write(root.join("run1/gate.log"), b"passed").expect("log");
-    std::fs::write(root.join("run1/tool.sh"), b"#!/bin/sh").expect("script");
-    let outside = temp.path().join("secret.png");
-    std::fs::write(&outside, b"private").expect("outside");
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&outside, root.join("run1/link.png")).expect("symlink");
-    let backend = CommandDashboardBackend::new(temp.path().to_path_buf(), None);
-    let shot = backend.evidence("run1/shot.png");
-    assert_eq!((shot.status, shot.content_type), (200, "image/png"));
-    assert_eq!(shot.body, b"\x89PNG proof");
-    assert_eq!(backend.evidence("run1/gate.log").status, 200);
-    for refused in [
-        "run1/tool.sh",
-        "../secret.png",
-        "run1/../../secret.png",
-        "/etc/passwd.txt",
-        "run1/link.png",
-        "run1/missing.png",
-        "run1/%2e%2e/secret.png",
-    ] {
-        assert_eq!(
-            backend.evidence(refused).status,
-            404,
-            "{refused} was served"
-        );
-    }
-    // The same boundary holds over HTTP.
-    let handle = DashboardHandle::start(
-        DashboardMode::Local {
-            allow_mutations: false,
-        },
-        Arc::new(backend),
-    )
-    .expect("dashboard");
-    let host = host(&handle);
-    let served = send(
-        handle.address(),
-        &format!("GET /api/evidence/run1/gate.log HTTP/1.1\r\nHost: {host}\r\n\r\n"),
-    );
-    assert!(
-        served.starts_with("HTTP/1.1 200") && served.ends_with("passed"),
-        "{served}"
-    );
-    let refused = send(
-        handle.address(),
-        &format!("GET /api/evidence/run1/link.png HTTP/1.1\r\nHost: {host}\r\n\r\n"),
-    );
-    assert!(refused.starts_with("HTTP/1.1 404"), "{refused}");
 }
 
 #[test]

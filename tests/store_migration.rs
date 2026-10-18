@@ -254,7 +254,7 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
     );
 
     // ── Beads holds every kind: agreement, proposal, review, retirement,
-    // plus a draft and receipts that never travel. ──
+    // plus a draft that never travels. ──
     // A test command, so the prove-it-works starter is offered.
     std::fs::write(root.join("package.json"), r#"{"scripts":{"test":"true"}}"#)
         .expect("package.json");
@@ -462,10 +462,6 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
     ] {
         assert!(types.contains(kind), "{kind} is exported: {types:?}");
     }
-    assert!(
-        !types.contains("verification_receipt"),
-        "a receipt never travels: {types:?}"
-    );
     // Each revision carries its resolved lifecycle view, not "accepted".
     let lifecycle_of = |id: &str| {
         exported

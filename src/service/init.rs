@@ -31,9 +31,6 @@ pub(crate) struct Progress {
     pub(crate) setup_complete: bool,
     pub(crate) missing_decisions: Vec<String>,
     pub(crate) agreement_records: Vec<RecordRef>,
-    /// A passing rule run at the current workspace: the loop is proven.
-    pub(crate) first_proof: Option<RecordRef>,
-    pub(crate) proof_status: String,
     pub(crate) hooks: crate::wire::GitHooks,
     pub(crate) shared: bool,
     #[serde(skip)]
@@ -77,30 +74,8 @@ pub(crate) fn progress(layout: &ProjectLayout, records: Option<&[AgreementRecord
         .map(|reference| reference.revision)
         .max()
         .unwrap_or(0);
-    let fingerprint = crate::gates::workspace_fingerprint(root).ok();
-    let mut first_proof = None;
-    let mut stale = false;
-    for record in state.records().iter().rev() {
-        let RecordBody::VerificationReceipt(receipt) = &record.body else {
-            continue;
-        };
-        if !receipt
-            .subject
-            .stable_id
-            .starts_with(crate::proof::GATE_SUBJECT_PREFIX)
-            || receipt.verification != crate::domain::VerificationAxis::Pass
-        {
-            continue;
-        }
-        if receipt.subject.revision.as_deref() == fingerprint.as_deref() {
-            first_proof = record.reference().ok();
-            break;
-        }
-        stale = true;
-    }
     let agreement_complete = missing.is_empty();
-    let setup_complete =
-        agreement_complete && hooks.pre_commit && hooks.pre_push && first_proof.is_some();
+    let setup_complete = agreement_complete && hooks.pre_commit && hooks.pre_push;
     let catalogue = crate::catalogue::catalogue(root);
     let starters = crate::starter::starters(root)
         .into_iter()
@@ -210,16 +185,6 @@ pub(crate) fn progress(layout: &ProjectLayout, records: Option<&[AgreementRecord
         setup_complete,
         missing_decisions: missing,
         agreement_records,
-        proof_status: if first_proof.is_some() {
-            "a rule ran and passed against the current workspace".into()
-        } else if stale {
-            "a rule passed before, but the workspace changed since; run wh check".into()
-        } else if agreement_complete {
-            "no rule has passed yet; run wh check".into()
-        } else {
-            "no agreement yet, so nothing has been checked".into()
-        },
-        first_proof,
         hooks,
         shared: false,
         onboarding,

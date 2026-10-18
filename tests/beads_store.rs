@@ -14,12 +14,11 @@ use whetstone::beads::{
     ascii_json, ensure_bd_version, BeadsStore, METADATA_SCHEMA, MINIMUM_BD_VERSION, MIN_BD_VERSION,
 };
 use whetstone::domain::{
-    AgreementRecord, AuthorizationAxis, ContentDigest, DomainError, Enforcer, EvidenceRef,
-    ExternalRef, ExternalSystem, Freshness, LocalReview, LocalReviewVerdict, Mission,
-    PolicyStateSnapshot, PrincipalKind, PrincipalRef, Principle, PrincipleSource, Proposal,
-    ProposalState, Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId,
-    RecordRef, RetiredRecord, Rule, RuleSource, Scope, Strength, VerificationAxis,
-    VerificationReceipt, LOCAL_REVIEW_ASSURANCE, RETIRED_KINDS, RULE_SCHEMA_V2, SCHEMA_VERSION_V1,
+    AgreementRecord, DomainError, Enforcer, EvidenceRef, LocalReview, LocalReviewVerdict, Mission,
+    PrincipalKind, PrincipalRef, Principle, PrincipleSource, Proposal, ProposalState, Provenance,
+    ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, RecordRef, RetiredRecord, Rule,
+    RuleSource, Scope, Strength, LOCAL_REVIEW_ASSURANCE, RETIRED_KINDS, RULE_SCHEMA_V2,
+    SCHEMA_VERSION_V1,
 };
 use whetstone::storage::{AppendRequest, RecordStore, StorageError, StoreKind};
 
@@ -34,7 +33,6 @@ fn owner() -> PrincipalRef {
 }
 
 fn record(id: &str, revision: u64, key: &str, body: RecordBody) -> AgreementRecord {
-    let receipt = body.is_receipt();
     AgreementRecord {
         schema_version: SCHEMA_VERSION_V1,
         id: RecordId::new(id).expect("id"),
@@ -42,11 +40,7 @@ fn record(id: &str, revision: u64, key: &str, body: RecordBody) -> AgreementReco
         scope: Scope::project("fixture"),
         owner: owner(),
         provenance: Provenance {
-            kind: if receipt {
-                ProvenanceKind::DeterministicCheck
-            } else {
-                ProvenanceKind::HumanAuthored
-            },
+            kind: ProvenanceKind::HumanAuthored,
             recorded_by: owner(),
             recorded_at: "2026-09-10T12:00:00Z".into(),
             sources: vec![EvidenceRef {
@@ -54,12 +48,7 @@ fn record(id: &str, revision: u64, key: &str, body: RecordBody) -> AgreementReco
                 locator: "test".into(),
                 digest: None,
             }],
-            // Receipts are evidence; they never carry agreement authority.
-            authority: if receipt {
-                ProvenanceAuthority::CandidateOnly
-            } else {
-                ProvenanceAuthority::OwnerAuthored
-            },
+            authority: ProvenanceAuthority::OwnerAuthored,
         },
         supersedes: None,
         idempotency_key: key.into(),
@@ -98,10 +87,6 @@ fn principle(text: &str) -> RecordBody {
         source: PrincipleSource::Custom,
         rationale: None,
     })
-}
-
-fn digest(seed: char) -> ContentDigest {
-    ContentDigest::new(format!("sha256:{}", seed.to_string().repeat(64))).expect("digest")
 }
 
 fn bd(dir: &Path, args: &[&str]) -> Value {
@@ -501,32 +486,19 @@ fn every_record_kind_lands_in_its_bead_type_with_its_digest() {
             None,
         )
         .expect("rule");
-    let gate = record(
-        "verification.gate_fixture",
+    let draft = record(
+        "proposal.fixture",
         1,
-        "gate:fixture",
-        RecordBody::VerificationReceipt(VerificationReceipt {
-            subject: ExternalRef {
-                system: ExternalSystem::Custom,
-                stable_id: "gate:rule.tests".into(),
-                revision: None,
-            },
-            code_digest: digest('a'),
-            policy_state: PolicyStateSnapshot {
-                accepted: Some(rule_ref.clone()),
-                required: None,
-                installed: None,
-                experimental: None,
-            },
-            verification: VerificationAxis::Fail,
-            authorization: AuthorizationAxis::Unknown,
-            freshness: Freshness::Fresh,
-            checked_at: "2026-09-10T12:01:00Z".into(),
-            related_records: vec![rule_ref.clone()],
-            evidence: Vec::new(),
+        "proposal:fixture",
+        RecordBody::Proposal(Proposal {
+            state: ProposalState::Draft,
+            title: "Run the tests".into(),
+            rationale: "Fixture.".into(),
+            proposed_records: vec![rule_ref.clone()],
+            binding: None,
         }),
     );
-    let gate_ref = store.append(&gate, None).expect("gate");
+    let draft_ref = store.append(&draft, None).expect("draft");
     let kinds: Vec<(AgreementRecord, &str)> = vec![
         (
             record(
@@ -556,7 +528,7 @@ fn every_record_kind_lands_in_its_bead_type_with_its_digest() {
     ];
     let mut expected = vec![
         (rule_ref.clone(), "rule", "record"),
-        (gate_ref, "verification_receipt", "receipt"),
+        (draft_ref, "proposal", "decision"),
     ];
     for (record, bead_type) in &kinds {
         let reference = store.append(record, None).expect("append kind");
@@ -573,17 +545,6 @@ fn every_record_kind_lands_in_its_bead_type_with_its_digest() {
         let stored = fresh.get(&reference).expect("get").expect("present");
         assert_eq!(stored.digest().expect("digest"), reference.digest);
     }
-    // A receipt that claims agreement authority is refused before any write.
-    let mut authoritative = gate.clone();
-    authoritative.id = RecordId::new("verification.gate_forged").expect("id");
-    authoritative.idempotency_key = "gate:forged".into();
-    authoritative.provenance.authority = ProvenanceAuthority::OwnerAuthored;
-    assert!(matches!(
-        fresh.append(&authoritative, None),
-        Err(StorageError::Domain(
-            DomainError::OperationalRecordCannotGrantAuthority
-        ))
-    ));
     assert_eq!(fresh.all_records().expect("records").len(), 4);
 }
 
