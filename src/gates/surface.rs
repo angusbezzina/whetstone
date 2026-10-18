@@ -1,6 +1,6 @@
 //! Public-surface enforcer: exported items, CLI flags and JSON schema fields,
-//! compared with the last pushed revision. Any difference is the owner's call,
-//! so it raises a hand instead of asking for a repair.
+//! compared with the last pushed revision. Any difference is the owner's
+//! call, so it is flagged rather than repaired.
 
 use std::collections::BTreeSet;
 use std::path::Path;

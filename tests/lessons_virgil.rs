@@ -400,23 +400,6 @@ fn lessons_live_in_virgil_through_the_shipped_cli() {
         "Maybe cache the parser.",
         json!({"type": "lesson", "key": "maybe-cache-the-parser"}),
     ));
-    let hand = wh(
-        root,
-        &fake,
-        &[
-            "check",
-            "--json",
-            "--raise-hand",
-            "--question",
-            "Integers or floats?",
-            "--tried",
-            "Read app.py",
-            "--recommend",
-            "Integers",
-        ],
-    );
-    assert_eq!(hand["state"], "needs_decision", "{hand}");
-    assert!(hand["data"]["route"].is_null());
     assert!(
         fake.calls().is_empty(),
         "standalone never calls virgil: {:?}",
@@ -1041,78 +1024,13 @@ fn lessons_live_in_virgil_through_the_shipped_cli() {
         "whetstone"
     );
 
-    // ── Raised hands: a task in the channel naming the agent, no marker. ──
-    fake.clear();
-    let hand = wh(
-        root,
-        &fake,
-        &[
-            "check",
-            "--json",
-            "--raise-hand",
-            "--question",
-            "Floats everywhere?",
-            "--tried",
-            "Read app.py",
-            "--recommend",
-            "Yes",
-        ],
-    );
-    assert_eq!(hand["data"]["route"], format!("virgil:{GROUP}"), "{hand}");
-    let task = hand["data"]["issue"].as_str().expect("task").to_string();
-    assert!(task.starts_with("task:"));
-    let description = fake.state()["tasks"][&task]["description"]
-        .as_str()
-        .expect("description")
-        .to_string();
-    assert!(
-        description.starts_with(&format!("Raised by {host} (an agent) through Whetstone.")),
-        "{description}"
-    );
-    for call in fake
-        .calls()
-        .iter()
-        .filter(|call| call["argv"][0] == "tasks")
-    {
-        assert!(
-            call["via"].is_null(),
-            "virgil tasks never gets VIRGIL_VIA: {call}"
-        );
-        assert!(has(call, "--group") && has(call, GROUP));
-    }
-    let answered = wh(
-        root,
-        &fake,
-        &[
-            "change",
-            "--json",
-            "--answer",
-            &task,
-            "--content",
-            "Yes, floats.",
-        ],
-    );
-    assert_eq!(answered["state"], "success", "{answered}");
-    assert_eq!(fake.state()["tasks"][&task]["state"], "done");
-    let dash = wh(root, &fake, &["dash", "--json"]);
-    let request = dash["data"]["current"]["requests"]
-        .as_array()
-        .and_then(|requests| {
-            requests
-                .iter()
-                .find(|request| request["issue"] == task.as_str())
-                .cloned()
-        })
-        .expect("the hand is listed");
-    assert_eq!(request["question"], "Floats everywhere?");
-
-    // Backend b never calls anything but `virgil lessons`, `tasks`, `repos`
-    // and `rulebook` (every other record), and setup's `--version` probe.
+    // Backend b never calls anything but `virgil lessons`, `repos` and
+    // `rulebook` (every other record), and setup's `--version` probe.
     for call in fake.calls() {
         assert!(
             matches!(
                 call["argv"][0].as_str(),
-                Some("lessons" | "tasks" | "repos" | "rulebook" | "--version")
+                Some("lessons" | "repos" | "rulebook" | "--version")
             ),
             "{call}"
         );

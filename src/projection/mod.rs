@@ -1,5 +1,5 @@
 //! Typed, human-labelled projection of the agreement for the dashboard's
-//! views: Home, Rules, Checks, Changelog and Requests, plus onboarding.
+//! views: Home, Rules, Checks and Changelog, plus onboarding.
 //!
 //! The browser renders these fields verbatim. Every state carries a human
 //! label and a tone so the UI never invents state or shows raw enum names,
@@ -182,7 +182,6 @@ pub struct RuleEntry {
     pub source: String,
     pub paths: Vec<String>,
     pub examples: Vec<Value>,
-    pub hand_raise: Vec<&'static str>,
     pub stats: RuleStats,
     /// Flags still waiting for the owner's label, newest first (at most 20):
     /// `receipt` is what `wh change --accept-flag|--dismiss-flag` takes.
@@ -282,31 +281,6 @@ pub struct Attention {
     pub agent_instruction: Option<String>,
 }
 
-/// A raised hand: the question an agent filed for the owner.
-#[derive(Debug, Clone, Serialize)]
-pub struct RequestEntry {
-    pub id: String,
-    pub issue: String,
-    pub trigger: &'static str,
-    pub rule: Option<String>,
-    pub question: String,
-    pub tried: String,
-    pub recommendation: String,
-    pub raised_at: String,
-    pub status: StateLabel,
-    pub answer: Option<String>,
-    pub answered_by: Option<String>,
-    pub answered_at: Option<String>,
-    pub answer_command: String,
-}
-
-/// What the tracker says about a hand's Beads issue right now.
-#[derive(Debug, Clone, Default)]
-pub struct HandStatus {
-    pub status: String,
-    pub answer: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct LatestChange {
     pub title: String,
@@ -332,7 +306,6 @@ pub struct DashboardView {
     pub rules: Vec<RuleEntry>,
     pub features: Vec<FeatureEntry>,
     pub checks: ChecksView,
-    pub requests: Vec<RequestEntry>,
     pub attention: Vec<Attention>,
     pub latest_change: Option<LatestChange>,
     pub skill: SkillState,
@@ -357,8 +330,6 @@ pub struct ProjectionInput<'a> {
     /// Shared record refs (id -> `id@revision#digest`) in the team's store:
     /// what `wh push` already shared and CI enforces.
     pub shared: BTreeMap<String, String>,
-    /// Beads issue id -> tracker status, for raised hands.
-    pub hands: BTreeMap<String, HandStatus>,
 }
 
 /// Written by skill rendering; read to detect stale projections.
@@ -414,7 +385,10 @@ pub(crate) fn kind_of(record: &AgreementRecord) -> &'static str {
     match &record.body {
         RecordBody::Mission(_) => "mission",
         RecordBody::Principle(_) => "principle",
-        RecordBody::Rule(_) | RecordBody::Standard(_) | RecordBody::Guidance(_) => "rule",
+        RecordBody::Rule(_)
+        | RecordBody::StoredRule(_)
+        | RecordBody::Standard(_)
+        | RecordBody::Guidance(_) => "rule",
         RecordBody::Feature(_) => "feature",
         RecordBody::VerificationMap(_) => "map",
         RecordBody::Retirement(_) => "retirement",
@@ -440,6 +414,7 @@ pub fn record_title(record: &AgreementRecord) -> String {
         RecordBody::Mission(body) => body.statement.clone(),
         RecordBody::Principle(body) => body.statement.clone(),
         RecordBody::Rule(body) => body.statement.clone(),
+        RecordBody::StoredRule(body) => body.rule.statement.clone(),
         RecordBody::Guidance(body) => body.statement.clone(),
         RecordBody::Standard(body) => body.statement.clone(),
         RecordBody::Feature(body) => body.name.clone(),
@@ -458,8 +433,6 @@ pub fn record_title(record: &AgreementRecord) -> String {
         RecordBody::FlagDecision(body) => {
             format!("Flag {} on {}", body.verdict.label(), body.rule.as_str())
         }
-        RecordBody::HandRaise(body) => format!("Raised hand: {}", body.question),
-        RecordBody::HandAnswer(body) => format!("Answered {}", body.issue),
         RecordBody::Retired(retired) => match retired.principle_text() {
             Some((text, _)) => text,
             None => format!("{} (retired kind)", retired.record_type.replace('_', " ")),
@@ -483,7 +456,6 @@ fn rule_definition(rule: &Rule) -> Value {
         "examples": rule.examples,
         "source": rule.source,
         "paths": rule.paths,
-        "hand_raise": rule.hand_raise,
         "privacy": rule.privacy,
         "shadow": rule.shadow,
         "sweep": rule.sweep,
@@ -508,7 +480,10 @@ fn edit_base(record: &AgreementRecord) -> EditBase {
                 "rationale": body.rationale,
             }),
         ),
-        body @ (RecordBody::Rule(_) | RecordBody::Standard(_) | RecordBody::Guidance(_)) => {
+        body @ (RecordBody::Rule(_)
+        | RecordBody::StoredRule(_)
+        | RecordBody::Standard(_)
+        | RecordBody::Guidance(_)) => {
             let rule = body.rule_view().map(std::borrow::Cow::into_owned);
             (
                 "rule",
@@ -574,7 +549,10 @@ fn detail(key: &'static str, value: impl Into<String>, code: bool) -> Detail {
 
 fn details_for(record: &AgreementRecord) -> Vec<Detail> {
     match &record.body {
-        body @ (RecordBody::Rule(_) | RecordBody::Standard(_) | RecordBody::Guidance(_)) => {
+        body @ (RecordBody::Rule(_)
+        | RecordBody::StoredRule(_)
+        | RecordBody::Standard(_)
+        | RecordBody::Guidance(_)) => {
             let Some(rule) = body.rule_view() else {
                 return Vec::new();
             };
@@ -698,7 +676,7 @@ pub fn gate_brief(
     lines.push("repair    within the current task; do not change or weaken the rule".into());
     lines.push(format!("recheck   {recheck}"));
     lines.push(format!(
-        "stop      if the same finding survives a second repair, or the fix needs a rule change, raise a hand for {owner} (wh check --raise-hand)"
+        "stop      if the same finding survives a second repair, or the fix needs a rule change, ask {owner}"
     ));
     lines.join("\n")
 }
@@ -855,11 +833,6 @@ fn rule_entries(state: &AgreementState, runs: &[GateRun]) -> Vec<RuleEntry> {
                     })
                 })
                 .collect(),
-            hand_raise: rule
-                .hand_raise
-                .iter()
-                .map(|trigger| trigger.label())
-                .collect(),
             stats: crate::learning::rule_stats(state, &id),
             unlabelled_flags: crate::learning::flags(state, &id)
                 .into_iter()
@@ -890,59 +863,6 @@ fn rule_entries(state: &AgreementState, runs: &[GateRun]) -> Vec<RuleEntry> {
     rules
 }
 
-fn requests(state: &AgreementState, hands: &BTreeMap<String, HandStatus>) -> Vec<RequestEntry> {
-    let mut answers = BTreeMap::<RecordRef, &crate::domain::HandAnswer>::new();
-    for record in state.records() {
-        if let RecordBody::HandAnswer(answer) = &record.body {
-            answers.insert(answer.raise.clone(), answer);
-        }
-    }
-    let mut result = Vec::new();
-    for record in state.records() {
-        let RecordBody::HandRaise(raise) = &record.body else {
-            continue;
-        };
-        let Ok(reference) = record.reference() else {
-            continue;
-        };
-        let answer = answers.get(&reference);
-        let tracker = hands.get(&raise.issue);
-        let status = match (answer, tracker.map(|status| status.status.as_str())) {
-            (Some(_), _) => StateLabel::new("pass", "answered"),
-            (None, Some("closed")) => {
-                StateLabel::new("warn", "closed in Beads · answer not recorded")
-            }
-            (None, Some(_)) => StateLabel::new("warn", "waiting for the owner"),
-            (None, None) => StateLabel::new("warn", "waiting · issue not found in Beads"),
-        };
-        result.push(RequestEntry {
-            id: record.id.as_str().into(),
-            issue: raise.issue.clone(),
-            trigger: raise.trigger.label(),
-            rule: raise.rule.as_ref().map(|rule| rule.as_str().to_string()),
-            question: raise.question.clone(),
-            tried: raise.tried.clone(),
-            recommendation: raise.recommendation.clone(),
-            raised_at: raise.raised_at.clone(),
-            status,
-            answer: answer
-                .map(|answer| answer.answer.clone())
-                .or_else(|| tracker.and_then(|status| status.answer.clone())),
-            answered_by: answer.map(|answer| answer.answered_by.clone()),
-            answered_at: answer.map(|answer| answer.answered_at.clone()),
-            answer_command: format!(
-                "wh change --answer {} --content \"<your answer>\"",
-                raise.issue
-            ),
-        });
-    }
-    result.sort_by(|left, right| {
-        (left.answer.is_some(), right.raised_at.as_str())
-            .cmp(&(right.answer.is_some(), left.raised_at.as_str()))
-    });
-    result
-}
-
 /// Build the dashboard projection.
 pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> DashboardView {
     let mission_id = RecordId::new(MISSION_ID).expect("constant id");
@@ -967,7 +887,6 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
         .collect::<BTreeMap<_, _>>();
     let features = features(state, &gate_labels, &input.changes);
     let rules = rule_entries(state, &gate_runs);
-    let requests = requests(state, &input.hands);
     let pending = state.pending_proposals();
     let drafts = pending.len();
     let skill = skill_state(state, input.skill.as_ref());
@@ -1003,7 +922,6 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
         &gate_runs,
         &features,
         &rules,
-        &requests,
         &suggestions,
         drafts,
         &skill,
@@ -1046,7 +964,6 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
             receipts,
             driver,
         },
-        requests,
         attention,
         latest_change: None,
         skill,
@@ -1089,33 +1006,12 @@ fn attention(
     gates: &[GateRun],
     features: &[FeatureEntry],
     rules: &[RuleEntry],
-    requests: &[RequestEntry],
     suggestions: &[crate::learning::Suggestion],
     drafts: usize,
     skill: &SkillState,
 ) -> Vec<Attention> {
     let mut items = Vec::new();
     let root = input.project_root.display().to_string();
-    for request in requests.iter().filter(|request| request.answer.is_none()) {
-        items.push(Attention {
-            priority: 0,
-            tone: "warn",
-            kind: "raised_hand",
-            kind_label: "raised hand",
-            title: format!("An agent asks: {}", snippet(&request.question, 90)),
-            text: format!(
-                "Tried: {} Recommends: {}",
-                snippet(&request.tried, 160),
-                snippet(&request.recommendation, 160)
-            ),
-            actor: owner.into(),
-            next: format!("Answer it: {}", request.answer_command),
-            route: "requests",
-            focus: Some(request.id.clone()),
-            action_label: "Open the request",
-            agent_instruction: None,
-        });
-    }
     for gate in gates
         .iter()
         .filter(|gate| gate.eligible && !gate.shadow && gate.result.tone == "fail")
@@ -1300,7 +1196,7 @@ fn attention(
             } else {
                 "Agents have no verification skill yet".into()
             },
-            text: "The skill is the agent-facing projection of the rules: how to brief, build, prove and raise a hand.".into(),
+            text: "The skill is the agent-facing projection of the rules: how to brief, build and prove.".into(),
             actor: "you or your agent".into(),
             next: "Run wh init --action wire --hooks to generate it and install the Git hooks.".into(),
             route: "checks",

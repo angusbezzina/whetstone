@@ -284,7 +284,6 @@ fn record_links(record: &AgreementRecord) -> Vec<RecordRef> {
         RecordBody::Judgment(body) => links.push(body.rule.clone()),
         RecordBody::Attestation(body) => links.push(body.rule.clone()),
         RecordBody::FlagDecision(body) => links.push(body.receipt.clone()),
-        RecordBody::HandAnswer(body) => links.push(body.raise.clone()),
         _ => {}
     }
     links.sort();

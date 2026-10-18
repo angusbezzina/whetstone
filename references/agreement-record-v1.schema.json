@@ -60,8 +60,6 @@
         "attestation",
         "brief",
         "flag_decision",
-        "hand_raise",
-        "hand_answer",
         "lesson",
         "lesson_check"
       ]
@@ -112,12 +110,6 @@
         },
         {
           "$ref": "#/$defs/flag_decision"
-        },
-        {
-          "$ref": "#/$defs/hand_raise"
-        },
-        {
-          "$ref": "#/$defs/hand_answer"
         },
         {
           "$ref": "#/$defs/lesson"
@@ -365,38 +357,6 @@
         "properties": {
           "record": {
             "$ref": "#/$defs/flag_decision"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "record_type": {
-            "const": "hand_raise"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "record": {
-            "$ref": "#/$defs/hand_raise"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "record_type": {
-            "const": "hand_answer"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "record": {
-            "$ref": "#/$defs/hand_answer"
           }
         }
       }
@@ -1568,16 +1528,6 @@
             "minLength": 1
           }
         },
-        "hand_raise": {
-          "type": "array",
-          "items": {
-            "enum": [
-              "flag",
-              "low_confidence",
-              "unavailable"
-            ]
-          }
-        },
         "privacy": {
           "$ref": "#/$defs/privacy"
         },
@@ -1859,81 +1809,6 @@
           "$ref": "#/$defs/nonempty"
         },
         "decided_at": {
-          "$ref": "#/$defs/timestamp"
-        }
-      }
-    },
-    "hand_raise": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "issue",
-        "trigger",
-        "question",
-        "tried",
-        "recommendation",
-        "raised_at"
-      ],
-      "properties": {
-        "issue": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "trigger": {
-          "enum": [
-            "low_confidence",
-            "second_failed_repair",
-            "must_rule_area",
-            "vague_spec",
-            "rule_flag",
-            "unavailable"
-          ]
-        },
-        "rule": {
-          "$ref": "#/$defs/record_id"
-        },
-        "question": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "tried": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "recommendation": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "raised_at": {
-          "$ref": "#/$defs/timestamp"
-        },
-        "route": {
-          "type": "string",
-          "pattern": "^virgil:[A-Za-z0-9_:-]+$",
-          "description": "Absent for a Beads issue; virgil:<group> for a task in a Virgil group's channel."
-        }
-      }
-    },
-    "hand_answer": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "raise",
-        "issue",
-        "answer",
-        "answered_by",
-        "answered_at"
-      ],
-      "properties": {
-        "raise": {
-          "$ref": "#/$defs/record_ref"
-        },
-        "issue": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "answer": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "answered_by": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "answered_at": {
           "$ref": "#/$defs/timestamp"
         }
       }
@@ -2274,7 +2149,9 @@
       "repair_session",
       "repair_handoff",
       "repair_authority_reservation",
-      "repair_operation_claim"
+      "repair_operation_claim",
+      "hand_raise",
+      "hand_answer"
     ]
   }
 }

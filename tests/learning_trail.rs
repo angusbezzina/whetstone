@@ -552,45 +552,6 @@ fn every_kind_of_decision_leaves_a_trail_row_and_a_journal_entry() {
         &offline(),
     );
     assert_eq!(attested["state"], "success", "{attested}");
-    let raised = wh(
-        root,
-        &[
-            "check",
-            "--request-id",
-            "hand-1",
-            "--raise-hand",
-            "--question",
-            "Should notes sync to the cloud?",
-            "--tried",
-            "Read the mission; it says nothing about sync.",
-            "--recommend",
-            "Keep notes local until the owner decides.",
-            "--trigger",
-            "vague-spec",
-            "--json",
-        ],
-        &offline(),
-    );
-    let issue = raised["data"]["issue"]
-        .as_str()
-        .or_else(|| raised["data"]["hand"]["issue"].as_str())
-        .unwrap_or_else(|| panic!("an issue id: {raised}"))
-        .to_string();
-    let answered = wh(
-        root,
-        &[
-            "change",
-            "--request-id",
-            "answer-1",
-            "--answer",
-            &issue,
-            "--content",
-            "Local only for now.",
-            "--json",
-        ],
-        &offline(),
-    );
-    assert_eq!(answered["state"], "success", "{answered}");
 
     let rows = trail_rows(root);
     let dump = rows
@@ -599,18 +560,6 @@ fn every_kind_of_decision_leaves_a_trail_row_and_a_journal_entry() {
         .collect::<Vec<_>>()
         .join("\n");
     for (what, phase, decision, rest) in [
-        (
-            "hand raise",
-            "hands",
-            "Raised a hand (",
-            "Should notes sync",
-        ),
-        (
-            "hand answer",
-            "hands",
-            &*format!("Answered {issue}"),
-            "Local only",
-        ),
         (
             "flag accept",
             "rules",
@@ -672,8 +621,6 @@ fn every_kind_of_decision_leaves_a_trail_row_and_a_journal_entry() {
         .collect::<Vec<_>>();
     let listing = entries.join("\n");
     for (what, needle) in [
-        ("hand raise", "Raised a hand: Should notes sync"),
-        ("hand answer", &*format!("Answered {issue}")),
         ("flag accept", "Flag accepted on rule.shadow-todo"),
         ("flag dismiss", "Flag dismissed on rule.no-todo"),
         ("strength change", "strength must → should"),

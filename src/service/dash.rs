@@ -108,26 +108,6 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
             (None, "unavailable", Some(error.to_string()))
         }
     };
-    let mut hands = crate::hands::statuses(layout.project_root());
-    // Hands filed as Virgil tasks are read back from Virgil.
-    if let Some(Ok(records)) = &records {
-        let virgil = records
-            .iter()
-            .filter_map(|record| match &record.body {
-                crate::domain::RecordBody::HandRaise(body) => {
-                    crate::hands::virgil_group(body.route.as_deref())
-                        .map(|group| (body.issue.clone(), group.to_string()))
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        if !virgil.is_empty() {
-            hands.extend(crate::hands::virgil_statuses(
-                layout.project_root(),
-                &virgil,
-            ));
-        }
-    }
     let agreement_state = match records {
         Some(Ok(records)) => Ok(AgreementState::from_records(records)),
         Some(Err(error)) => Err(error),
@@ -158,7 +138,6 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
                         manifest.as_ref(),
                     ),
                     shared: shared_refs(loaded.as_ref().ok()),
-                    hands,
                 },
             );
             let journal = match &journal_items {
@@ -225,7 +204,7 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
         "workflows": [
             {"name": "init", "state": "available", "effect": "inspect, agree the mission, principles and rules, wire the gates"},
             {"name": "dash", "state": "available", "effect": "inspect rules, checks, requests and history"},
-            {"name": "change", "state": "available", "effect": "draft a change, accept or withdraw it, label a flag, answer a hand, remember or admit a lesson"},
+            {"name": "change", "state": "available", "effect": "draft a change, accept or withdraw it, label a flag, remember or admit a lesson"},
             {"name": "check", "state": "available", "effect": "run the rules and return repair feedback"},
             {"name": "pull", "state": if shared_exists { "available" } else { "unavailable" }, "effect": "receive shared records; nothing runs or is accepted"},
             {"name": "push", "state": if shared_exists { "available" } else { "unavailable" }, "effect": "share an exact, confirmed package of accepted records"}

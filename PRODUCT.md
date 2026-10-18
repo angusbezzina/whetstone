@@ -22,8 +22,8 @@ become a short list of agreed rules. Every rule has one strength (must, should
 or advisory) and exactly one enforcer, chosen in this order: a mechanical
 check, a literal yes/no Jev question (TypeSafe System One), or a review by
 pstack's `/interrogate` or a person. Agents and people in any tool are briefed
-on the rules before building, checked at pre-commit, pre-push and CI, and
-told when to raise a hand. Every consequential change is an append-only,
+on the rules before building and checked at pre-commit, pre-push and CI.
+Every consequential change is an append-only,
 inspectable decision. The direction is in `planning/direction.md` and Beads
 epic `whetstone-ppq`.
 
@@ -53,7 +53,7 @@ the terminal and an editor, and opens `wh dash` in a browser tab beside them.
 They are also the accountable project owner. In under a minute they want to
 know:
 - whether the rules are holding;
-- which flags or raised hands need them;
+- which flags need them;
 - whether any rule is getting noisy.
 
 Coding agents use the same typed services through `--json`; the dashboard is
@@ -62,12 +62,12 @@ console, or CI replacement.
 
 ## Surfaces
 
-The dashboard has five views for the delegation plan
+The dashboard has four views for the delegation plan
 (`planning/direction-demo/index.html` is the reference, built from the
 product's own dashboard files):
 
-1. **Home** (default): what needs the owner (raised hands, flags to
-   accept or dismiss, drafts), rule health, and one primary action. Before
+1. **Home** (default): what needs the owner (flags to accept or
+   dismiss, drafts), rule health, and one primary action. Before
    `wh init`, it shows only onboarding: mission, principles, exemplar
    codebases, then accepting each proposed rule with its examples, strength
    and enforcer.
@@ -81,10 +81,8 @@ product's own dashboard files):
    - the exact recheck route;
    - the repair brief to hand to the current agent.
 4. **Changelog**: the decision log, newest first, grouped by day. It includes
-   raised hands and answers, accepted and dismissed flags, strength changes
+   accepted and dismissed flags, strength changes
    and redactions. Exact records sit behind disclosure.
-5. **Requests**: raised hands (`bd human` issues), open ones first, each with
-   the question, what was tried and the recommendation, answered in place.
 
 ## Durable constraints
 

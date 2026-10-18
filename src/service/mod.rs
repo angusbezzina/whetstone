@@ -14,8 +14,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
-    ActorKind, AgreementRecord, ContentDigest, Enforcer, HandRaiseTrigger, HandTrigger, Privacy,
-    RecordId, Reviewer, RuleExample, RuleSource, Strength, SweepClass, Trust,
+    ActorKind, AgreementRecord, ContentDigest, Enforcer, Privacy, RecordId, Reviewer, RuleExample,
+    RuleSource, Strength, SweepClass, Trust,
 };
 use crate::storage::{ProjectLayout, StorageError};
 
@@ -202,8 +202,6 @@ pub enum ChangeDefinition {
         #[serde(default)]
         paths: Vec<String>,
         #[serde(default)]
-        hand_raise: Vec<HandRaiseTrigger>,
-        #[serde(default)]
         privacy: Privacy,
         /// Recorded, never enforced, until a promotion is accepted.
         #[serde(default)]
@@ -319,8 +317,6 @@ pub struct ChangeRequest {
     pub retire: Option<String>,
     /// Accept or dismiss one flag.
     pub flag: Option<FlagRequest>,
-    /// Answer a raised hand (a Beads issue id); the answer is the content.
-    pub answer: Option<String>,
     /// Draft principles from earlier values and philosophy records.
     pub migrate: bool,
     /// Record the tuning drafts (demotion, promotion) the rules' records suggest.
@@ -370,18 +366,6 @@ pub struct BriefRequest {
     pub notes: String,
 }
 
-/// A question for the owner, filed as a `human` Beads issue.
-#[derive(Debug, Clone)]
-pub struct HandRequest {
-    pub question: String,
-    pub tried: String,
-    pub recommendation: String,
-    pub trigger: HandTrigger,
-    pub rule: Option<String>,
-    /// Who raised it; an agent's hand in Virgil names the agent in the task.
-    pub actor: crate::domain::ActorKind,
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct CheckRequest {
     pub project_dir: PathBuf,
@@ -413,8 +397,6 @@ pub struct CheckRequest {
     pub attest: Option<AttestRequest>,
     /// Record a brief instead of running rules.
     pub brief: Option<BriefRequest>,
-    /// Raise a hand instead of running rules.
-    pub raise_hand: Option<HandRequest>,
     /// Also prove each selected feature with its recorded mutations applied,
     /// in an isolated worktree; a proof that still passes is hollow.
     pub mutate: bool,

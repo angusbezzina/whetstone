@@ -1,6 +1,6 @@
 //! Receipts and decisions that record what happened around a rule: check
-//! results, Jev answers, review attestations, briefs, flag decisions and
-//! raised hands. Each is its own record, never a rewrite of another.
+//! results, Jev answers, review attestations, briefs and flag decisions.
+//! Each is its own record, never a rewrite of another.
 
 use serde::{Deserialize, Serialize};
 
@@ -319,94 +319,6 @@ impl FlagDecision {
         require_text(&self.decided_by)?;
         if !looks_like_utc_timestamp(&self.decided_at) {
             return Err(DomainError::InvalidTimestamp(self.decided_at.clone()));
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HandTrigger {
-    /// A Jev answer below the rule's confidence bar.
-    LowConfidence,
-    /// The same flag survived a second repair.
-    SecondFailedRepair,
-    /// The change touches an area a must rule reserves for the owner.
-    MustRuleArea,
-    /// The spec is too vague to satisfy the rules.
-    VagueSpec,
-    /// A rule whose flags are the owner's call.
-    RuleFlag,
-    /// A must rule's enforcer is unknown or unavailable.
-    Unavailable,
-}
-
-impl HandTrigger {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::LowConfidence => "low_confidence",
-            Self::SecondFailedRepair => "second_failed_repair",
-            Self::MustRuleArea => "must_rule_area",
-            Self::VagueSpec => "vague_spec",
-            Self::RuleFlag => "rule_flag",
-            Self::Unavailable => "unavailable",
-        }
-    }
-}
-
-/// A question an agent filed for the owner as a Beads issue labelled `human`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HandRaise {
-    /// The Beads issue that carries the question, or the Virgil task.
-    pub issue: String,
-    /// Where the hand went: absent for Beads (`bd human`), `virgil:<group>`
-    /// for a task in a Virgil group's channel.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub route: Option<String>,
-    pub trigger: HandTrigger,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rule: Option<RecordId>,
-    pub question: String,
-    pub tried: String,
-    pub recommendation: String,
-    pub raised_at: String,
-    /// Who raised it (absent on hands raised before this was recorded).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor: Option<super::ActorKind>,
-}
-
-impl HandRaise {
-    pub(super) fn validate(&self) -> Result<(), DomainError> {
-        require_text(&self.issue)?;
-        require_text(&self.question)?;
-        require_text(&self.tried)?;
-        require_text(&self.recommendation)?;
-        if !looks_like_utc_timestamp(&self.raised_at) {
-            return Err(DomainError::InvalidTimestamp(self.raised_at.clone()));
-        }
-        Ok(())
-    }
-}
-
-/// The owner's answer to a raised hand.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HandAnswer {
-    pub raise: RecordRef,
-    pub issue: String,
-    pub answer: String,
-    pub answered_by: String,
-    pub answered_at: String,
-}
-
-impl HandAnswer {
-    pub(super) fn validate(&self) -> Result<(), DomainError> {
-        require_text(&self.issue)?;
-        require_text(&self.answer)?;
-        require_text(&self.answered_by)?;
-        if !looks_like_utc_timestamp(&self.answered_at) {
-            return Err(DomainError::InvalidTimestamp(self.answered_at.clone()));
         }
         Ok(())
     }

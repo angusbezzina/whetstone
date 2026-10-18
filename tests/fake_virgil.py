@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""A stand-in for the shipped `virgil` CLI (lessons, tasks, repos) and the
+"""A stand-in for the shipped `virgil` CLI (lessons, repos) and the
 proposed `virgil rulebook` verbs, for tests/lessons_virgil.rs and the
 record store tests. It speaks the flags, JSON lines and exit codes of
-Virgil's crates/virgil-cli/src/handlers/{lessons,tasks,repos}.rs, and for
+Virgil's crates/virgil-cli/src/handlers/{lessons,repos}.rs, and for
 the rulebook the contract src/store/virgil.rs pins (virgil.rulebook/v1, one
 JSON request on --input -, one JSON line out, every request naming its
 "scope": "repository" or "private"), keeps its state in FAKE_VIRGIL_STATE,
@@ -35,7 +35,6 @@ os.makedirs(os.path.dirname(state_path), exist_ok=True)
 os.makedirs(os.path.dirname(log_path), exist_ok=True)
 state = json.load(open(state_path)) if os.path.exists(state_path) else {}
 state.setdefault("lessons", {})
-state.setdefault("tasks", {})
 state.setdefault("seen", {})
 state.setdefault("n", 0)
 state.setdefault("rulebook", {"repository": [], "private": []})
@@ -573,53 +572,4 @@ if family == "rulebook":
 
     error(api, "invalid_request", "unknown op " + op, 2)
 
-if family == "tasks":
-    api = "virgil.tasks/v1"
-    op = args[1]
-    request = json.loads(sys.stdin.read() or "{}")
-    tasks = state["tasks"]
-    if op == "create":
-        ref = "task:01J8Z0000000000000000000T%d" % (len(tasks) + 1)
-        tasks[ref] = {
-            "task": ref,
-            "title": request["title"],
-            "description": request["description"],
-            "state": "todo",
-            "comments": [],
-        }
-        out(
-            api,
-            {"result": {"scope": request.get("scope"), "task": ref, "queued": False}},
-        )
-    ref = args[2]
-    task = tasks[ref]
-    if op == "show":
-        detail = {k: v for k, v in task.items() if k != "comments"}
-        out(
-            api,
-            {
-                "result": {
-                    "task": detail,
-                    "files": [],
-                    "comments": [{"message": "m", "text": c} for c in task["comments"]],
-                    "links": {},
-                }
-            },
-        )
-    if op == "comment":
-        task["comments"].append(request["text"])
-        out(api, {"result": {"task": ref, "message": "m", "queued": False}})
-    if op == "move":
-        task["state"] = request["state"]
-        out(
-            api,
-            {
-                "result": {
-                    "task": ref,
-                    "state": task["state"],
-                    "changed": True,
-                    "queued": False,
-                }
-            },
-        )
 error("virgil." + family + "/v1", "invalid_request", "unknown " + " ".join(args[:2]), 2)

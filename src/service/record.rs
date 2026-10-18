@@ -175,7 +175,10 @@ pub(crate) fn ensure_local_change_proposal(
                 crate::projection::kind_label(match &candidate.body {
                     RecordBody::Mission(_) => "mission",
                     RecordBody::Principle(_) => "principle",
-                    RecordBody::Rule(_) | RecordBody::Standard(_) | RecordBody::Guidance(_) => {
+                    RecordBody::Rule(_)
+                    | RecordBody::StoredRule(_)
+                    | RecordBody::Standard(_)
+                    | RecordBody::Guidance(_) => {
                         "rule"
                     }
                     RecordBody::Feature(_) => "feature",

@@ -1134,7 +1134,6 @@ pub fn legacy_rules_as_v2(
                 provenance: Vec::new(),
             },
             paths: Vec::new(),
-            hand_raise: Vec::new(),
             privacy: Privacy::default(),
             shadow: false,
             sweep: None,

@@ -1,7 +1,6 @@
 //! The delegation loop end to end through the real binary: Jev questions
 //! against a stub TypeSafe endpoint (what leaves the machine, and what each
-//! answer is allowed to mean), raising a hand into Beads, and learning from
-//! labelled flags. Every repository is a throwaway; nothing touches this
+//! answer is allowed to mean) and learning from labelled flags. Every repository is a throwaway; nothing touches this
 //! repository's `.beads` or private store.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -378,7 +377,7 @@ fn jev_sees_only_redacted_text_and_its_flag_breaks_a_must_rule() {
 }
 
 #[test]
-fn a_clear_answer_never_passes_a_must_rule_and_doubt_raises_a_hand() {
+fn a_clear_answer_never_passes_a_must_rule_and_doubt_is_unknown() {
     if !ready() {
         return;
     }
@@ -407,10 +406,6 @@ fn a_clear_answer_never_passes_a_must_rule_and_doubt_raises_a_hand() {
     );
     let outcome = gate(&check, "rule.no-todo");
     assert_eq!(outcome["state"], "unknown", "{outcome}");
-    assert_eq!(
-        outcome["raise_hand"], true,
-        "low confidence raises a hand: {outcome}"
-    );
 }
 
 #[test]
@@ -471,106 +466,6 @@ fn an_unreachable_jev_is_unknown_and_a_local_only_rule_never_calls_it() {
     );
 }
 
-#[test]
-fn a_raised_hand_is_a_beads_issue_and_the_answer_is_recorded() {
-    if !have("bd", "--version") {
-        assert!(
-            std::env::var_os("CI").is_none(),
-            "a tool this test needs is missing in CI"
-        );
-        eprintln!("skipping: bd is not installed");
-        return;
-    }
-    let temp = repository();
-    let root = temp.path();
-    let output = Command::new("bd")
-        .args(["init", "--prefix", "t", "--quiet"])
-        .current_dir(root)
-        .env("BEADS_DIR", root.join(".beads"))
-        .env("BD_NON_INTERACTIVE", "1")
-        .env("GIT_CEILING_DIRECTORIES", root.parent().expect("parent"))
-        .output()
-        .expect("bd");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    agree(root);
-
-    let raised = wh(
-        root,
-        &[
-            "check",
-            "--raise-hand",
-            "--question",
-            "Should notes sync to the cloud?",
-            "--tried",
-            "Read the mission; it says nothing about sync.",
-            "--recommend",
-            "Keep notes local until the owner decides.",
-            "--trigger",
-            "vague-spec",
-            "--json",
-        ],
-        &[],
-    );
-    let issue = raised["data"]["issue"]
-        .as_str()
-        .or_else(|| raised["data"]["hand"]["issue"].as_str())
-        .unwrap_or_else(|| panic!("an issue id: {raised}"))
-        .to_string();
-    let listed = Command::new("bd")
-        .args(["list", "--label", "human", "--json"])
-        .current_dir(root)
-        .env("BEADS_DIR", root.join(".beads"))
-        .env("BD_NON_INTERACTIVE", "1")
-        .output()
-        .expect("bd list");
-    assert!(
-        String::from_utf8_lossy(&listed.stdout).contains(&issue),
-        "the issue is labelled human: {}",
-        String::from_utf8_lossy(&listed.stdout)
-    );
-
-    let dash = wh(root, &["dash", "--json"], &[]);
-    let requests = dash["data"]["current"]["requests"]
-        .as_array()
-        .expect("requests");
-    assert!(
-        requests
-            .iter()
-            .any(|request| request["issue"] == issue.as_str()),
-        "the dashboard lists the request: {requests:?}"
-    );
-
-    let answered = wh(
-        root,
-        &[
-            "change",
-            "--answer",
-            &issue,
-            "--content",
-            "Local only for now.",
-            "--json",
-        ],
-        &[],
-    );
-    assert_eq!(answered["state"], "success", "{answered}");
-    let dash = wh(root, &["dash", "--json"], &[]);
-    let request = dash["data"]["current"]["requests"]
-        .as_array()
-        .and_then(|requests| {
-            requests
-                .iter()
-                .find(|request| request["issue"] == issue.as_str())
-        })
-        .cloned()
-        .expect("the request");
-    assert_eq!(request["answer"], "Local only for now.", "{request}");
-}
-
-/// Commit a flagged change `count` times and label each flag.
 fn flag_and_label(root: &Path, rule: &str, count: usize, verdict: &str) {
     for index in 0..count {
         commit(

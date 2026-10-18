@@ -747,7 +747,6 @@ fn dashboard_init_agree_records_mission_principles_and_starters() {
     assert_eq!(api["strength"], "must");
     assert_eq!(api["family"], "mechanical");
     assert_eq!(api["shadow"], false);
-    assert_eq!(api["hand_raise"], json!(["flag"]));
     let tests = rule_entry(&view, "rule.tests-only-when-asked");
     assert_eq!(tests["strength"], "should");
     assert_eq!(tests["family"], "question");
@@ -1354,96 +1353,6 @@ fn mutations_are_observed_but_inspections_and_rejected_bodies_are_not() {
     assert_eq!(
         seen.lock().expect("observer").as_slice(),
         ["init:observed-init"]
-    );
-}
-
-fn bd_available() -> bool {
-    Command::new("bd")
-        .arg("version")
-        .output()
-        .is_ok_and(|output| output.status.success())
-}
-
-#[test]
-fn a_task_is_queued_in_the_repositorys_beads_tracker() {
-    let temp = tempfile::tempdir().expect("temp project");
-    init_git(temp.path());
-    let session = Session::open(start(temp.path(), true));
-    // Without a tracker the task is honestly unavailable.
-    let unavailable = session.command(&json!({
-        "workflow": "task",
-        "title": "Tidy the parser",
-        "description": "Queued from the dashboard."
-    }));
-    assert_eq!(unavailable["state"], "unavailable", "{unavailable}");
-    let too_long = session.command(&json!({
-        "workflow": "task",
-        "title": "x".repeat(201),
-        "description": ""
-    }));
-    assert_eq!(too_long["state"], "needs_input", "{too_long}");
-    if !bd_available() {
-        assert!(
-            std::env::var_os("CI").is_none(),
-            "a tool this test needs is missing in CI"
-        );
-        eprintln!("bd is not installed; skipping the queued-task half");
-        return;
-    }
-    // A throwaway tracker in the temporary repository, never this one's.
-    let output = Command::new("bd")
-        .args([
-            "init",
-            "--non-interactive",
-            "--skip-agents",
-            "--skip-hooks",
-            "-p",
-            "tsk",
-            "-q",
-        ])
-        .current_dir(temp.path())
-        .env_remove("BEADS_DIR")
-        .env_remove("BEADS_DB")
-        .env("BD_NON_INTERACTIVE", "1")
-        .output()
-        .expect("bd init");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let queued = session.command(&json!({
-        "workflow": "task",
-        "title": "Tidy the parser",
-        "description": "Queued from the dashboard."
-    }));
-    assert_eq!(queued["state"], "success", "{queued}");
-    let issue = queued["data"]["issue"]
-        .as_str()
-        .expect("issue id")
-        .to_string();
-    assert!(issue.starts_with("tsk-"), "{issue}");
-    let shown = Command::new("bd")
-        .args(["show", &issue, "--json"])
-        .current_dir(temp.path())
-        .env_remove("BEADS_DIR")
-        .env_remove("BEADS_DB")
-        .env("BD_NON_INTERACTIVE", "1")
-        .output()
-        .expect("bd show");
-    let text = String::from_utf8_lossy(&shown.stdout);
-    let value: Value =
-        serde_json::from_str(&text[text.find(['[', '{']).expect("json")..]).expect("bd JSON");
-    let value = value
-        .as_array()
-        .and_then(|items| items.first())
-        .cloned()
-        .unwrap_or(value);
-    assert_eq!(value["title"], "Tidy the parser");
-    assert_eq!(value["issue_type"], "task");
-    assert!(
-        value["labels"].to_string().contains("whetstone-task"),
-        "{value}"
     );
 }
 

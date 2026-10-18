@@ -1,6 +1,5 @@
 //! The Virgil backend: admitted lessons in the group's Records `lesson`
-//! collection and raised hands as tasks in the group's channel, reached only
-//! through the `virgil` CLI on the daemon socket. No MCP tool, no door, no
+//! collection, reached only through the `virgil` CLI on the daemon socket. No MCP tool, no door, no
 //! database.
 //!
 //! `virgil lessons` (Virgil PRs #1021, #1036) has `remember`, `supersede`,
@@ -26,7 +25,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use serde_json::{json, Value};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
@@ -1282,114 +1281,10 @@ pub fn attachment(project_root: &Path) -> Result<Option<(String, String)>, Refus
     )
 }
 
-/// Run one `virgil tasks` operation and return its `result`. `virgil tasks`
-/// does not read `VIRGIL_VIA` (a task is the daemon's principal's whoever
-/// asked), so none is passed; an agent's hand names the agent in the task.
-pub fn call(
-    project_root: &Path,
-    family: &str,
-    op: &str,
-    group: &str,
-    args: &[&str],
-    request: &Value,
-) -> Result<Value, Refusal> {
-    let mut full = vec![family.to_string(), op.to_string()];
-    full.extend(args.iter().map(|arg| (*arg).to_string()));
-    full.extend([
-        "--group".into(),
-        group.to_string(),
-        "--input".into(),
-        "-".into(),
-    ]);
-    let answer = invoke(project_root, &full, Some(&request.to_string()), None)?;
-    if answer.exit != 0 || answer.line.get("error").is_some() {
-        return Err(failure(&format!("{family} {op}"), &answer));
-    }
-    answer.line.get("result").cloned().ok_or_else(|| {
-        Refusal::new(
-            "store_contract",
-            format!("virgil {family} {op} answered without a result line"),
-        )
-    })
-}
-
-/// File a raised hand as a native task in the group's channel; returns the
-/// task reference (`task:<ULID>`).
-pub fn create_task(
-    project_root: &Path,
-    group: &str,
-    title: &str,
-    description: &str,
-) -> Result<String, Refusal> {
-    let result = call(
-        project_root,
-        "tasks",
-        "create",
-        group,
-        &[],
-        &json!({"scope": {"group": group}, "title": title, "description": description}),
-    )?;
-    result["task"]
-        .as_str()
-        .filter(|task| !task.trim().is_empty())
-        .map(str::to_owned)
-        .ok_or_else(|| Refusal::new("store_contract", "virgil tasks create returned no task"))
-}
-
-/// A task's state and its latest comment, from this device's replica
-/// (`show` answers `{"task":{...,"state"},"comments":[{"text"}]}`).
-pub fn task_status(
-    project_root: &Path,
-    group: &str,
-    task: &str,
-) -> Option<(String, Option<String>)> {
-    let result = call(project_root, "tasks", "show", group, &[task], &json!({})).ok()?;
-    let detail = result
-        .get("task")
-        .filter(|task| task.is_object())
-        .unwrap_or(&result);
-    let state = detail["state"].as_str()?.to_string();
-    let answer = result["comments"]
-        .as_array()
-        .or_else(|| detail["comments"].as_array())
-        .and_then(|comments| comments.last())
-        .and_then(|comment| {
-            comment["text"]
-                .as_str()
-                .or_else(|| comment["body"].as_str())
-        })
-        .map(str::to_owned);
-    Some((state, answer))
-}
-
-/// Answer a raised hand's task: the answer as a comment, then done.
-pub fn answer_task(
-    project_root: &Path,
-    group: &str,
-    task: &str,
-    answer: &str,
-) -> Result<(), Refusal> {
-    call(
-        project_root,
-        "tasks",
-        "comment",
-        group,
-        &[task],
-        &json!({"task": task, "text": answer}),
-    )?;
-    call(
-        project_root,
-        "tasks",
-        "move",
-        group,
-        &[task],
-        &json!({"task": task, "state": "done"}),
-    )
-    .map(|_| ())
-}
-
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     fn wire(trust: &str, status: &str) -> Value {

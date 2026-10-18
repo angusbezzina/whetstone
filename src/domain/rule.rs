@@ -1,5 +1,5 @@
 //! Rule record v2 (`whetstone.rule.v2`): one statement, one strength, exactly
-//! one enforcer, labelled examples, a source, hand-raise triggers and privacy.
+//! one enforcer, labelled examples, a source and privacy.
 //!
 //! Earlier `Standard` and `Guidance` records stay readable and are enforced
 //! through [`Rule::from_standard`] and [`Rule::from_guidance`]; every new
@@ -139,7 +139,7 @@ pub enum Enforcer {
         sizes: bool,
     },
     /// Any change to exported items, CLI flags or JSON envelope fields,
-    /// compared with the last pushed revision, raises a hand.
+    /// compared with the last pushed revision, is flagged for the owner.
     PublicSurface {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         surfaces: Vec<String>,
@@ -170,7 +170,7 @@ pub enum Enforcer {
         #[serde(default = "default_threshold")]
         threshold_bp: u16,
         /// Confidence (distance from even odds, in basis points) below which
-        /// the answer is too uncertain to act on and raises a hand.
+        /// the answer is too uncertain to act on.
         #[serde(default = "default_confidence_bar")]
         confidence_bar_bp: u16,
         /// Distinct commits of shadow answers before promotion is considered.
@@ -411,28 +411,6 @@ impl RuleSource {
     }
 }
 
-/// When a result stops the agent and asks the owner instead of repairing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HandRaiseTrigger {
-    /// Any flag from this rule is the owner's call (a public API, say).
-    Flag,
-    /// A Jev answer below the rule's confidence bar.
-    LowConfidence,
-    /// The enforcer could not run.
-    Unavailable,
-}
-
-impl HandRaiseTrigger {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Flag => "flag",
-            Self::LowConfidence => "low_confidence",
-            Self::Unavailable => "unavailable",
-        }
-    }
-}
-
 /// What may leave the machine when a question runs.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -577,8 +555,6 @@ pub struct Rule {
     /// Repository paths or globs the rule applies to; empty means everywhere.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub hand_raise: Vec<HandRaiseTrigger>,
     #[serde(default, skip_serializing_if = "Privacy::is_default")]
     pub privacy: Privacy,
     /// Recorded and shown, never enforced, whatever the enforcer, until the
@@ -690,10 +666,6 @@ impl Rule {
             .map(|unsure| unsure.reason.trim())
     }
 
-    pub fn raises_hand_on(&self, trigger: HandRaiseTrigger) -> bool {
-        self.hand_raise.contains(&trigger)
-    }
-
     /// An earlier `Standard` read as a v2 rule (`may` is advisory).
     pub fn from_standard(standard: &super::Standard) -> Self {
         use super::{Enforcement, StandardStrength};
@@ -738,7 +710,6 @@ impl Rule {
                 provenance: Vec::new(),
             },
             paths: Vec::new(),
-            hand_raise: Vec::new(),
             privacy: Privacy::default(),
             shadow: false,
             sweep: None,
@@ -769,13 +740,40 @@ impl Rule {
                 provenance: Vec::new(),
             },
             paths: Vec::new(),
-            hand_raise: Vec::new(),
             privacy: Privacy::default(),
             shadow: false,
             sweep: None,
             sweep_priority: None,
             sweep_unsure: Vec::new(),
         }
+    }
+}
+
+/// Fields of stored rule revisions that the current model drops on read.
+const DROPPED_RULE_FIELDS: &[&str] = &["hand_raise"];
+
+/// How [`Rule::from_stored`] reads a stored rule revision.
+pub(super) enum StoredRead {
+    /// Read as this rule.
+    Mapped(Rule),
+}
+
+impl Rule {
+    /// Read a stored rule revision that does not parse as a current rule:
+    /// the dropped fields are ignored. `None` when the revision is not of
+    /// that shape (it is then malformed).
+    pub(super) fn from_stored(record: &serde_json::Value) -> Option<StoredRead> {
+        let mut fields = record.as_object()?.clone();
+        let mut mapped = false;
+        for field in DROPPED_RULE_FIELDS {
+            mapped |= fields.remove(*field).is_some();
+        }
+        if !mapped {
+            return None;
+        }
+        serde_json::from_value(serde_json::Value::Object(fields))
+            .ok()
+            .map(StoredRead::Mapped)
     }
 }
 

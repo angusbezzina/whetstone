@@ -295,8 +295,8 @@ pub enum SwitchSource {
 
 /// The switch as read, with where it came from.
 ///
-/// `config` is the record store. `lessons` is where lessons (and raised
-/// hands) go: the same store, except under a legacy `memory.json` naming
+/// `config` is the record store. `lessons` is where lessons go: the same
+/// store, except under a legacy `memory.json` naming
 /// Virgil, which only ever moved lessons. Its records stay in Beads until
 /// `wh init --action setup --store virgil` moves them, so no rule ever
 /// silently disappears from a check.
@@ -401,7 +401,7 @@ pub fn read_config(project_root: &Path) -> Result<StoreConfig, String> {
     read_switch(project_root).map(|switch| switch.config)
 }
 
-/// Where lessons and raised hands go (see [`StoreSwitch`]).
+/// Where lessons go (see [`StoreSwitch`]).
 pub fn read_lesson_config(project_root: &Path) -> Result<StoreConfig, String> {
     read_switch(project_root).map(|switch| switch.lessons)
 }
@@ -520,6 +520,7 @@ pub fn record_class(body: &RecordBody) -> &'static str {
         RecordBody::Mission(_)
         | RecordBody::Principle(_)
         | RecordBody::Rule(_)
+        | RecordBody::StoredRule(_)
         | RecordBody::Standard(_)
         | RecordBody::Guidance(_)
         | RecordBody::Feature(_)
@@ -528,13 +529,11 @@ pub fn record_class(body: &RecordBody) -> &'static str {
         RecordBody::Proposal(_)
         | RecordBody::LocalReview(_)
         | RecordBody::Retirement(_)
-        | RecordBody::FlagDecision(_)
-        | RecordBody::HandAnswer(_) => "decision",
+        | RecordBody::FlagDecision(_) => "decision",
         RecordBody::VerificationReceipt(_)
         | RecordBody::Judgment(_)
         | RecordBody::Attestation(_)
         | RecordBody::Brief(_)
-        | RecordBody::HandRaise(_)
         | RecordBody::LessonCheck(_) => "receipt",
         RecordBody::Retired(retired) => match retired.record_type.as_str() {
             "core_value"
@@ -542,7 +541,7 @@ pub fn record_class(body: &RecordBody) -> &'static str {
             | "metric_definition"
             | "source_snapshot"
             | "policy_exception" => "record",
-            "decision" | "mandate" | "activation" => "decision",
+            "decision" | "mandate" | "activation" | "hand_answer" => "decision",
             _ => "receipt",
         },
     }
@@ -648,7 +647,7 @@ pub fn logical_stage(record: &AgreementRecord) -> u8 {
         RecordBody::Proposal(_) => 1,
         RecordBody::LocalReview(_) => 2,
         body if body.is_receipt() => 3,
-        RecordBody::FlagDecision(_) | RecordBody::HandAnswer(_) => 4,
+        RecordBody::FlagDecision(_) => 4,
         _ => 0,
     }
 }

@@ -235,14 +235,9 @@ pub(crate) fn skill_markdown(
                 let (mechanism, command) = crate::gates::mechanism_label(rule);
                 let _ = writeln!(
                     out,
-                    "- **{}** — {mechanism}: `{command}`; runs at {}.{}{} Recheck with `wh check --rule {}`.",
+                    "- **{}** — {mechanism}: `{command}`; runs at {}.{} Recheck with `wh check --rule {}`.",
                     rule.statement.trim_end_matches('.'),
                     projection::runs_at(rule),
-                    if rule.raises_hand_on(crate::domain::HandRaiseTrigger::Flag) {
-                        " A flag is the owner's call: raise a hand instead of repairing."
-                    } else {
-                        ""
-                    },
                     if rule.privacy.local_only {
                         " Local-only: Jev is never asked; a review attests it."
                     } else {
@@ -258,11 +253,6 @@ pub(crate) fn skill_markdown(
     let _ = writeln!(
         out,
         "Brief yourself before writing code, so you reuse what exists and write nothing the task did not ask for:\n\n1. Run pstack's `/how` for how the area works, `/why` for why it is built that way (start from `JOURNAL.md` and `wh dash --json`), and `/blast-radius` for what the change could break.\n2. Name the existing code, components and design tokens you will reuse. Do not add a helper, component or test until you have checked one does not exist and the task asks for it.\n3. Record the brief: `wh check --brief --area <feature id or path> --skill how --skill why --skill blast-radius --reuse \"<thing>\" --risk \"<what could break>\" --notes \"<summary>\"`. A must rule with a brief enforcer treats a change without one as missing evidence.\n\nAfter each bounded edit run `wh check --changed` (add `--base <ref>` for committed work), repair the smallest thing, and recheck. The Git hooks run the same rules at commit and push; CI runs them as the required `whetstone/policy` check.\n"
-    );
-    let _ = writeln!(out, "## Raise a hand\n");
-    let _ = writeln!(
-        out,
-        "Stop and ask instead of guessing when:\n\n- a must rule's enforcer is unknown or unavailable;\n- the same finding survives a second repair;\n- the change touches an area a must rule reserves for the owner (for example a public API);\n- a Jev answer is low confidence;\n- the spec is too vague to satisfy the rules.\n\nRaise it with `wh check --raise-hand --question \"<the one decision needed>\" --tried \"<what you tried>\" --recommend \"<what you recommend>\" --trigger <low_confidence|second_failed_repair|must_rule_area|vague_spec|rule_flag|unavailable> [--rule <id>]`. It files a Beads issue labelled `human` (the owner sees it in `bd human list` and the dashboard's Requests view), or a task in the group's channel when the project's lessons live in Virgil. Then take other ready work (`bd ready`); do not wait and do not guess. Another agent may advise but cannot decide for the owner.\n"
     );
     let _ = writeln!(out, "## Feature map\n");
     let _ = writeln!(
@@ -417,7 +407,10 @@ pub(crate) fn journal_markdown(state: &AgreementState, header: &str) -> String {
         let kind = match &record.body {
             RecordBody::Mission(_) => "mission",
             RecordBody::Principle(_) => "principle",
-            RecordBody::Rule(_) | RecordBody::Standard(_) | RecordBody::Guidance(_) => "rule",
+            RecordBody::Rule(_)
+            | RecordBody::StoredRule(_)
+            | RecordBody::Standard(_)
+            | RecordBody::Guidance(_) => "rule",
             RecordBody::Feature(_) => "feature",
             RecordBody::VerificationMap(_) => "map",
             _ => "record",

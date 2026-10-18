@@ -262,7 +262,7 @@ pub fn stamp(project_root: &Path, actor: ActorKind, at: &str) -> LessonStamp {
 
 /// The Beads issue in progress, when exactly one is.
 fn in_progress_task(project_root: &Path) -> Option<String> {
-    if !crate::hands::tracker_available(project_root) {
+    if !project_root.join(".beads").is_dir() {
         return None;
     }
     let output = Command::new("bd")

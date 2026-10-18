@@ -465,8 +465,6 @@ pub struct GateOutcome {
     pub elapsed_ms: u64,
     pub program: Option<String>,
     pub program_digest: Option<String>,
-    /// The result is the owner's call: raise a hand instead of repairing.
-    pub raise_hand: bool,
     /// Recorded and shown, never enforced (a question rule in shadow).
     pub shadow: bool,
 }
@@ -489,7 +487,6 @@ impl GateOutcome {
             elapsed_ms: 0,
             program: None,
             program_digest: None,
-            raise_hand: false,
             shadow: rule.in_shadow(),
         }
     }
@@ -1090,7 +1087,6 @@ fn run_surface_gate(
     rule: &Rule,
     surfaces: &[String],
 ) -> GateOutcome {
-    outcome.raise_hand = true;
     let Some(base) = context.surface_base else {
         let outcome = outcome.unknown(
             "No pushed revision to compare with (no upstream or origin/HEAD); the public surface is unknown.",
@@ -1140,7 +1136,7 @@ fn run_surface_gate(
     } else {
         outcome.state = VerificationAxis::Fail;
         outcome.summary = format!(
-            "The public surface changed ({} item(s)); this is the owner's call: raise a hand before continuing.",
+            "The public surface changed ({} item(s)); this is the owner's call.",
             outcome.failures.len()
         );
     }

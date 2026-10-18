@@ -224,7 +224,7 @@ pub(super) fn question_run(
     } else if flags > 0 {
         StateLabel::new("fail", format!("flag · {flags}"))
     } else if low > 0 {
-        StateLabel::new("warn", "low confidence · raise a hand")
+        StateLabel::new("warn", "low confidence")
     } else if shadow {
         StateLabel::new("muted", "shadow · clear")
     } else if rule.strength == crate::domain::Strength::Must {

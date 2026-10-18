@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 // Live browser proof against the real dashboard service and private store:
 // agree the first rules through onboarding, draft and accept a rule from
-// Rules, run the checks, label the flag it raises, answer a raised hand, and
-// prove everything persists across a reload at every agreed width.
+// Rules, run the checks, label the flag it raises, and prove everything
+// persists across a reload at every agreed width.
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { delay, launch } from "./cdp.mjs";
@@ -15,9 +14,7 @@ const root = process.env.WH_PROJECT_ROOT;
 assert.ok(url, "WH_DASHBOARD_URL is required");
 assert.ok(root, "WH_PROJECT_ROOT is required");
 const origin = new URL(url).origin;
-// Optional: the whetstone binary (raises a hand as an agent would) and a
-// directory for screenshots of every view at every width.
-const bin = process.env.WH_BIN;
+// Optional: a directory for screenshots of every view at every width.
 const shots = process.env.WH_SCREENSHOTS;
 
 const browser = await launch();
@@ -32,7 +29,7 @@ const fill = (form, values, submit = true) => cdp.evaluate(`(() => { const f = d
 const text = (selector) => cdp.evaluate(`document.querySelector(${q(selector)})?.textContent ?? null`);
 let checks = 0;
 const check = (condition, message) => { assert.ok(condition, message); checks += 1; };
-const TABS = ["home", "rules", "checks", "changelog", "requests"];
+const TABS = ["home", "rules", "checks", "changelog"];
 async function shot(name) {
   if (!shots) return;
   mkdirSync(shots, { recursive: true });
@@ -45,7 +42,7 @@ try {
   await cdp.navigate(url);
   await cdp.waitFor("document.querySelector('#onboard h1')", "the fresh project did not show onboarding");
   check(await cdp.evaluate("[...document.querySelectorAll('#onboard .steps li')].map(l => l.dataset.step).join() === 'tools,mission,principles,exemplars,rules,gates'"), "onboarding lists the six steps in order");
-  check(await cdp.evaluate("['checks','changelog','requests'].every(t => document.querySelector('#tab-' + t).getAttribute('aria-disabled') === 'true')"), "checks, changelog and requests are gated before the agreement");
+  check(await cdp.evaluate("['checks','changelog'].every(t => document.querySelector('#tab-' + t).getAttribute('aria-disabled') === 'true')"), "checks and changelog are gated before the agreement");
   check(await cdp.evaluate("!/eight|core value|metric/i.test(document.body.innerText)"), "no removed decision, value or metric language");
   for (const width of [320, 1280]) {
     await cdp.viewport(width);
@@ -120,26 +117,6 @@ try {
   await click("#tab-rules");
   await cdp.waitFor("/1 false/.test(document.querySelector('[data-id=\"rule.no-todo-comments\"] .stats')?.textContent || '')", "the dismissed flag did not reach the rule's record");
 
-  // A raised hand, filed as an agent would, answered from Requests.
-  let answered = false;
-  if (bin) {
-    const raised = spawnSync(bin, ["check", "--raise-hand", "--project-dir", root, "--question", "Should the parser accept tabs?", "--tried", "Read the spec", "--recommend", "Treat tabs as spaces", "--trigger", "vague-spec", "--json"], { encoding: "utf8" });
-    const response = JSON.parse(raised.stdout || "{}");
-    if (response.state === "needs_decision") {
-      await cdp.navigate(`${origin}/`);
-      await cdp.waitFor("document.querySelector('#req-count')?.textContent === '1'", "the open request is not counted");
-      await click("#tab-requests");
-      await cdp.waitFor("document.querySelector('#requests .req:not(.done) form')", "the request did not render");
-      check(await cdp.evaluate("/Treat tabs as spaces/.test(document.querySelector('#requests .req').textContent)"), "the request shows the agent's recommendation");
-      check(await cdp.evaluate("/read only|Editing is not available/.test(document.body.innerText) === false"), "requests are answerable in an edit session");
-      await fill("#requests .req form", { content: "Yes, tabs are four spaces." });
-      await cdp.waitFor("document.querySelector('#requests .req.done')", "the answer was not recorded", 45_000);
-      answered = true;
-    } else {
-      console.log(`note: no hand raised (${response.summary || raised.stderr.trim()}); skipping the Requests answer`);
-    }
-  }
-
   // Persistence and a read of the same records after reload.
   await cdp.navigate(`${origin}/`);
   await cdp.waitFor("document.querySelector('#mission-line')", "the dashboard did not reload");
@@ -149,11 +126,6 @@ try {
   await click("#tab-checks");
   await cdp.waitFor("document.querySelector('#gate-rule\\\\.no-todo-comments')", "checks did not reload");
   check(await cdp.evaluate("document.querySelector('#gate-rule\\\\.no-todo-comments .state').classList.contains('fail') && document.querySelectorAll('#flags .row.flag').length === 0"), "the result and the flag label persist");
-  if (answered) {
-    await click("#tab-requests");
-    check(await cdp.evaluate("/tabs are four spaces/.test(document.querySelector('#requests .req.done').textContent)"), "the answer persists");
-  }
-
   for (const width of [320, 390, 768, 1280]) {
     await cdp.viewport(width);
     for (const tab of TABS) {
@@ -167,7 +139,7 @@ try {
   const external = cdp.requests.filter((request) => !request.startsWith(origin) && !request.startsWith("data:") && request !== "about:blank");
   check(external.length === 0, `no external requests: ${external.join(", ")}`);
   check(cdp.errors.length === 0, `no page errors: ${cdp.errors.join("\n")}`);
-  console.log(`PASS live dashboard (${checks} assertions${answered ? ", request answered" : ""})`);
+  console.log(`PASS live dashboard (${checks} assertions)`);
 } finally {
   await browser.close();
 }

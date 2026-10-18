@@ -44,21 +44,6 @@ Beads epic `whetstone-ppq`.
 - Never weaken a check, edit a rule record by hand, or skip hooks. Rule
   changes go through `wh change` as drafts the owner accepts.
 
-## Raise a hand
-
-Stop and ask instead of guessing when:
-- a check is unknown or unavailable for a must rule;
-- the same finding survives a second repair;
-- the task touches an area a must rule reserves for the owner, such as a
-  public API;
-- the spec is too vague to satisfy the rules.
-
-File the question with `wh check --raise-hand` (below): standalone it is a
-Beads issue labelled `human` (the owner sees it in `bd human list`); with the
-store switch naming Virgil it is a task in the attached group's channel. Include what you were asked,
-what you tried, what you recommend, and the one decision needed. Then take other ready
-work (`bd ready`). A second agent may advise but cannot decide for the owner.
-
 ## Remember what you learn
 
 When you learn something the next agent or person should know (a convention
@@ -91,7 +76,7 @@ holds records or admitted lessons it writes them, outside the repository, as
 the files `virgil rulebook import-beads` and `virgil lessons import-beads`
 read, prints the dry-run and apply commands, and flips only when a person runs
 the same command with `--yes` after the apply: every revision must read back
-with its digest, and anchored lessons are re-anchored. Never run `--yes` or the import yourself; raise a hand.
+with its digest, and anchored lessons are re-anchored. Never run `--yes` or the import yourself; ask the owner.
 
 ## Using the CLI
 
@@ -119,8 +104,7 @@ resume token. A retry with the same request ID must keep the same input.
 - `wh change` drafts, previews, accepts, withdraws or retires records
   (`--kind mission|principle|rule|feature|map`), and remembers lessons
   (`--kind lesson`; `--admit`, `--supersede` and `--forget` are a person's). `--accept-flag` and
-  `--dismiss-flag` label a flag, `--answer <issue>` answers a raised hand, and
-  `--tune` and `--migrate` record drafts. Accepting is the owner's call.
+  `--dismiss-flag` label a flag, and `--tune` and `--migrate` record drafts. Accepting is the owner's call.
 - `wh check` runs the rules: `--staged` for pre-commit, `--changed` or
   `--base` for the change, `--feature` and `--step` to prove one feature,
   `--sweep` for every mapped feature, `--mutate` to test the proofs.
@@ -135,10 +119,6 @@ resume token. A retry with the same request ID must keep the same input.
   person raises them; a doubt that covers every flag is refused.
 - Before building, run pstack's `/how`, `/why` and `/blast-radius` and record
   them with `wh check --brief --area <feature|path> --skill how --skill why`.
-- When confidence is low, a repair fails twice, the spec is vague or the area
-  is under a must rule, raise a hand and move on to other ready work:
-  `wh check --raise-hand --question "..." --tried "..." --recommend "..."
-  --trigger <low-confidence|second-failed-repair|must-rule-area|vague-spec>`.
 - A review rule passes only with an attestation at this commit:
   `wh check --attest <rule> --verdict pass|fail --reviewer interrogate
   --notes "..."`.

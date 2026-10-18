@@ -16,12 +16,12 @@ use whetstone::beads::{
 use whetstone::domain::{
     AgreementRecord, Attestation, AttestationVerdict, AuthorizationAxis, Brief, ContentDigest,
     DomainError, Enforcer, EvidenceRef, ExternalRef, ExternalSystem, FlagDecision, FlagVerdict,
-    Freshness, HandAnswer, HandRaise, HandTrigger, JudgmentOutcome, JudgmentReceipt, LocalReview,
-    LocalReviewVerdict, Mission, PolicyStateSnapshot, PrincipalKind, PrincipalRef, Principle,
-    PrincipleSource, Privacy, Proposal, ProposalState, Provenance, ProvenanceAuthority,
-    ProvenanceKind, RecordBody, RecordId, RecordRef, RetiredRecord, Reviewer, Rule, RuleSource,
-    Scope, Strength, VerificationAxis, VerificationReceipt, DEFAULT_JEV_MODEL,
-    LOCAL_REVIEW_ASSURANCE, RETIRED_KINDS, RULE_SCHEMA_V2, SCHEMA_VERSION_V1,
+    Freshness, JudgmentOutcome, JudgmentReceipt, LocalReview, LocalReviewVerdict, Mission,
+    PolicyStateSnapshot, PrincipalKind, PrincipalRef, Principle, PrincipleSource, Privacy,
+    Proposal, ProposalState, Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId,
+    RecordRef, RetiredRecord, Reviewer, Rule, RuleSource, Scope, Strength, VerificationAxis,
+    VerificationReceipt, DEFAULT_JEV_MODEL, LOCAL_REVIEW_ASSURANCE, RETIRED_KINDS, RULE_SCHEMA_V2,
+    SCHEMA_VERSION_V1,
 };
 use whetstone::storage::{AppendRequest, RecordStore, StorageError, StoreKind};
 
@@ -83,7 +83,6 @@ fn rule(statement: &str) -> RecordBody {
         examples: Vec::new(),
         source: RuleSource::owner(),
         paths: Vec::new(),
-        hand_raise: Vec::new(),
         privacy: Privacy::default(),
         shadow: false,
         sweep: None,
@@ -535,23 +534,6 @@ fn every_record_kind_lands_in_its_bead_type_with_its_digest() {
         }),
     );
     let gate_ref = store.append(&gate, None).expect("gate");
-    let raise = record(
-        "hand.fixture",
-        1,
-        "hand:fixture",
-        RecordBody::HandRaise(HandRaise {
-            issue: "whp-1".into(),
-            trigger: HandTrigger::VagueSpec,
-            rule: Some(rule_ref.id.clone()),
-            question: "Which API shape?".into(),
-            tried: "Read the spec.".into(),
-            recommendation: "Keep the current shape.".into(),
-            raised_at: "2026-09-10T12:02:00Z".into(),
-            route: None,
-            actor: None,
-        }),
-    );
-    let raise_ref = store.append(&raise, None).expect("raise");
     let kinds: Vec<(AgreementRecord, &str)> = vec![
         (
             record(
@@ -654,26 +636,10 @@ fn every_record_kind_lands_in_its_bead_type_with_its_digest() {
             ),
             "decision",
         ),
-        (
-            record(
-                "decision.hand_fixture",
-                1,
-                "answer:fixture",
-                RecordBody::HandAnswer(HandAnswer {
-                    raise: raise_ref.clone(),
-                    issue: "whp-1".into(),
-                    answer: "Keep it.".into(),
-                    answered_by: "Owner".into(),
-                    answered_at: "2026-09-10T12:07:00Z".into(),
-                }),
-            ),
-            "decision",
-        ),
     ];
     let mut expected = vec![
         (rule_ref.clone(), "rule", "record"),
         (gate_ref, "verification_receipt", "receipt"),
-        (raise_ref, "hand_raise", "receipt"),
     ];
     for (record, bead_type) in &kinds {
         let reference = store.append(record, None).expect("append kind");
@@ -701,7 +667,7 @@ fn every_record_kind_lands_in_its_bead_type_with_its_digest() {
             DomainError::OperationalRecordCannotGrantAuthority
         ))
     ));
-    assert_eq!(fresh.all_records().expect("records").len(), 10);
+    assert_eq!(fresh.all_records().expect("records").len(), 8);
 }
 
 #[test]

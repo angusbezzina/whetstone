@@ -36,7 +36,7 @@ fn envelope(case: &Value) -> Value {
     );
     let receipt = matches!(
         case["record_type"].as_str(),
-        Some("judgment" | "attestation" | "brief" | "hand_raise" | "verification_receipt")
+        Some("judgment" | "attestation" | "brief" | "verification_receipt")
     );
     json!({
         "schema_version": 1,
@@ -147,6 +147,26 @@ fn every_case_meets_its_expectation() {
                     "{id}"
                 );
             }
+            "stored" => {
+                let record = parsed.unwrap_or_else(|error| panic!("{id} did not parse: {error}"));
+                let RecordBody::StoredRule(stored) = &record.body else {
+                    panic!("{id} was not read as a stored rule: {:?}", record.body);
+                };
+                assert_eq!(stored.record, case["record"], "{id} keeps its body");
+                record
+                    .validate()
+                    .unwrap_or_else(|error| panic!("{id} is invalid: {error}"));
+                assert_eq!(
+                    record.canonical_json().expect("canonical"),
+                    bytes,
+                    "{id} re-serializes byte for byte"
+                );
+                let mut history = AgreementHistory::default();
+                let reference = history
+                    .append(record.clone(), None)
+                    .unwrap_or_else(|error| panic!("{id} was not appended: {error}"));
+                assert_eq!(reference.digest, record.digest().expect("digest"));
+            }
             "retired" => {
                 let record = parsed.unwrap_or_else(|error| panic!("{id} did not parse: {error}"));
                 let RecordBody::Retired(retired) = &record.body else {
@@ -177,7 +197,7 @@ fn every_case_meets_its_expectation() {
 #[test]
 fn rule_cases_keep_their_family_shadow_privacy_and_defaults() {
     for case in cases() {
-        if case["expect"] != "valid" {
+        if case["expect"] != "valid" && case["expect"] != "stored" {
             continue;
         }
         let id = case["id"].as_str().expect("id");
@@ -335,8 +355,6 @@ fn the_record_schema_lists_current_kinds_and_retires_the_removed_ones() {
         "attestation",
         "brief",
         "flag_decision",
-        "hand_raise",
-        "hand_answer",
     ] {
         assert!(writable.contains(kind), "{kind} is not published");
         assert_eq!(

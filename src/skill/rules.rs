@@ -5,7 +5,7 @@
 //! before and after, and an unchanged file records nothing.
 //!
 //! Format: JSON-valued frontmatter (record, revision, strength, enforcer,
-//! source, paths, hand_raise, privacy), an H1 with the statement, the
+//! source, paths, privacy), an H1 with the statement, the
 //! rationale, then `## Examples` with one `### Flag: <reason>` or
 //! `### Pass: <reason>` per example, an optional `Path:` line and the input
 //! in a fenced block.
@@ -15,8 +15,8 @@ use std::collections::BTreeMap;
 use serde_json::{json, Value};
 
 use crate::domain::{
-    Enforcer, ExampleVerdict, HandRaiseTrigger, Privacy, RecordId, Rule, RuleExample, RuleSource,
-    Strength, RULE_SCHEMA_V2,
+    Enforcer, ExampleVerdict, Privacy, RecordId, Rule, RuleExample, RuleSource, Strength,
+    RULE_SCHEMA_V2,
 };
 
 pub fn rule_slug(id: &RecordId) -> String {
@@ -51,7 +51,6 @@ pub fn render_rule_file(id: &RecordId, revision: u64, rule: &Rule, header: &str)
         ("enforcer", json!(rule.enforcer)),
         ("source", json!(rule.source)),
         ("paths", json!(rule.paths)),
-        ("hand_raise", json!(rule.hand_raise)),
         ("privacy", json!(rule.privacy)),
     ] {
         out.push_str(&crate::feature_map::frontmatter_line(key, &value));
@@ -117,8 +116,6 @@ pub fn parse_rule_file(text: &str) -> Result<ParsedRule, String> {
     let source: RuleSource =
         serde_json::from_value(field("source")).map_err(|error| format!("source: {error}"))?;
     let paths: Vec<String> = serde_json::from_value(field("paths")).unwrap_or_default();
-    let hand_raise: Vec<HandRaiseTrigger> =
-        serde_json::from_value(field("hand_raise")).unwrap_or_default();
     let privacy: Privacy = serde_json::from_value(field("privacy")).unwrap_or_default();
     let rest = &body[end + "\n---\n".len()..];
     let mut lines = rest
@@ -195,7 +192,6 @@ pub fn parse_rule_file(text: &str) -> Result<ParsedRule, String> {
         examples,
         source,
         paths,
-        hand_raise,
         privacy,
         shadow: false,
         sweep: None,

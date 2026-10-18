@@ -28,10 +28,7 @@ system, and agents guessing instead of asking.
    (fast, staged files), pre-push (the full `wh check` with fresh proofs) and
    as a required CI status. The generated verification skill proves features
    in the running app.
-4. **Raise a hand without stalling.** Low confidence, a second failed repair,
-   a vague spec or a must-rule area makes the agent file a `bd human` request
-   and move to other ready work.
-5. **Get stricter and cheaper over time.** Flags you accept or dismiss give
+4. **Get stricter and cheaper over time.** Flags you accept or dismiss give
    each rule a false-flag rate. Noisy rules are proposed for demotion and
    recurring Jev flags are proposed as mechanical checks. You accept every
    change; nothing learns on its own.
@@ -41,7 +38,7 @@ The public surface is exactly six commands:
 | Command | Purpose |
 | --- | --- |
 | `wh init` | Set up: install what's missing, agree the mission, principles and rules, wire hooks and the verification skill. |
-| `wh dash` | See rules, checks, raised hands and the full decision log, and accept or reject drafts. |
+| `wh dash` | See rules, checks and the full decision log, and accept or reject drafts. |
 | `wh change` | Propose a change to a rule, principle or feature map as a reviewable draft. |
 | `wh check` | Check work against the rules, return failures to the worker, and record receipts. |
 | `wh pull` | Receive the team's shared agreement without touching your drafts. |
@@ -74,14 +71,12 @@ and the plan in epic `whetstone-ppq` is built:
   One. Text is redacted in Whetstone before the driver sees it (path globs,
   patterns, built-in secret patterns and the key itself), receipts record
   that redaction happened, and a local-only rule never leaves the machine.
-  A Jev answer can flag but never pass a must rule; low confidence raises a
-  hand.
+  A Jev answer can flag but never pass a must rule; a low-confidence answer
+  is unknown.
 - **Gates.** `wh init --action wire --hooks` installs git pre-commit (staged
   content, mechanical rules only) and pre-push (`wh check --base <remote>`)
   hooks, chaining any existing hook. `--ci` writes the `whetstone/policy` required status workflow.
-- **Hands and briefs.** `wh check --raise-hand` files a `bd human` issue and
-  the dashboard shows it until `wh change --answer` records the answer.
-  `wh check --brief` records a pstack brief that brief-enforced rules require.
+- **Briefs.** `wh check --brief` records a pstack brief that brief-enforced rules require.
 - **Learning.** `wh change --accept-flag` and `--dismiss-flag` label flags.
   Each rule then has a false-flag rate, and `wh change --tune` drafts
   demotions for noisy rules and promotions for accurate shadow questions.

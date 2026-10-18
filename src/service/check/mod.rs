@@ -1,6 +1,5 @@
 //! `wh check`: run every applicable rule the cheapest reliable way and
-//! return actionable findings, or record a review attestation, a brief or a
-//! raised hand.
+//! return actionable findings, or record a review attestation or a brief.
 //!
 //! Modes: the staged index (pre-commit: mechanical content checks only), the
 //! change since a base (pre-push and CI), everything, or a sweep of every
@@ -19,10 +18,9 @@ use crate::agreement::AgreementState;
 use crate::check;
 use crate::domain::{
     AgreementRecord, Attestation, AttestationVerdict, Brief, ContentDigest, Enforcer,
-    EnforcerFamily, EvidenceRef, ExternalRef, ExternalSystem, Feature, Freshness, HandRaise,
-    HandRaiseTrigger, HandTrigger, JudgmentOutcome, JudgmentReceipt, PolicyStateSnapshot,
-    ProvenanceKind, RecordBody, RecordId, RecordRef, Rule, Strength, VerificationAxis,
-    VerificationReceipt,
+    EnforcerFamily, EvidenceRef, ExternalRef, ExternalSystem, Feature, Freshness, JudgmentOutcome,
+    JudgmentReceipt, PolicyStateSnapshot, ProvenanceKind, RecordBody, RecordId, RecordRef, Rule,
+    Strength, VerificationAxis, VerificationReceipt,
 };
 use crate::gates::{BriefView, FileSet, GateOutcome};
 use crate::judgment::{self, Answer, UnitSource};
@@ -41,7 +39,7 @@ use super::record::{
 use super::{
     bounded_input, bounded_list, bounded_request_id, domain_response, load_records, storage_error,
     unix_now, unknown_response, utc_now, AttestRequest, BriefRequest, CheckRequest, GateMode,
-    HandRequest, RequiredSnapshot, ServiceEvidence, ServiceResponse, ServiceState,
+    RequiredSnapshot, ServiceEvidence, ServiceResponse, ServiceState,
 };
 
 /// The repository's own privacy settings, applied to every question.
@@ -161,14 +159,11 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         if let Some(brief) = request.brief.clone() {
             return record_brief(layout, request_id, &brief);
         }
-        if let Some(hand) = request.raise_hand.clone() {
-            return raise_hand(layout, request_id, &hand);
-        }
-    } else if request.attest.is_some() || request.brief.is_some() || request.raise_hand.is_some() {
+    } else if request.attest.is_some() || request.brief.is_some() {
         return unknown_response(
             "check",
             request_id,
-            "Recording an attestation, brief or raised hand needs a Git repository.".into(),
+            "Recording an attestation or a brief needs a Git repository.".into(),
         );
     }
     // CI enforces what the team accepted and shared, never a contributor's
@@ -582,39 +577,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                             });
                         }
                     }
-                    // A flag that is the owner's call passes once the owner
-                    // attested this exact rule revision for the change.
-                    if outcome.state == VerificationAxis::Fail
-                        && rule.raises_hand_on(HandRaiseTrigger::Flag)
-                    {
-                        if let Some(attestation) = current_attestation(
-                            agreement.as_ref(),
-                            selected,
-                            head.as_deref(),
-                            checked_tree.as_deref(),
-                        ) {
-                            if attestation.verdict == AttestationVerdict::Pass {
-                                outcome.state = VerificationAxis::Pass;
-                                outcome.raise_hand = false;
-                                outcome.summary = format!(
-                                    "{} The owner approved it: {} attested at {} ({}).",
-                                    outcome.summary,
-                                    attestation.reviewer.label(),
-                                    &attestation.commit[..attestation.commit.len().min(12)],
-                                    attestation.notes
-                                );
-                                outcome.evidence.push(EvidenceRef {
-                                    system: "whetstone_attestation".into(),
-                                    locator: format!(
-                                        "{}@{}",
-                                        attestation.reviewer.label(),
-                                        attestation.attested_at
-                                    ),
-                                    digest: None,
-                                });
-                            }
-                        }
-                    }
                     // A proof that survived its recorded mutation is hollow.
                     if let (Enforcer::Drive { feature }, VerificationAxis::Pass) =
                         (&rule.enforcer, outcome.state)
@@ -784,8 +746,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                                     ""
                                 }
                             ));
-                            outcome.raise_hand = rule.strength == Strength::Must
-                                && rule.raises_hand_on(HandRaiseTrigger::Unavailable);
                             (outcome, RequirementKind::Review, None)
                         }
                     }
@@ -972,7 +932,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             flags.join(", ")
         ));
     }
-    let hands = hand_signals(&outcomes);
     let mut response = ServiceResponse::new(request_id, "check", state, summary);
     response.required_snapshot = Some(RequiredSnapshot {
         code_digest: Some(report.snapshot.code_tree.as_str().into()),
@@ -999,7 +958,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             });
         }
     }
-    response.permitted_actions = next_actions(state, &outcomes, &hands);
+    response.permitted_actions = next_actions(state, &outcomes);
     response.data = json!({
         "report": report,
         "raw_scan": result,
@@ -1010,7 +969,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         "judgment_receipts": judgment_receipts,
         "gates": outcomes,
         "flags": flags,
-        "raise_hand": hands,
         "not_applicable": not_applicable,
         "mutations": mutation_runs,
         "mutation_receipts": mutation_receipts,
@@ -1053,13 +1011,13 @@ fn selection_json(request: &CheckRequest, selection: &Selection) -> Value {
     })
 }
 
-fn next_actions(state: ServiceState, outcomes: &[GateOutcome], hands: &[Value]) -> Vec<String> {
-    let mut actions = match state {
+fn next_actions(state: ServiceState, outcomes: &[GateOutcome]) -> Vec<String> {
+    match state {
         ServiceState::Success => vec!["handoff the verified result".into()],
         ServiceState::Violated => {
             let failing = outcomes
                 .iter()
-                .filter(|outcome| outcome.state == VerificationAxis::Fail && !outcome.raise_hand)
+                .filter(|outcome| outcome.state == VerificationAxis::Fail)
                 .map(|outcome| format!("repair, then wh check --rule {}", outcome.id))
                 .collect::<Vec<_>>();
             if failing.is_empty() {
@@ -1069,40 +1027,7 @@ fn next_actions(state: ServiceState, outcomes: &[GateOutcome], hands: &[Value]) 
             }
         }
         _ => vec!["restore the rule's checker, driver or evidence, then wh check".into()],
-    };
-    for hand in hands {
-        actions.push(format!(
-            "raise a hand: wh check --raise-hand --question \"...\" --tried \"...\" --recommend \"...\" --trigger {} --rule {}",
-            hand["trigger"].as_str().unwrap_or("rule_flag"),
-            hand["rule"].as_str().unwrap_or_default()
-        ));
     }
-    actions
-}
-
-/// Results that are the owner's call, with the trigger to file them under.
-fn hand_signals(outcomes: &[GateOutcome]) -> Vec<Value> {
-    outcomes
-        .iter()
-        .filter(|outcome| outcome.raise_hand && !outcome.shadow)
-        .map(|outcome| {
-            let trigger =
-                if outcome.state == VerificationAxis::Fail && outcome.family == "mechanical" {
-                    HandTrigger::RuleFlag
-                } else if outcome.summary.contains("low confidence") {
-                    HandTrigger::LowConfidence
-                } else if outcome.state == VerificationAxis::Fail {
-                    HandTrigger::RuleFlag
-                } else {
-                    HandTrigger::Unavailable
-                };
-            json!({
-                "rule": outcome.id,
-                "trigger": trigger.label(),
-                "summary": outcome.summary,
-            })
-        })
-        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]

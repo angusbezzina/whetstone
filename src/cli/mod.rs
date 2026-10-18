@@ -10,11 +10,11 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::json;
 
-use crate::domain::{AttestationVerdict, FlagVerdict, HandTrigger, Reviewer};
+use crate::domain::{AttestationVerdict, FlagVerdict, Reviewer};
 use crate::service::{
     AttestRequest, BriefRequest, ChangeDefinition, ChangeKind, ChangeRequest, CheckRequest,
-    CommandService, DashRequest, FlagRequest, GateMode, HandRequest, InitAction, InitRequest,
-    ReviewRequest, ServiceRequest, ServiceResponse, ServiceState,
+    CommandService, DashRequest, FlagRequest, GateMode, InitAction, InitRequest, ReviewRequest,
+    ServiceRequest, ServiceResponse, ServiceState,
 };
 use crate::{check, dashboard, dashboard_service, output, rules};
 
@@ -134,7 +134,7 @@ enum Command {
     },
 
     /// Draft a change for the owner to accept, or record the owner's call on
-    /// a draft, a flag or a raised hand.
+    /// a draft or a flag.
     Change {
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
@@ -186,9 +186,6 @@ enum Command {
         /// Label a flag as wrong (a false flag); needs --rationale.
         #[arg(long, conflicts_with_all = ["accept_flag", "accept", "withdraw", "retire", "kind"])]
         dismiss_flag: Option<String>,
-        /// Answer a raised hand (its Beads issue id); the answer is --content.
-        #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind"])]
-        answer: Option<String>,
         /// Draft principles from earlier values and philosophy records.
         #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind", "tune"])]
         migrate: bool,
@@ -216,8 +213,8 @@ enum Command {
         from_lesson: Option<String>,
     },
 
-    /// Run the rules and return actionable findings, or record a review, a
-    /// brief or a raised hand.
+    /// Run the rules and return actionable findings, or record a review or a
+    /// brief.
     Check {
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
@@ -227,7 +224,7 @@ enum Command {
         paths: Vec<PathBuf>,
         #[arg(long = "lang")]
         language: Option<String>,
-        /// Run only this rule (repeatable); with --raise-hand, the rule the hand is about.
+        /// Run only this rule (repeatable).
         #[arg(long = "rule")]
         rules: Vec<String>,
         /// Prove a mapped feature by running the rules that prove it.
@@ -306,21 +303,6 @@ enum Command {
         /// What the change could break (repeatable).
         #[arg(long = "risk")]
         risks: Vec<String>,
-        /// Raise a hand: file a question for the owner as a `human` Beads issue.
-        #[arg(long, requires_all = ["question", "tried", "recommend"])]
-        raise_hand: bool,
-        /// The one decision needed (with --raise-hand).
-        #[arg(long)]
-        question: Option<String>,
-        /// What was tried (with --raise-hand).
-        #[arg(long)]
-        tried: Option<String>,
-        /// What you recommend (with --raise-hand).
-        #[arg(long)]
-        recommend: Option<String>,
-        /// Why you stopped (with --raise-hand).
-        #[arg(long, value_enum, default_value_t = TriggerArg::VagueSpec)]
-        trigger: TriggerArg,
         /// Run as a Git gate: `pre-commit` or `pre-push`.
         #[arg(long, value_enum)]
         hook: Option<CheckHookArg>,
@@ -451,29 +433,6 @@ enum MaintainOutcomeArg {
 enum VerdictArg {
     Pass,
     Fail,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum TriggerArg {
-    LowConfidence,
-    SecondFailedRepair,
-    MustRuleArea,
-    VagueSpec,
-    RuleFlag,
-    Unavailable,
-}
-
-impl From<TriggerArg> for HandTrigger {
-    fn from(value: TriggerArg) -> Self {
-        match value {
-            TriggerArg::LowConfidence => Self::LowConfidence,
-            TriggerArg::SecondFailedRepair => Self::SecondFailedRepair,
-            TriggerArg::MustRuleArea => Self::MustRuleArea,
-            TriggerArg::VagueSpec => Self::VagueSpec,
-            TriggerArg::RuleFlag => Self::RuleFlag,
-            TriggerArg::Unavailable => Self::Unavailable,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -657,7 +616,6 @@ pub fn run() -> i32 {
             retire,
             accept_flag,
             dismiss_flag,
-            answer,
             migrate,
             tune,
             hardens,
@@ -706,7 +664,6 @@ pub fn run() -> i32 {
                         verdict: FlagVerdict::Dismiss,
                     })
                 }),
-            answer,
             migrate,
             tune,
             hardens,
@@ -752,21 +709,15 @@ pub fn run() -> i32 {
             skills,
             reuse,
             risks,
-            raise_hand,
-            question,
-            tried,
-            recommend,
-            trigger,
             hook,
             pushed,
         }) => {
-            let hand_rule = rules.first().cloned();
             let request = CheckRequest {
                 project_dir,
                 request_id,
                 paths,
                 language,
-                rules: if raise_hand { Vec::new() } else { rules },
+                rules,
                 features,
                 gate_mode: if staged || hook == Some(CheckHookArg::PreCommit) {
                     GateMode::Staged
@@ -814,14 +765,6 @@ pub fn run() -> i32 {
                 }),
                 mutate,
                 findings: format == Some(CheckFormatArg::Findings),
-                raise_hand: raise_hand.then(|| HandRequest {
-                    question: question.clone().unwrap_or_default(),
-                    tried: tried.clone().unwrap_or_default(),
-                    recommendation: recommend.clone().unwrap_or_default(),
-                    trigger: trigger.into(),
-                    rule: hand_rule,
-                    actor: crate::memory::detect_actor(),
-                }),
             };
             match hook {
                 Some(CheckHookArg::PreCommit | CheckHookArg::PrePush) => {
@@ -1522,10 +1465,6 @@ mod tests {
         assert_eq!(InitAction::from(InitActionArg::Agree), InitAction::Agree);
         assert_eq!(ChangeKind::from(ChangeKindArg::Rule), ChangeKind::Rule);
         assert_eq!(InitAction::from(InitActionArg::Setup), InitAction::Setup);
-        assert_eq!(
-            HandTrigger::from(TriggerArg::SecondFailedRepair),
-            HandTrigger::SecondFailedRepair
-        );
     }
 
     #[test]

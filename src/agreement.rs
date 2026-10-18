@@ -59,6 +59,7 @@ pub fn is_agreement_body(body: &RecordBody) -> bool {
         RecordBody::Mission(_)
             | RecordBody::Principle(_)
             | RecordBody::Rule(_)
+            | RecordBody::StoredRule(_)
             | RecordBody::Standard(_)
             | RecordBody::Guidance(_)
             | RecordBody::Feature(_)

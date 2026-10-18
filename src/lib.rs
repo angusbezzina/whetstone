@@ -12,7 +12,6 @@ pub mod execution;
 pub mod exemplar;
 pub mod feature_map;
 pub mod gates;
-pub mod hands;
 pub mod history;
 pub mod hygiene;
 pub mod judgment;

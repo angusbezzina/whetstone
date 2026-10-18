@@ -83,11 +83,7 @@ pub(super) fn gate_finding(selected: &SelectedRule, failure: &ArtifactFailure) -
         observed: failure.message.clone(),
         expected: selected.rule.statement.clone(),
         rationale: selected.rule.rationale.clone(),
-        repair_direction: if selected.rule.raises_hand_on(HandRaiseTrigger::Flag) {
-            "This is the owner's call: raise a hand with wh check --raise-hand instead of repairing.".into()
-        } else {
-            "Repair within the current task scope; never weaken the rule.".into()
-        },
+        repair_direction: "Repair within the current task scope; never weaken the rule.".into(),
         permitted_next_action: format!("repair, then wh check --rule {}", selected.id.as_str()),
         verification_command: format!("wh check --rule {}", selected.id.as_str()),
     }

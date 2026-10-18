@@ -5,6 +5,7 @@
     "valid": "parses, validates, appends once, and its canonical bytes are a fixed point of parse and serialize",
     "parse_error": "the record body does not deserialize",
     "invalid": "the record body deserializes but validation refuses it",
+    "stored": "a rule revision read through its mapping and enforced as that rule; its stored bytes and digest are kept",
     "retired": "read exactly as stored as a retired kind; appending it is refused"
   },
   "cases": [
@@ -124,7 +125,7 @@
         "hand_raise": ["low_confidence", "unavailable"],
         "privacy": { "redact_globs": ["secrets/**"], "redact_patterns": ["[a-z]+@example\\.com"], "local_only": true }
       },
-      "expect": "valid",
+      "expect": "stored",
       "family": "question",
       "shadow": true,
       "local_only": true
@@ -261,7 +262,7 @@
         "source": { "kind": "starter", "reference": "pstack:boundary-discipline" },
         "hand_raise": ["flag"]
       },
-      "expect": "valid",
+      "expect": "stored",
       "family": "mechanical"
     },
     {
@@ -354,7 +355,7 @@
         "recommendation": "Fix the clock injection.",
         "raised_at": "2026-09-10T12:00:00Z"
       },
-      "expect": "valid"
+      "expect": "retired"
     },
     {
       "id": "E-035",

@@ -83,7 +83,6 @@ fn rule(enforcer: Enforcer) -> Rule {
         }],
         source: RuleSource::owner(),
         paths: vec!["src/**".into()],
-        hand_raise: Vec::new(),
         privacy: Privacy::default(),
         shadow: false,
         sweep: None,

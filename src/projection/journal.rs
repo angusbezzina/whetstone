@@ -61,14 +61,16 @@ pub(crate) fn area_of(record: &AgreementRecord) -> &'static str {
     match &record.body {
         RecordBody::Mission(_) => "mission",
         RecordBody::Principle(_) => "principles",
-        RecordBody::Rule(_) | RecordBody::Standard(_) | RecordBody::Guidance(_) => "rules",
+        RecordBody::Rule(_)
+        | RecordBody::StoredRule(_)
+        | RecordBody::Standard(_)
+        | RecordBody::Guidance(_) => "rules",
         RecordBody::Feature(_) | RecordBody::VerificationMap(_) => "features",
         RecordBody::VerificationReceipt(_)
         | RecordBody::Judgment(_)
         | RecordBody::Attestation(_)
         | RecordBody::Brief(_) => "checks",
         RecordBody::FlagDecision(_) => "rules",
-        RecordBody::HandRaise(_) | RecordBody::HandAnswer(_) => "requests",
         RecordBody::Retired(_) => "history",
         _ => "governance",
     }
@@ -342,28 +344,6 @@ fn journal_entry(
                     format!("{} ({})", body.reason, body.decided_by),
                 );
             }
-            RecordBody::HandRaise(body) => {
-                return base(
-                    "decision",
-                    format!("Raised a hand: {}", snippet(&body.question, 90)),
-                    StateLabel::new("warn", "open"),
-                    "requests",
-                    format!(
-                        "{} · recommends: {}",
-                        body.trigger.label(),
-                        body.recommendation
-                    ),
-                );
-            }
-            RecordBody::HandAnswer(body) => {
-                return base(
-                    "decision",
-                    format!("Answered {}", body.issue),
-                    StateLabel::new("pass", "answered"),
-                    "requests",
-                    format!("{} ({})", body.answer, body.answered_by),
-                );
-            }
             RecordBody::Retired(retired) => {
                 return base(
                     "decision",
@@ -371,7 +351,7 @@ fn journal_entry(
                     StateLabel::new("muted", "retired kind"),
                     "history",
                     format!(
-                        "A {} record from before the delegation plan; kept exactly as recorded.",
+                        "A {} record of a kind Whetstone no longer writes; kept exactly as recorded.",
                         retired.record_type.replace('_', " ")
                     ),
                 );
@@ -632,8 +612,8 @@ fn record_evidence(record: &AgreementRecord) -> String {
 
 /// The decision history as a show-me-your-work TSV: accepted changes
 /// (retirements, strength changes and shadow promotions included), check
-/// receipts, Jev answers (with redactions), review attestations, briefs,
-/// flag decisions and raised hands with their answers, in time order.
+/// receipts, Jev answers (with redactions), review attestations, briefs and
+/// flag decisions, in time order.
 pub fn decision_trail(state: &AgreementState) -> String {
     let mut rows = Vec::<(String, String, [String; 5])>::new();
     let acceptance = |record: &AgreementRecord| -> Option<(String, String)> {
@@ -938,32 +918,6 @@ pub fn decision_trail(state: &AgreementState) -> String {
                         crate::domain::FlagVerdict::Accept => "true flag".into(),
                         crate::domain::FlagVerdict::Dismiss => "false flag".into(),
                     },
-                ],
-            )),
-            RecordBody::HandRaise(body) => rows.push((
-                body.raised_at.clone(),
-                id,
-                [
-                    "hands".into(),
-                    format!(
-                        "Raised a hand ({}): {}",
-                        body.trigger.label(),
-                        body.question
-                    ),
-                    format!("Tried: {} Recommends: {}", body.tried, body.recommendation),
-                    format!("beads:{}", body.issue),
-                    "waiting for the owner".into(),
-                ],
-            )),
-            RecordBody::HandAnswer(body) => rows.push((
-                body.answered_at.clone(),
-                id,
-                [
-                    "hands".into(),
-                    format!("Answered {}", body.issue),
-                    body.answer.clone(),
-                    format!("beads:{} by {}", body.issue, body.answered_by),
-                    "answered".into(),
                 ],
             )),
             _ => {}

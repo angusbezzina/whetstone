@@ -1,17 +1,15 @@
 //! `wh change`: propose a bounded change as a private draft the owner
 //! accepts, and the owner's other decisions: accepting or withdrawing a
-//! draft, retiring a record, labelling a flag, answering a raised hand,
-//! migrating earlier values and philosophy, and recording tuning drafts.
+//! draft, retiring a record, labelling a flag, migrating earlier values and philosophy, and recording tuning drafts.
 
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::agreement::AgreementState;
 use crate::domain::{
-    AgreementRecord, EvidenceRef, FlagDecision, HandAnswer, JudgmentOutcome, Principle,
-    PrincipleSource, Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId,
-    RecordRef, Rule, RuleSource, RuleSourceKind, VerificationAxis, RULE_SCHEMA_V2,
-    SCHEMA_VERSION_V1,
+    AgreementRecord, EvidenceRef, FlagDecision, JudgmentOutcome, Principle, PrincipleSource,
+    Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, RecordRef, Rule,
+    RuleSource, RuleSourceKind, VerificationAxis, RULE_SCHEMA_V2, SCHEMA_VERSION_V1,
 };
 use crate::storage::{ProjectLayout, RecordStore, StorageError};
 
@@ -52,9 +50,6 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
     if let Some(flag) = request.flag.clone() {
         return record_flag(&layout, request_id, &flag, &request);
     }
-    if let Some(issue) = request.answer.clone() {
-        return answer_hand(&layout, request_id, &issue, &request);
-    }
     if request.migrate {
         return migrate(&layout, private, request_id, &request);
     }
@@ -73,7 +68,7 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
 /// they differ between the inspection and the confirmation.
 fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String {
     let input = format!(
-        "{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{}\0{}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}",
+        "{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{}\0{}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}",
         request.kind,
         request.record_id,
         request.content,
@@ -88,7 +83,6 @@ fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String
         request.flag.as_ref().map(|flag| (&flag.receipt, flag.verdict)),
         request.migrate,
         request.tune,
-        request.answer,
         request.hardens,
         request.examples,
         request.conflicts,
@@ -500,7 +494,6 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
                 examples,
                 source,
                 paths,
-                hand_raise,
                 privacy,
                 shadow,
                 sweep,
@@ -538,7 +531,6 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
                 examples: examples.clone(),
                 source,
                 paths: paths.clone(),
-                hand_raise: hand_raise.clone(),
                 privacy: privacy.clone(),
                 shadow: *shadow,
                 sweep: *sweep,
@@ -783,128 +775,6 @@ fn record_flag(
             );
             response.permitted_actions = vec!["wh dash".into(), "wh change --tune".into()];
             response.data = json!({"decision": reference, "rule": rule, "verdict": flag.verdict});
-            response
-        }
-        Err(error) => storage_error("change", request_id, error),
-    }
-}
-
-/// Answer a raised hand: respond in Beads, then record the answer.
-fn answer_hand(
-    layout: &ProjectLayout,
-    request_id: String,
-    issue: &str,
-    request: &ChangeRequest,
-) -> ServiceResponse {
-    let state = match state_of(layout) {
-        Ok(state) => state,
-        Err(error) => return storage_error("change", request_id, error),
-    };
-    let Some(raise) = state
-        .records()
-        .iter()
-        .find(|record| matches!(&record.body, RecordBody::HandRaise(body) if body.issue == issue))
-    else {
-        return unknown_response(
-            "change",
-            request_id,
-            format!("No raised hand is filed as {issue}; see the Requests view or bd human list."),
-        );
-    };
-    let already = state
-        .records()
-        .iter()
-        .any(|record| matches!(&record.body, RecordBody::HandAnswer(body) if body.issue == issue));
-    if already {
-        let mut response = ServiceResponse::new(
-            request_id,
-            "change",
-            ServiceState::Success,
-            format!("{issue} is already answered; nothing was recorded twice."),
-        );
-        response.data = json!({"issue": issue, "idempotent_replay": true});
-        return response;
-    }
-    let answer = match request.content.clone() {
-        Some(content) => match bounded_input(Some(content), "answer", 4_000) {
-            Ok(answer) => {
-                let route = match &raise.body {
-                    RecordBody::HandRaise(body) => body.route.clone(),
-                    _ => None,
-                };
-                if let Err(error) =
-                    crate::hands::answer(layout.project_root(), issue, route.as_deref(), &answer)
-                {
-                    // Already closed in Beads (answered there) is fine; any
-                    // other failure means the tracker did not take it.
-                    if !error.to_ascii_lowercase().contains("closed") {
-                        let mut response = ServiceResponse::new(
-                            request_id,
-                            "change",
-                            ServiceState::Unavailable,
-                            format!("The tracker did not take the answer: {error}"),
-                        );
-                        response.permitted_actions = vec![format!("bd human respond {issue} -r \"<answer>\"")];
-                        return response;
-                    }
-                }
-                answer
-            }
-            Err(question) => return needs_input("change", request_id, 0, String::new(), question),
-        },
-        None => match crate::hands::latest_comment(layout.project_root(), issue) {
-            Some(answer) => answer,
-            None => {
-                return needs_input(
-                    "change",
-                    request_id,
-                    0,
-                    String::new(),
-                    format!("Provide the answer with --content, or answer {issue} in Beads first (bd human respond)."),
-                )
-            }
-        },
-    };
-    let raise_ref = match raise.reference() {
-        Ok(reference) => reference,
-        Err(error) => return domain_response("change", request_id, error),
-    };
-    let answered_at = utc_now();
-    let key = format!("answer:{issue}");
-    let answered_by = owner_name(layout.project_root()).unwrap_or_else(|| "the owner".into());
-    let record = match receipt_record(
-        layout,
-        format!("decision.answer_{}", key_suffix(&key, 24)),
-        key,
-        "whetstone:owner-answer",
-        ProvenanceKind::HumanAuthored,
-        &answered_at,
-        EvidenceRef {
-            system: "beads".into(),
-            locator: issue.into(),
-            digest: None,
-        },
-        RecordBody::HandAnswer(HandAnswer {
-            raise: raise_ref,
-            issue: issue.into(),
-            answer: answer.clone(),
-            answered_by,
-            answered_at: answered_at.clone(),
-        }),
-    ) {
-        Ok(record) => record,
-        Err(error) => return domain_response("change", request_id, error),
-    };
-    match append_private(layout, &record) {
-        Ok(reference) => {
-            let mut response = ServiceResponse::new(
-                request_id,
-                "change",
-                ServiceState::Success,
-                format!("{issue} was answered and closed where it was filed; the answer is in the trail."),
-            );
-            response.permitted_actions = vec!["wh dash --trail".into()];
-            response.data = json!({"answer": reference, "issue": issue});
             response
         }
         Err(error) => storage_error("change", request_id, error),

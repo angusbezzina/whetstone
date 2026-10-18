@@ -39,9 +39,8 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   `memory.json` moves lessons and raised hands only, and its `group` is no
   longer read (the scope is the attachment). Rules stay in Beads until
   `wh init --action setup --store virgil` moves them.
-- Whetstone needs `bd` 1.3.0 or later (CI pins 1.3.0). Answering a raised
-  hand uses `bd human respond`, and `wh init --action setup` offers an
-  upgrade for an older `bd`.
+- Whetstone needs `bd` 1.3.0 or later (CI pins 1.3.0), and
+  `wh init --action setup` offers an upgrade for an older `bd`.
 
 ### Fixed
 
@@ -60,6 +59,12 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   receipts are gone. The Git pre-commit and pre-push gates are the loop
   every tool passes through. `wh init --action setup --yes` installs only
   Beads; it lists the pstack installs for you to run.
+- Raised hands: `wh check --raise-hand`, `wh change --answer`, a rule's
+  `hand_raise` triggers, the dashboard's Requests view and its Beads task
+  queue, and the Virgil task route. A sweep finding's `unsure` is how a
+  rule says it cannot decide. Stored `hand_raise` and `hand_answer` records
+  are read as retired history, and a stored rule with `hand_raise` loads
+  without it, its digest unchanged.
 
 ## [0.13.0] - 2026-10-15
 

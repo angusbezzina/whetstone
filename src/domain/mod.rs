@@ -3,10 +3,11 @@
 //! These types are the single semantic contract used by every adapter. They
 //! deliberately contain no Beads, GitHub, CLI or dashboard concerns.
 //!
-//! Record kinds the delegation plan removed (values and philosophy, metrics,
-//! exceptions, mandates, activation, observations, repair sessions and team
-//! decisions) stay readable as [`RetiredRecord`]s with their original bytes
-//! and digests, so history is never rewritten; they can no longer be created.
+//! Removed record kinds (values and philosophy, metrics, exceptions,
+//! mandates, activation, observations, repair sessions, team decisions and
+//! raised hands) stay readable as [`RetiredRecord`]s with their original
+//! bytes and digests, so history is never rewritten; they can no longer be
+//! created.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -118,7 +119,6 @@ impl AgreementRecord {
             RecordBody::Judgment(body) => links.push(body.rule.clone()),
             RecordBody::Attestation(body) => links.push(body.rule.clone()),
             RecordBody::FlagDecision(body) => links.push(body.receipt.clone()),
-            RecordBody::HandAnswer(body) => links.push(body.raise.clone()),
             _ => {}
         }
         links
@@ -397,6 +397,8 @@ pub const RETIRED_KINDS: &[&str] = &[
     "repair_handoff",
     "repair_authority_reservation",
     "repair_operation_claim",
+    "hand_raise",
+    "hand_answer",
 ];
 
 /// A record of a removed kind, kept exactly as stored so its digest still
@@ -428,11 +430,22 @@ impl RetiredRecord {
     }
 }
 
+/// A rule revision stored with fields the current model reads through a
+/// mapping ([`Rule::from_stored`]), kept exactly as stored so its digest
+/// still verifies. It is enforced as its mapped rule; revisions are written
+/// as plain rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredRule {
+    pub rule: Rule,
+    pub record: serde_json::Value,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordBody {
     Mission(Mission),
     Principle(Principle),
     Rule(Rule),
+    StoredRule(StoredRule),
     Standard(Standard),
     Guidance(Guidance),
     Feature(Feature),
@@ -445,8 +458,6 @@ pub enum RecordBody {
     Attestation(Attestation),
     Brief(Brief),
     FlagDecision(FlagDecision),
-    HandRaise(HandRaise),
-    HandAnswer(HandAnswer),
     Lesson(Lesson),
     LessonCheck(LessonCheck),
     Retired(RetiredRecord),
@@ -470,8 +481,6 @@ enum BodyRef<'a> {
     Attestation(&'a Attestation),
     Brief(&'a Brief),
     FlagDecision(&'a FlagDecision),
-    HandRaise(&'a HandRaise),
-    HandAnswer(&'a HandAnswer),
     Lesson(&'a Lesson),
     LessonCheck(&'a LessonCheck),
 }
@@ -494,8 +503,6 @@ enum BodyOwned {
     Attestation(Attestation),
     Brief(Brief),
     FlagDecision(FlagDecision),
-    HandRaise(HandRaise),
-    HandAnswer(HandAnswer),
     Lesson(Lesson),
     LessonCheck(LessonCheck),
 }
@@ -507,6 +514,12 @@ impl Serialize for RecordBody {
                 let mut state = serializer.serialize_struct("RecordBody", 2)?;
                 state.serialize_field("record_type", &retired.record_type)?;
                 state.serialize_field("record", &retired.record)?;
+                return state.end();
+            }
+            Self::StoredRule(stored) => {
+                let mut state = serializer.serialize_struct("RecordBody", 2)?;
+                state.serialize_field("record_type", "rule")?;
+                state.serialize_field("record", &stored.record)?;
                 return state.end();
             }
             Self::Mission(value) => BodyRef::Mission(value),
@@ -524,8 +537,6 @@ impl Serialize for RecordBody {
             Self::Attestation(value) => BodyRef::Attestation(value),
             Self::Brief(value) => BodyRef::Brief(value),
             Self::FlagDecision(value) => BodyRef::FlagDecision(value),
-            Self::HandRaise(value) => BodyRef::HandRaise(value),
-            Self::HandAnswer(value) => BodyRef::HandAnswer(value),
             Self::Lesson(value) => BodyRef::Lesson(value),
             Self::LessonCheck(value) => BodyRef::LessonCheck(value),
         };
@@ -548,6 +559,18 @@ impl<'de> Deserialize<'de> for RecordBody {
                 record: raw.record,
             }));
         }
+        if raw.record_type == "rule" {
+            return match serde_json::from_value::<Rule>(raw.record.clone()) {
+                Ok(rule) => Ok(Self::Rule(rule)),
+                Err(error) => match Rule::from_stored(&raw.record) {
+                    Some(StoredRead::Mapped(rule)) => Ok(Self::StoredRule(StoredRule {
+                        rule,
+                        record: raw.record,
+                    })),
+                    None => Err(D::Error::custom(error)),
+                },
+            };
+        }
         let owned: BodyOwned = serde_json::from_value(serde_json::json!({
             "record_type": raw.record_type,
             "record": raw.record,
@@ -569,8 +592,6 @@ impl<'de> Deserialize<'de> for RecordBody {
             BodyOwned::Attestation(value) => Self::Attestation(value),
             BodyOwned::Brief(value) => Self::Brief(value),
             BodyOwned::FlagDecision(value) => Self::FlagDecision(value),
-            BodyOwned::HandRaise(value) => Self::HandRaise(value),
-            BodyOwned::HandAnswer(value) => Self::HandAnswer(value),
             BodyOwned::Lesson(value) => Self::Lesson(value),
             BodyOwned::LessonCheck(value) => Self::LessonCheck(value),
         })
@@ -583,7 +604,7 @@ impl RecordBody {
         match self {
             Self::Mission(_) => "mission",
             Self::Principle(_) => "principle",
-            Self::Rule(_) => "rule",
+            Self::Rule(_) | Self::StoredRule(_) => "rule",
             Self::Standard(_) => "standard",
             Self::Guidance(_) => "guidance",
             Self::Feature(_) => "feature",
@@ -596,8 +617,6 @@ impl RecordBody {
             Self::Attestation(_) => "attestation",
             Self::Brief(_) => "brief",
             Self::FlagDecision(_) => "flag_decision",
-            Self::HandRaise(_) => "hand_raise",
-            Self::HandAnswer(_) => "hand_answer",
             Self::Lesson(_) => "lesson",
             Self::LessonCheck(_) => "lesson_check",
             Self::Retired(retired) => &retired.record_type,
@@ -609,6 +628,7 @@ impl RecordBody {
     pub fn rule_view(&self) -> Option<std::borrow::Cow<'_, Rule>> {
         match self {
             Self::Rule(rule) => Some(std::borrow::Cow::Borrowed(rule)),
+            Self::StoredRule(stored) => Some(std::borrow::Cow::Borrowed(&stored.rule)),
             Self::Standard(standard) => {
                 Some(std::borrow::Cow::Owned(Rule::from_standard(standard)))
             }
@@ -627,7 +647,6 @@ impl RecordBody {
                 | Self::Judgment(_)
                 | Self::Attestation(_)
                 | Self::Brief(_)
-                | Self::HandRaise(_)
                 | Self::LessonCheck(_)
         )
     }
@@ -637,6 +656,7 @@ impl RecordBody {
             Self::Mission(value) => require_text(&value.statement),
             Self::Principle(value) => value.validate(),
             Self::Rule(value) => value.validate(),
+            Self::StoredRule(value) => value.rule.validate(),
             Self::Standard(value) => value.validate(),
             Self::Guidance(value) => {
                 require_text(&value.statement)?;
@@ -655,8 +675,6 @@ impl RecordBody {
             Self::Attestation(value) => value.validate(),
             Self::Brief(value) => value.validate(),
             Self::FlagDecision(value) => value.validate(),
-            Self::HandRaise(value) => value.validate(),
-            Self::HandAnswer(value) => value.validate(),
             Self::Lesson(value) => value.validate(),
             Self::LessonCheck(value) => value.validate(),
             // History is kept as stored; its digest is verified on read.

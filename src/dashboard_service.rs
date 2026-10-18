@@ -168,21 +168,14 @@ impl DashboardBackend for CommandDashboardBackend {
     }
 
     fn mutate(&self, request_body: &[u8]) -> BackendResponse {
-        let mutation = match serde_json::from_slice::<DashboardCommand>(request_body) {
-            Ok(request) => request.into_mutation(self.project_dir.clone()),
+        let mut request = match serde_json::from_slice::<DashboardCommand>(request_body) {
+            Ok(request) => request.into_service_request(self.project_dir.clone()),
             Err(error) => return invalid_request(format!("invalid dashboard command: {error}")),
         };
-        let response = match mutation {
-            Mutation::Service(mut request) => {
-                if let ServiceRequest::Change(change) = request.as_mut() {
-                    change.actor = self.actor;
-                }
-                self.service.execute(*request)
-            }
-            Mutation::Task { title, description } => {
-                queue_task(&self.project_dir, &title, &description)
-            }
-        };
+        if let ServiceRequest::Change(change) = &mut request {
+            change.actor = self.actor;
+        }
+        let response = self.service.execute(request);
         if let Some(observer) = &self.observer {
             observer(&response);
         }
@@ -274,8 +267,6 @@ enum DashboardCommand {
         #[serde(default)]
         flag: Option<DashboardFlag>,
         #[serde(default)]
-        answer: Option<String>,
-        #[serde(default)]
         migrate: bool,
         #[serde(default)]
         tune: bool,
@@ -297,8 +288,6 @@ enum DashboardCommand {
         #[serde(default)]
         mode: DashboardCheckMode,
     },
-    /// Queue work for any agent as a Beads task (Grok Bot is optional).
-    Task { title: String, description: String },
 }
 
 #[derive(Debug, Deserialize)]
@@ -356,20 +345,7 @@ enum DashboardCheckMode {
     Sweep,
 }
 
-/// A mutation is a service request, or a Beads task the dashboard queues.
-enum Mutation {
-    Service(Box<ServiceRequest>),
-    Task { title: String, description: String },
-}
-
 impl DashboardCommand {
-    fn into_mutation(self, project_dir: PathBuf) -> Mutation {
-        match self {
-            Self::Task { title, description } => Mutation::Task { title, description },
-            other => Mutation::Service(Box::new(other.into_service_request(project_dir))),
-        }
-    }
-
     fn into_service_request(self, project_dir: PathBuf) -> ServiceRequest {
         match self {
             Self::Init {
@@ -430,7 +406,6 @@ impl DashboardCommand {
                 review,
                 retire,
                 flag,
-                answer,
                 migrate,
                 tune,
                 lesson,
@@ -466,7 +441,6 @@ impl DashboardCommand {
                         DashboardFlagVerdict::Dismiss => crate::domain::FlagVerdict::Dismiss,
                     },
                 }),
-                answer,
                 migrate,
                 tune,
                 hardens: None,
@@ -508,7 +482,6 @@ impl DashboardCommand {
                 },
                 ..CheckRequest::default()
             }),
-            Self::Task { .. } => ServiceRequest::Orientation,
         }
     }
 }
@@ -552,41 +525,6 @@ impl From<DashboardChangeKind> for ChangeKind {
             DashboardChangeKind::Feature => Self::Feature,
             DashboardChangeKind::Map => Self::Map,
         }
-    }
-}
-
-/// A dashboard button without a bot: queue the work as a Beads task any
-/// agent can pick up (`bd ready`).
-fn queue_task(project_dir: &std::path::Path, title: &str, description: &str) -> ServiceResponse {
-    let root = crate::storage::ProjectLayout::resolve(project_dir)
-        .map(|layout| layout.project_root().to_path_buf())
-        .unwrap_or_else(|_| project_dir.to_path_buf());
-    let title = title.trim();
-    if title.is_empty() || title.len() > 200 || description.len() > 8_000 {
-        return ServiceResponse::new_public(
-            "dashboard-task".into(),
-            "dash",
-            crate::service::ServiceState::NeedsInput,
-            "A task needs a title under 200 bytes and a description under 8000 bytes.",
-        );
-    }
-    match crate::hands::file_task(&root, title, description) {
-        Ok(issue) => {
-            let mut response = ServiceResponse::new_public(
-                "dashboard-task".into(),
-                "dash",
-                crate::service::ServiceState::Success,
-                format!("Queued {issue} for any agent (bd ready shows it)."),
-            );
-            response.data = serde_json::json!({"issue": issue});
-            response
-        }
-        Err(error) => ServiceResponse::new_public(
-            "dashboard-task".into(),
-            "dash",
-            crate::service::ServiceState::Unavailable,
-            format!("The task could not be queued in Beads: {error}"),
-        ),
     }
 }
 

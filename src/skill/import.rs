@@ -272,7 +272,6 @@ pub fn import(
                         provenance: Vec::new(),
                     },
                     paths: Vec::new(),
-                    hand_raise: Vec::new(),
                     privacy: crate::domain::Privacy::default(),
                     shadow: false,
                     sweep: None,

@@ -188,16 +188,6 @@ pub(super) fn run_question(
         JudgmentOutcome::Clear if rule.strength != Strength::Must => VerificationAxis::Pass,
         _ => VerificationAxis::Unknown,
     };
-    outcome.raise_hand = match aggregate {
-        // Low confidence on an enforced question always raises a hand (the
-        // plan's first trigger); a shadow rule raises one only if it opts in.
-        JudgmentOutcome::LowConfidence => {
-            !rule.in_shadow() || rule.raises_hand_on(HandRaiseTrigger::LowConfidence)
-        }
-        JudgmentOutcome::Unavailable => rule.raises_hand_on(HandRaiseTrigger::Unavailable),
-        JudgmentOutcome::Flag => rule.raises_hand_on(HandRaiseTrigger::Flag),
-        JudgmentOutcome::Clear => false,
-    };
     if aggregate == JudgmentOutcome::LowConfidence {
         outcome.summary.push_str("; low confidence");
     }

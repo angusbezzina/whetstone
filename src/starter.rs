@@ -7,8 +7,8 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::domain::{
-    ContextUnit, Enforcer, ExampleVerdict, HandRaiseTrigger, Privacy, Reviewer, Rule, RuleExample,
-    RuleSource, RuleSourceKind, Strength, DEFAULT_JEV_MODEL, RULE_SCHEMA_V2,
+    ContextUnit, Enforcer, ExampleVerdict, Privacy, Reviewer, Rule, RuleExample, RuleSource,
+    RuleSourceKind, Strength, DEFAULT_JEV_MODEL, RULE_SCHEMA_V2,
 };
 
 pub const PROVE_IT_WORKS: &str = "rule.prove-it-works";
@@ -121,7 +121,6 @@ pub fn starters(root: &Path) -> Vec<Starter> {
         ],
         source: source("prove-it-works"),
         paths: Vec::new(),
-        hand_raise: vec![HandRaiseTrigger::Unavailable],
         privacy: Privacy::default(),
         shadow: false,
         sweep: None,
@@ -153,7 +152,6 @@ pub fn starters(root: &Path) -> Vec<Starter> {
         ],
         source: source("boundary-discipline"),
         paths: surface_paths.clone(),
-        hand_raise: vec![HandRaiseTrigger::Flag],
         privacy: Privacy::default(),
         shadow: false,
         sweep: None,
@@ -198,7 +196,6 @@ pub fn starters(root: &Path) -> Vec<Starter> {
             "**/*.test.*".into(),
             "**/test_*.py".into(),
         ],
-        hand_raise: vec![HandRaiseTrigger::LowConfidence],
         privacy: Privacy::default(),
         shadow: false,
         sweep: None,
@@ -216,10 +213,10 @@ pub fn starters(root: &Path) -> Vec<Starter> {
             id: ASK_BEFORE_PUBLIC_API,
             title: "Ask before changing a public API",
             detected: if surface_paths.is_empty() {
-                "Compares every source file's exports, CLI flags and JSON schemas with the last pushed revision at pre-commit, and raises a hand on any change.".into()
+                "Compares every source file's exports, CLI flags and JSON schemas with the last pushed revision at pre-commit, and flags any change.".into()
             } else {
                 format!(
-                    "Compares exports, CLI flags and JSON schemas under {} with the last pushed revision at pre-commit, and raises a hand on any change.",
+                    "Compares exports, CLI flags and JSON schemas under {} with the last pushed revision at pre-commit, and flags any change.",
                     surface_paths.join(", ")
                 )
             },

@@ -184,7 +184,6 @@ fn rule(
             provenance: evidence.to_vec(),
         },
         paths,
-        hand_raise: Vec::new(),
         privacy: Privacy::default(),
         shadow: false,
         sweep: None,

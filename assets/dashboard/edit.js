@@ -38,7 +38,6 @@ export function flag(a,receipt,verdict,host,trigger){h=a.h;for(const o of docume
 form.addEventListener("submit",async ev=>{ev.preventDefault();const b=form.querySelector("#confirm-flag");busy(b,true);try{const r=await a.cmd({workflow:"change",request_id:rid("dash-flag"),flag:{receipt,verdict},rationale:new FormData(form).get("rationale")});if(r.state!=="success"){busy(b,false);form.prepend(h("p",{class:"notice fail",text:r.summary}));return}await a.reload();a.say(r.summary)}catch(x){busy(b,false);form.prepend(h("p",{class:"notice fail",text:err(x)}))}});
 box.textContent="";box.append(form);host.classList.add("open");form.querySelector("textarea").focus()}
 async function simple(a,body,btn,after){busy(btn,true);try{const r=await a.cmd({request_id:rid("dash"),...body});await a.reload();a.say(r.summary);after?.(r);return r}catch(x){busy(btn,false);a.say(err(x))}}
-export function answer(a,req,form){h=a.h;return simple(a,{workflow:"change",answer:req.issue,content:new FormData(form).get("content")},form.querySelector("button"))}
 export function tune(a,btn){h=a.h;return simple(a,{workflow:"change",tune:true},btn)}
 export function migrate(a,btn){h=a.h;return simple(a,{workflow:"change",migrate:true},btn)}
 const ck=(a,name,value,on,label,side,note,extra)=>h("label",{class:"pick"},h("input",{type:"checkbox",name,value,checked:on,disabled:extra?.disabled}),h("b",{text:label}),h("span",{class:"g",text:side}),h("span",{class:"s",text:note}),extra?.more);

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Synthetic browser proof of the dashboard assets against controlled
-// projections: gated onboarding, the five views, honest states, safe
+// projections: gated onboarding, the four views, honest states, safe
 // rendering, the exact bodies every mutation sends, keyboard, theme, errors
 // and widths.
 
@@ -32,12 +32,12 @@ const entry = (id, kind, title, extra = {}) => ({
 const stats = (extra = {}) => ({ checks: 0, commits: 0, flags: 0, accepted: 0, dismissed: 0, undecided: 0, false_flag_rate: null, jev_answers: 0, jev_unavailable: 0, low_confidence: 0, input_tokens: 0, cost_per_check_usd: null, ...extra });
 const example = (input, expected, reason) => ({ input, expected, reason, path: null });
 function rule(id, title, strength, family, enforcer, command, extra = {}) {
-  const definition = { type: "rule", strength, enforcer: extra.enforcerRecord || { kind: "test", command }, examples: extra.examples || [], source: { kind: "owner" }, paths: [], hand_raise: [], privacy: {} };
+  const definition = { type: "rule", strength, enforcer: extra.enforcerRecord || { kind: "test", command }, examples: extra.examples || [], source: { kind: "owner" }, paths: [], privacy: {} };
   return {
     ...entry(id, "rule", title, { definition, state: extra.result || label("pass", "pass"), lifecycle: extra.lifecycle || "accepted", pending: extra.pending || null }),
     strength, family, enforcer, command, shadow: !!extra.shadow, local_only: false,
     runs_at: extra.runs_at || "pre-push and CI", sweep_class: extra.sweep_class || "discuss", origin_lesson: null, source: "owner", paths: [], examples: extra.examples || [],
-    hand_raise: extra.hand_raise || [], stats: stats(extra.stats), unlabelled_flags: extra.flags || [], result: extra.result || label("pass", "pass"),
+    stats: stats(extra.stats), unlabelled_flags: extra.flags || [], result: extra.result || label("pass", "pass"),
   };
 }
 const gate = (id, name, strength, family, mechanism, command, result, extra = {}) => ({
@@ -62,7 +62,7 @@ const brief = "rule      No TODO comments (v1, should)\nrecheck   wh check --rul
 function view(mode) {
   const established = mode !== "fresh";
   const rules = [
-    rule("rule.ask-before-public-api", "Ask before changing a public API.", "must", "mechanical", "Public surface", "exports, cli, json", { runs_at: "pre-commit, pre-push and CI", hand_raise: ["flag"], stats: { checks: 3, commits: 2 }, examples: [example("pub fn run(a: u8)", "flag", "The signature changed.")], enforcerRecord: { kind: "public_surface" } }),
+    rule("rule.ask-before-public-api", "Ask before changing a public API.", "must", "mechanical", "Public surface", "exports, cli, json", { runs_at: "pre-commit, pre-push and CI", stats: { checks: 3, commits: 2 }, examples: [example("pub fn run(a: u8)", "flag", "The signature changed.")], enforcerRecord: { kind: "public_surface" } }),
     rule("rule.tests", "Rust tests pass.", "must", "mechanical", "Test", "cargo test", { result: label("warn", "pass · stale") }),
     rule("rule.no-todo", XSS + "No TODO comments.", "should", "mechanical", "Test", "false", { result: label("fail", "fail · 1"), stats: { checks: 4, commits: 4, flags: 3, accepted: 1, dismissed: 1, undecided: 1, false_flag_rate: "50.0%" }, flags: [{ receipt: "verification.gate_a", at: "2026-09-10T10:05:00Z", unit: "gate:rule.no-todo", commit: "abc123", shadow: false }], pending: { version: 2, title: "No TODO or FIXME", proposal: "proposal.a" } }),
     rule("rule.tests-only-when-asked", "Only add tests when the task asks for them.", "should", "question", "Jev question", "Does this change add a test? (jev-1.13.0)", { shadow: true, result: label("muted", "shadow · 1 flag(s)"), runs_at: "pre-push and CI, in shadow (recorded, not enforced)", stats: { checks: 12, commits: 6, jev_answers: 12, cost_per_check_usd: "0.000420" }, flags: [{ receipt: "verification.judgment_a", at: "2026-09-10T10:06:00Z", unit: "tests/new_test.rs", commit: null, shadow: true }], enforcerRecord: { kind: "question", question: "Does this change add a test?", shadow: true } }),
@@ -101,12 +101,7 @@ function view(mode) {
       ] : [],
       advisory: 1, shadow: 1, receipts: [], driver: { configured: true, path: "whetstone/verify/drive.mjs", label: "verification driver present" },
     },
-    requests: established ? [
-      { id: "verification.hand_a", issue: "fx-1", trigger: "vague_spec", rule: null, question: XSS + "Should the parser accept tabs?", tried: "Read the spec", recommendation: "Treat tabs as spaces", raised_at: "2026-09-10T10:06:00Z", status: label("warn", "waiting for the owner"), answer: null, answered_by: null, answered_at: null, answer_command: 'wh change --answer fx-1 --content "<your answer>"' },
-      { id: "verification.hand_b", issue: "fx-2", trigger: "must_rule_area", rule: "rule.ask-before-public-api", question: "May I rename run()?", tried: "Checked callers", recommendation: "Keep the old name", raised_at: "2026-09-09T10:06:00Z", status: label("pass", "answered"), answer: "Keep it.", answered_by: "Owner", answered_at: "2026-09-09T11:00:00Z", answer_command: "" },
-    ] : [],
     attention: established ? [
-      { priority: 0, tone: "warn", kind: "raised_hand", kind_label: "raised hand", title: "An agent asks: Should the parser accept tabs?", text: "Tried: Read the spec", actor: "Owner", next: "Answer it.", route: "requests", focus: "verification.hand_a", action_label: "Open the request", agent_instruction: null },
       { priority: 1, tone: "fail", kind: "agent_repair", kind_label: "agent repair", title: "Failing rule: No TODO comments", text: "1 failure in the latest check.", actor: "your coding agent", next: "Hand the brief to the agent.", route: "checks", focus: "rule.no-todo", action_label: "Open the failing rule", agent_instruction: brief },
       { priority: 2, tone: "muted", kind: "tuning", kind_label: "demotion", title: "Suggested demotion: No TODO comments", text: "Noisy.", actor: "Owner", next: "Record it as a draft.", route: "rules", focus: "rule.no-todo", action_label: "Open the rule", agent_instruction: null },
     ] : [],
@@ -177,7 +172,6 @@ const server = createServer((request, response) => {
           : { state: "success", summary: "The draft was accepted.", data: {} });
       }
       if (body.workflow === "change" && body.flag) return send(200, { state: "success", summary: "The flag was dismissed; it counts toward the rule's false-flag rate.", data: {} });
-      if (body.workflow === "change" && body.answer) return send(200, { state: "success", summary: "fx-1 was answered and closed in Beads.", data: {} });
       if (body.workflow === "change" && (body.tune || body.migrate)) return send(200, { state: "success", summary: body.tune ? "Recorded 1 tuning draft." : "Recorded 1 principle draft.", data: {} });
       if (body.workflow === "change" && body.expected_revision == null) {
         return send(200, { state: "needs_input", summary: "Base ready.", expected_revision: 3, resume_token: "tok-3", blocking_questions: ["Base revision 3"], data: {} });
@@ -210,7 +204,7 @@ const count = (selector) => cdp.evaluate(`document.querySelectorAll(${q(selector
 const text = (selector) => cdp.evaluate(`document.querySelector(${q(selector)})?.textContent ?? null`);
 const fill = (form, values) => cdp.evaluate(`(() => { const f = document.querySelector(${q(form)}); for (const [k, v] of Object.entries(${q(values)})) { const n = f.querySelector('[name="' + k + '"]'); n.value = v; n.dispatchEvent(new Event("change")); } f.requestSubmit(); return true; })()`);
 const last = (predicate) => commands.filter(predicate).at(-1);
-const TABS = ["home", "rules", "checks", "changelog", "requests"];
+const TABS = ["home", "rules", "checks", "changelog"];
 let checks = 0;
 const check = (condition, message) => { assert.ok(condition, message); checks += 1; };
 
@@ -222,7 +216,7 @@ try {
   check(await count("#home .panel") === 0, "fresh home shows no attention or rule panels");
   check(await cdp.evaluate("[...document.querySelectorAll('#onboard .steps li')].map(l => l.dataset.step).join() === 'tools,mission,principles,exemplars,rules,gates'"), "the six onboarding steps are listed in order");
   check(await cdp.evaluate("/npx skills add pstack/.test(document.querySelector('#onboard').textContent) && !/Beads is installed/.test(document.querySelector('#onboard').textContent)"), "missing tools show their fix; installed ones are not listed");
-  check(await cdp.evaluate("['checks','changelog','requests'].every(t => document.querySelector('#tab-' + t).getAttribute('aria-disabled') === 'true') && document.querySelector('#tab-rules').getAttribute('aria-disabled') === 'false'"), "checks, changelog and requests are gated before the agreement");
+  check(await cdp.evaluate("['checks','changelog'].every(t => document.querySelector('#tab-' + t).getAttribute('aria-disabled') === 'true') && document.querySelector('#tab-rules').getAttribute('aria-disabled') === 'false'"), "checks and changelog are gated before the agreement");
   await click("#tab-checks");
   check(await cdp.evaluate("document.querySelector('#home').hidden === false"), "a gated view does not open");
   check(await count("#start-onboarding") === 0, "without edit capability there is no onboarding action");
@@ -257,22 +251,15 @@ try {
   check(await cdp.evaluate("location.hash === ''"), "the bootstrap fragment is removed from the URL");
   check(await cdp.evaluate("!globalThis.whetstoneXss && document.querySelector('#mission-line').textContent.startsWith('<img')"), "hostile record text renders as text");
   check(await count("#home .btn.primary") === 1, "exactly one primary action on home");
-  check(await count("#home .attn.more") === 2, "remaining attention items are secondary rows");
+  check(await count("#home .attn.more") === 1, "remaining attention items are secondary rows");
   check(await count("#home-rules .row") === 5, "home lists every rule in force");
   check(await cdp.evaluate("[...document.querySelectorAll('#home .state.pass')].every(n => !/unknown|not|stale|draft|shadow/.test(n.textContent))"), "unknown, stale, shadow and draft never render as pass");
   check(await text("#draft-count") === "1" && await text("#draft-word") === "draft", "the draft count is exact and pluralised");
-  check(await text("#req-count") === "1", "the open request is counted on its tab");
 
-  // Attention routes to the raised hand; answering posts the Beads issue.
+  // Attention routes to the failing rule in Checks.
   await click("#attention-primary .btn.primary");
-  await cdp.waitFor("!document.querySelector('#requests').hidden", "attention did not open requests");
-  check(await cdp.evaluate("document.activeElement?.dataset.id === 'verification.hand_a'"), "focus moves to the request");
-  check(await cdp.evaluate("!globalThis.whetstoneXss && document.querySelectorAll('#requests .req').length === 2 && !document.querySelector('#requests .req').classList.contains('done')"), "open requests come first and render as text");
-  check(await cdp.evaluate("document.querySelector('#requests .req.done').textContent.includes('Keep it.')"), "an answered request shows its answer");
-  await fill("#requests .req form", { content: "Yes, four spaces." });
-  await cdp.waitFor("document.querySelector('#announce').textContent.includes('answered')", "answering did not announce");
-  const answer = last((c) => c.answer);
-  check(answer.workflow === "change" && answer.answer === "fx-1" && answer.content === "Yes, four spaces.", "the answer posts the issue and content");
+  await cdp.waitFor("!document.querySelector('#checks').hidden", "attention did not open checks");
+  check(await cdp.evaluate("document.activeElement?.dataset.id === 'rule.no-todo'"), "focus moves to the failing rule");
 
   // Checks: family, shadow, quarantined, failures, brief, evidence, flags.
   await click("#tab-checks");
@@ -301,7 +288,7 @@ try {
   await cdp.waitFor("document.querySelector('#r-must')", "rules did not render");
   check(await cdp.evaluate("[...document.querySelectorAll('#rules .panel .ph h2')].map(h => h.firstChild.textContent).join('|') === 'Mission|Principles|Must|Should|Advisory|Suggestions|Earlier records|Features'"), "rules render mission, principles, strengths, suggestions, legacy and features in order");
   check(await count("#r-must .rec") === 2 && await count("#r-should .rec") === 2 && await count("#r-advisory .rec") === 1, "every rule sits under its strength");
-  check(await cdp.evaluate("/pre-commit, pre-push and CI/.test(document.querySelector('[data-id=\"rule.ask-before-public-api\"]').textContent) && /raises a hand on flag/.test(document.querySelector('[data-id=\"rule.ask-before-public-api\"]').textContent)"), "a rule says where it runs and when it raises a hand");
+  check(await cdp.evaluate("/pre-commit, pre-push and CI/.test(document.querySelector('[data-id=\"rule.ask-before-public-api\"]').textContent)"), "a rule says where it runs");
   check(await cdp.evaluate("/false-flag rate 50.0%/.test(document.querySelector('[data-id=\"rule.no-todo\"] .stats').textContent) && !/%%/.test(document.body.innerText)"), "the false-flag rate is shown once");
   check(await cdp.evaluate("/\\$0.000420 per check/.test(document.querySelector('[data-id=\"rule.tests-only-when-asked\"] .stats').textContent) && !/per check/.test(document.querySelector('[data-id=\"rule.ask-before-public-api\"] .stats').textContent)"), "Jev cost is shown only for Jev rules");
   check(await cdp.evaluate("document.querySelector('[data-id=\"rule.no-todo\"] .ver').textContent.includes('draft v2 pending')"), "a pending draft is labelled while the accepted rule stays in force");
@@ -352,7 +339,7 @@ try {
 
   // Keyboard and theme.
   await cdp.evaluate("document.querySelector('#tab-home').focus(); document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })); true");
-  check(await cdp.evaluate("document.activeElement.id === 'tab-requests'"), "End moves to the last tab");
+  check(await cdp.evaluate("document.activeElement.id === 'tab-changelog'"), "End moves to the last tab");
   await cdp.evaluate("document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); true");
   check(await cdp.evaluate("document.activeElement.id === 'tab-home'"), "arrow keys wrap around the tabs");
   await click('.theme button[data-theme="dark"]');

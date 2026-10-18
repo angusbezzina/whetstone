@@ -3,9 +3,9 @@
 //! `wh init --action wire` renders, from accepted records only:
 //!
 //! * `SKILL.md`: why the project exists (mission and principles), the rules
-//!   in force by strength and enforcer, how to brief before building, prove
-//!   before handing back and raise a hand, and how to launch, doctor, drive
-//!   and prove the app;
+//!   in force by strength and enforcer, how to brief before building and
+//!   prove before handing back, and how to launch, doctor, drive and prove
+//!   the app;
 //! * `rules/<rule>.md`: one editable file per rule, returned with import;
 //! * `features/README.md` and one file per feature: the pstack runbook with
 //!   the four fixed headings;
