@@ -506,7 +506,9 @@ if family == "rulebook":
 
     if op == "mark":
         markers[request["marker"]] = request.get("members", [])
-        out(api, {"result": {"marker": request["marker"]}}, failing[0] if failing else 0)
+        out(
+            api, {"result": {"marker": request["marker"]}}, failing[0] if failing else 0
+        )
 
     if op == "markers":
         out(
@@ -514,8 +516,7 @@ if family == "rulebook":
             {
                 "result": {
                     "markers": [
-                        {"marker": k, "members": v}
-                        for k, v in sorted(markers.items())
+                        {"marker": k, "members": v} for k, v in sorted(markers.items())
                     ]
                 }
             },
