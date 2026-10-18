@@ -178,6 +178,11 @@ pub(crate) fn fix_diff(
                 "commit.gpgsign=false",
             ])
             .args(args)
+            // The copy is its own repository, whatever a hook exported.
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_COMMON_DIR")
             .env("GIT_AUTHOR_NAME", "whetstone")
             .env("GIT_AUTHOR_EMAIL", "whetstone@localhost")
             .env("GIT_COMMITTER_NAME", "whetstone")
