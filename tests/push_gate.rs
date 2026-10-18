@@ -10,6 +10,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+mod support;
+
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_whetstone"))
 }
@@ -18,6 +20,7 @@ fn run(args: &[&str], cwd: &Path) -> Output {
     Command::new(bin())
         .args(args)
         .current_dir(cwd)
+        .env("PATH", support::path_with_bd_template())
         .env_remove("BEADS_DIR")
         .output()
         .expect("run whetstone")
@@ -64,9 +67,7 @@ impl Repo {
         #[cfg(unix)]
         std::os::unix::fs::symlink(bin(), bin_dir.join("wh")).expect("symlink wh");
         let mut paths = vec![bin_dir];
-        paths.extend(std::env::split_paths(
-            &std::env::var_os("PATH").unwrap_or_default(),
-        ));
+        paths.extend(std::env::split_paths(&support::path_with_bd_template()));
         let path = std::env::join_paths(paths).expect("PATH");
         let repo = Self {
             temp,

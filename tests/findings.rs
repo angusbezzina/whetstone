@@ -13,6 +13,8 @@ use tempfile::TempDir;
 use whetstone::domain::ActorKind;
 use whetstone::service::{ChangeKind, ChangeRequest, CommandService, ServiceRequest, ServiceState};
 
+mod support;
+
 fn have_bd() -> bool {
     let ok = Command::new("bd")
         .arg("--version")
@@ -46,6 +48,7 @@ fn run(root: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_whetstone"))
         .args(args)
         .current_dir(root)
+        .env("PATH", support::path_with_bd_template())
         .env("GIT_CEILING_DIRECTORIES", root.parent().expect("parent"))
         .env("BD_NON_INTERACTIVE", "1")
         .env_remove("BEADS_DIR")

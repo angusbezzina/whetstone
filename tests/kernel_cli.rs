@@ -5,6 +5,8 @@ use whetstone::beads::BeadsStore;
 use whetstone::domain::{AgreementRecord, AuthorizationAxis, RecordBody, VerificationAxis};
 use whetstone::storage::{ProjectLayout, StoreKind};
 
+mod support;
+
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_whetstone"))
 }
@@ -13,6 +15,7 @@ fn run(args: &[&str], cwd: &Path) -> Output {
     Command::new(bin())
         .args(args)
         .current_dir(cwd)
+        .env("PATH", support::path_with_bd_template())
         .env_remove("BEADS_DIR")
         .output()
         .expect("run lean Whetstone binary")

@@ -25,6 +25,8 @@ use whetstone::service::{
 use whetstone::storage::{RecordStore, StoreKind};
 use whetstone::store::virgil::VirgilStore;
 
+mod support;
+
 mod conformance;
 
 const GROUP: &str = "01J8Z0000000000000000000AD";
@@ -217,6 +219,7 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
             std::env::var("PATH").unwrap_or_default()
         ),
     );
+    std::env::set_var("PATH", support::path_with_bd_template());
     std::env::remove_var("FAKE_VIRGIL_STATE");
     std::env::remove_var("FAKE_VIRGIL_LOG");
     let home = TempDir::new().expect("home");
