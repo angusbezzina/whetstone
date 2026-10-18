@@ -207,6 +207,21 @@
       "rule_view_strength": "should"
     },
     {
+      "id": "R-020",
+      "name": "a stored rule with a hardening source loads as the owner's",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "No unwrap in library code.",
+        "rationale": "Recoverable errors.",
+        "strength": "must",
+        "enforcer": { "kind": "lint", "tool": "cargo clippy", "code": "clippy::unwrap_used" },
+        "source": { "kind": "hardening", "reference": "rule.no-unwrap" }
+      },
+      "expect": "stored",
+      "rule_view_source": "owner"
+    },
+    {
       "id": "P-020",
       "name": "a pstack principle is pinned to its id and version",
       "record_type": "principle",

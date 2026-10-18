@@ -205,6 +205,9 @@ fn rule_cases_keep_their_strength_and_examples() {
         if let Some(strength) = case["rule_view_strength"].as_str() {
             assert_eq!(rule.strength.label(), strength, "{id}");
         }
+        if let Some(source) = case["rule_view_source"].as_str() {
+            assert_eq!(rule.source.kind.label(), source, "{id}");
+        }
         if case["record_type"] == "rule" {
             assert_eq!(
                 serde_json::to_value(&rule.examples).expect("examples"),

@@ -154,8 +154,7 @@ def test_validation_and_eval_do_real_work() -> None:
     assert evaluation["ok"] is True
     assert evaluation["rules_evaluated"] > 0
     assert sum(card["golden_checked"] for card in evaluation["scorecards"]) > 0
-    assert evaluation["rule_eval"]["ok"] is True
-    assert evaluation["rule_eval"]["pstack_roundtrip"]["ok"] is True
+    assert evaluation["pstack_roundtrip"]["ok"] is True
 
 
 def test_scan_reports_a_known_bad_file(tmp_path: Path) -> None:

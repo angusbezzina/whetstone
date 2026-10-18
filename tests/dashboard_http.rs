@@ -823,7 +823,6 @@ fn command_backend_preserves_service_stale_rejection_and_fixed_project_scope() {
         r#"{"workflow":"change","kind":"value","record_id":"value.core"}"#,
         r#"{"workflow":"change","kind":"exception","record_id":"exception.one"}"#,
         r#"{"workflow":"change","flag":{"receipt":"x","verdict":"dismiss"}}"#,
-        r#"{"workflow":"change","tune":true}"#,
         r#"{"workflow":"check","mode":"repair"}"#,
         r#"{"workflow":"task","title":"No description"}"#,
         "not json",

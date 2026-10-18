@@ -89,6 +89,10 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   (flags, never blocks, and becomes a sweep finding). A stored advisory rule
   loads as should with its digest unchanged, and earlier `may` standards
   and YAML rules map to should; `wh change` refuses `advisory`.
+- The rule-example half of `wh eval` (per-rule precision and recall over
+  labelled examples): `wh eval` runs the scanner's golden examples and the
+  pstack round trip. A stored rule whose source is `hardening` loads as the
+  owner's with its digest unchanged.
 
 ## [0.13.0] - 2026-10-15
 

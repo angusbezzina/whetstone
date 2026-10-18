@@ -100,8 +100,8 @@ pub enum ExampleVerdict {
     Flag,
 }
 
-/// A labelled example that defines the rule and that `wh eval` scores the
-/// enforcer against.
+/// A labelled example that defines the rule: an input the enforcer should
+/// flag or pass, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuleExample {
@@ -127,8 +127,6 @@ pub enum RuleSourceKind {
     Owner,
     /// One of Whetstone's starter rules.
     Starter,
-    /// Replaces a recurring flag with a mechanical check.
-    Hardening,
     /// Migrated from an earlier record or rule file.
     Migration,
     /// Drafted from an admitted lesson (the reference is its key).
@@ -143,7 +141,6 @@ impl RuleSourceKind {
             Self::Exemplar => "exemplar",
             Self::Owner => "owner",
             Self::Starter => "starter",
-            Self::Hardening => "hardening",
             Self::Migration => "migration",
             Self::Lesson => "lesson",
         }
@@ -434,6 +431,8 @@ impl Rule {
 
 /// Fields of stored rule revisions that the current model drops on read.
 const DROPPED_RULE_FIELDS: &[&str] = &["hand_raise", "privacy", "shadow"];
+/// Source kinds of stored rule revisions that read as owner.
+const OWNER_SOURCES: &[&str] = &["hardening"];
 /// Enforcer kinds of stored rule revisions that nothing holds any more.
 const RETIRED_ENFORCERS: &[&str] = &[
     "review",
@@ -455,8 +454,8 @@ pub(super) enum StoredRead {
 impl Rule {
     /// Read a stored rule revision that does not parse as a current rule:
     /// one held by a retired enforcer or in shadow is history, and otherwise
-    /// the dropped fields are ignored and strength `advisory` is read as
-    /// should. `None` when the revision is not of either shape
+    /// the dropped fields are ignored, strength `advisory` is read as should
+    /// and a retired source kind as owner. `None` when the revision is not of either shape
     /// (it is then malformed).
     pub(super) fn from_stored(record: &serde_json::Value) -> Option<StoredRead> {
         let kind = record
@@ -474,6 +473,19 @@ impl Rule {
         if fields.get("strength").and_then(serde_json::Value::as_str) == Some("advisory") {
             fields.insert("strength".into(), "should".into());
             mapped = true;
+        }
+        if let Some(source) = fields
+            .get_mut("source")
+            .and_then(|source| source.as_object_mut())
+        {
+            if source
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|kind| OWNER_SOURCES.contains(&kind))
+            {
+                source.insert("kind".into(), "owner".into());
+                mapped = true;
+            }
         }
         if !mapped {
             return None;

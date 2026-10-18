@@ -7,7 +7,6 @@ mod cli;
 pub mod dashboard;
 pub mod dashboard_service;
 pub mod domain;
-pub mod eval;
 pub mod execution;
 pub mod exemplar;
 pub mod feature_map;

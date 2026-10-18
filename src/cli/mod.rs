@@ -312,8 +312,8 @@ enum Command {
         project_dir: PathBuf,
     },
 
-    /// Internal golden-example gate: every rule against its labelled examples,
-    /// per-rule precision and recall, and the pstack round-trip contract.
+    /// Internal golden-example gate: every scanner rule against its golden
+    /// examples, and the pstack round-trip contract.
     #[command(hide = true)]
     Eval {
         #[arg(long, default_value = ".")]
@@ -1265,53 +1265,34 @@ fn validate(project_dir: &Path, machine: bool) -> i32 {
     i32::from(!ok)
 }
 
-/// The legacy rule-file eval (until those rules move to Beads) and the rule
-/// eval: labelled examples per rule and enforcer, and the pstack round trip.
+/// The rule-file scanner eval (every rule against its golden examples) and
+/// the pstack round-trip contract on the pinned example.
 fn eval(project_dir: &Path, lang: Option<&str>, machine: bool) -> i32 {
     let mut result = check::eval(project_dir, lang);
-    let rules = crate::eval::evaluate(project_dir);
-    let legacy_ok = result.get("ok").and_then(|value| value.as_bool()) == Some(true);
-    let rules_ok = rules["ok"] == true;
-    result["legacy_ok"] = json!(legacy_ok);
-    result["ok"] = json!(legacy_ok && rules_ok);
-    result["status"] = json!(if legacy_ok && rules_ok {
-        "ok"
-    } else {
-        "eval_failed"
+    let scanner_ok = result.get("ok").and_then(|value| value.as_bool()) == Some(true);
+    let results = crate::feature_map::pinned_roundtrip();
+    let roundtrip_ok = results.iter().all(|(_, result)| result.is_ok());
+    let ok = scanner_ok && roundtrip_ok;
+    result["ok"] = json!(ok);
+    result["status"] = json!(if ok { "ok" } else { "eval_failed" });
+    result["pstack_roundtrip"] = json!({
+        "ok": roundtrip_ok,
+        "pstack_version": crate::setup::PSTACK_VERSION,
+        "files": results
+            .iter()
+            .map(|(file, result)| json!({"file": file, "ok": result.is_ok(), "error": result.as_ref().err()}))
+            .collect::<Vec<_>>(),
     });
-    let summary = format!(
-        "Rule eval: {} rule(s), {} labelled example(s) checked, {} mismatch(es), {} error(s); pstack round trip {}.\n",
-        rules["rules_scored"],
-        rules["examples_checked"],
-        rules["mismatch_count"],
-        rules["error_count"],
-        if rules["pstack_roundtrip"]["ok"] == true { "ok" } else { "FAILED" }
-    );
-    result["rule_eval"] = rules;
     if machine {
         output::print_json(&result);
     } else {
         print!("{}", check::format_eval_output(&result));
-        print!("{summary}");
-        if let Some(rules) = result["rule_eval"]["rules"].as_array() {
-            for rule in rules {
-                println!(
-                    "  {} [{} · {}] precision {} recall {} ({} checked, {} unscored)",
-                    rule["rule"].as_str().unwrap_or_default(),
-                    rule["strength"].as_str().unwrap_or_default(),
-                    rule["enforcer"].as_str().unwrap_or_default(),
-                    rule["precision"].as_str().unwrap_or("n/a"),
-                    rule["recall"].as_str().unwrap_or("n/a"),
-                    rule["score"]["true_flags"].as_u64().unwrap_or(0)
-                        + rule["score"]["false_flags"].as_u64().unwrap_or(0)
-                        + rule["score"]["true_passes"].as_u64().unwrap_or(0)
-                        + rule["score"]["missed_flags"].as_u64().unwrap_or(0),
-                    rule["score"]["unscored"].as_u64().unwrap_or(0),
-                );
-            }
-        }
+        println!(
+            "pstack round trip {}.",
+            if roundtrip_ok { "ok" } else { "FAILED" }
+        );
     }
-    i32::from(!(legacy_ok && rules_ok))
+    i32::from(!ok)
 }
 
 fn scan(
