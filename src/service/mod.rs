@@ -133,7 +133,7 @@ pub struct InitRequest {
     pub import_from: Option<PathBuf>,
     /// A Git URL of an exemplar codebase (exemplar).
     pub exemplar_url: Option<String>,
-    /// Install agent-host hooks and the Git pre-commit and pre-push hooks (wire).
+    /// Install the Git pre-commit and pre-push hooks (wire).
     pub hooks: bool,
     /// Scaffold the workflow that runs the required whetstone/policy check (wire).
     pub ci: bool,
@@ -403,9 +403,6 @@ pub struct CheckRequest {
     /// The required CI check: enforce the team's shared, accepted records
     /// only, ignoring any private store and unshared drafts.
     pub ci: bool,
-    /// Record an explicit host checkpoint: which skill revision this agent
-    /// host has on disk right now.
-    pub host: Option<String>,
     /// Include paths changed since this revision (a committed change), not
     /// only the working tree.
     pub base: Option<String>,
@@ -668,15 +665,7 @@ impl CommandService {
                 crate::sync::attach_publication(&mut response, &project_dir);
                 response
             }
-            ServiceRequest::Check(request) => {
-                let host = request.host.clone();
-                let project_dir = request.project_dir.clone();
-                let mut response = check::check(request);
-                if let Some(host) = host {
-                    record::attach_host_checkpoint(&mut response, &project_dir, &host);
-                }
-                response
-            }
+            ServiceRequest::Check(request) => check::check(request),
             ServiceRequest::Pull(request) => crate::sync::pull(request),
             ServiceRequest::Push(request) => crate::sync::push(request),
         }

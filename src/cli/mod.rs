@@ -16,7 +16,6 @@ use crate::service::{
     CommandService, DashRequest, FlagRequest, GateMode, HandRequest, InitAction, InitRequest,
     ReviewRequest, ServiceRequest, ServiceResponse, ServiceState,
 };
-use crate::storage::ProjectLayout;
 use crate::{check, dashboard, dashboard_service, output, rules};
 
 mod hooks;
@@ -85,13 +84,13 @@ enum Command {
         /// A Git URL of an exemplar codebase, cloned shallowly with hooks off (exemplar).
         #[arg(long = "url")]
         exemplar_url: Option<String>,
-        /// Install the Git pre-commit and pre-push gates and each host's hooks (wire).
+        /// Install the Git pre-commit and pre-push gates (wire).
         #[arg(long)]
         hooks: bool,
         /// Scaffold the GitHub workflow that runs the required whetstone/policy check (wire).
         #[arg(long)]
         ci: bool,
-        /// Run the install commands setup found (setup): the one confirmation.
+        /// Run the Beads install setup found (setup): the one confirmation.
         #[arg(long)]
         yes: bool,
         /// Where every record lives (setup, store): beads (standalone) or virgil.
@@ -132,13 +131,6 @@ enum Command {
         /// decision, why, evidence, result) instead of serving the dashboard.
         #[arg(long)]
         trail: bool,
-        /// Run as an agent-host hook: `session-start` prints the canonical
-        /// context for the host (never pointing at a stale skill).
-        #[arg(long, value_enum)]
-        hook: Option<DashHookArg>,
-        /// The agent host the hook serves (claude, cursor, codex, agents).
-        #[arg(long, default_value = "claude")]
-        host: String,
     },
 
     /// Draft a change for the owner to accept, or record the owner's call on
@@ -329,11 +321,7 @@ enum Command {
         /// Why you stopped (with --raise-hand).
         #[arg(long, value_enum, default_value_t = TriggerArg::VagueSpec)]
         trigger: TriggerArg,
-        /// Record an explicit checkpoint for this agent host (claude, cursor, codex, agents).
-        #[arg(long)]
-        host: Option<String>,
-        /// Run as a hook: `stop` returns violations to the same agent session
-        /// (bounded); `pre-commit` and `pre-push` are the Git gates.
+        /// Run as a Git gate: `pre-commit` or `pre-push`.
         #[arg(long, value_enum)]
         hook: Option<CheckHookArg>,
         /// The commit being pushed (passed by the pre-push hook).
@@ -443,14 +431,8 @@ impl From<InitActionArg> for InitAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CheckHookArg {
-    Stop,
     PreCommit,
     PrePush,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum DashHookArg {
-    SessionStart,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -619,30 +601,7 @@ pub fn run() -> i32 {
             no_open,
             bootstrap_file,
             trail,
-            hook,
-            host,
         }) => {
-            if matches!(hook, Some(DashHookArg::SessionStart)) {
-                let input = hook_input();
-                if host == "claude" && input.get("cursor_version").is_some() {
-                    // Cursor runs Claude hooks too; its own hook serves it.
-                    return 0;
-                }
-                remember_session_base(&project_dir, &input);
-                let response = service.execute(ServiceRequest::Dash(DashRequest::basic(
-                    project_dir,
-                    request_id,
-                )));
-                let value = serde_json::to_value(&response).unwrap_or(json!({}));
-                println!(
-                    "{}",
-                    crate::hosts::session_output(
-                        &host,
-                        &crate::hosts::session_context(&value, &host)
-                    )
-                );
-                return 0;
-            }
             if explicit_json || trail {
                 let response = service.execute(ServiceRequest::Dash(DashRequest {
                     project_dir,
@@ -798,7 +757,6 @@ pub fn run() -> i32 {
             tried,
             recommend,
             trigger,
-            host,
             hook,
             pushed,
         }) => {
@@ -814,7 +772,7 @@ pub fn run() -> i32 {
                     GateMode::Staged
                 } else if sweep {
                     GateMode::Sweep
-                } else if changed || base.is_some() || hook == Some(CheckHookArg::Stop) {
+                } else if changed || base.is_some() {
                     GateMode::Changed
                 } else {
                     GateMode::All
@@ -828,9 +786,6 @@ pub fn run() -> i32 {
                 }),
                 maintain_evidence,
                 ci,
-                host: host
-                    .clone()
-                    .or_else(|| (hook == Some(CheckHookArg::Stop)).then(|| "claude".to_string())),
                 base,
                 pushed,
                 steps,
@@ -869,9 +824,6 @@ pub fn run() -> i32 {
                 }),
             };
             match hook {
-                Some(CheckHookArg::Stop) => {
-                    return run_stop_hook(&service, request, host.as_deref().unwrap_or("claude"))
-                }
                 Some(CheckHookArg::PreCommit | CheckHookArg::PrePush) => {
                     return run_git_hook(&service, request, hook == Some(CheckHookArg::PreCommit))
                 }

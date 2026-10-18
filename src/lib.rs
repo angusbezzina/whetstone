@@ -14,7 +14,6 @@ pub mod feature_map;
 pub mod gates;
 pub mod hands;
 pub mod history;
-pub mod hosts;
 pub mod hygiene;
 pub mod judgment;
 pub mod learning;

@@ -217,37 +217,6 @@ fn journal_entry(
             ),
         );
     }
-    // An agent host checked in with the skill revision it had.
-    if let Some(body) = records.iter().find_map(|record| match &record.body {
-        RecordBody::VerificationReceipt(body)
-            if body
-                .subject
-                .stable_id
-                .starts_with(crate::hosts::HOST_SUBJECT_PREFIX) =>
-        {
-            Some(body)
-        }
-        _ => None,
-    }) {
-        let host = body
-            .subject
-            .stable_id
-            .trim_start_matches(crate::hosts::HOST_SUBJECT_PREFIX)
-            .to_string();
-        return base(
-            "verification",
-            format!("Host checkpoint: {host}"),
-            match body.verification {
-                VerificationAxis::Pass => StateLabel::new("pass", "current skill"),
-                _ => StateLabel::new("warn", "skill not current"),
-            },
-            "checks",
-            format!(
-                "{host} had skill revision {} at this checkpoint.",
-                body.subject.revision.as_deref().unwrap_or("none")
-            ),
-        );
-    }
     // Check runs: gate receipts, native scans and Jev answers.
     if records.iter().all(|record| {
         matches!(
@@ -776,31 +745,6 @@ pub fn decision_trail(state: &AgreementState) -> String {
                     .strip_prefix(GATE_SUBJECT_PREFIX)
                     .map(str::to_owned);
                 let maintain = body.subject.stable_id == crate::service::MAINTAIN_SUBJECT;
-                if let Some(host) = body
-                    .subject
-                    .stable_id
-                    .strip_prefix(crate::hosts::HOST_SUBJECT_PREFIX)
-                {
-                    rows.push((
-                        body.checked_at.clone(),
-                        id,
-                        [
-                            "hosts".into(),
-                            format!("Host checkpoint: {host}"),
-                            "An agent host reported the skill revision it had.".into(),
-                            body.subject
-                                .revision
-                                .clone()
-                                .unwrap_or_else(|| "no skill installed".into()),
-                            if body.verification == VerificationAxis::Pass {
-                                "current skill".into()
-                            } else {
-                                "skill not current".into()
-                            },
-                        ],
-                    ));
-                    continue;
-                }
                 let quarantine = body
                     .evidence
                     .iter()

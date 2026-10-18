@@ -51,6 +51,16 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   order, so a flag added later in the file never changes an earlier
   finding's fingerprint (and never un-dismisses it in Messo).
 
+### Removed
+
+- The agent-host hook loop: `wh init --action wire --hooks` no longer
+  writes Stop and SessionStart hooks into `.claude/settings.json`,
+  `.codex/hooks.json` or `.cursor/hooks.json`, and `wh check --hook stop`,
+  `wh dash --hook session-start`, `wh check --host` and the host checkpoint
+  receipts are gone. The Git pre-commit and pre-push gates are the loop
+  every tool passes through. `wh init --action setup --yes` installs only
+  Beads; it lists the pstack installs for you to run.
+
 ## [0.13.0] - 2026-10-15
 
 The first release of the rebuilt product. Whetstone is rebuilt around six

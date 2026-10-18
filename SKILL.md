@@ -38,9 +38,9 @@ Beads epic `whetstone-ppq`.
   `--base <ref>` to include committed work). Read each finding's rule,
   location, expected result and repair direction, make the smallest repair,
   and recheck.
-- In Claude Code with `--hooks` wired, the Stop hook runs the same check and
-  returns violations to you, up to three times. After that, hand back to the
-  owner. Other tools: run the checkpoint yourself before handing back.
+- With `--hooks` wired, the Git pre-commit and pre-push gates run the same
+  rules and block until the must rules hold. If the same finding survives
+  two repairs, hand back to the owner.
 - Never weaken a check, edit a rule record by hand, or skip hooks. Rule
   changes go through `wh change` as drafts the owner accepts.
 
@@ -108,12 +108,12 @@ resume token. A retry with the same request ID must keep the same input.
 - `wh init --action agree` records the owner's agreement: `--mission`,
   optional `--principle <pstack id>` and `--custom-principle`, and
   `--starter <id|all>`. Pass only answers the owner gave you.
-  `--action setup` detects and (with `--yes`) installs Beads and pstack;
+  `--action setup` detects Beads and pstack and (with `--yes`) installs Beads;
   `--action exemplar --from <path>` turns a codebase the owner admires into
   rule drafts.
 - `wh init --action wire --host <claude|codex|cursor|agents> --hooks` writes
   the skill (with `rules/*.md` and `whetstone.verify.json`), feature map,
-  driver, the agent hooks and the git pre-commit and pre-push hooks. `--ci`
+  driver, and the git pre-commit and pre-push hooks. `--ci`
   adds the required CI status. `wh init --action import --from <dir>` turns
   pstack-edited skill files, including rule files, into drafts.
 - `wh change` drafts, previews, accepts, withdraws or retires records

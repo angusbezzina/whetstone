@@ -368,17 +368,20 @@ fn a_lesson_is_proposed_by_anyone_admitted_by_a_person_and_goes_stale_with_its_a
         "the same comparison is one receipt"
     );
 
-    // Delivery at session start carries the admitted lesson and its flag.
-    let session = run(
-        root,
-        &["dash", "--hook", "session-start", "--host", "agents"],
-    );
-    let context = String::from_utf8_lossy(&session.stdout);
-    assert!(
-        context.contains("Load config through the schema"),
-        "{context}"
-    );
-    assert!(context.contains("may be stale"), "{context}");
+    // The dashboard carries the admitted lesson and its flag.
+    let dash = wh(root, &["dash", "--json"]);
+    let lesson = dash["data"]["memory"]["lessons"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|lesson| {
+            lesson["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("Load config through the schema"))
+        })
+        .unwrap_or_else(|| panic!("{}", dash["data"]["memory"]));
+    assert_eq!(lesson["status"], "admitted", "{lesson}");
+    assert_eq!(lesson["may_be_stale"], true, "{lesson}");
 }
 
 #[test]

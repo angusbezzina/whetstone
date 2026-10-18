@@ -111,7 +111,7 @@ function view(mode) {
       { priority: 2, tone: "muted", kind: "tuning", kind_label: "demotion", title: "Suggested demotion: No TODO comments", text: "Noisy.", actor: "Owner", next: "Record it as a draft.", route: "rules", focus: "rule.no-todo", action_label: "Open the rule", agent_instruction: null },
     ] : [],
     latest_change: established ? { title: "Rule revised: No TODO or FIXME", at: "2026-09-10T10:00:00Z" } : null,
-    skill: { rendered: false, current: false, hosts: [], rendered_at: null, label: label("warn", "not generated"), projections: [], acknowledged: [] },
+    skill: { rendered: false, current: false, hosts: [], rendered_at: null, label: label("warn", "not generated") },
     hygiene: [],
     suggestions: established ? [{ kind: "demotion", rule: "rule.no-todo", reason: "1 of 2 labelled flags were dismissed.", draft: { strength: "advisory" } }, { kind: "hardening", rule: "rule.tests-only-when-asked", reason: "Jev's flag was right 3 times.", examples: ["tests/a.rs"] }] : [],
   };

@@ -35,7 +35,7 @@ mod wire;
 
 pub use import::import;
 pub use render::verify_document;
-pub use wire::wire;
+pub use wire::{git_hooks, wire, GitHooks};
 
 pub const MANIFEST_FILE: &str = "skill.json";
 pub const MAP_ID: &str = "map.verification";

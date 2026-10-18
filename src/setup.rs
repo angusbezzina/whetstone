@@ -444,17 +444,9 @@ pub fn write_lock(project_root: &Path, lock: &Lock) -> Result<(), String> {
 }
 
 /// Run an install command that needs no interaction, without a shell: `&&`
-/// chains become literal argv sequences. Commands that only a host app can
-/// run (Cursor's `/add-plugin`) are reported, not attempted.
+/// chains become literal argv sequences.
 pub fn run_install(project_root: &Path, command: &str) -> Result<String, String> {
-    if command.starts_with("In Cursor") {
-        return Err(format!("Run this yourself: {command}"));
-    }
-    let command = command
-        .split(" (community port")
-        .next()
-        .unwrap_or(command)
-        .replace("~/", &format!("{}/", home().unwrap_or_default().display()));
+    let command = command.replace("~/", &format!("{}/", home().unwrap_or_default().display()));
     let sequences = crate::gates::parse_command(&command)?;
     let mut output = String::new();
     for argv in sequences {

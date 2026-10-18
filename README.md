@@ -57,7 +57,8 @@ This is a pre-release. The six commands work against the Beads record store
 and the plan in epic `whetstone-ppq` is built:
 
 - **Setup.** `wh init --action setup` detects Beads and pstack, shows the
-  exact install commands and runs them after one confirmation, and pins what
+  exact install commands, installs Beads after one confirmation (the pstack
+  installs are yours to run), and pins what
   it found in `whetstone/tools.lock.json`. Onboarding asks for a one-line
   mission, offers pstack's principles and three starter rules chosen for the
   repository, and turns exemplar codebases (`--action exemplar --from <path>`
@@ -77,8 +78,7 @@ and the plan in epic `whetstone-ppq` is built:
   hand.
 - **Gates.** `wh init --action wire --hooks` installs git pre-commit (staged
   content, mechanical rules only) and pre-push (`wh check --base <remote>`)
-  hooks, chaining any existing hook, plus the Claude, Codex and Cursor agent
-  hooks. `--ci` writes the `whetstone/policy` required status workflow.
+  hooks, chaining any existing hook. `--ci` writes the `whetstone/policy` required status workflow.
 - **Hands and briefs.** `wh check --raise-hand` files a `bd human` issue and
   the dashboard shows it until `wh change --answer` records the answer.
   `wh check --brief` records a pstack brief that brief-enforced rules require.
@@ -97,7 +97,7 @@ the two-week tuning experiment, all tracked under `whetstone-ppq.10`.
 ```bash
 wh init                                                     # guided onboarding in the dashboard
 wh init --json                                              # inspect: missing steps, starters, tools
-wh init --action setup --yes                                # install bd and pstack if missing
+wh init --action setup --yes                                # install bd if missing
 wh init --action agree --mission "..." --principle prove-it-works --starter all \
   --expected-revision 0 --resume <token>
 wh init --action wire --host claude --host codex --hooks --ci

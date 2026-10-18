@@ -320,10 +320,6 @@ pub struct SkillState {
     pub hosts: Vec<String>,
     pub rendered_at: Option<String>,
     pub label: StateLabel,
-    /// Each host's copy compared with the manifest and the agreement.
-    pub projections: Vec<crate::hosts::HostProjection>,
-    /// The latest checkpoint per host: the skill revision it actually had.
-    pub acknowledged: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -974,13 +970,7 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
     let requests = requests(state, &input.hands);
     let pending = state.pending_proposals();
     let drafts = pending.len();
-    let mut skill = skill_state(state, input.skill.as_ref());
-    skill.projections = crate::hosts::projections(
-        input.project_root,
-        input.skill.as_ref(),
-        &state.in_force_digest(),
-    );
-    skill.acknowledged = host_acknowledgements(state, &skill.projections);
+    let skill = skill_state(state, input.skill.as_ref());
     let driver = DriverState {
         configured: input.driver_path.is_some(),
         label: if input.driver_path.is_some() {
@@ -1065,66 +1055,6 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
     }
 }
 
-/// The latest host checkpoint receipts, and whether the host has checked in
-/// since its skill or the adapter changed (if not, rerun the regression set).
-fn host_acknowledgements(
-    state: &AgreementState,
-    projections: &[crate::hosts::HostProjection],
-) -> Vec<Value> {
-    let mut latest = BTreeMap::<String, &AgreementRecord>::new();
-    for record in state.records() {
-        if let RecordBody::VerificationReceipt(body) = &record.body {
-            if let Some(host) = body
-                .subject
-                .stable_id
-                .strip_prefix(crate::hosts::HOST_SUBJECT_PREFIX)
-            {
-                let newer = latest.get(host).map_or(true, |current| {
-                    current.provenance.recorded_at < record.provenance.recorded_at
-                });
-                if newer {
-                    latest.insert(host.to_string(), record);
-                }
-            }
-        }
-    }
-    let mut result = Vec::new();
-    for projection in projections {
-        let receipt = latest
-            .get(&projection.host)
-            .and_then(|record| match &record.body {
-                RecordBody::VerificationReceipt(body) => Some(body),
-                _ => None,
-            });
-        let acknowledged_digest = receipt.and_then(|body| body.subject.revision.clone());
-        let adapter = receipt.and_then(|body| {
-            body.evidence
-                .iter()
-                .find(|evidence| evidence.system == "whetstone_adapter")
-                .map(|evidence| evidence.locator.clone())
-        });
-        let in_step = acknowledged_digest.is_some()
-            && acknowledged_digest == projection.skill_digest
-            && adapter.as_deref() == Some(crate::hosts::ADAPTER_VERSION);
-        result.push(json!({
-            "host": projection.host,
-            "last_checkpoint": receipt.map(|body| body.checked_at.clone()),
-            "acknowledged_skill_digest": acknowledged_digest,
-            "adapter": adapter,
-            "state": if receipt.is_none() {
-                "not acknowledged"
-            } else if in_step {
-                "acknowledged"
-            } else {
-                "changed since last checkpoint"
-            },
-            "regression": (!in_step && receipt.is_some())
-                .then_some("The skill or the adapter changed since this host last checked in: run wh check --sweep before relying on earlier results."),
-        }));
-    }
-    result
-}
-
 fn skill_state(state: &AgreementState, manifest: Option<&SkillManifest>) -> SkillState {
     match manifest {
         None => SkillState {
@@ -1133,8 +1063,6 @@ fn skill_state(state: &AgreementState, manifest: Option<&SkillManifest>) -> Skil
             hosts: Vec::new(),
             rendered_at: None,
             label: StateLabel::new("warn", "not generated"),
-            projections: Vec::new(),
-            acknowledged: Vec::new(),
         },
         Some(manifest) => {
             let current = manifest.agreement_digest == state.in_force_digest();
@@ -1148,8 +1076,6 @@ fn skill_state(state: &AgreementState, manifest: Option<&SkillManifest>) -> Skil
                 } else {
                     StateLabel::new("warn", "stale · regenerate")
                 },
-                projections: Vec::new(),
-                acknowledged: Vec::new(),
             }
         }
     }

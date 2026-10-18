@@ -34,7 +34,7 @@ pub(crate) struct Progress {
     /// A passing rule run at the current workspace: the loop is proven.
     pub(crate) first_proof: Option<RecordRef>,
     pub(crate) proof_status: String,
-    pub(crate) hooks: crate::hosts::GitHooks,
+    pub(crate) hooks: crate::skill::GitHooks,
     pub(crate) shared: bool,
     #[serde(skip)]
     pub(crate) onboarding: Onboarding,
@@ -57,7 +57,7 @@ pub(crate) fn progress(layout: &ProjectLayout, records: Option<&[AgreementRecord
                 .is_some_and(|rule| rule.source.kind == crate::domain::RuleSourceKind::Exemplar)
         })
         .count();
-    let hooks = crate::hosts::git_hooks(root);
+    let hooks = crate::skill::git_hooks(root);
     let tools = crate::setup::detect(root, &[]);
     let mut missing = Vec::new();
     if mission.is_none() {
@@ -761,7 +761,7 @@ fn agree(
     response
 }
 
-/// Detect, then (with `--yes`) install and pin, Beads and pstack.
+/// Detect Beads and pstack, then (with `--yes`) install Beads and pin both.
 fn setup(layout: &ProjectLayout, request_id: String, request: &InitRequest) -> ServiceResponse {
     // `--store` chooses the record store first (and moves records into it),
     // so the tools detected next are the ones that store needs: under
@@ -801,10 +801,14 @@ fn setup_tools(
     let mut ran = Vec::new();
     let mut failed = Vec::new();
     if request.yes && !request.dry_run {
+        // Only the store tool is installed here. pstack installs write into
+        // the user's agent-host directories, so they are listed for the
+        // person to run.
         for fix in detected
-            .fixes
+            .tools
             .iter()
-            .filter(|fix| !fix.starts_with("wh init"))
+            .filter(|tool| tool.tool == "bd")
+            .filter_map(|tool| tool.fix.as_ref())
         {
             match crate::setup::run_install(root, fix) {
                 Ok(_) => ran.push(fix.clone()),
