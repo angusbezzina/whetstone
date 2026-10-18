@@ -23,8 +23,13 @@ step() {
 step "[1/8] cargo clippy --all-targets --all-features -- -D warnings"
 cargo clippy --all-targets --all-features -- -D warnings
 
-step "[2/8] cargo test"
-cargo test
+step "[2/8] cargo nextest run --no-fail-fast, then cargo test --doc"
+if ! cargo nextest --version >/dev/null 2>&1; then
+  echo "cargo-nextest is missing: cargo install cargo-nextest --locked" >&2
+  exit 1
+fi
+cargo nextest run --no-fail-fast
+cargo test --doc
 
 step "[3/8] python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501"
 python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501

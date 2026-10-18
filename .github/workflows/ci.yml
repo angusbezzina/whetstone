@@ -54,8 +54,14 @@ jobs:
       - name: 1 - Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.132
+
       - name: 2 - Rust tests
-        run: cargo test
+        run: |
+          cargo nextest run --no-fail-fast
+          cargo test --doc
 
       - name: 3 - Ruff lint
         run: python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501

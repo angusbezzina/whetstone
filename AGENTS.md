@@ -177,7 +177,7 @@ CI and the pre-push hook must run these exact eight gates meaningfully:
 
 ```bash
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test
+cargo nextest run --no-fail-fast && cargo test --doc
 python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
 python3 -m ruff format --check scripts/ tests/
 cargo run --quiet -- validate
@@ -189,6 +189,8 @@ python3 -m pytest -q
 The scan gate additionally requires `files_scanned > 0`, `rules_applied > 0`,
 `config_issues_count == 0`, and `violations_count == 0`. Eval must exercise at
 least one rule and one scanner-backed golden example. Zero work is not green.
+The tests run under `cargo-nextest` (`cargo install cargo-nextest --locked`),
+which runs every test binary in parallel; `cargo test --doc` covers doc tests.
 
 At the start of a session that may push, ensure the hook is active:
 
