@@ -194,6 +194,15 @@ pub fn bd_install_command() -> String {
     }
 }
 
+/// The command that brings an older `bd` up to the pinned minimum.
+pub fn bd_upgrade_command() -> String {
+    if cfg!(target_os = "macos") && on_path("brew") {
+        "brew upgrade beads".into()
+    } else {
+        bd_install_command()
+    }
+}
+
 /// How pstack is installed for a host. Upstream ships a Cursor plugin; the
 /// Claude Code and Codex installs are community ports, named as such.
 pub fn pstack_install_command(host: &str) -> String {
@@ -261,7 +270,7 @@ pub fn detect_in(project_root: &Path, hosts: &[String], home: Option<&Path>) -> 
             fix: None,
         }),
         Some(version) => {
-            let fix = bd_install_command();
+            let fix = bd_upgrade_command();
             fixes.push(fix.clone());
             tools.push(ToolState {
                 tool: "bd".into(),

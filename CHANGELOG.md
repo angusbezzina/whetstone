@@ -39,6 +39,9 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   `memory.json` moves lessons and raised hands only, and its `group` is no
   longer read (the scope is the attachment). Rules stay in Beads until
   `wh init --action setup --store virgil` moves them.
+- Whetstone needs `bd` 1.3.0 or later (CI pins 1.3.0). Answering a raised
+  hand uses `bd human respond`, and `wh init --action setup` offers an
+  upgrade for an older `bd`.
 
 ### Fixed
 

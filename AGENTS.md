@@ -140,7 +140,7 @@ their metadata with `bd update`, and never prune, compact or delete them to
 tidy the tracker. Tests use throwaway `bd init` databases only; never point a
 test or experiment at this repository's `.beads`.
 
-Install requirements for Whetstone itself: the `wh` binary, `bd` 1.1.2 or
+Install requirements for Whetstone itself: the `wh` binary, `bd` 1.3.0 or
 later, Node 22 for the verification driver, and Chrome or Chromium for web
 surfaces. No `dolt` binary.
 

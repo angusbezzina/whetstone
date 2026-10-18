@@ -186,15 +186,14 @@ pub fn file_task(project_root: &Path, title: &str, description: &str) -> Result<
     Ok(id.lines().last().unwrap_or_default().trim().to_string())
 }
 
-/// Answer a human-needed issue in Beads (adds the comment and closes it).
-/// Writes what `bd human respond` writes, through commands that also work on
-/// bd 1.1.2, whose `human respond` cannot open the store.
+/// Answer a human-needed issue in Beads: `bd human respond` adds the answer
+/// as a comment and closes the issue.
 pub fn respond(project_root: &Path, issue: &str, answer: &str) -> Result<(), String> {
     bd(
         project_root,
-        &["comments", "add", issue, &format!("Response: {answer}")],
-    )?;
-    bd(project_root, &["close", issue, "--reason", "Responded"]).map(|_| ())
+        &["human", "respond", issue, "--response", answer],
+    )
+    .map(|_| ())
 }
 
 /// The latest comment on an issue, when the owner answered it in Beads.

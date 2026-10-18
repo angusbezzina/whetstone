@@ -43,9 +43,9 @@ use crate::storage::{
 };
 
 /// The oldest `bd` whose JSON shapes Whetstone is tested against.
-pub const MINIMUM_BD_VERSION: (u64, u64, u64) = (1, 1, 2);
+pub const MINIMUM_BD_VERSION: (u64, u64, u64) = (1, 3, 0);
 /// The same minimum as text, pinned in scaffolds such as the CI workflow.
-pub const MIN_BD_VERSION: &str = "1.1.2";
+pub const MIN_BD_VERSION: &str = "1.3.0";
 pub const WHETSTONE_LABEL: &str = "whetstone";
 pub const LIFECYCLE_LABEL_PREFIX: &str = "wh:lifecycle:";
 pub const PRIVATE_PREFIX: &str = "whp";

@@ -121,7 +121,7 @@ the permitted next actions.
 
 ### Storage
 
-Records live in Beads (`bd` 1.1.2 or later, embedded Dolt; no `dolt` binary).
+Records live in Beads (`bd` 1.3.0 or later, embedded Dolt; no `dolt` binary).
 Each record revision is a bead whose metadata carries the typed body, digest,
 supersedes reference and idempotency key; lifecycle is a `wh:lifecycle:*`
 label. Drafts and receipts stay in a private Beads database under
@@ -154,7 +154,7 @@ ln -sf ~/.local/bin/whetstone ~/.local/bin/wh
 wh --help   # lists init, dash, change, check, pull and push
 ```
 
-Requirements: `bd` 1.1.2 or later, Node 22 for the verification driver, and
+Requirements: `bd` 1.3.0 or later, Node 22 for the verification driver, and
 Chrome or Chromium for web surfaces. Jev rules need a `TYPESAFE_API_KEY` in
 the environment; without one they report `unavailable`, which is never a pass.
 

@@ -201,11 +201,11 @@ fn plant_legacy_bead(dir: &Path, canonical: &str, digest: &str) -> String {
 }
 
 #[test]
-fn the_pinned_bd_floor_is_one_point_one_point_two_and_is_met() {
+fn the_pinned_bd_floor_is_one_point_three_and_is_met() {
     let version = ensure_bd_version().expect("bd is installed at the pinned minimum");
     assert!(!version.is_empty());
-    assert_eq!(MINIMUM_BD_VERSION, (1, 1, 2));
-    assert_eq!(MIN_BD_VERSION, "1.1.2");
+    assert_eq!(MINIMUM_BD_VERSION, (1, 3, 0));
+    assert_eq!(MIN_BD_VERSION, "1.3.0");
     assert_eq!(
         format!(
             "{}.{}.{}",
@@ -213,6 +213,83 @@ fn the_pinned_bd_floor_is_one_point_one_point_two_and_is_met() {
         ),
         MIN_BD_VERSION,
         "the text pin and the tuple pin agree"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_bd_older_than_the_floor_is_refused_by_name() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempfile::tempdir().expect("temp");
+    let bin = temp.path().join("bin");
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&bin).expect("bin");
+    fs::create_dir_all(&repo).expect("repo");
+    let fake = bin.join("bd");
+    fs::write(&fake, "#!/bin/sh\necho 'bd version 1.2.9 (Homebrew)'\n").expect("fake bd");
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).expect("chmod");
+    let status = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&repo)
+        .status()
+        .expect("git");
+    assert!(status.success());
+    let path = std::env::join_paths(
+        std::iter::once(bin.clone()).chain(
+            std::env::var_os("PATH")
+                .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+                .unwrap_or_default(),
+        ),
+    )
+    .expect("PATH");
+    let wh = |args: &[&str]| -> Value {
+        let output = Command::new(env!("CARGO_BIN_EXE_whetstone"))
+            .args(args)
+            .current_dir(&repo)
+            .env("PATH", &path)
+            .env("GIT_CEILING_DIRECTORIES", temp.path())
+            .env("WHETSTONE_JEV_OFFLINE", "1")
+            .env_remove("BEADS_DIR")
+            .output()
+            .expect("whetstone");
+        serde_json::from_slice(&output.stdout).expect("JSON")
+    };
+
+    let setup = wh(&["init", "--action", "setup", "--json"]);
+    let bd = setup["data"]["tools"]
+        .as_array()
+        .and_then(|tools| tools.iter().find(|tool| tool["tool"] == "bd"))
+        .cloned()
+        .expect("bd is reported");
+    assert_eq!(bd["state"], "outdated", "{bd}");
+    assert_eq!(bd["found"], "1.2.9", "{bd}");
+    assert_eq!(
+        bd["detail"], "Whetstone needs Beads 1.3.0 or later.",
+        "{bd}"
+    );
+    assert!(
+        bd["fix"].as_str().is_some_and(|fix| !fix.is_empty()),
+        "{bd}"
+    );
+
+    let refused = wh(&[
+        "change",
+        "--json",
+        "--kind",
+        "rule",
+        "--record-id",
+        "rule.example",
+        "--content",
+        "An example.",
+        "--rationale",
+        "For the test.",
+    ]);
+    assert_eq!(refused["state"], "unavailable", "{refused}");
+    let summary = refused["summary"].as_str().expect("summary");
+    assert!(
+        summary.contains("1.3.0") && summary.contains("1.2.9"),
+        "{summary}"
     );
 }
 

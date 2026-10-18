@@ -139,7 +139,7 @@ or a drive without evidence is unknown, never a pass. Draft gates never run.
 
 ## Storage
 
-Records live in Beads (`src/beads.rs`, `bd` 1.1.2 or later). Each record
+Records live in Beads (`src/beads.rs`, `bd` 1.3.0 or later). Each record
 revision is one bead: agreement records are `record` beads, proposals,
 reviews, decisions and retirements are `decision` beads, and receipts and
 repair sessions are `receipt` beads, all labelled `whetstone`. The metadata
