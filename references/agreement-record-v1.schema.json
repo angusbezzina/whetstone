@@ -49,8 +49,6 @@
         "principle",
         "rule",
         "standard",
-        "feature",
-        "verification_map",
         "proposal",
         "local_review",
         "retirement",
@@ -153,38 +151,6 @@
         "properties": {
           "record": {
             "$ref": "#/$defs/standard"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "record_type": {
-            "const": "feature"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "record": {
-            "$ref": "#/$defs/feature"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "record_type": {
-            "const": "verification_map"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "record": {
-            "$ref": "#/$defs/verification_map"
           }
         }
       }
@@ -567,22 +533,6 @@
               "$ref": "#/$defs/nonempty"
             }
           }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "enforcement",
-            "feature"
-          ],
-          "properties": {
-            "enforcement": {
-              "const": "drive"
-            },
-            "feature": {
-              "$ref": "#/$defs/record_id"
-            }
-          }
         }
       ]
     },
@@ -772,93 +722,6 @@
         }
       }
     },
-    "text_list": {
-      "type": "array",
-      "maxItems": 64,
-      "items": {
-        "$ref": "#/$defs/nonempty"
-      }
-    },
-    "record_id_set": {
-      "type": "array",
-      "maxItems": 64,
-      "uniqueItems": true,
-      "items": {
-        "$ref": "#/$defs/record_id"
-      }
-    },
-    "feature": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "summary",
-        "area",
-        "user_path",
-        "proof"
-      ],
-      "properties": {
-        "name": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "summary": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "area": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "sweep_order": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "sub_features": {
-          "$ref": "#/$defs/text_list"
-        },
-        "user_path": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "drive_steps": {
-          "$ref": "#/$defs/text_list"
-        },
-        "proof": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "gotchas": {
-          "$ref": "#/$defs/text_list"
-        },
-        "entry_points": {
-          "$ref": "#/$defs/text_list"
-        },
-        "serves": {
-          "$ref": "#/$defs/record_id_set"
-        },
-        "constrained_by": {
-          "$ref": "#/$defs/record_id_set"
-        },
-        "proven_by": {
-          "$ref": "#/$defs/record_id_set"
-        },
-        "index_summary": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "harness": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "preconditions": {
-          "$ref": "#/$defs/text_list"
-        },
-        "drive_recipe": {
-          "$ref": "#/$defs/text_list"
-        },
-        "mutations": {
-          "type": "array",
-          "maxItems": 16,
-          "items": {
-            "$ref": "#/$defs/mutation"
-          }
-        }
-      }
-    },
     "local_review": {
       "type": "object",
       "additionalProperties": false,
@@ -903,54 +766,6 @@
             "$ref": "#/$defs/evidence_ref"
           },
           "description": "Evidence the decision rested on."
-        }
-      }
-    },
-    "verification_map": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "title",
-        "intro"
-      ],
-      "properties": {
-        "title": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "intro": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "baseline_preconditions": {
-          "$ref": "#/$defs/text_list"
-        },
-        "driving_conventions": {
-          "$ref": "#/$defs/text_list"
-        },
-        "proof_reporting": {
-          "$ref": "#/$defs/text_list"
-        },
-        "entry_contract": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "skill_notes": {
-          "type": "array",
-          "maxItems": 16,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "section",
-              "text"
-            ],
-            "properties": {
-              "section": {
-                "$ref": "#/$defs/nonempty"
-              },
-              "text": {
-                "$ref": "#/$defs/nonempty"
-              }
-            }
-          }
         }
       }
     },
@@ -1046,22 +861,6 @@
             },
             "command": {
               "$ref": "#/$defs/nonempty"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "kind",
-            "feature"
-          ],
-          "properties": {
-            "kind": {
-              "const": "drive"
-            },
-            "feature": {
-              "$ref": "#/$defs/record_id"
             }
           }
         }
@@ -1244,30 +1043,6 @@
           ]
         }
       }
-    },
-    "mutation": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "path",
-        "find",
-        "replace",
-        "description"
-      ],
-      "properties": {
-        "path": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "find": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "replace": {
-          "type": "string"
-        },
-        "description": {
-          "$ref": "#/$defs/nonempty"
-        }
-      }
     }
   },
   "x-retired-kinds": {
@@ -1294,7 +1069,9 @@
       "judgment",
       "flag_decision",
       "lesson",
-      "lesson_check"
+      "lesson_check",
+      "feature",
+      "verification_map"
     ]
   }
 }

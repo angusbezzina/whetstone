@@ -14,8 +14,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
-    ActorKind, AgreementRecord, ContentDigest, Enforcer, RecordId, RuleExample, RuleSource,
-    Strength, SweepClass,
+    ActorKind, AgreementRecord, ContentDigest, Enforcer, RuleExample, RuleSource, Strength,
+    SweepClass,
 };
 use crate::storage::{ProjectLayout, StorageError};
 
@@ -55,30 +55,7 @@ pub fn detect_actor() -> ActorKind {
     }
 }
 
-/// Storage and domain failures as envelopes, for workflows outside this module.
-pub(crate) fn record_storage_error(
-    workflow: &str,
-    request_id: String,
-    error: StorageError,
-) -> ServiceResponse {
-    storage_error(workflow, request_id, error)
-}
-
-pub(crate) fn record_domain_response(
-    workflow: &str,
-    request_id: String,
-    error: crate::domain::DomainError,
-) -> ServiceResponse {
-    domain_response(workflow, request_id, error)
-}
-
 pub const RESPONSE_SCHEMA: &str = "whetstone.command-response.v1";
-/// Receipt subject of a reported maintain pass.
-pub const MAINTAIN_SUBJECT: &str = "maintain:verification-skill";
-pub const DRIVER_EVIDENCE: &str = "whetstone_driver";
-pub const DRIVER_CONFIG_EVIDENCE: &str = "whetstone_driver_config";
-pub const MAP_EVIDENCE: &str = "whetstone_map";
-pub const DOCTOR_EVIDENCE: &str = "whetstone_doctor";
 
 #[derive(Debug, Clone)]
 pub enum ServiceRequest {
@@ -124,10 +101,8 @@ pub enum InitAction {
     /// Record the owner's mission, principles and accepted starter rules.
     Agree,
     Cancel,
-    /// Generate the skill, scaffold the driver, install hooks and CI.
+    /// Install the Git hooks and scaffold CI.
     Wire,
-    /// Read pstack-edited skill or rule files into private drafts.
-    Import,
     /// Detect, install and pin Beads and pstack.
     Setup,
     /// Read an exemplar codebase and draft rules from it, with provenance.
@@ -152,11 +127,9 @@ pub struct InitRequest {
     pub starters: Vec<String>,
     /// Report exact writes without performing them.
     pub dry_run: bool,
-    /// Agent hosts to project the verification skill into (wire, setup).
+    /// Agent hosts whose pstack skills setup detects (setup).
     pub hosts: Vec<String>,
-    /// Replace the team-owned driver with a fresh scaffold (wire).
-    pub regenerate_driver: bool,
-    /// A directory to read: a pstack skill (import) or an exemplar (exemplar).
+    /// A directory to read: an exemplar codebase (exemplar).
     pub import_from: Option<PathBuf>,
     /// A Git URL of an exemplar codebase (exemplar).
     pub exemplar_url: Option<String>,
@@ -177,8 +150,6 @@ pub enum ChangeKind {
     Mission,
     Principle,
     Rule,
-    Feature,
-    Map,
 }
 
 /// Explicit solo review of a pending local draft.
@@ -188,9 +159,8 @@ pub struct ReviewRequest {
     pub verdict: crate::domain::LocalReviewVerdict,
 }
 
-/// Always stored boxed (`Option<Box<ChangeDefinition>>`), so the feature
+/// Always stored boxed (`Option<Box<ChangeDefinition>>`), so the rule
 /// variant's size never inflates the requests that carry it.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ChangeDefinition {
@@ -219,50 +189,6 @@ pub enum ChangeDefinition {
         pstack: Option<String>,
         #[serde(default)]
         rationale: Option<String>,
-    },
-    Feature {
-        summary: String,
-        area: String,
-        #[serde(default)]
-        sweep_order: u32,
-        #[serde(default)]
-        sub_features: Vec<String>,
-        user_path: String,
-        #[serde(default)]
-        drive_steps: Vec<String>,
-        proof: String,
-        #[serde(default)]
-        gotchas: Vec<String>,
-        #[serde(default)]
-        entry_points: Vec<String>,
-        #[serde(default)]
-        serves: Vec<RecordId>,
-        #[serde(default)]
-        constrained_by: Vec<RecordId>,
-        #[serde(default)]
-        proven_by: Vec<RecordId>,
-        #[serde(default)]
-        index_summary: Option<String>,
-        #[serde(default)]
-        harness: Option<String>,
-        #[serde(default)]
-        preconditions: Vec<String>,
-        #[serde(default)]
-        drive_recipe: Vec<String>,
-        #[serde(default)]
-        mutations: Vec<crate::domain::Mutation>,
-    },
-    /// The feature map's conventions (`features/README.md` before the list).
-    Map {
-        intro: String,
-        #[serde(default)]
-        baseline_preconditions: Vec<String>,
-        #[serde(default)]
-        driving_conventions: Vec<String>,
-        #[serde(default)]
-        proof_reporting: Vec<String>,
-        #[serde(default)]
-        entry_contract: Option<String>,
     },
 }
 
@@ -302,11 +228,11 @@ pub enum GateMode {
     /// Every in-force rule (or those named by `rules`).
     #[default]
     All,
-    /// Rules that apply to what changed, and the features it touched.
+    /// Rules that apply to what changed.
     Changed,
     /// Pre-commit: mechanical content checks on the staged index only.
     Staged,
-    /// Every drive rule, in feature-map sweep order.
+    /// Every rule below must, each flag reported as a finding.
     Sweep,
 }
 
@@ -317,44 +243,20 @@ pub struct CheckRequest {
     pub paths: Vec<PathBuf>,
     pub language: Option<String>,
     pub rules: Vec<String>,
-    /// Feature ids whose proving rules should run.
-    pub features: Vec<String>,
     pub gate_mode: GateMode,
     pub timeout_seconds: Option<u64>,
     /// Report the selection and exact commands without executing anything.
     pub dry_run: bool,
-    /// Record the outcome of pstack's maintain pass (clean, changed, blocked)
-    /// as a receipt instead of running rules.
-    pub maintain_outcome: Option<MaintainOutcome>,
-    /// The maintain run's notes or PR: a repository path or a URL.
-    pub maintain_evidence: Option<String>,
     /// The required CI check: enforce the team's shared, accepted records
     /// only, ignoring any private store and unshared drafts.
     pub ci: bool,
     /// Include paths changed since this revision (a committed change), not
     /// only the working tree.
     pub base: Option<String>,
-    /// With exactly one `--feature`: change-specific drive steps run after
-    /// the accepted ones in the same session and recorded in the receipt.
-    pub steps: Vec<String>,
-    /// Also prove each selected feature with its recorded mutations applied,
-    /// in an isolated worktree; a proof that still passes is hollow.
-    pub mutate: bool,
-    /// With the sweep: run only the rules below must and report each flag as
-    /// a finding for a night sweep (`--format findings`).
-    pub findings: bool,
     /// The commit a push sends (pre-push). The check reads the working tree,
     /// so it refuses unless that commit is checked out with no uncommitted
     /// tracked changes; changed paths then come from commits only.
     pub pushed: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MaintainOutcome {
-    Clean,
-    Changed,
-    Blocked,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

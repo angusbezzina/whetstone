@@ -130,7 +130,7 @@ fn propose(
             question,
         );
         response.permitted_actions = vec![format!(
-            "wh change --request-id {} --kind <mission|principle|rule|feature|map> --record-id {} --content <text> --rationale <why> --expected-revision {current_revision} --resume {resume}",
+            "wh change --request-id {} --kind <mission|principle|rule> --record-id {} --content <text> --rationale <why> --expected-revision {current_revision} --resume {resume}",
             response.request_id, id_text
         )];
         response.data = json!({
@@ -529,90 +529,6 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
                 .map_err(|error| format!("The rule is not valid: {error}"))?;
             RecordBody::Rule(rule)
         }
-        ChangeKind::Feature => {
-            let Some(ChangeDefinition::Feature {
-                summary,
-                area,
-                sweep_order,
-                sub_features,
-                user_path,
-                drive_steps,
-                proof,
-                gotchas,
-                entry_points,
-                serves,
-                constrained_by,
-                proven_by,
-                index_summary,
-                harness,
-                preconditions,
-                drive_recipe,
-                mutations,
-            }) = request.definition.as_deref()
-            else {
-                return Err("Provide the feature summary, area, user path, drive steps, proof and entry points as a feature definition.".into());
-            };
-            RecordBody::Feature(crate::domain::Feature {
-                name: content,
-                summary: bounded_input(Some(summary.clone()), "feature summary", 500)?,
-                area: bounded_input(Some(area.clone()), "feature area", 120)?,
-                sweep_order: *sweep_order,
-                sub_features: bounded_list(sub_features, "sub-features", 64, 500)?,
-                user_path: bounded_input(Some(user_path.clone()), "user path", 2_000)?,
-                drive_steps: bounded_list(drive_steps, "drive steps", 64, 1_000)?,
-                proof: bounded_input(Some(proof.clone()), "proof", 1_000)?,
-                gotchas: bounded_list(gotchas, "gotchas", 64, 1_000)?,
-                entry_points: bounded_list(entry_points, "entry points", 64, 500)?,
-                serves: serves.clone(),
-                constrained_by: constrained_by.clone(),
-                proven_by: proven_by.clone(),
-                index_summary: index_summary
-                    .as_ref()
-                    .map(|value| bounded_input(Some(value.clone()), "index summary", 500))
-                    .transpose()?,
-                harness: harness
-                    .as_ref()
-                    .map(|value| bounded_input(Some(value.clone()), "harness", 120))
-                    .transpose()?,
-                preconditions: bounded_list(preconditions, "preconditions", 64, 1_000)?,
-                drive_recipe: bounded_list(drive_recipe, "drive recipe", 64, 2_000)?,
-                mutations: mutations.clone(),
-            })
-        }
-        ChangeKind::Map => {
-            let Some(ChangeDefinition::Map {
-                intro,
-                baseline_preconditions,
-                driving_conventions,
-                proof_reporting,
-                entry_contract,
-            }) = request.definition.as_deref()
-            else {
-                return Err("Provide the map intro, baseline preconditions, driving conventions and proof reporting as a map definition.".into());
-            };
-            RecordBody::VerificationMap(crate::domain::VerificationMap {
-                title: content,
-                intro: bounded_input(Some(intro.clone()), "map intro", 2_000)?,
-                baseline_preconditions: bounded_list(
-                    baseline_preconditions,
-                    "baseline preconditions",
-                    64,
-                    1_000,
-                )?,
-                driving_conventions: bounded_list(
-                    driving_conventions,
-                    "driving conventions",
-                    64,
-                    1_000,
-                )?,
-                proof_reporting: bounded_list(proof_reporting, "proof reporting", 64, 1_000)?,
-                entry_contract: entry_contract
-                    .as_ref()
-                    .map(|value| bounded_input(Some(value.clone()), "entry contract", 8_000))
-                    .transpose()?,
-                skill_notes: Vec::new(),
-            })
-        }
     })
 }
 
@@ -950,8 +866,7 @@ pub(crate) fn review_draft(
 }
 
 /// Record a private draft that retires an accepted record. Accepting it takes
-/// the record out of force (and a feature out of the sweep); every revision
-/// stays in history.
+/// the record out of force; every revision stays in history.
 pub(crate) fn retire_record(
     layout: &ProjectLayout,
     private: &dyn RecordStore,

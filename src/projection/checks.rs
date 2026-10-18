@@ -28,7 +28,7 @@ pub(super) fn mechanical_run(
             let same_code = input.fingerprint.is_some()
                 && body.subject.revision.as_deref() == input.fingerprint;
             let current = bound && same_code && body.freshness == Freshness::Fresh;
-            // The gate artifact is written last; driver evidence may also be JSON.
+            // The gate artifact is written last.
             let artifact = body
                 .evidence
                 .iter()
@@ -51,12 +51,7 @@ pub(super) fn mechanical_run(
                         .collect()
                 })
                 .unwrap_or_default();
-            let quarantined = body
-                .evidence
-                .iter()
-                .any(|evidence| evidence.system == crate::gates::QUARANTINE_EVIDENCE);
             let result = match (body.verification, current) {
-                _ if quarantined => StateLabel::new("warn", "quarantined · flaky"),
                 (VerificationAxis::Pass, true) => StateLabel::new("pass", "pass"),
                 (VerificationAxis::Pass, false) => StateLabel::new("warn", "pass · stale"),
                 (VerificationAxis::Fail, true) => {
@@ -77,19 +72,7 @@ pub(super) fn mechanical_run(
                 result,
                 last_run: Some(body.checked_at.clone()),
                 current,
-                // A quarantined run's artifact is the passing retry; the
-                // reason it is not a pass is the first failure.
-                summary: body
-                    .evidence
-                    .iter()
-                    .find(|evidence| evidence.system == crate::gates::QUARANTINE_EVIDENCE)
-                    .map(|evidence| {
-                        format!(
-                            "Flaky: the proof failed ({}) and passed on one retry; quarantined until it passes first time.",
-                            evidence.locator
-                        )
-                    })
-                    .or_else(|| artifact.as_ref().map(|artifact| artifact.summary.clone())),
+                summary: artifact.as_ref().map(|artifact| artifact.summary.clone()),
                 failures,
                 evidence: body
                     .evidence
@@ -124,7 +107,6 @@ pub(super) fn not_run(eligible: bool) -> RunView {
 pub(super) fn gate_runs(
     state: &AgreementState,
     input: &ProjectionInput<'_>,
-    features: &[FeatureEntry],
     owner: &str,
 ) -> (Vec<GateRun>, Option<LastCheck>) {
     let mut runs = Vec::new();
@@ -139,10 +121,6 @@ pub(super) fn gate_runs(
             continue;
         };
         let (mechanism, command) = crate::gates::mechanism_label(&rule);
-        let feature = match &rule.enforcer {
-            Enforcer::Drive { feature } => Some(link(state, feature)),
-            _ => None,
-        };
         let eligible = in_force.is_some();
         let view = mechanical_run(state, input, &id, shown, eligible);
         if let Some(at) = &view.last_run {
@@ -158,9 +136,6 @@ pub(super) fn gate_runs(
             }
         }
         let recheck = format!("wh check --rule {}", id.as_str());
-        let feature_entry = feature
-            .as_ref()
-            .and_then(|link| features.iter().find(|entry| entry.entry.id == link.id));
         let brief = (view.result.tone == "fail").then(|| {
             gate_brief(
                 &rule.statement,
@@ -170,7 +145,6 @@ pub(super) fn gate_runs(
                 &view.failures,
                 &recheck,
                 owner,
-                feature_entry,
             )
         });
         runs.push(GateRun {
@@ -188,7 +162,6 @@ pub(super) fn gate_runs(
             recheck,
             brief,
             evidence: view.evidence,
-            feature,
             team: match (
                 input.shared.get(id.as_str()),
                 in_force.and_then(|record| record.reference().ok()),

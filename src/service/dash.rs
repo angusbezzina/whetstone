@@ -4,7 +4,6 @@
 use serde_json::{json, Value};
 
 use crate::agreement::AgreementState;
-use crate::domain::{Enforcer, VerificationAxis};
 use crate::history::{HistoryError, HistoryInspectionRequest, HistoryInspectionService};
 use crate::onboarding;
 use crate::projection;
@@ -117,7 +116,6 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
         Ok(state) => {
             let fingerprint = crate::gates::workspace_fingerprint(layout.project_root()).ok();
             let evidence_root = crate::gates::evidence_root(&layout);
-            let manifest = crate::skill::read_manifest(&layout);
             let mut view = projection::dashboard_view(
                 &state,
                 &projection::ProjectionInput {
@@ -127,14 +125,6 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
                     agreement_complete: progress.agreement_complete,
                     onboarding: progress.onboarding.clone(),
                     fingerprint: fingerprint.as_deref(),
-                    driver_path: crate::gates::driver_path(layout.project_root()),
-                    skill: manifest.clone(),
-                    changes: crate::proof::changes_for(&state, layout.project_root()),
-                    hygiene: crate::hygiene::check(
-                        &state,
-                        layout.project_root(),
-                        manifest.as_ref(),
-                    ),
                     shared: shared_refs(loaded.as_ref().ok()),
                 },
             );
@@ -184,7 +174,7 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
         "shared_records": loaded.as_ref().ok().and_then(|loaded| loaded.shared.as_ref()).map_or(0, Vec::len),
         "conflicts": sync_conflicts,
         "shared_refs": shared_refs(loaded.as_ref().ok()),
-        "required_workflow": layout.project_root().join(crate::skill::CI_WORKFLOW).is_file(),
+        "required_workflow": layout.project_root().join(crate::wire::CI_WORKFLOW).is_file(),
     });
     response.data = json!({
         "setup": setup,
@@ -242,128 +232,4 @@ fn store_section(layout: &ProjectLayout) -> Value {
     let left = crate::store::export::left_behind(layout);
     section["left_behind"] = json!(left);
     section
-}
-
-/// Whether an area is the closing multi-surface journeys group.
-fn is_journey(area: &str) -> bool {
-    area.to_ascii_lowercase().contains("journey")
-}
-
-/// Per-feature sweep outcomes in feature-map order (journeys last): proven,
-/// failed at a named step, unreachable with its prerequisite, or skipped
-/// with the reason. Map hygiene findings travel with it.
-pub(crate) fn sweep_report(
-    agreement: Option<&AgreementState>,
-    selection: &super::check::Selection,
-    outcomes: &[crate::gates::GateOutcome],
-    layout: Option<&ProjectLayout>,
-) -> Value {
-    let mut features = selection.features.iter().collect::<Vec<_>>();
-    features.sort_by(|left, right| {
-        (
-            is_journey(&left.1.area),
-            left.1.area.as_str(),
-            left.1.sweep_order,
-            left.1.name.as_str(),
-        )
-            .cmp(&(
-                is_journey(&right.1.area),
-                right.1.area.as_str(),
-                right.1.sweep_order,
-                right.1.name.as_str(),
-            ))
-    });
-    let mut tally = std::collections::BTreeMap::from([
-        ("proven", 0_u64),
-        ("failed", 0),
-        ("unreachable", 0),
-        ("skipped", 0),
-        ("unknown", 0),
-    ]);
-    let mut rows = Vec::new();
-    for (id, feature) in features {
-        let ran = selection
-            .rules
-            .iter()
-            .zip(outcomes)
-            .find(|(selected, _)| matches!(&selected.rule.enforcer, Enforcer::Drive { feature } if feature == id));
-        let (outcome, detail, step, gate, evidence) = match ran {
-            Some((gate, outcome)) => {
-                let evidence = outcome
-                    .evidence
-                    .iter()
-                    .map(|evidence| evidence.locator.clone())
-                    .collect::<Vec<_>>();
-                let first = outcome.failures.first();
-                let (kind, detail, step) = match outcome.state {
-                    VerificationAxis::Pass => ("proven", outcome.summary.clone(), None),
-                    VerificationAxis::Fail => (
-                        "failed",
-                        first.map_or_else(
-                            || outcome.summary.clone(),
-                            |failure| failure.message.clone(),
-                        ),
-                        first.map(|failure| failure.location.clone()),
-                    ),
-                    VerificationAxis::Unknown => {
-                        if let Some(rest) = outcome
-                            .summary
-                            .strip_prefix(crate::gates::UNREACHABLE_PREFIX)
-                        {
-                            ("unreachable", rest.to_string(), None)
-                        } else if outcome.summary.starts_with("Skipped:") {
-                            ("skipped", outcome.summary.clone(), None)
-                        } else {
-                            ("unknown", outcome.summary.clone(), None)
-                        }
-                    }
-                };
-                (
-                    kind,
-                    detail,
-                    step,
-                    Some(gate.id.as_str().to_string()),
-                    evidence,
-                )
-            }
-            None => (
-                "skipped",
-                if feature.drive_steps.is_empty() {
-                    "no drive steps are recorded, so it cannot be driven".to_string()
-                } else {
-                    "no accepted drive rule proves it".to_string()
-                },
-                None,
-                None,
-                Vec::new(),
-            ),
-        };
-        *tally.entry(outcome).or_insert(0) += 1;
-        rows.push(json!({
-            "feature": id.as_str(),
-            "name": feature.name,
-            "area": feature.area,
-            "outcome": outcome,
-            "detail": detail,
-            "step": step,
-            "gate": gate,
-            "evidence": evidence,
-        }));
-    }
-    let hygiene = match (agreement, layout) {
-        (Some(state), Some(layout)) => crate::hygiene::check(
-            state,
-            layout.project_root(),
-            crate::skill::read_manifest(layout).as_ref(),
-        ),
-        _ => Vec::new(),
-    };
-    json!({
-        "order": rows.iter().map(|row| row["feature"].clone()).collect::<Vec<_>>(),
-        "features": rows,
-        "tally": tally,
-        "hygiene": hygiene,
-        "edits_product_code": false,
-        "edits_map_or_driver": false,
-    })
 }

@@ -440,9 +440,7 @@ pub fn record_class(body: &RecordBody) -> &'static str {
         | RecordBody::Principle(_)
         | RecordBody::Rule(_)
         | RecordBody::StoredRule(_)
-        | RecordBody::Standard(_)
-        | RecordBody::Feature(_)
-        | RecordBody::VerificationMap(_) => "record",
+        | RecordBody::Standard(_) => "record",
         RecordBody::Proposal(_) | RecordBody::LocalReview(_) | RecordBody::Retirement(_) => {
             "decision"
         }
@@ -455,7 +453,9 @@ pub fn record_class(body: &RecordBody) -> &'static str {
             | "metric_definition"
             | "source_snapshot"
             | "policy_exception"
-            | "lesson" => "record",
+            | "lesson"
+            | "feature"
+            | "verification_map" => "record",
             "decision" | "mandate" | "activation" | "hand_answer" | "flag_decision" => "decision",
             _ => "receipt",
         },

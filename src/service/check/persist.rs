@@ -1,4 +1,4 @@
-//! Receipts a check records: gate and mutation records.
+//! Receipts a check records: one per gate run.
 
 use super::*;
 
@@ -96,7 +96,6 @@ pub(super) fn persist_gate_receipt(
     outcome: &GateOutcome,
     fingerprint: &str,
     checked_at: &str,
-    binding: &DriveBinding<'_>,
 ) -> Result<Option<RecordRef>, StorageError> {
     if !layout.private_store_exists() {
         return Ok(None);
@@ -118,12 +117,7 @@ pub(super) fn persist_gate_receipt(
     } else {
         verification
     };
-    let mut evidence = with_head(layout, outcome.evidence.clone());
-    let mut related = vec![selected.reference.clone()];
-    if matches!(selected.rule.enforcer, Enforcer::Drive { .. }) {
-        related.extend(binding.feature.clone());
-        evidence.extend(drive_evidence(layout.project_root(), binding, checked_at));
-    }
+    let evidence = with_head(layout, outcome.evidence.clone());
     let record = receipt_record(
         layout,
         format!("verification.gate_{suffix}"),
@@ -162,119 +156,10 @@ pub(super) fn persist_gate_receipt(
             authorization: crate::domain::AuthorizationAxis::Unknown,
             freshness,
             checked_at: checked_at.into(),
-            related_records: related,
-            evidence,
-        }),
-    )
-    .map_err(StorageError::Domain)?;
-    repository.append(&record, None).map(Some)
-}
-
-/// The latest mutation run for a feature, when any mutation left its proof
-/// passing: the reason the proof is hollow.
-pub(crate) fn hollow_proof(state: &AgreementState, feature: &RecordId) -> Option<String> {
-    let subject = format!(
-        "{}{}",
-        crate::gates::MUTATION_SUBJECT_PREFIX,
-        feature.as_str()
-    );
-    let receipts = state
-        .records()
-        .iter()
-        .filter_map(|record| match &record.body {
-            RecordBody::VerificationReceipt(body) if body.subject.stable_id == subject => {
-                Some((record, body))
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let latest_run = receipts
-        .iter()
-        .max_by(|left, right| left.1.checked_at.cmp(&right.1.checked_at))
-        .map(|(record, _)| {
-            record
-                .idempotency_key
-                .split(':')
-                .nth(1)
-                .unwrap_or_default()
-                .to_string()
-        })?;
-    receipts
-        .iter()
-        .filter(|(record, _)| record.idempotency_key.split(':').nth(1) == Some(latest_run.as_str()))
-        .find(|(_, body)| body.verification == VerificationAxis::Fail)
-        .map(|(_, body)| {
-            body.evidence
-                .iter()
-                .find(|evidence| evidence.system == "whetstone_mutation")
-                .map_or_else(
-                    || "it still passed with a recorded mutation applied".to_string(),
-                    |evidence| {
-                        format!(
-                            "it still passed with \"{}\" applied; strengthen its drive steps",
-                            evidence.locator
-                        )
-                    },
-                )
-        })
-}
-
-pub(super) fn persist_mutation_receipt(
-    layout: &ProjectLayout,
-    run_id: &str,
-    index: usize,
-    selected: &SelectedRule,
-    run: &crate::gates::MutationOutcome,
-) -> Result<Option<RecordRef>, StorageError> {
-    if !layout.private_store_exists() {
-        return Ok(None);
-    }
-    let checked_at = utc_now();
-    let key = format!("mutation:{run_id}:{}:{index}", run.feature);
-    let verification = match run.verdict {
-        "killed" => VerificationAxis::Pass,
-        "hollow" => VerificationAxis::Fail,
-        _ => VerificationAxis::Unknown,
-    };
-    let mut evidence = with_head(layout, run.proof.evidence.clone());
-    evidence.push(EvidenceRef {
-        system: "whetstone_mutation".into(),
-        locator: run.mutation.chars().take(300).collect(),
-        digest: None,
-    });
-    let record = receipt_record(
-        layout,
-        format!("verification.mutation_{}", key_suffix(&key, 24)),
-        key,
-        "whetstone:mutation-runner",
-        ProvenanceKind::DeterministicCheck,
-        &checked_at,
-        EvidenceRef {
-            system: crate::proof::EVIDENCE_SYSTEM.into(),
-            locator: run_id.into(),
-            digest: None,
-        },
-        RecordBody::VerificationReceipt(VerificationReceipt {
-            subject: ExternalRef {
-                system: ExternalSystem::Custom,
-                stable_id: format!("{}{}", crate::gates::MUTATION_SUBJECT_PREFIX, run.feature),
-                revision: Some(run.verdict.into()),
-            },
-            code_digest: digest_bytes(run.detail.as_bytes()),
-            policy_state: PolicyStateSnapshot {
-                accepted: Some(selected.reference.clone()),
-                required: None,
-                installed: None,
-                experimental: None,
-            },
-            verification,
-            authorization: crate::domain::AuthorizationAxis::Unknown,
-            freshness: Freshness::Fresh,
-            checked_at: checked_at.clone(),
             related_records: vec![selected.reference.clone()],
             evidence,
         }),
     )
     .map_err(StorageError::Domain)?;
-    append_private(layout, &record).map(Some)
+    repository.append(&record, None).map(Some)
 }

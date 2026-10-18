@@ -61,8 +61,6 @@ pub fn is_agreement_body(body: &RecordBody) -> bool {
             | RecordBody::Rule(_)
             | RecordBody::StoredRule(_)
             | RecordBody::Standard(_)
-            | RecordBody::Feature(_)
-            | RecordBody::VerificationMap(_)
     )
 }
 

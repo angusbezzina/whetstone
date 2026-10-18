@@ -154,22 +154,6 @@
               "$ref": "#/$defs/nonempty"
             }
           }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "kind",
-            "feature"
-          ],
-          "properties": {
-            "kind": {
-              "const": "drive"
-            },
-            "feature": {
-              "$ref": "#/$defs/record_id"
-            }
-          }
         }
       ]
     },

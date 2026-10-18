@@ -23,15 +23,7 @@ pub const PSTACK_VERSION: &str = "0.15.5";
 pub const PSTACK_COMMIT: &str = "12d587dfb20741cafc376c42c696c5f6e2a64487";
 
 /// pstack skills the plan uses; Whetstone never reimplements them.
-pub const PSTACK_SKILLS: &[&str] = &[
-    "how",
-    "why",
-    "blast-radius",
-    "interrogate",
-    "reflect",
-    "create-verification-skill",
-    "maintain-verification-skill",
-];
+pub const PSTACK_SKILLS: &[&str] = &["how", "why", "blast-radius", "interrogate", "reflect"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolState {

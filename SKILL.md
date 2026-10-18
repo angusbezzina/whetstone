@@ -29,8 +29,6 @@ Beads epic `whetstone-ppq`.
    change could break. Name the existing code, components and design tokens
    you will reuse. Do not write a new helper, component or test until you
    have checked that one doesn't already exist and that the task asks for it.
-3. Use the generated `verify-<app>` skill to drive the running app when a
-   rule or feature needs proof.
 
 ## While you build
 
@@ -76,19 +74,14 @@ resume token. A retry with the same request ID must keep the same input.
   `--action setup` detects Beads and pstack and (with `--yes`) installs Beads;
   `--action exemplar --from <path>` turns a codebase the owner admires into
   rule drafts.
-- `wh init --action wire --host <claude|codex|cursor|agents> --hooks` writes
-  the skill (with `rules/*.md` and `whetstone.verify.json`), feature map,
-  driver, and the git pre-commit and pre-push hooks. `--ci`
-  adds the required CI status. `wh init --action import --from <dir>` turns
-  pstack-edited skill files, including rule files, into drafts.
+- `wh init --action wire --hooks` installs the git pre-commit and pre-push
+  hooks. `--ci` adds the required CI status.
 - `wh change` drafts, previews, accepts, withdraws or retires records
-  (`--kind mission|principle|rule|feature|map`). `--migrate` records
+  (`--kind mission|principle|rule`). `--migrate` records
   drafts. Accepting is the owner's call.
 - `wh check` runs the rules: `--staged` for pre-commit, `--changed` or
-  `--base` for the change, `--feature` and `--step` to prove one feature,
-  `--sweep` for every mapped feature, `--mutate` to test the proofs.
-  `--sweep --format findings` runs only the rules below must and prints a
-  JSON array, one finding per flag (`fingerprint`, `subjectDigest`, `class`,
+  `--base` for the change. `--sweep` runs only the rules below must and
+  prints a JSON array (`--format json` gives the envelope instead), one finding per flag (`fingerprint`, `subjectDigest`, `class`,
   `priority`, `title`, `responsibility`, and `unsure` with a reason where the
   rule doubts its own flag), for a sweep's `findings.json`; a rule's `sweep` class (`draft_pr`,
   `confirm_first`, `discuss`, the default) says how far the sweep may go,
@@ -110,7 +103,7 @@ The earlier direction's `wh push --propose`, `wh change --activate`,
 
 - Prefer five trusted rules to fifty noisy ones.
 - Every rule gets one mechanical enforcer (native linter, formatter, AST,
-  test, validator, drive proof). A concern no check can hold stays guidance,
+  test, validator). A concern no check can hold stays guidance,
   not a rule.
 - Send native-linter concerns to native linters; do not duplicate them. Use
   AST rules only for structural, type-independent properties. Raw regex is

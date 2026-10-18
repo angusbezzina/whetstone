@@ -96,6 +96,17 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   owns lessons itself; `whetstone/store.json` names the record store).
   Stored lessons and lesson checks are read as retired history, and a stored
   rule drafted from a lesson loads as the owner's with its digest unchanged.
+- The verification skill and drive proofs: `wh init --action wire --host`
+  and `--regenerate-driver` (wire now installs the Git gates and the CI
+  workflow only), `wh init --action import`, the verification driver
+  (`whetstone/verify/`, Node and Chrome), feature maps
+  (`wh change --kind feature` and `--kind map`), map hygiene, the `drive`
+  enforcer, flaky-proof quarantine, `wh check --feature`, `--step`,
+  `--mutate` and `--maintain-outcome`, the dashboard's Features panel and
+  feature editor, and the pstack round trip in `wh eval`. `wh check --sweep`
+  prints its findings by default; `--format json` gives the envelope.
+  Stored features, feature maps and rules or standards held by a drive are
+  read as retired history.
 
 ## [0.13.0] - 2026-10-15
 

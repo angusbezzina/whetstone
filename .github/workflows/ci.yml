@@ -26,11 +26,6 @@ jobs:
       - name: Install Python quality tools
         run: python3 -m pip install pytest ruff
 
-      # The verification driver needs Node 22 (global WebSocket and fetch).
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
       - name: Install pinned Beads (bd) 1.3.0
         shell: bash
         env:

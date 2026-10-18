@@ -1366,7 +1366,6 @@ fn rule_definitions_hold_one_strength_and_one_enforcer() {
         r#"{"kind":"formatter","tool":"ruff format --check ."}"#,
         r#"{"kind":"test","command":"cargo test"}"#,
         r#"{"kind":"validator","command":"python3 scripts/check.py"}"#,
-        r#"{"kind":"drive","feature":"feature.search"}"#,
     ];
     for (index, strength) in ["must", "should"].into_iter().enumerate() {
         for (offset, enforcer) in enforcers.iter().enumerate() {
@@ -1395,6 +1394,7 @@ fn rule_definitions_hold_one_strength_and_one_enforcer() {
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"brief","skills":["how"]}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"question","question":"Is this a test?"}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"public_surface"}}"#,
+        r#"{"type":"rule","strength":"must","enforcer":{"kind":"drive","feature":"feature.search"}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"true","query":"(identifier)"}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"vibes"}}"#,
         r#"{"type":"rule","strength":"may","enforcer":{"kind":"test","command":"true"}}"#,

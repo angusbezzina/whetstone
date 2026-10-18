@@ -21,19 +21,18 @@ system, and agents guessing instead of asking.
    blocks the gate; should flags and becomes a sweep finding) and one
    mechanical enforcer (AST, linter, formatter,
    test, validator) scored against the rule's examples.
-3. **Brief before building, prove before shipping.** Agents run pstack's
+3. **Brief before building, check before shipping.** Agents run pstack's
    `/how`, `/why` and `/blast-radius` first. Checks run at git pre-commit
-   (fast, staged files), pre-push (the full `wh check` with fresh proofs) and
-   as a required CI status. The generated verification skill proves features
-   in the running app.
+   (fast, staged files), pre-push (the full `wh check`) and as a required CI
+   status.
 
 The public surface is exactly six commands:
 
 | Command | Purpose |
 | --- | --- |
-| `wh init` | Set up: install what's missing, agree the mission, principles and rules, wire hooks and the verification skill. |
+| `wh init` | Set up: install what's missing, agree the mission, principles and rules, wire the hooks and CI. |
 | `wh dash` | See rules, checks and the full decision log, and accept or reject drafts. |
-| `wh change` | Propose a change to a rule, principle or feature map as a reviewable draft. |
+| `wh change` | Propose a change to the mission, a principle or a rule as a reviewable draft. |
 | `wh check` | Check work against the rules, return failures to the worker, and record receipts. |
 | `wh pull` | Receive the team's shared agreement without touching your drafts. |
 | `wh push` | Share an exact, confirmed selection of accepted records. |
@@ -56,15 +55,14 @@ and the plan in epic `whetstone-ppq` is built:
   or `--url <git url>`) into rule drafts with provenance.
 - **Rules.** One strength and one enforcer per rule
   ([rule schema](references/rule-v2.schema.json)): AST, lint, formatter, test,
-  validator or drive. Earlier standards are read as rules, and
+  or validator. Earlier standards are read as rules, and
   `wh change --migrate` turns earlier values, philosophy and YAML rules into
   drafts.
 - **Gates.** `wh init --action wire --hooks` installs git pre-commit (staged
   content, mechanical rules only) and pre-push (`wh check --base <remote>`)
   hooks, chaining any existing hook. `--ci` writes the `whetstone/policy` required status workflow.
-- **Proofs.** Flaky proofs are quarantined as unknown, and
-  `wh check --mutate` runs a feature's declared mutations in an isolated
-  worktree to catch proofs that pass on broken code.
+- **Sweeps.** `wh check --sweep` runs the rules below must and prints one
+  finding per flag (`findings.json`) for a night sweep's controller.
 
 Still waiting on the owner: the milestone walkthroughs, tracked under
 `whetstone-ppq.10`.
@@ -75,12 +73,12 @@ wh init --json                                              # inspect: missing s
 wh init --action setup --yes                                # install bd if missing
 wh init --action agree --mission "..." --principle prove-it-works --starter all \
   --expected-revision 0 --resume <token>
-wh init --action wire --host claude --host codex --hooks --ci
+wh init --action wire --hooks --ci
 wh change --kind rule --record-id rule.no-todo --content "..." --rationale "..." \
   --definition '{"type":"rule","strength":"should","enforcer":{"kind":"ast","query":"(comment) @match","language":"rust"}}'
 wh check --staged                                           # what pre-commit runs
 wh check --base origin/main                                 # what pre-push runs
-wh check --sweep                                            # drive every mapped feature
+wh check --sweep                                            # findings.json for a night sweep
 wh dash                                                     # local dashboard
 wh dash --trail                                             # decision trail as TSV
 wh push                                                     # review the exact package, then --confirm <token>
@@ -128,8 +126,7 @@ ln -sf ~/.local/bin/whetstone ~/.local/bin/wh
 wh --help   # lists init, dash, change, check, pull and push
 ```
 
-Requirements: `bd` 1.3.0 or later, Node 22 for the verification driver, and
-Chrome or Chromium for web surfaces.
+Requirements: `bd` 1.3.0 or later.
 
 An earlier install of the previous product also answers to `wh` and would open
 its terminal UI instead. If `wh --help` lists commands such as `extract`,

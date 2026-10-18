@@ -3,7 +3,7 @@
 //! Inspect is read-only. Agree records the owner's mission, the principles
 //! they picked and the starter rules they accepted. Setup detects, installs
 //! and pins Beads and pstack. Exemplar reads a codebase the owner admires and
-//! drafts rules from it. Wire and import live in `crate::skill`.
+//! drafts rules from it. Wire lives in `crate::wire`.
 
 use serde::Serialize;
 use serde_json::json;
@@ -34,7 +34,7 @@ pub(crate) struct Progress {
     /// A passing rule run at the current workspace: the loop is proven.
     pub(crate) first_proof: Option<RecordRef>,
     pub(crate) proof_status: String,
-    pub(crate) hooks: crate::skill::GitHooks,
+    pub(crate) hooks: crate::wire::GitHooks,
     pub(crate) shared: bool,
     #[serde(skip)]
     pub(crate) onboarding: Onboarding,
@@ -57,7 +57,7 @@ pub(crate) fn progress(layout: &ProjectLayout, records: Option<&[AgreementRecord
                 .is_some_and(|rule| rule.source.kind == crate::domain::RuleSourceKind::Exemplar)
         })
         .count();
-    let hooks = crate::skill::git_hooks(root);
+    let hooks = crate::wire::git_hooks(root);
     let tools = crate::setup::detect(root, &[]);
     let mut missing = Vec::new();
     if mission.is_none() {
@@ -248,8 +248,7 @@ pub(super) fn init(request: InitRequest) -> ServiceResponse {
         Err(summary) => return unknown_response("init", "invalid-request-id".into(), summary),
     };
     match request.action {
-        InitAction::Wire => return crate::skill::wire(&layout, request_id, &request),
-        InitAction::Import => return crate::skill::import(&layout, request_id, &request),
+        InitAction::Wire => return crate::wire::wire(&layout, request_id, &request),
         InitAction::Setup => return setup(&layout, request_id, &request),
         InitAction::Exemplar => return exemplar(&layout, request_id, &request),
         InitAction::Store => return store_switch(&layout, request_id, &request),

@@ -1,5 +1,4 @@
-//! Sweep findings: `wh check --sweep --format findings` turns every flag of
-//! a rule below must into one finding a night sweep's controller works. The
+//! Sweep findings: `wh check --sweep` turns every flag of a rule below must into one finding a night sweep's controller works. The
 //! fixture holds only rules; the agent is the real binary and the person is
 //! the library's service called with a person as the actor. Every repository
 //! is a throwaway; nothing touches this repository's stores.
@@ -295,8 +294,9 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
         "no priority reads as 2"
     );
 
-    // Findings for the rules below must only, byte-identical across runs.
-    let first = run(root, &["check", "--sweep", "--format", "findings"]);
+    // Findings for the rules below must only (a sweep prints them by
+    // default), byte-identical across runs.
+    let first = run(root, &["check", "--sweep"]);
     assert_eq!(
         first.status.code(),
         Some(0),
@@ -389,7 +389,7 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
     // The fingerprint holds while the flagged content changes; the digest moves.
     let before = by_rule("rule.print-should");
     std::fs::write(root.join("src/app.py"), "print('two')\nvalue = 1\n").expect("write");
-    let changed = run(root, &["check", "--sweep", "--format", "findings"]);
+    let changed = run(root, &["check", "--sweep"]);
     let after = serde_json::from_slice::<Vec<Value>>(&changed.stdout)
         .expect("findings")
         .into_iter()
@@ -423,7 +423,15 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
     assert_eq!(required("rule.print-should"), json!(false));
     assert_eq!(required("rule.print-must"), json!(true));
 
-    // The ordinary feature sweep is unchanged: it drives features only.
-    let sweep = wh(root, &["check", "--sweep", "--json"]);
-    assert!(sweep["data"]["findings"].is_null(), "{}", sweep["data"]);
+    // `--format json` keeps the envelope, with the same findings in it.
+    let enveloped = run(root, &["check", "--sweep", "--format", "json"]);
+    let envelope: Value = serde_json::from_slice(&enveloped.stdout).expect("envelope");
+    assert_eq!(envelope["schema"], "whetstone.command-response.v1");
+    assert_eq!(
+        envelope["data"]["findings_json"]
+            .as_str()
+            .map(str::as_bytes),
+        Some(changed.stdout.as_slice()),
+        "{envelope}"
+    );
 }

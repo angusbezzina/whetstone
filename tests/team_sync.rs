@@ -240,7 +240,7 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
         &a,
         speed["data"]["proposal"]["id"].as_str().expect("proposal"),
     );
-    // A feature linking to a gate that exists only as a draft.
+    // A gate that exists only as a draft.
     let gate = change(
         &a,
         "gate-draft",
@@ -258,31 +258,7 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
         ],
     );
     assert_eq!(gate["state"], "success", "{gate}");
-    let feature = change(
-        &a,
-        "feature",
-        &[
-            "--kind",
-            "feature",
-            "--record-id",
-            "feature.journey",
-            "--content",
-            "Journey",
-            "--rationale",
-            "the core path",
-            "--definition",
-            r#"{"type":"feature","summary":"The core path","area":"App","user_path":"Open it.","proof":"It opens.","proven_by":["rule.journey"]}"#,
-        ],
-    );
-    accept(
-        &a,
-        feature["data"]["proposal"]["id"]
-            .as_str()
-            .expect("proposal"),
-    );
-
-    // Review the exact package; the canary, the draft gate and anything
-    // depending on it are not in it.
+    // Review the exact package; the canary and the draft gate are not in it.
     let reviewed = json(&run(
         &["push", "--json", "--canary", "PRIVATE-CANARY-7f3a"],
         &a,
@@ -302,11 +278,6 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
         "a draft is never shared"
     );
     assert!(!package.contains("rule.journey"));
-    let blocked = reviewed["data"]["blocked"].to_string();
-    assert!(
-        blocked.contains("feature.journey") && blocked.contains("rule.journey"),
-        "{blocked}"
-    );
     assert!(reviewed["data"]["destination"]["remotes"]
         .to_string()
         .contains("origin.git"));

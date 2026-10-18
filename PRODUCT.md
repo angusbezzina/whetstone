@@ -28,20 +28,18 @@ epic `whetstone-ppq`.
 Mechanism that makes it different:
 - Judgment (interpreting intent, proposing rules, briefing) stays with the
   skill and pstack's skills.
-- Network calls and driving stay in the driver.
+- Network calls stay in the driver.
 - Deterministic, replayable work (schemas, state transitions, check
   execution, receipts) stays in typed services.
-- Only a mechanical pass or a proof passes a must rule.
+- Only a mechanical pass passes a must rule.
 - Unknown, stale, skipped or unavailable evidence is never reported as
   success.
 - Rule changes, including strength changes, are drafts a person accepts.
 - Local drafts stay private until pushed.
 
-Outputs for agents: a generated, pstack-compatible verification skill with a
-feature map (one file per user-facing feature: sub-features, how a user
-reaches it, how to drive it, gotchas, plus the versioned "why" in frontmatter)
-and a small team-owned driver script. Records live in Beads (`bd`), not in a
-Whetstone-owned database and not in Git commits.
+Outputs for agents: the agreed rules (`wh dash --json`), the decision trail
+behind them, and repair findings from every check. Records live in Beads
+(`bd`), not in a Whetstone-owned database and not in Git commits.
 
 ## Users and job
 

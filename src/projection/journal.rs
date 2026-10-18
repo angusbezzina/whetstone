@@ -61,7 +61,6 @@ pub(crate) fn area_of(record: &AgreementRecord) -> &'static str {
         RecordBody::Mission(_) => "mission",
         RecordBody::Principle(_) => "principles",
         RecordBody::Rule(_) | RecordBody::StoredRule(_) | RecordBody::Standard(_) => "rules",
-        RecordBody::Feature(_) | RecordBody::VerificationMap(_) => "features",
         RecordBody::VerificationReceipt(_) => "checks",
         RecordBody::Retired(_) => "history",
         _ => "governance",
@@ -181,34 +180,6 @@ fn journal_entry(
             StateLabel::new("muted", "redacted"),
             "governance",
             "This history item is not visible from this boundary.".into(),
-        );
-    }
-    // A reported maintain pass (pstack's maintain-verification-skill).
-    if let Some(body) = records.iter().find_map(|record| match &record.body {
-        RecordBody::VerificationReceipt(body)
-            if body.subject.stable_id == crate::service::MAINTAIN_SUBJECT =>
-        {
-            Some(body)
-        }
-        _ => None,
-    }) {
-        let outcome = body
-            .subject
-            .revision
-            .clone()
-            .unwrap_or_else(|| "reported".into());
-        return base(
-            "verification",
-            format!("Maintain pass: {outcome}"),
-            match body.verification {
-                VerificationAxis::Pass => StateLabel::new("pass", outcome.as_str()),
-                _ => StateLabel::new("warn", "unknown"),
-            },
-            "features",
-            body.evidence.first().map_or_else(
-                || "No evidence was supplied, so the pass counts as unknown.".to_string(),
-                |evidence| format!("Evidence: {}", evidence.locator),
-            ),
         );
     }
     // Check runs: gate receipts and native scans.
@@ -629,49 +600,7 @@ pub fn decision_trail(state: &AgreementState) -> String {
                     .stable_id
                     .strip_prefix(GATE_SUBJECT_PREFIX)
                     .map(str::to_owned);
-                let maintain = body.subject.stable_id == crate::service::MAINTAIN_SUBJECT;
-                let quarantine = body
-                    .evidence
-                    .iter()
-                    .find(|evidence| evidence.system == crate::gates::QUARANTINE_EVIDENCE);
-                if let Some(feature) = body
-                    .subject
-                    .stable_id
-                    .strip_prefix(crate::gates::MUTATION_SUBJECT_PREFIX)
-                {
-                    rows.push((
-                        body.checked_at.clone(),
-                        id,
-                        [
-                            "proofs".into(),
-                            format!("Mutated {feature} to test its proof"),
-                            body.evidence
-                                .iter()
-                                .find(|evidence| evidence.system == "whetstone_mutation")
-                                .map_or_else(
-                                    || "a recorded mutation".to_string(),
-                                    |evidence| evidence.locator.clone(),
-                                ),
-                            format!("whetstone:{}", record.id.as_str()),
-                            match body.verification {
-                                VerificationAxis::Pass => {
-                                    "proof failed under mutation: real".into()
-                                }
-                                VerificationAxis::Fail => "hollow: the proof still passed".into(),
-                                VerificationAxis::Unknown => "unknown (not a pass)".into(),
-                            },
-                        ],
-                    ));
-                    continue;
-                }
                 let (decision, why) = match &gate {
-                    _ if maintain => (
-                        format!(
-                            "Recorded the maintain pass outcome: {}",
-                            body.subject.revision.as_deref().unwrap_or("reported")
-                        ),
-                        "pstack's maintain-verification-skill kept the feature map honest.".into(),
-                    ),
                     Some(gate) => {
                         let statement = body
                             .policy_state
@@ -695,9 +624,7 @@ pub fn decision_trail(state: &AgreementState) -> String {
                 let evidence = body
                     .evidence
                     .iter()
-                    .filter(|evidence| {
-                        evidence.system == EVIDENCE_SYSTEM || evidence.system == "maintain_run"
-                    })
+                    .filter(|evidence| evidence.system == EVIDENCE_SYSTEM)
                     .map(|evidence| evidence.locator.clone())
                     .take(3)
                     .collect::<Vec<_>>();
@@ -705,11 +632,7 @@ pub fn decision_trail(state: &AgreementState) -> String {
                     body.checked_at.clone(),
                     id.clone(),
                     [
-                        if maintain {
-                            "maintain".into()
-                        } else {
-                            "checks".into()
-                        },
+                        "checks".into(),
                         decision,
                         why,
                         if evidence.is_empty() {
@@ -717,13 +640,10 @@ pub fn decision_trail(state: &AgreementState) -> String {
                         } else {
                             evidence.join(", ")
                         },
-                        match (body.verification, quarantine) {
-                            (_, Some(first)) => {
-                                format!("quarantined as flaky (first run: {})", first.locator)
-                            }
-                            (VerificationAxis::Pass, None) => "pass".into(),
-                            (VerificationAxis::Fail, None) => "fail".into(),
-                            (VerificationAxis::Unknown, None) => "unknown (not a pass)".into(),
+                        match body.verification {
+                            VerificationAxis::Pass => "pass".into(),
+                            VerificationAxis::Fail => "fail".into(),
+                            VerificationAxis::Unknown => "unknown (not a pass)".into(),
                         },
                     ],
                 ));

@@ -38,12 +38,7 @@ Two 2026-09-10 decisions still stand:
   and `bd dolt pull` on the repository's shared database. Keep the domain and
   agreement layers storage-agnostic.
 - **pstack interop, not imitation.** Whetstone uses pstack's `how`, `why`,
-  `blast-radius`, `interrogate`, `reflect` and `maintain-verification-skill`
-  and never reimplements them. The generated `verify-<app>` skill stays a
-  valid pstack verification skill (frontmatter plus exactly four H2s per
-  feature file, a pstack-shaped `features/README.md`, `wh init --action
-  import`, control-adapter driver vocabulary, show-me-your-work TSV).
-  Whetstone owns the format, and pstack's layout is its projection.
+  `blast-radius`, `interrogate` and `reflect` and never reimplements them.
 
 Removed from direction; their code was deleted in `whetstone-ppq.2` (stored
 records of these kinds are read as retired and never written):
@@ -141,8 +136,7 @@ tidy the tracker. Tests use throwaway `bd init` databases only; never point a
 test or experiment at this repository's `.beads`.
 
 Install requirements for Whetstone itself: the `wh` binary, `bd` 1.3.0 or
-later, Node 22 for the verification driver, and Chrome or Chromium for web
-surfaces. No `dolt` binary.
+later. No `dolt` binary.
 
 ## Design work
 

@@ -42,7 +42,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Inspect the project, agree the mission, principles and rules, install
-    /// the tools, and wire the skill, hooks and CI.
+    /// the tools, and wire the hooks and CI.
     Init {
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
@@ -73,13 +73,11 @@ enum Command {
         /// opening the dashboard's guided onboarding (inspect).
         #[arg(long)]
         no_open: bool,
-        /// Agent host: claude, cursor, codex or agents (wire, setup; repeatable).
+        /// Agent host whose pstack skills to detect: claude, cursor, codex or
+        /// agents (setup; repeatable).
         #[arg(long = "host")]
         hosts: Vec<String>,
-        /// Replace the team-owned driver script with a fresh scaffold (wire).
-        #[arg(long)]
-        regenerate_driver: bool,
-        /// A directory to read: a verify skill (import) or an exemplar codebase (exemplar).
+        /// A directory to read: an exemplar codebase (exemplar).
         #[arg(long = "from")]
         import_from: Option<PathBuf>,
         /// A Git URL of an exemplar codebase, cloned shallowly with hooks off (exemplar).
@@ -144,7 +142,7 @@ enum Command {
         record_id: Option<String>,
         #[arg(long)]
         content: Option<String>,
-        /// Typed rule, principle, feature or map details as a JSON object.
+        /// Typed rule or principle details as a JSON object.
         #[arg(long, value_parser = parse_change_definition)]
         definition: Option<Box<ChangeDefinition>>,
         /// Change the accountable owner on the proposed record revision.
@@ -196,10 +194,7 @@ enum Command {
         /// Run only this rule (repeatable).
         #[arg(long = "rule")]
         rules: Vec<String>,
-        /// Prove a mapped feature by running the rules that prove it.
-        #[arg(long = "feature")]
-        features: Vec<String>,
-        /// Run the rules that apply to what changed and the features it touched.
+        /// Run the rules that apply to what changed.
         #[arg(long, conflicts_with_all = ["sweep", "staged"])]
         changed: bool,
         /// Include paths changed since this revision (e.g. origin/main), so a
@@ -209,38 +204,24 @@ enum Command {
         /// Pre-commit: the fast mechanical content checks on the staged index only.
         #[arg(long, conflicts_with_all = ["sweep", "changed"])]
         staged: bool,
-        /// With one --feature: a change-specific drive step, run after the
-        /// feature's accepted steps and recorded in the receipt (repeatable).
-        #[arg(long = "step", requires = "features")]
-        steps: Vec<String>,
-        /// Drive every mapped feature in sweep order.
+        /// Run only the rules below must and print one finding per flag
+        /// {fingerprint, subjectDigest, class, priority, title, responsibility,
+        /// unsure?}, a JSON array one per line, for a sweep's controller
+        /// (findings.json).
         #[arg(long)]
         sweep: bool,
-        /// With --sweep: `findings` runs only the rules below must and prints
-        /// a JSON array, one finding per flag {fingerprint, subjectDigest, class,
-        /// priority, title, responsibility, unsure?}, for a sweep's controller
-        /// (findings.json).
+        /// With --sweep: `findings` (the default) or `json` for the envelope.
         #[arg(long, value_enum, requires = "sweep")]
         format: Option<CheckFormatArg>,
-        /// Also prove each feature with its recorded mutations applied (in an
-        /// isolated worktree); a proof that still passes is hollow.
-        #[arg(long)]
-        mutate: bool,
         /// Per-rule time bound in seconds (default 900).
         #[arg(long)]
         timeout: Option<u64>,
         /// Show which rules and exact commands would run; execute nothing.
         #[arg(long)]
         dry_run: bool,
-        /// Record pstack's maintain-verification-skill outcome as a receipt.
-        #[arg(long, value_enum, conflicts_with_all = ["paths", "rules", "features", "changed", "sweep", "dry_run"])]
-        maintain_outcome: Option<MaintainOutcomeArg>,
-        /// The maintain run's notes file (repository path) or PR URL.
-        #[arg(long, requires = "maintain_outcome")]
-        maintain_evidence: Option<String>,
         /// The required CI check (whetstone/policy): the team's shared, accepted
         /// rules only, never a contributor's private drafts. Use with --base.
-        #[arg(long, conflicts_with_all = ["sweep", "maintain_outcome", "staged"])]
+        #[arg(long, conflicts_with_all = ["sweep", "staged"])]
         ci: bool,
         /// Run as a Git gate: `pre-commit` or `pre-push`.
         #[arg(long, value_enum)]
@@ -294,7 +275,7 @@ enum Command {
     },
 
     /// Internal golden-example gate: every scanner rule against its golden
-    /// examples, and the pstack round-trip contract.
+    /// examples.
     #[command(hide = true)]
     Eval {
         #[arg(long, default_value = ".")]
@@ -327,7 +308,6 @@ enum InitActionArg {
     Agree,
     Cancel,
     Wire,
-    Import,
     Setup,
     Exemplar,
     Store,
@@ -340,7 +320,6 @@ impl From<InitActionArg> for InitAction {
             InitActionArg::Agree => Self::Agree,
             InitActionArg::Cancel => Self::Cancel,
             InitActionArg::Wire => Self::Wire,
-            InitActionArg::Import => Self::Import,
             InitActionArg::Setup => Self::Setup,
             InitActionArg::Exemplar => Self::Exemplar,
             InitActionArg::Store => Self::Store,
@@ -357,13 +336,7 @@ enum CheckHookArg {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CheckFormatArg {
     Findings,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum MaintainOutcomeArg {
-    Clean,
-    Changed,
-    Blocked,
+    Json,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -371,8 +344,6 @@ enum ChangeKindArg {
     Mission,
     Principle,
     Rule,
-    Feature,
-    Map,
 }
 
 fn parse_change_definition(value: &str) -> Result<Box<ChangeDefinition>, String> {
@@ -398,8 +369,6 @@ impl From<ChangeKindArg> for ChangeKind {
             ChangeKindArg::Mission => Self::Mission,
             ChangeKindArg::Principle => Self::Principle,
             ChangeKindArg::Rule => Self::Rule,
-            ChangeKindArg::Feature => Self::Feature,
-            ChangeKindArg::Map => Self::Map,
         }
     }
 }
@@ -424,7 +393,6 @@ pub fn run() -> i32 {
             dry_run,
             no_open,
             hosts,
-            regenerate_driver,
             import_from,
             exemplar_url,
             hooks,
@@ -450,7 +418,6 @@ pub fn run() -> i32 {
                 starters,
                 dry_run,
                 hosts,
-                regenerate_driver,
                 import_from,
                 exemplar_url,
                 hooks,
@@ -574,18 +541,13 @@ pub fn run() -> i32 {
             paths,
             language,
             rules,
-            features,
             changed,
             base,
             staged,
-            steps,
             sweep,
             format,
-            mutate,
             timeout,
             dry_run,
-            maintain_outcome,
-            maintain_evidence,
             ci,
             hook,
             pushed,
@@ -596,7 +558,6 @@ pub fn run() -> i32 {
                 paths,
                 language,
                 rules,
-                features,
                 gate_mode: if staged || hook == Some(CheckHookArg::PreCommit) {
                     GateMode::Staged
                 } else if sweep {
@@ -608,26 +569,18 @@ pub fn run() -> i32 {
                 },
                 timeout_seconds: timeout,
                 dry_run,
-                maintain_outcome: maintain_outcome.map(|outcome| match outcome {
-                    MaintainOutcomeArg::Clean => crate::service::MaintainOutcome::Clean,
-                    MaintainOutcomeArg::Changed => crate::service::MaintainOutcome::Changed,
-                    MaintainOutcomeArg::Blocked => crate::service::MaintainOutcome::Blocked,
-                }),
-                maintain_evidence,
                 ci,
                 base,
                 pushed,
-                steps,
-                mutate,
-                findings: format == Some(CheckFormatArg::Findings),
             };
+            let findings = sweep && format != Some(CheckFormatArg::Json);
             match hook {
                 Some(CheckHookArg::PreCommit | CheckHookArg::PrePush) => {
                     return run_git_hook(&service, request, hook == Some(CheckHookArg::PreCommit))
                 }
-                None if request.findings => {
-                    // Findings mode prints only the findings (a JSON array, one per line)
-                    // each, unless the envelope was asked for.
+                None if findings => {
+                    // A sweep prints only its findings (one JSON object per
+                    // line), unless the envelope was asked for.
                     let response = service.execute(ServiceRequest::Check(request));
                     if explicit_json {
                         response
@@ -643,6 +596,12 @@ pub fn run() -> i32 {
                             }
                         }
                     }
+                }
+                None if sweep => {
+                    // `--format json`: the envelope, wherever it is printed.
+                    let response = service.execute(ServiceRequest::Check(request));
+                    emit_response(&response, true);
+                    return response.state.exit_code();
                 }
                 None => service.execute(ServiceRequest::Check(request)),
             }
@@ -1218,32 +1177,14 @@ fn validate(project_dir: &Path, machine: bool) -> i32 {
     i32::from(!ok)
 }
 
-/// The rule-file scanner eval (every rule against its golden examples) and
-/// the pstack round-trip contract on the pinned example.
+/// The rule-file scanner eval: every rule against its golden examples.
 fn eval(project_dir: &Path, lang: Option<&str>, machine: bool) -> i32 {
-    let mut result = check::eval(project_dir, lang);
-    let scanner_ok = result.get("ok").and_then(|value| value.as_bool()) == Some(true);
-    let results = crate::feature_map::pinned_roundtrip();
-    let roundtrip_ok = results.iter().all(|(_, result)| result.is_ok());
-    let ok = scanner_ok && roundtrip_ok;
-    result["ok"] = json!(ok);
-    result["status"] = json!(if ok { "ok" } else { "eval_failed" });
-    result["pstack_roundtrip"] = json!({
-        "ok": roundtrip_ok,
-        "pstack_version": crate::setup::PSTACK_VERSION,
-        "files": results
-            .iter()
-            .map(|(file, result)| json!({"file": file, "ok": result.is_ok(), "error": result.as_ref().err()}))
-            .collect::<Vec<_>>(),
-    });
+    let result = check::eval(project_dir, lang);
+    let ok = result.get("ok").and_then(|value| value.as_bool()) == Some(true);
     if machine {
         output::print_json(&result);
     } else {
         print!("{}", check::format_eval_output(&result));
-        println!(
-            "pstack round trip {}.",
-            if roundtrip_ok { "ok" } else { "FAILED" }
-        );
     }
     i32::from(!ok)
 }

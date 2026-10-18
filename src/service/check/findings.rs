@@ -1,5 +1,4 @@
-//! Sweep findings: `wh check --sweep --format findings` runs only the should
-//! rules and turns each flag into one finding for a night sweep's controller
+//! Sweep findings: `wh check --sweep` runs only the should rules and turns each flag into one finding for a night sweep's controller
 //! to work (Messo's, inside Virgil).
 //!
 //! A finding is `{fingerprint, subjectDigest, class, priority, title,
@@ -18,7 +17,7 @@ use std::path::Path;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::domain::{Enforcer, Rule, Strength, VerificationAxis};
+use crate::domain::{Rule, Strength, VerificationAxis};
 use crate::gates::GateOutcome;
 
 use super::SelectedRule;
@@ -37,11 +36,9 @@ pub(crate) struct SweepFinding {
     pub(crate) unsure: Option<String>,
 }
 
-/// Whether a rule's flags are sweep work: below must, and enforced from the
-/// repository's content. Drive proofs are not swept: they are the feature
-/// sweep.
+/// Whether a rule's flags are sweep work: below must.
 pub(crate) fn sweepable(rule: &Rule) -> bool {
-    rule.strength != Strength::Must && !matches!(rule.enforcer, Enforcer::Drive { .. })
+    rule.strength != Strength::Must
 }
 
 /// The repository's identity in a fingerprint: its origin remote when it has

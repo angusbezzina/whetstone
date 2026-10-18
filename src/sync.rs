@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 
 use crate::agreement::{AgreementState, Lifecycle};
 use crate::beads::BeadsStore;
-use crate::domain::{AgreementRecord, Enforcement, RecordBody, RecordId, RecordRef};
+use crate::domain::{AgreementRecord, RecordBody, RecordId, RecordRef};
 use crate::service::{ServiceResponse, ServiceState};
 use crate::storage::{ProjectLayout, RecordStore, StorageError, StoreConfig, StoreKind};
 
@@ -121,17 +121,6 @@ fn reference_text(reference: &RecordRef) -> String {
 /// Every record id a record depends on to make sense on another machine.
 fn links(record: &AgreementRecord) -> Vec<RecordId> {
     match &record.body {
-        RecordBody::Feature(feature) => feature
-            .serves
-            .iter()
-            .chain(&feature.constrained_by)
-            .chain(&feature.proven_by)
-            .cloned()
-            .collect(),
-        RecordBody::Standard(standard) => match &standard.enforcement {
-            Enforcement::Drive { feature } => vec![feature.clone()],
-            _ => Vec::new(),
-        },
         RecordBody::Retirement(retirement) => vec![retirement.target.id.clone()],
         _ => Vec::new(),
     }

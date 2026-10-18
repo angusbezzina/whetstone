@@ -13,10 +13,10 @@ use serde_json::{json, Value};
 
 use crate::agreement::{AgreementState, Lifecycle};
 use crate::domain::{
-    AgreementRecord, Enforcer, Feature, Freshness, PrincipleSource, RecordBody, RecordId,
-    RecordRef, Rule, VerificationAxis,
+    AgreementRecord, Freshness, PrincipleSource, RecordBody, RecordId, RecordRef, Rule,
+    VerificationAxis,
 };
-use crate::proof::{latest_gate_receipt, read_artifact, rule_ids, Changes, EVIDENCE_SYSTEM};
+use crate::proof::{latest_gate_receipt, read_artifact, rule_ids, EVIDENCE_SYSTEM};
 
 mod checks;
 mod journal;
@@ -134,35 +134,6 @@ pub struct Entry {
     pub edit: EditBase,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct Link {
-    pub id: String,
-    pub kind: &'static str,
-    pub title: String,
-    pub resolved: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct FeatureEntry {
-    #[serde(flatten)]
-    pub entry: Entry,
-    pub area: String,
-    pub sweep_order: u32,
-    pub summary: String,
-    pub user_path: String,
-    pub proof: String,
-    pub sub_features: Vec<String>,
-    pub drive_steps: Vec<String>,
-    pub gotchas: Vec<String>,
-    pub entry_points: Vec<String>,
-    pub serves: Vec<Link>,
-    pub constrained_by: Vec<Link>,
-    pub proven_by: Vec<Link>,
-    pub proof_state: StateLabel,
-    /// Entry-point paths changed since the feature was last proven.
-    pub drift: Vec<String>,
-}
-
 /// A rule as the Rules view shows it: strength, enforcer, where it runs and
 /// how a sweep works its flags.
 #[derive(Debug, Clone, Serialize)]
@@ -215,7 +186,6 @@ pub struct GateRun {
     pub recheck: String,
     pub brief: Option<String>,
     pub evidence: Vec<EvidenceSummary>,
-    pub feature: Option<Link>,
     /// Accepted here versus shared with the team through `wh push`:
     /// "shared", "shared at another revision" or "private".
     pub team: &'static str,
@@ -239,14 +209,6 @@ pub struct ChecksView {
     pub last_complete: Option<LastCheck>,
     pub gates: Vec<GateRun>,
     pub receipts: Vec<EvidenceSummary>,
-    pub driver: DriverState,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DriverState {
-    pub configured: bool,
-    pub path: Option<String>,
-    pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -272,15 +234,6 @@ pub struct LatestChange {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct SkillState {
-    pub rendered: bool,
-    pub current: bool,
-    pub hosts: Vec<String>,
-    pub rendered_at: Option<String>,
-    pub label: StateLabel,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct DashboardView {
     pub established: bool,
     pub header: Header,
@@ -288,13 +241,9 @@ pub struct DashboardView {
     pub mission: Option<Entry>,
     pub principles: Vec<Entry>,
     pub rules: Vec<RuleEntry>,
-    pub features: Vec<FeatureEntry>,
     pub checks: ChecksView,
     pub attention: Vec<Attention>,
     pub latest_change: Option<LatestChange>,
-    pub skill: SkillState,
-    /// Deterministic map hygiene findings (see `crate::hygiene`).
-    pub hygiene: Vec<crate::hygiene::HygieneFinding>,
 }
 
 /// Inputs the service computes before projecting.
@@ -305,28 +254,9 @@ pub struct ProjectionInput<'a> {
     pub agreement_complete: bool,
     pub onboarding: Onboarding,
     pub fingerprint: Option<&'a str>,
-    pub driver_path: Option<String>,
-    pub skill: Option<SkillManifest>,
-    pub changes: Changes,
-    pub hygiene: Vec<crate::hygiene::HygieneFinding>,
     /// Shared record refs (id -> `id@revision#digest`) in the team's store:
     /// what `wh push` already shared and CI enforces.
     pub shared: BTreeMap<String, String>,
-}
-
-/// Written by skill rendering; read to detect stale projections.
-#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct SkillManifest {
-    pub agreement_digest: String,
-    pub rendered_at: String,
-    pub hosts: Vec<String>,
-    pub files: Vec<SkillFile>,
-}
-
-#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct SkillFile {
-    pub path: String,
-    pub digest: String,
 }
 
 pub(crate) fn snippet(text: &str, limit: usize) -> String {
@@ -355,8 +285,6 @@ pub(crate) fn kind_of(record: &AgreementRecord) -> &'static str {
         RecordBody::Mission(_) => "mission",
         RecordBody::Principle(_) => "principle",
         RecordBody::Rule(_) | RecordBody::StoredRule(_) | RecordBody::Standard(_) => "rule",
-        RecordBody::Feature(_) => "feature",
-        RecordBody::VerificationMap(_) => "map",
         RecordBody::Retirement(_) => "retirement",
         _ => "record",
     }
@@ -367,8 +295,6 @@ pub fn kind_label(kind: &str) -> &'static str {
         "mission" => "Mission",
         "principle" => "Principle",
         "rule" => "Rule",
-        "feature" => "Feature",
-        "map" => "Feature map",
         "retirement" => "Retirement",
         _ => "Record",
     }
@@ -382,8 +308,6 @@ pub fn record_title(record: &AgreementRecord) -> String {
         RecordBody::Rule(body) => body.statement.clone(),
         RecordBody::StoredRule(body) => body.rule.statement.clone(),
         RecordBody::Standard(body) => body.statement.clone(),
-        RecordBody::Feature(body) => body.name.clone(),
-        RecordBody::VerificationMap(body) => body.title.clone(),
         RecordBody::Retirement(body) => format!("Retire {}", body.target.id.as_str()),
         RecordBody::Proposal(body) => body.title.clone(),
         RecordBody::Retired(retired) => match retired.principle_text() {
@@ -441,42 +365,6 @@ fn edit_base(record: &AgreementRecord) -> EditBase {
                 rule.as_ref().map_or(Value::Null, rule_definition),
             )
         }
-        RecordBody::Feature(body) => (
-            "feature",
-            body.name.clone(),
-            json!({
-                "type": "feature",
-                "summary": body.summary,
-                "area": body.area,
-                "sweep_order": body.sweep_order,
-                "sub_features": body.sub_features,
-                "user_path": body.user_path,
-                "drive_steps": body.drive_steps,
-                "proof": body.proof,
-                "gotchas": body.gotchas,
-                "entry_points": body.entry_points,
-                "serves": body.serves,
-                "constrained_by": body.constrained_by,
-                "proven_by": body.proven_by,
-                "index_summary": body.index_summary,
-                "harness": body.harness,
-                "preconditions": body.preconditions,
-                "drive_recipe": body.drive_recipe,
-                "mutations": body.mutations,
-            }),
-        ),
-        RecordBody::VerificationMap(body) => (
-            "map",
-            body.title.clone(),
-            json!({
-                "type": "map",
-                "intro": body.intro,
-                "baseline_preconditions": body.baseline_preconditions,
-                "driving_conventions": body.driving_conventions,
-                "proof_reporting": body.proof_reporting,
-                "entry_contract": body.entry_contract,
-            }),
-        ),
         _ => ("record", String::new(), Value::Null),
     };
     EditBase {
@@ -526,10 +414,6 @@ fn details_for(record: &AgreementRecord) -> Vec<Detail> {
             }
             details
         }
-        RecordBody::Feature(body) => vec![
-            detail("area", body.area.clone(), false),
-            detail("summary", body.summary.clone(), false),
-        ],
         _ => Vec::new(),
     }
 }
@@ -565,20 +449,6 @@ pub(crate) fn entry(state: &AgreementState, id: &RecordId) -> Option<Entry> {
     })
 }
 
-fn link(state: &AgreementState, id: &RecordId) -> Link {
-    let record = state.in_force(id).or_else(|| state.pending(id));
-    Link {
-        id: id.as_str().into(),
-        kind: record.map_or("record", kind_of),
-        title: record.map_or_else(
-            || id.as_str().into(),
-            |record| snippet(&record_title(record), 80),
-        ),
-        resolved: record.is_some(),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
 pub fn gate_brief(
     name: &str,
     version: u64,
@@ -587,7 +457,6 @@ pub fn gate_brief(
     failures: &[Failure],
     recheck: &str,
     owner: &str,
-    feature: Option<&FeatureEntry>,
 ) -> String {
     let mut lines = vec![
         format!("rule      {name} (v{version}, {strength})"),
@@ -603,20 +472,6 @@ pub fn gate_brief(
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
-    }
-    if let Some(feature) = feature {
-        lines.push(format!(
-            "feature   {} — {}",
-            feature.entry.title, feature.user_path
-        ));
-        lines.push(format!("prove     {}", feature.proof));
-        if let Ok(id) = RecordId::new(feature.entry.id.as_str()) {
-            lines.push(format!(
-                "map       features/{}.md in the verify skill (read it before driving)",
-                crate::feature_map::feature_slug(&id)
-            ));
-        }
-        lines.push("proof bar the real user path, the action and its resulting state, side effects checked, evidence that survives cleanup; no evidence is unknown".into());
     }
     lines.push("repair    within the current task; do not change or weaken the rule".into());
     lines.push(format!("recheck   {recheck}"));
@@ -638,99 +493,6 @@ pub fn reference_text(reference: &RecordRef) -> String {
         reference.revision,
         reference.digest.as_str()
     )
-}
-
-fn features(
-    state: &AgreementState,
-    gates: &BTreeMap<String, StateLabel>,
-    changes: &Changes,
-) -> Vec<FeatureEntry> {
-    let heads = crate::proof::proof_heads(state);
-    let mut result = Vec::new();
-    for id in state.agreement_ids(|body| matches!(body, RecordBody::Feature(_))) {
-        let Some(base) = entry(state, &id) else {
-            continue;
-        };
-        let Some(record) = state.in_force(&id).or_else(|| state.pending(&id)) else {
-            continue;
-        };
-        let RecordBody::Feature(feature) = &record.body else {
-            continue;
-        };
-        let proving = crate::proof::proving_rules(state, &id, feature);
-        let proof_state = proving
-            .iter()
-            .filter_map(|gate| gates.get(gate.as_str()))
-            .min_by_key(|label| match label.tone {
-                "fail" => 0,
-                "warn" => 1,
-                "draft" => 2,
-                "muted" => 3,
-                _ => 4,
-            })
-            .cloned()
-            .unwrap_or_else(|| {
-                if proving.is_empty() {
-                    StateLabel::new("warn", "no proving rule")
-                } else {
-                    StateLabel::new("warn", "not run")
-                }
-            });
-        let drift = if state.pending(&id).is_some() {
-            Vec::new()
-        } else {
-            crate::proof::drifted_paths(state, &id, feature, &heads, changes)
-        };
-        let mut entry = feature_entry(state, base, feature, proof_state);
-        if !drift.is_empty() && entry.proof_state.tone != "fail" {
-            entry.entry.state = Some(StateLabel::new("warn", "changed · re-prove"));
-        }
-        entry.drift = drift;
-        result.push(entry);
-    }
-    result.sort_by(|left, right| {
-        (
-            left.area.as_str(),
-            left.sweep_order,
-            left.entry.title.as_str(),
-        )
-            .cmp(&(
-                right.area.as_str(),
-                right.sweep_order,
-                right.entry.title.as_str(),
-            ))
-    });
-    result
-}
-
-fn feature_entry(
-    state: &AgreementState,
-    mut base: Entry,
-    feature: &Feature,
-    proof_state: StateLabel,
-) -> FeatureEntry {
-    base.state = Some(proof_state.clone());
-    FeatureEntry {
-        entry: base,
-        area: feature.area.clone(),
-        sweep_order: feature.sweep_order,
-        summary: feature.summary.clone(),
-        user_path: feature.user_path.clone(),
-        proof: feature.proof.clone(),
-        sub_features: feature.sub_features.clone(),
-        drive_steps: feature.drive_steps.clone(),
-        gotchas: feature.gotchas.clone(),
-        entry_points: feature.entry_points.clone(),
-        serves: feature.serves.iter().map(|id| link(state, id)).collect(),
-        constrained_by: feature
-            .constrained_by
-            .iter()
-            .map(|id| link(state, id))
-            .collect(),
-        proven_by: feature.proven_by.iter().map(|id| link(state, id)).collect(),
-        proof_state,
-        drift: Vec::new(),
-    }
 }
 
 fn rule_entries(state: &AgreementState, runs: &[GateRun]) -> Vec<RuleEntry> {
@@ -798,28 +560,10 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
         .iter()
         .filter_map(|id| entry(state, id))
         .collect::<Vec<_>>();
-    // Provisional: rule labels needed by features before runs exist.
-    let placeholder = BTreeMap::new();
-    let provisional_features = features(state, &placeholder, &Changes::default());
-    let (gate_runs, last_complete) = gate_runs(state, input, &provisional_features, &owner);
-    let gate_labels = gate_runs
-        .iter()
-        .map(|run| (run.id.clone(), run.result.clone()))
-        .collect::<BTreeMap<_, _>>();
-    let features = features(state, &gate_labels, &input.changes);
+    let (gate_runs, last_complete) = gate_runs(state, input, &owner);
     let rules = rule_entries(state, &gate_runs);
     let pending = state.pending_proposals();
     let drafts = pending.len();
-    let skill = skill_state(state, input.skill.as_ref());
-    let driver = DriverState {
-        configured: input.driver_path.is_some(),
-        label: if input.driver_path.is_some() {
-            "verification driver present".into()
-        } else {
-            "no verification driver yet".into()
-        },
-        path: input.driver_path.clone(),
-    };
     let receipts = state
         .records()
         .iter()
@@ -835,9 +579,7 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
             })
         })
         .collect();
-    let attention = attention(
-        state, input, &owner, &gate_runs, &features, &rules, drafts, &skill,
-    );
+    let attention = attention(&owner, &gate_runs, &rules, drafts);
     DashboardView {
         established,
         header: Header {
@@ -861,59 +603,18 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
         mission,
         principles,
         rules,
-        features,
         checks: ChecksView {
             last_complete,
             gates: gate_runs,
             receipts,
-            driver,
         },
         attention,
         latest_change: None,
-        skill,
-        hygiene: input.hygiene.clone(),
     }
 }
 
-fn skill_state(state: &AgreementState, manifest: Option<&SkillManifest>) -> SkillState {
-    match manifest {
-        None => SkillState {
-            rendered: false,
-            current: false,
-            hosts: Vec::new(),
-            rendered_at: None,
-            label: StateLabel::new("warn", "not generated"),
-        },
-        Some(manifest) => {
-            let current = manifest.agreement_digest == state.in_force_digest();
-            SkillState {
-                rendered: true,
-                current,
-                hosts: manifest.hosts.clone(),
-                rendered_at: Some(manifest.rendered_at.clone()),
-                label: if current {
-                    StateLabel::new("pass", "current")
-                } else {
-                    StateLabel::new("warn", "stale · regenerate")
-                },
-            }
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn attention(
-    state: &AgreementState,
-    input: &ProjectionInput<'_>,
-    owner: &str,
-    gates: &[GateRun],
-    features: &[FeatureEntry],
-    rules: &[RuleEntry],
-    drafts: usize,
-    skill: &SkillState,
-) -> Vec<Attention> {
+fn attention(owner: &str, gates: &[GateRun], rules: &[RuleEntry], drafts: usize) -> Vec<Attention> {
     let mut items = Vec::new();
-    let root = input.project_root.display().to_string();
     for gate in gates
         .iter()
         .filter(|gate| gate.eligible && gate.result.tone == "fail")
@@ -981,94 +682,6 @@ fn attention(
             focus: Some(gate.id.clone()),
             action_label: "Open checks",
             agent_instruction: None,
-        });
-    }
-    for feature in features.iter().filter(|feature| !feature.drift.is_empty()) {
-        items.push(Attention {
-            priority: 1,
-            tone: "warn",
-            kind: "feature_drift",
-            kind_label: "map review",
-            title: format!("Behaviour may have moved: {}", feature.entry.title),
-            text: format!(
-                "{} changed under this feature since it was last proven: {}.",
-                if feature.drift.len() == 1 { "One file" } else { "Files" },
-                feature
-                    .drift
-                    .iter()
-                    .take(4)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            actor: "you or your agent".into(),
-            next: format!(
-                "Re-prove with wh check --feature {}; if the behaviour moved, revise the feature entry in the same change.",
-                feature.entry.id
-            ),
-            route: "rules",
-            focus: Some(feature.entry.id.clone()),
-            action_label: "Open the feature",
-            agent_instruction: Some(format!(
-                "In {root}, run `wh check --feature {id}`. If it fails because the behaviour intentionally moved, update the feature record with `wh change --kind feature --record-id {id}` (user path, drive steps, proof) as a draft for the owner; if it fails because the product regressed, repair the product instead. Never edit the map to hide a regression.",
-                id = feature.entry.id
-            )),
-        });
-    }
-    let mut by_feature = BTreeMap::<&str, Vec<&crate::hygiene::HygieneFinding>>::new();
-    for finding in &input.hygiene {
-        by_feature
-            .entry(finding.feature.as_str())
-            .or_default()
-            .push(finding);
-    }
-    for (feature, found) in by_feature.into_iter().take(6) {
-        let title = state
-            .in_force(
-                &RecordId::new(feature)
-                    .unwrap_or_else(|_| RecordId::new("unknown").expect("constant")),
-            )
-            .map_or_else(|| feature.to_string(), record_title);
-        items.push(Attention {
-            priority: 2,
-            tone: "warn",
-            kind: "map_hygiene",
-            kind_label: "map hygiene",
-            title: format!("Feature map: {}", snippet(&title, 70)),
-            text: found
-                .iter()
-                .map(|finding| finding.detail.clone())
-                .collect::<Vec<_>>()
-                .join(" "),
-            actor: "you or your agent".into(),
-            next: found[0].next.clone(),
-            route: "rules",
-            focus: RecordId::new(feature).ok().map(|id| id.as_str().to_string()),
-            action_label: "Open the feature",
-            agent_instruction: Some(format!(
-                "In {root}: {} Change records only through wh change; never edit product code to satisfy the map.",
-                found.iter().map(|finding| finding.next.clone()).collect::<Vec<_>>().join(" ")
-            )),
-        });
-    }
-    if !skill.rendered || !skill.current {
-        items.push(Attention {
-            priority: 2,
-            tone: "muted",
-            kind: "verification_skill",
-            kind_label: "verification skill",
-            title: if skill.rendered {
-                "The verification skill is stale".into()
-            } else {
-                "Agents have no verification skill yet".into()
-            },
-            text: "The skill is the agent-facing projection of the rules: how to brief, build and prove.".into(),
-            actor: "you or your agent".into(),
-            next: "Run wh init --action wire --hooks to generate it and install the Git hooks.".into(),
-            route: "checks",
-            focus: None,
-            action_label: "Open checks",
-            agent_instruction: Some(format!("In {root}, run `wh init --action wire --hooks --dry-run`, review the exact writes, then run it without --dry-run.")),
         });
     }
     if drafts > 0 {

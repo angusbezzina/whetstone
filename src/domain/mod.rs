@@ -6,7 +6,7 @@
 //! Removed record kinds (values and philosophy, metrics, exceptions,
 //! mandates, activation, observations, repair sessions, team decisions,
 //! raised hands, review attestations, briefs, earlier guidance, Jev
-//! judgments, flag labels and lessons) stay readable as [`RetiredRecord`]s
+//! judgments, flag labels, lessons, features and the feature map) stay readable as [`RetiredRecord`]s
 //! with their original bytes and digests, so history is never rewritten;
 //! they can no longer be created.
 
@@ -421,6 +421,8 @@ pub const RETIRED_KINDS: &[&str] = &[
     "flag_decision",
     "lesson",
     "lesson_check",
+    "feature",
+    "verification_map",
 ];
 
 /// A record of a removed kind, kept exactly as stored so its digest still
@@ -469,8 +471,6 @@ pub enum RecordBody {
     Rule(Rule),
     StoredRule(StoredRule),
     Standard(Standard),
-    Feature(Feature),
-    VerificationMap(VerificationMap),
     Proposal(Proposal),
     LocalReview(LocalReview),
     Retirement(Retirement),
@@ -485,8 +485,6 @@ enum BodyRef<'a> {
     Principle(&'a Principle),
     Rule(&'a Rule),
     Standard(&'a Standard),
-    Feature(&'a Feature),
-    VerificationMap(&'a VerificationMap),
     Proposal(&'a Proposal),
     LocalReview(&'a LocalReview),
     Retirement(&'a Retirement),
@@ -500,8 +498,6 @@ enum BodyOwned {
     Principle(Principle),
     Rule(Rule),
     Standard(Standard),
-    Feature(Feature),
-    VerificationMap(VerificationMap),
     Proposal(Proposal),
     LocalReview(LocalReview),
     Retirement(Retirement),
@@ -527,8 +523,6 @@ impl Serialize for RecordBody {
             Self::Principle(value) => BodyRef::Principle(value),
             Self::Rule(value) => BodyRef::Rule(value),
             Self::Standard(value) => BodyRef::Standard(value),
-            Self::Feature(value) => BodyRef::Feature(value),
-            Self::VerificationMap(value) => BodyRef::VerificationMap(value),
             Self::Proposal(value) => BodyRef::Proposal(value),
             Self::LocalReview(value) => BodyRef::LocalReview(value),
             Self::Retirement(value) => BodyRef::Retirement(value),
@@ -548,6 +542,15 @@ impl<'de> Deserialize<'de> for RecordBody {
         }
         let raw = Raw::deserialize(deserializer)?;
         if RETIRED_KINDS.contains(&raw.record_type.as_str()) {
+            return Ok(Self::Retired(RetiredRecord {
+                record_type: raw.record_type,
+                record: raw.record,
+            }));
+        }
+        // A standard that drove a feature is held by nothing any more.
+        if raw.record_type == "standard"
+            && raw.record.pointer("/enforcement/enforcement") == Some(&"drive".into())
+        {
             return Ok(Self::Retired(RetiredRecord {
                 record_type: raw.record_type,
                 record: raw.record,
@@ -579,8 +582,6 @@ impl<'de> Deserialize<'de> for RecordBody {
             BodyOwned::Principle(value) => Self::Principle(value),
             BodyOwned::Rule(value) => Self::Rule(value),
             BodyOwned::Standard(value) => Self::Standard(value),
-            BodyOwned::Feature(value) => Self::Feature(value),
-            BodyOwned::VerificationMap(value) => Self::VerificationMap(value),
             BodyOwned::Proposal(value) => Self::Proposal(value),
             BodyOwned::LocalReview(value) => Self::LocalReview(value),
             BodyOwned::Retirement(value) => Self::Retirement(value),
@@ -597,8 +598,6 @@ impl RecordBody {
             Self::Principle(_) => "principle",
             Self::Rule(_) | Self::StoredRule(_) => "rule",
             Self::Standard(_) => "standard",
-            Self::Feature(_) => "feature",
-            Self::VerificationMap(_) => "verification_map",
             Self::Proposal(_) => "proposal",
             Self::LocalReview(_) => "local_review",
             Self::Retirement(_) => "retirement",
@@ -632,8 +631,6 @@ impl RecordBody {
             Self::Rule(value) => value.validate(),
             Self::StoredRule(value) => value.rule.validate(),
             Self::Standard(value) => value.validate(),
-            Self::Feature(value) => value.validate(),
-            Self::VerificationMap(value) => value.validate(),
             Self::Proposal(value) => value.validate(),
             Self::LocalReview(value) => value.validate(),
             Self::Retirement(value) => {
@@ -720,28 +717,11 @@ pub enum StandardStrength {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "enforcement", rename_all = "snake_case")]
 pub enum Enforcement {
-    Ast {
-        query: String,
-    },
-    LintProxy {
-        tool: String,
-        code: String,
-    },
-    Formatter {
-        tool: String,
-    },
-    Test {
-        command_ref: String,
-    },
-    Validator {
-        command_ref: String,
-    },
-    /// Prove a mapped feature by driving the running app with the project's
-    /// verification driver. Evidence is mandatory; a drive without evidence
-    /// is unknown, never a pass.
-    Drive {
-        feature: RecordId,
-    },
+    Ast { query: String },
+    LintProxy { tool: String, code: String },
+    Formatter { tool: String },
+    Test { command_ref: String },
+    Validator { command_ref: String },
 }
 
 /// An earlier deterministic rule (v1). It stays readable and in force, and
@@ -771,222 +751,11 @@ impl Standard {
             Enforcement::Test { command_ref } | Enforcement::Validator { command_ref } => {
                 require_text(command_ref)
             }
-            Enforcement::Drive { .. } => Ok(()),
         }
     }
 }
 
-pub const MAX_FEATURE_LIST_ITEMS: usize = 64;
 pub const LOCAL_REVIEW_ASSURANCE: &str = "solo-local";
-
-/// A user-facing capability of the governed app: what it is, how a person
-/// reaches it, how an agent drives and proves it, and why it exists.
-///
-/// The record is the source of truth; the agent runbook (four fixed headings
-/// plus Why) and the human journal entry are projections of it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Feature {
-    pub name: String,
-    pub summary: String,
-    /// Grouping used for the sweep order, for example "Dashboard".
-    pub area: String,
-    #[serde(default)]
-    pub sweep_order: u32,
-    #[serde(default)]
-    pub sub_features: Vec<String>,
-    /// How a person reaches the feature, written from the user's point of view.
-    pub user_path: String,
-    /// Driver commands executed in one session, in order.
-    #[serde(default)]
-    pub drive_steps: Vec<String>,
-    /// The observable end state that proves the feature works.
-    pub proof: String,
-    #[serde(default)]
-    pub gotchas: Vec<String>,
-    /// Repository-relative path prefixes or globs whose changes affect this feature.
-    #[serde(default)]
-    pub entry_points: Vec<String>,
-    /// The mission or principles this feature exists to serve.
-    #[serde(default)]
-    pub serves: Vec<RecordId>,
-    /// Principles and rules that constrain how it is built.
-    #[serde(default)]
-    pub constrained_by: Vec<RecordId>,
-    /// Rules (gates) that prove it.
-    #[serde(default)]
-    pub proven_by: Vec<RecordId>,
-    /// One line after the link in `features/README.md`; defaults to the summary.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub index_summary: Option<String>,
-    /// The harness named in "Driving it with <harness>"; defaults to the driver.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub harness: Option<String>,
-    /// State the recipe assumes before the first action.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub preconditions: Vec<String>,
-    /// Labeled recipe bullets (user action, exact command, observable result)
-    /// for agents; rendered verbatim. Executable steps stay in `drive_steps`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub drive_recipe: Vec<String>,
-    /// Recorded ways to break the feature on purpose; its proof must fail
-    /// under each one, or the proof is hollow.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mutations: Vec<Mutation>,
-}
-
-/// A deliberate break: replace the first `find` in `path` with `replace`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Mutation {
-    pub path: String,
-    pub find: String,
-    pub replace: String,
-    pub description: String,
-}
-
-impl Feature {
-    fn validate(&self) -> Result<(), DomainError> {
-        require_text(&self.name)?;
-        require_text(&self.summary)?;
-        require_text(&self.area)?;
-        require_text(&self.user_path)?;
-        require_text(&self.proof)?;
-        for text in [&self.index_summary, &self.harness].into_iter().flatten() {
-            require_text(text)?;
-        }
-        if self
-            .harness
-            .as_deref()
-            .is_some_and(|harness| harness.contains('\n') || harness.len() > 120)
-        {
-            return Err(DomainError::InvalidField(
-                "feature harness must be one short line",
-            ));
-        }
-        for list in [
-            &self.sub_features,
-            &self.drive_steps,
-            &self.gotchas,
-            &self.entry_points,
-            &self.preconditions,
-            &self.drive_recipe,
-        ] {
-            if list.len() > MAX_FEATURE_LIST_ITEMS {
-                return Err(DomainError::InvalidField("feature list exceeds 64 items"));
-            }
-            for item in list {
-                require_text(item)?;
-            }
-        }
-        for entry in &self.entry_points {
-            let path = std::path::Path::new(entry);
-            if path.is_absolute()
-                || entry.contains('\\')
-                || path
-                    .components()
-                    .any(|component| matches!(component, std::path::Component::ParentDir))
-            {
-                return Err(DomainError::InvalidField(
-                    "feature entry points must be repository-relative",
-                ));
-            }
-        }
-        if self.mutations.len() > 16 {
-            return Err(DomainError::InvalidField(
-                "a feature lists at most 16 mutations",
-            ));
-        }
-        for mutation in &self.mutations {
-            require_text(&mutation.find)?;
-            require_text(&mutation.description)?;
-            if !safe_relative_path(&mutation.path) || mutation.find == mutation.replace {
-                return Err(DomainError::InvalidField(
-                    "a mutation changes a repository-relative file",
-                ));
-            }
-        }
-        for links in [&self.serves, &self.constrained_by, &self.proven_by] {
-            if links.len() > MAX_FEATURE_LIST_ITEMS {
-                return Err(DomainError::InvalidField("feature links exceed 64 items"));
-            }
-            let unique = links.iter().collect::<BTreeSet<_>>();
-            if unique.len() != links.len() {
-                return Err(DomainError::InvalidField("feature links must be unique"));
-            }
-        }
-        Ok(())
-    }
-
-    /// Whether a repository-relative path is covered by this feature's entry points.
-    pub fn covers_path(&self, path: &str) -> bool {
-        let path = path.trim_start_matches("./");
-        self.entry_points
-            .iter()
-            .any(|entry| entry_point_matches(entry.trim_start_matches("./"), path))
-    }
-}
-
-/// Project-wide conventions of the feature map: what `features/README.md`
-/// says before the feature list (pstack's baseline preconditions, driving
-/// conventions, proof and skip reporting, and the feature entry contract).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct VerificationMap {
-    pub title: String,
-    pub intro: String,
-    #[serde(default)]
-    pub baseline_preconditions: Vec<String>,
-    #[serde(default)]
-    pub driving_conventions: Vec<String>,
-    #[serde(default)]
-    pub proof_reporting: Vec<String>,
-    /// Verbatim entry-contract section; the renderer's standard text when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub entry_contract: Option<String>,
-    /// Sections of an imported skill (Launch, Doctor, Drive, ...) kept verbatim.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub skill_notes: Vec<SkillNote>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SkillNote {
-    pub section: String,
-    pub text: String,
-}
-
-impl VerificationMap {
-    fn validate(&self) -> Result<(), DomainError> {
-        require_text(&self.title)?;
-        require_text(&self.intro)?;
-        for list in [
-            &self.baseline_preconditions,
-            &self.driving_conventions,
-            &self.proof_reporting,
-        ] {
-            if list.len() > MAX_FEATURE_LIST_ITEMS {
-                return Err(DomainError::InvalidField("map list exceeds 64 items"));
-            }
-            for item in list {
-                require_text(item)?;
-            }
-        }
-        if let Some(contract) = &self.entry_contract {
-            require_text(contract)?;
-        }
-        if self.skill_notes.len() > 16 {
-            return Err(DomainError::InvalidField(
-                "map skill notes exceed 16 sections",
-            ));
-        }
-        for note in &self.skill_notes {
-            require_text(&note.section)?;
-            require_text(&note.text)?;
-        }
-        Ok(())
-    }
-}
 
 /// Matches a path against a prefix (`src/`, `src/dashboard.rs`) or a simple
 /// glob with `*` (one segment) and `**` (any depth).

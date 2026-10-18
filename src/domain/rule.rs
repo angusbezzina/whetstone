@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{require_text, safe_relative_path, DomainError, RecordId};
+use super::{require_text, safe_relative_path, DomainError};
 
 pub const RULE_SCHEMA_V2: &str = "whetstone.rule.v2";
 pub const MAX_RULE_EXAMPLES: usize = 32;
@@ -15,8 +15,8 @@ pub const MAX_RULE_LIST_ITEMS: usize = 32;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Strength {
-    /// Blocks the commit, push or CI check: nothing but a mechanical pass or
-    /// a proof passes it.
+    /// Blocks the commit, push or CI check: nothing but a mechanical pass
+    /// passes it.
     Must,
     /// Flags, never blocks the gate, and becomes a sweep finding.
     Should,
@@ -49,8 +49,6 @@ pub enum Enforcer {
     Test { command: String },
     /// A validator command, run without a shell.
     Validator { command: String },
-    /// Prove a mapped feature by driving the running app.
-    Drive { feature: RecordId },
 }
 
 impl Enforcer {
@@ -61,7 +59,6 @@ impl Enforcer {
             Self::Formatter { .. } => "formatter",
             Self::Test { .. } => "test",
             Self::Validator { .. } => "validator",
-            Self::Drive { .. } => "drive",
         }
     }
 
@@ -86,7 +83,6 @@ impl Enforcer {
             }
             Self::Formatter { tool } => require_text(tool),
             Self::Test { command } | Self::Validator { command } => require_text(command),
-            Self::Drive { .. } => Ok(()),
         }
     }
 }
@@ -395,9 +391,6 @@ impl Rule {
             Enforcement::Validator { command_ref } => Enforcer::Validator {
                 command: command_ref.clone(),
             },
-            Enforcement::Drive { feature } => Enforcer::Drive {
-                feature: feature.clone(),
-            },
         };
         let mut rationale = standard.rationale.clone();
         if !standard.examples.is_empty() {
@@ -437,6 +430,7 @@ const RETIRED_ENFORCERS: &[&str] = &[
     "question",
     "design_tokens",
     "public_surface",
+    "drive",
 ];
 
 /// How [`Rule::from_stored`] reads a stored rule revision.

@@ -7,8 +7,8 @@
 //! time and output are bounded, and every run writes evidence artifacts to
 //! the private state directory, where they survive instance cleanup.
 //!
-//! Outcomes are honest: a timeout, truncation, missing driver, failed doctor
-//! or a drive without evidence is unknown, never a pass.
+//! Outcomes are honest: a timeout, truncation or a run without evidence is
+//! unknown, never a pass.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -16,25 +16,22 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
-    ContentDigest, Enforcer, EvidenceRef, Feature, RecordId, Rule, Strength, VerificationAxis,
+    ContentDigest, Enforcer, EvidenceRef, RecordId, Rule, Strength, VerificationAxis,
 };
 use crate::proof::{ArtifactFailure, GateArtifact, EVIDENCE_SYSTEM};
 use crate::storage::ProjectLayout;
 
 pub mod ast;
-mod drive;
 pub mod files;
 pub mod lint;
 
-pub use drive::*;
 pub use files::{FileSet, Source};
 
-pub const DRIVER_RELATIVE: &str = "whetstone/verify/drive.mjs";
 pub const DEFAULT_GATE_TIMEOUT: Duration = Duration::from_secs(900);
 const OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
 const MAX_FAILURES: usize = 20;
@@ -55,7 +52,6 @@ pub const ENV_ALLOWLIST: &[&str] = &[
     "RUSTUP_TOOLCHAIN",
     "CARGO_TARGET_DIR",
     "NODE_PATH",
-    "CHROME_BIN",
     "PYTHONPATH",
     "VIRTUAL_ENV",
     "JAVA_HOME",
@@ -67,13 +63,6 @@ pub const ENV_ALLOWLIST: &[&str] = &[
 
 pub fn evidence_root(layout: &ProjectLayout) -> PathBuf {
     layout.state_root().join("evidence")
-}
-
-pub fn driver_path(project_root: &Path) -> Option<String> {
-    project_root
-        .join(DRIVER_RELATIVE)
-        .is_file()
-        .then(|| DRIVER_RELATIVE.to_string())
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -411,22 +400,12 @@ pub fn gate_environment(extra: &[(&str, String)]) -> BTreeMap<String, String> {
     environment
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DoctorResult {
-    pub ok: bool,
-    pub detail: String,
-}
-
 /// Everything a gate run needs, prepared once per `wh check`.
 pub struct GateContext<'a> {
     pub project_root: &'a Path,
     pub run_dir: &'a Path,
     pub run_id: &'a str,
-    pub features: &'a BTreeMap<RecordId, Feature>,
-    pub doctor: Option<&'a DoctorResult>,
     pub timeout: Duration,
-    /// Change-specific steps for one feature, appended to its accepted steps.
-    pub change_steps: Option<(&'a RecordId, &'a [String])>,
     /// The files content checks read (the staged index at pre-commit).
     pub files: &'a FileSet,
     /// Paths the change touched (empty for a whole-repository check).
@@ -485,7 +464,6 @@ pub fn mechanism_label(rule: &Rule) -> (String, String) {
         Enforcer::Formatter { tool } => ("Formatter".into(), tool.clone()),
         Enforcer::Lint { tool, code } => ("Lint".into(), format!("{tool} ({code})")),
         Enforcer::Ast { query, .. } => ("AST query".into(), query.clone()),
-        Enforcer::Drive { feature } => ("Drive".into(), format!("prove {}", feature.as_str())),
     }
 }
 
@@ -689,15 +667,6 @@ fn finish(
     outcome
 }
 
-/// Summary prefix of a drive the driver could not reach, with the unmet
-/// prerequisite it named.
-pub const UNREACHABLE_PREFIX: &str = "Unreachable: ";
-
-/// A gate that was deliberately not run; unknown, never a pass.
-pub fn skipped_outcome(id: &RecordId, rule: &Rule, reason: &str) -> GateOutcome {
-    GateOutcome::new(id, rule).unknown(reason)
-}
-
 /// Run one rule's enforcer.
 pub fn run_gate(context: &GateContext<'_>, id: &RecordId, rule: &Rule) -> GateOutcome {
     let outcome = GateOutcome::new(id, rule);
@@ -713,7 +682,6 @@ pub fn run_gate(context: &GateContext<'_>, id: &RecordId, rule: &Rule) -> GateOu
         Enforcer::Ast { query, language } => {
             run_ast_gate(context, outcome, rule, query, language.as_deref())
         }
-        Enforcer::Drive { feature } => run_drive_gate(context, outcome, feature),
     }
 }
 
@@ -953,7 +921,7 @@ mod tests {
     use super::*;
 
     /// Pass, flag and unavailable for every enforcer kind `run_gate`
-    /// dispatches (drive has its own suite).
+    /// dispatches.
     #[test]
     fn every_enforcer_kind_passes_flags_and_is_honest_when_unavailable() {
         let temp = tempfile::tempdir().expect("temp");
@@ -981,7 +949,6 @@ mod tests {
         }
         let run_dir = root.join(".git/run");
         fs::create_dir_all(&run_dir).expect("run dir");
-        let features = BTreeMap::new();
         let id = RecordId::new("rule.case").expect("id");
         let rule = |enforcer: serde_json::Value| -> Rule {
             serde_json::from_value(json!({
@@ -1009,10 +976,7 @@ mod tests {
                 project_root: root,
                 run_dir: &run_dir,
                 run_id: "case",
-                features: &features,
-                doctor: None,
                 timeout: Duration::from_secs(20),
-                change_steps: None,
                 files: set,
                 changed: &changed,
             };

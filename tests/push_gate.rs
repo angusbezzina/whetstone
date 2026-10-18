@@ -1,8 +1,8 @@
 //! The pre-push gate through real `git push` to a bare remote, with the
 //! hooks `wh init --action wire --hooks` installs. A push is refused unless
 //! the pushed commit itself holds every must rule: it must be checked out
-//! with no uncommitted tracked changes, and a broken mechanical rule or a
-//! failed re-proof blocks it. A new branch is checked against the remote's
+//! with no uncommitted tracked changes, and a broken mechanical rule blocks
+//! it. A new branch is checked against the remote's
 //! default branch.
 
 use std::ffi::OsString;
@@ -34,18 +34,6 @@ fn json(output: &Output) -> serde_json::Value {
             String::from_utf8_lossy(&output.stderr)
         )
     })
-}
-
-fn node_available() -> bool {
-    let found = Command::new("node")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success());
-    assert!(
-        found || std::env::var_os("CI").is_none(),
-        "node is required in CI"
-    );
-    found
 }
 
 /// A repository cloned from a bare remote named `team`, with `wh` (the
@@ -331,113 +319,6 @@ fn a_push_is_refused_unless_the_pushed_commit_itself_holds_the_must_rules() {
         .as_str()
         .expect("summary")
         .contains("is checked out"));
-}
-
-#[test]
-fn a_push_whose_change_breaks_a_drive_proof_is_refused_with_the_reprove_command() {
-    if !node_available() {
-        eprintln!("SKIP: node is required for the driver");
-        return;
-    }
-    let repo = Repo::new();
-    repo.agree();
-    repo.write("check.sh", "#!/bin/sh\necho \"all good\"\n");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(
-            repo.root.join("check.sh"),
-            fs::Permissions::from_mode(0o755),
-        )
-        .expect("chmod");
-    }
-    repo.write(
-        "whetstone/verify/drive.mjs",
-        &fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/verify/drive.mjs"))
-            .expect("driver"),
-    );
-    repo.write("whetstone/verify/driver.json", r#"{"surface":"cli"}"#);
-    let feature = serde_json::json!({
-        "type": "feature",
-        "summary": "Runs the check",
-        "area": "CLI",
-        "sweep_order": 1,
-        "user_path": "Run ./check.sh.",
-        "drive_steps": ["run ./check.sh", "expect-output all good"],
-        "proof": "It prints all good.",
-        "entry_points": ["check.sh"],
-        "serves": ["mission.project"],
-        "proven_by": ["rule.check-journey"],
-    });
-    repo.accept(&repo.change(
-        "feature",
-        &[
-            "--kind",
-            "feature",
-            "--record-id",
-            "feature.check",
-            "--content",
-            "Check",
-            "--rationale",
-            "the core path",
-            "--definition",
-            &feature.to_string(),
-        ],
-    ));
-    repo.rule(
-        "rule.check-journey",
-        "The check journey is proven by driving it.",
-        serde_json::json!({"type": "rule", "strength": "must", "enforcer": {"kind": "drive", "feature": "feature.check"}}),
-    );
-    repo.wire_hooks();
-    repo.commit_unchecked("mapped");
-    let (pushed, log) = repo.push(&["team", "HEAD:main"]);
-    assert!(pushed, "{log}");
-
-    // A change to the entry point that keeps the behaviour goes through, and
-    // the push re-proves the feature at the pushed commit.
-    repo.write("check.sh", "#!/bin/sh\n# quieter\necho \"all good\"\n");
-    repo.commit_unchecked("tweak");
-    let (pushed, log) = repo.push(&["team", "HEAD:main"]);
-    assert!(pushed, "{log}");
-    let base = repo.head();
-    assert_eq!(repo.remote("main").as_deref(), Some(base.as_str()));
-    let dash = json(&run(&["dash", "--json"], &repo.root));
-    let reproved = dash["data"]["changelog"]
-        .as_array()
-        .expect("changelog")
-        .iter()
-        .flat_map(|entry| entry["records"].as_array().cloned().unwrap_or_default())
-        .filter_map(|item| item.get("record").cloned())
-        .filter(|record| {
-            record["record_type"] == "verification_receipt"
-                && record["record"]["subject"]["stable_id"] == "gate:rule.check-journey"
-                && record["record"]["verification"] == "pass"
-        })
-        .any(|record| {
-            record["record"]["evidence"]
-                .as_array()
-                .is_some_and(|evidence| {
-                    evidence.iter().any(|item| {
-                        item["system"] == "git_head" && item["locator"] == base.as_str()
-                    })
-                })
-        });
-    assert!(reproved, "a passing receipt at the pushed commit: {dash}");
-
-    // The entry point changes and the behaviour with it: the push re-proves
-    // the feature, and the proof no longer holds.
-    repo.write("check.sh", "#!/bin/sh\necho \"all bad\"\n");
-    repo.commit_unchecked("regress");
-    let (pushed, log) = repo.push(&["team", "HEAD:main"]);
-    assert!(!pushed, "{log}");
-    assert!(log.contains("rule.check-journey"), "{log}");
-    assert!(
-        log.contains("wh check --rule rule.check-journey")
-            || log.contains("wh check --feature feature.check"),
-        "the refusal names the re-prove command: {log}"
-    );
-    assert_eq!(repo.remote("main").as_deref(), Some(base.as_str()));
 }
 
 #[test]

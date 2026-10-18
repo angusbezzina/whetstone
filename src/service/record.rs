@@ -1,7 +1,6 @@
 //! The records and receipts the workflows write, and the snapshot and
 //! evidence helpers they bind to. Every receipt carries the commit it ran at,
-//! the rule or feature revision it proved and where its evidence lives, so a
-//! stale proof is detected the same way everywhere.
+//! the rule revision it ran and where its evidence lives.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,21 +9,16 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
-use crate::agreement::AgreementState;
 use crate::domain::{
     AgreementRecord, AuthorizationAxis, ContentDigest, EvidenceRef, ExternalRef, ExternalSystem,
     Freshness, PolicyStateSnapshot, PrincipalKind, PrincipalRef, Proposal, ProposalState,
-    Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, RecordRef, Scope,
-    VerificationAxis, VerificationReceipt, SCHEMA_VERSION_V1,
+    Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, Scope, VerificationAxis,
+    VerificationReceipt, SCHEMA_VERSION_V1,
 };
 use crate::storage::{ProjectLayout, RecordStore, StorageError};
 use crate::verification::{self, Finding, SnapshotBinding, VerificationReport, VerificationState};
 
-use super::{
-    domain_response, load_records, storage_error, utc_now, MaintainOutcome, ServiceResponse,
-    ServiceState, DOCTOR_EVIDENCE, DRIVER_CONFIG_EVIDENCE, DRIVER_EVIDENCE, MAINTAIN_SUBJECT,
-    MAP_EVIDENCE,
-};
+use super::{utc_now, ServiceState};
 
 /// Current UTC time in RFC 3339 form, second precision.
 pub fn utc_timestamp() -> String {
@@ -99,18 +93,6 @@ pub(crate) fn key_suffix(key: &str, length: usize) -> String {
         .collect()
 }
 
-/// Append to the private store, creating it on first use.
-pub(crate) fn append_private(
-    layout: &ProjectLayout,
-    record: &AgreementRecord,
-) -> Result<RecordRef, StorageError> {
-    let store = crate::storage::initialize_private(layout)?;
-    if let Some(existing) = store.by_idempotency_key(&record.idempotency_key)? {
-        return existing.reference().map_err(StorageError::Domain);
-    }
-    store.append(record, None)
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct ChangeNarrative {
     pub(crate) rationale: String,
@@ -178,8 +160,6 @@ pub(crate) fn ensure_local_change_proposal(
                     RecordBody::Rule(_) | RecordBody::StoredRule(_) | RecordBody::Standard(_) => {
                         "rule"
                     }
-                    RecordBody::Feature(_) => "feature",
-                    RecordBody::VerificationMap(_) => "map",
                     RecordBody::Retirement(_) => "retirement",
                     _ => "record",
                 }),
@@ -601,55 +581,6 @@ pub(crate) fn persist_verification_receipt(
     repository.append(&record, None).map(Some)
 }
 
-/// What a drive receipt binds besides the gate: the map revision it proved
-/// and the doctor verdict it drove after.
-pub(crate) struct DriveBinding<'a> {
-    pub(crate) feature: Option<crate::domain::RecordRef>,
-    pub(crate) doctor: Option<&'a crate::gates::DoctorResult>,
-}
-
-/// Driver script, driver configuration, map revision and doctor freshness as
-/// receipt evidence, so a proof names exactly what drove it.
-pub(crate) fn drive_evidence(
-    project: &Path,
-    binding: &DriveBinding<'_>,
-    checked_at: &str,
-) -> Vec<EvidenceRef> {
-    let mut evidence = Vec::new();
-    for (system, relative) in [
-        (DRIVER_EVIDENCE, crate::gates::DRIVER_RELATIVE),
-        (DRIVER_CONFIG_EVIDENCE, crate::skill::DRIVER_CONFIG_RELATIVE),
-    ] {
-        if let Ok(bytes) = fs::read(project.join(relative)) {
-            evidence.push(EvidenceRef {
-                system: system.into(),
-                locator: relative.into(),
-                digest: Some(digest_bytes(&bytes)),
-            });
-        }
-    }
-    if let Some(feature) = &binding.feature {
-        evidence.push(EvidenceRef {
-            system: MAP_EVIDENCE.into(),
-            locator: format!("{}@r{}", feature.id.as_str(), feature.revision),
-            digest: Some(feature.digest.clone()),
-        });
-    }
-    if let Some(doctor) = binding.doctor {
-        let verdict = format!(
-            "{} at {checked_at}: {}",
-            if doctor.ok { "ok" } else { "failed" },
-            doctor.detail
-        );
-        evidence.push(EvidenceRef {
-            system: DOCTOR_EVIDENCE.into(),
-            locator: verdict.chars().take(400).collect(),
-            digest: Some(digest_bytes(verdict.as_bytes())),
-        });
-    }
-    evidence
-}
-
 pub(crate) fn digest_rule_inputs(project: &Path) -> Result<String, std::io::Error> {
     let mut files = WalkDir::new(project.join("whetstone"))
         .follow_links(false)
@@ -693,146 +624,4 @@ pub(crate) fn digest_rule_inputs(project: &Path) -> Result<String, std::io::Erro
         hasher.update([0]);
     }
     Ok(format!("sha256:{:x}", hasher.finalize()))
-}
-
-/// Record a maintain pass's reported outcome as a receipt. Clean and changed
-/// need evidence (the run notes or the PR); without it the receipt is
-/// unknown. Blocked is always unknown: coverage did not finish.
-pub(crate) fn record_maintain_outcome(
-    layout: &ProjectLayout,
-    request_id: String,
-    outcome: MaintainOutcome,
-    evidence: Option<&str>,
-) -> ServiceResponse {
-    let loaded = match load_records(layout) {
-        Ok(loaded) => loaded,
-        Err(error) => return storage_error("check", request_id, error),
-    };
-    let state = AgreementState::from_records(loaded.union().0);
-    let related = state
-        .in_force_matching(|body| {
-            matches!(
-                body,
-                RecordBody::Feature(_) | RecordBody::VerificationMap(_)
-            )
-        })
-        .into_iter()
-        .filter_map(|record| record.reference().ok())
-        .collect::<Vec<_>>();
-    let evidence_ref = evidence.map(|locator| {
-        let local = layout.project_root().join(locator);
-        let digest = (!locator.contains("://"))
-            .then(|| fs::read(&local).ok())
-            .flatten()
-            .map(|bytes| digest_bytes(&bytes));
-        EvidenceRef {
-            system: "maintain_run".into(),
-            locator: locator.chars().take(500).collect(),
-            digest,
-        }
-    });
-    let local_missing = evidence.is_some_and(|locator| {
-        !locator.contains("://") && !layout.project_root().join(locator).is_file()
-    });
-    let verification = match (outcome, &evidence_ref, local_missing) {
-        (MaintainOutcome::Blocked, _, _) | (_, None, _) | (_, _, true) => VerificationAxis::Unknown,
-        _ => VerificationAxis::Pass,
-    };
-    let checked_at = utc_now();
-    // One receipt per reported pass: the default request id is per project,
-    // so the outcome, evidence and time distinguish reports.
-    let key = format!(
-        "maintain:{request_id}:{outcome:?}:{}:{checked_at}",
-        evidence
-            .unwrap_or("none")
-            .chars()
-            .take(80)
-            .collect::<String>()
-    );
-    let key_digest = digest_bytes(key.as_bytes());
-    let suffix = &key_digest.as_str()["sha256:".len()..][..24];
-    let principal = PrincipalRef {
-        kind: PrincipalKind::LocalUser,
-        stable_id: "whetstone:maintain-report".into(),
-        display_name: None,
-    };
-    let record = AgreementRecord {
-        schema_version: SCHEMA_VERSION_V1,
-        id: match RecordId::new(format!("verification.maintain_{suffix}")) {
-            Ok(id) => id,
-            Err(error) => return domain_response("check", request_id, error),
-        },
-        revision: 1,
-        scope: project_scope(layout),
-        owner: principal.clone(),
-        provenance: Provenance {
-            kind: ProvenanceKind::ExternalObservation,
-            recorded_by: principal,
-            recorded_at: checked_at.clone(),
-            sources: vec![EvidenceRef {
-                system: "pstack".into(),
-                locator: "maintain-verification-skill".into(),
-                digest: None,
-            }],
-            authority: ProvenanceAuthority::CandidateOnly,
-        },
-        supersedes: None,
-        idempotency_key: key,
-        body: RecordBody::VerificationReceipt(VerificationReceipt {
-            subject: ExternalRef {
-                system: ExternalSystem::Custom,
-                stable_id: MAINTAIN_SUBJECT.into(),
-                revision: Some(
-                    match outcome {
-                        MaintainOutcome::Clean => "clean",
-                        MaintainOutcome::Changed => "changed",
-                        MaintainOutcome::Blocked => "blocked",
-                    }
-                    .into(),
-                ),
-            },
-            code_digest: digest_bytes(
-                crate::gates::workspace_fingerprint(layout.project_root())
-                    .unwrap_or_default()
-                    .as_bytes(),
-            ),
-            policy_state: PolicyStateSnapshot {
-                accepted: None,
-                required: None,
-                installed: None,
-                experimental: None,
-            },
-            verification,
-            authorization: AuthorizationAxis::Unknown,
-            freshness: Freshness::Fresh,
-            checked_at,
-            related_records: related,
-            evidence: evidence_ref.into_iter().collect(),
-        }),
-    };
-    let store = match crate::storage::initialize_private(layout) {
-        Ok(store) => store,
-        Err(error) => return storage_error("check", request_id, error),
-    };
-    let reference = match store.append(&record, None) {
-        Ok(reference) => reference,
-        Err(error) => return storage_error("check", request_id, error),
-    };
-    let mut response = ServiceResponse::new(
-        request_id,
-        "check",
-        if verification == VerificationAxis::Pass {
-            ServiceState::Success
-        } else {
-            ServiceState::Unknown
-        },
-        match (outcome, verification) {
-            (MaintainOutcome::Blocked, _) => "The maintain pass was recorded as blocked; coverage did not finish, so the map is not verified.".to_string(),
-            (_, VerificationAxis::Pass) => "The maintain pass outcome and its evidence were recorded.".to_string(),
-            _ => "The maintain pass outcome was recorded without usable evidence, so it counts as unknown; pass --maintain-evidence <notes or PR>.".to_string(),
-        },
-    );
-    response.permitted_actions = vec!["wh dash".into()];
-    response.data = json!({"receipt": reference, "outcome": outcome, "verification": verification});
-    response
 }

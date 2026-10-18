@@ -2,11 +2,11 @@
 //! return actionable findings.
 //!
 //! Modes: the staged index (pre-commit: mechanical content checks only), the
-//! change since a base (pre-push and CI), everything, or a sweep of every
-//! mapped feature. Every enforcer is mechanical and runs through
-//! `crate::gates`.
+//! change since a base (pre-push and CI), everything, or a sweep that reports
+//! every flag of the rules below must as a finding. Every enforcer is
+//! mechanical and runs through `crate::gates`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use crate::agreement::AgreementState;
 use crate::check;
 use crate::domain::{
-    ContentDigest, Enforcer, EvidenceRef, ExternalRef, ExternalSystem, Feature, Freshness,
+    ContentDigest, Enforcer, EvidenceRef, ExternalRef, ExternalSystem, Freshness,
     PolicyStateSnapshot, ProvenanceKind, RecordBody, RecordId, RecordRef, Rule, Strength,
     VerificationAxis, VerificationReceipt,
 };
@@ -29,9 +29,8 @@ use crate::verification::{
 };
 
 use super::record::{
-    append_private, array_len, compute_check_snapshot, count, digest_bytes, digest_json,
-    drive_evidence, key_suffix, persist_verification_receipt, receipt_record,
-    record_maintain_outcome, scan_findings, service_state, with_head, DriveBinding,
+    array_len, compute_check_snapshot, count, digest_bytes, digest_json, key_suffix,
+    persist_verification_receipt, receipt_record, scan_findings, service_state, with_head,
 };
 use super::{
     bounded_request_id, load_records, storage_error, unix_now, unknown_response, utc_now,
@@ -54,10 +53,8 @@ pub(crate) struct SelectedRule {
 pub(crate) struct Selection {
     pub(crate) rules: Vec<SelectedRule>,
     pub(crate) rule_ids: BTreeSet<String>,
-    pub(crate) features: BTreeMap<RecordId, Feature>,
     pub(crate) skipped_drafts: Vec<String>,
     pub(crate) changed_paths: Vec<String>,
-    pub(crate) features_affected: Vec<Value>,
 }
 
 fn invalid(summary: &str) -> ServiceResponse {
@@ -65,8 +62,8 @@ fn invalid(summary: &str) -> ServiceResponse {
 }
 
 pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
-    if request.paths.len() > 64 || request.rules.len() > 64 || request.features.len() > 64 {
-        return invalid("A check accepts at most 64 paths, 64 rule filters and 64 features.");
+    if request.paths.len() > 64 || request.rules.len() > 64 {
+        return invalid("A check accepts at most 64 paths and 64 rule filters.");
     }
     if request
         .paths
@@ -75,7 +72,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         || request
             .rules
             .iter()
-            .chain(request.features.iter())
             .any(|rule| rule.is_empty() || rule.len() > 256)
         || request.language.as_ref().is_some_and(|language| {
             language.is_empty()
@@ -88,17 +84,9 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             .timeout_seconds
             .is_some_and(|seconds| seconds == 0 || seconds > 3_600)
     {
-        return invalid("A check input exceeds its bound or contains an invalid language, rule, feature or timeout.");
-    }
-    if !request.steps.is_empty()
-        && (request.features.len() != 1
-            || request.steps.len() > 32
-            || request
-                .steps
-                .iter()
-                .any(|step| step.trim().is_empty() || step.len() > 1_000))
-    {
-        return invalid("Change-specific steps need exactly one --feature, at most 32 steps, each 1 to 1000 characters.");
+        return invalid(
+            "A check input exceeds its bound or contains an invalid language, rule or timeout.",
+        );
     }
     // CI sends the all-zero sha for a branch's first push: no base.
     if request
@@ -133,16 +121,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         Err(summary) => return unknown_response("check", "invalid-request-id".into(), summary),
     };
     let layout = ProjectLayout::resolve(&project).ok();
-    if let Some(layout) = layout.as_ref() {
-        if let Some(outcome) = request.maintain_outcome {
-            return record_maintain_outcome(
-                layout,
-                request_id,
-                outcome,
-                request.maintain_evidence.as_deref(),
-            );
-        }
-    }
     // CI enforces what the team accepted and shared, never a contributor's
     // private drafts; a local check sees both stores.
     let agreement = match layout.as_ref().map(load_records) {
@@ -190,7 +168,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         GateMode::Changed => FileSet::working(&project, &selection.changed_paths),
         _ => FileSet::repository(&project).unwrap_or_default(),
     }
-    .retain(|path| !crate::skill::is_generated(path));
+    .retain(|path| !crate::wire::is_generated(path));
     if request.dry_run {
         return dry_run_response(request_id, &request, &selection);
     }
@@ -227,12 +205,9 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         );
     }
     // The compiled-in scanner reads the working tree, so it never runs at
-    // pre-commit (which must ignore unstaged edits); a feature proof is
-    // about that feature, not the repository-wide scan.
-    let include_native = !staged
-        && !rules_only_name_rules
-        && request.features.is_empty()
-        && request.gate_mode != GateMode::Sweep;
+    // pre-commit (which must ignore unstaged edits); a sweep reports the
+    // rules' own flags.
+    let include_native = !staged && !rules_only_name_rules && request.gate_mode != GateMode::Sweep;
     let filter = (!scanner_rules.is_empty()).then_some(scanner_rules.as_slice());
     let result = if include_native {
         check::run(check::CheckOptions {
@@ -343,8 +318,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     let run_id = {
         let digest = digest_bytes(
             format!(
-                "{request_id}\0{fingerprint}\0{started_at}\0{}\0{}\0{:?}",
-                request.steps.join("\n"),
+                "{request_id}\0{fingerprint}\0{started_at}\0{}\0{:?}",
                 selection
                     .rules
                     .iter()
@@ -357,31 +331,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         );
         digest.as_str()["sha256:".len().."sha256:".len() + 16].to_string()
     };
-    // Change-specific steps extend exactly one feature's drive, and only
-    // when a drive rule for that feature is about to run.
-    let change_steps = match request.features.as_slice() {
-        [feature] if !request.steps.is_empty() => {
-            let drives_it = selection.rules.iter().any(|selected| {
-                matches!(&selected.rule.enforcer, Enforcer::Drive { feature: driven } if driven.as_str() == feature)
-            });
-            if !drives_it {
-                return unknown_response(
-                    "check",
-                    request_id,
-                    format!("No accepted drive rule proves {feature}, so change-specific steps have nothing to extend; record one with wh change --kind rule."),
-                );
-            }
-            match RecordId::new(feature.clone()) {
-                Ok(id) => Some((id, request.steps.clone())),
-                Err(error) => return unknown_response("check", request_id, error.to_string()),
-            }
-        }
-        _ => None,
-    };
     let mut outcomes = Vec::new();
-    let mut doctor = None;
-    let mut mutation_runs = Vec::new();
-    let mut mutation_receipts = Vec::new();
     if let (Some(layout), false) = (layout.as_ref(), selection.rules.is_empty()) {
         let run_dir = crate::gates::evidence_root(layout).join(&run_id);
         if let Err(error) = fs::create_dir_all(&run_dir) {
@@ -390,13 +340,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                 request_id,
                 format!("The evidence directory could not be created: {error}"),
             );
-        }
-        if selection
-            .rules
-            .iter()
-            .any(|selected| matches!(selected.rule.enforcer, Enforcer::Drive { .. }))
-        {
-            doctor = Some(crate::gates::run_doctor(&project, &run_dir));
         }
         let timeout = request.timeout_seconds.map_or(
             crate::gates::DEFAULT_GATE_TIMEOUT,
@@ -407,134 +350,21 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         let content_changed = selection
             .changed_paths
             .iter()
-            .filter(|path| !crate::skill::is_generated(path))
+            .filter(|path| !crate::wire::is_generated(path))
             .cloned()
             .collect::<Vec<_>>();
-        // Mutations run first, so a hollow proof they reveal decides this
-        // check, not only the next one.
-        if request.mutate {
-            for selected in &selection.rules {
-                let Enforcer::Drive { feature } = &selected.rule.enforcer else {
-                    continue;
-                };
-                let Some(mapped) = selection.features.get(feature) else {
-                    continue;
-                };
-                let context = crate::gates::GateContext {
-                    project_root: &project,
-                    run_dir: &run_dir,
-                    run_id: &run_id,
-                    features: &selection.features,
-                    doctor: None,
-                    timeout,
-                    change_steps: None,
-                    files: &files,
-                    changed: &selection.changed_paths,
-                };
-                for (index, mutation) in mapped.mutations.iter().enumerate() {
-                    let run = crate::gates::run_mutation(
-                        &context,
-                        &selected.id,
-                        &selected.rule,
-                        feature,
-                        mutation,
-                        index,
-                    );
-                    if !request.ci {
-                        match persist_mutation_receipt(layout, &run_id, index, selected, &run) {
-                            Ok(Some(reference)) => mutation_receipts.push(reference),
-                            Ok(None) => {}
-                            Err(error) => return storage_error("check", request_id, error),
-                        }
-                    }
-                    mutation_runs.push(run);
-                }
-            }
-        }
-        // Doctor runs before the first drive and again after any failed
-        // drive; once it fails, the remaining drives are skipped, never run
-        // against an instance nobody checked.
-        let mut halted: Option<String> = None;
         for selected in &selection.rules {
             let rule = &selected.rule;
-            let is_drive = matches!(rule.enforcer, Enforcer::Drive { .. });
             let (outcome, evidence) = {
                 let context = crate::gates::GateContext {
                     project_root: &project,
                     run_dir: &run_dir,
                     run_id: &run_id,
-                    features: &selection.features,
-                    doctor: doctor.as_ref(),
                     timeout,
-                    change_steps: change_steps
-                        .as_ref()
-                        .map(|(id, steps)| (id, steps.as_slice())),
                     files: &files,
                     changed: &content_changed,
                 };
-                let mut outcome = match (&halted, is_drive) {
-                    (Some(reason), true) => {
-                        crate::gates::skipped_outcome(&selected.id, rule, reason)
-                    }
-                    _ => crate::gates::run_gate(&context, &selected.id, rule),
-                };
-                // A proof that fails and then passes on one retry is
-                // flaky: quarantined with the reason, never a pass.
-                if is_drive && outcome.state == VerificationAxis::Fail && halted.is_none() {
-                    let first = outcome.summary.clone();
-                    let retry = crate::gates::run_gate(&context, &selected.id, rule);
-                    if retry.state == VerificationAxis::Pass {
-                        outcome = retry.unknown(format!(
-                                "Flaky: the proof failed ({first}) and passed on one retry; it is quarantined until it passes first time."
-                            ));
-                        outcome.evidence.push(EvidenceRef {
-                            system: crate::gates::QUARANTINE_EVIDENCE.into(),
-                            locator: first.chars().take(300).collect(),
-                            digest: None,
-                        });
-                    }
-                }
-                // A proof that survived its recorded mutation is hollow.
-                if let (Enforcer::Drive { feature }, VerificationAxis::Pass) =
-                    (&rule.enforcer, outcome.state)
-                {
-                    let fresh = mutation_runs
-                        .iter()
-                        .find(|run: &&crate::gates::MutationOutcome| {
-                            run.feature == feature.as_str() && run.verdict == "hollow"
-                        })
-                        .map(|run| {
-                            format!(
-                                "it still passed with \"{}\" applied; strengthen its drive steps",
-                                run.mutation
-                            )
-                        });
-                    if let Some(detail) = fresh.or_else(|| {
-                        agreement
-                            .as_ref()
-                            .and_then(|state| hollow_proof(state, feature))
-                    }) {
-                        outcome = outcome.unknown(format!("Hollow proof: {detail}"));
-                    }
-                }
-                if is_drive
-                    && halted.is_none()
-                    && outcome.state != VerificationAxis::Pass
-                    && !outcome
-                        .summary
-                        .starts_with(crate::gates::UNREACHABLE_PREFIX)
-                    && doctor.as_ref().is_some_and(|result| result.ok)
-                {
-                    let again = crate::gates::run_doctor(&project, &run_dir);
-                    if !again.ok {
-                        halted = Some(format!(
-                                "Skipped: doctor failed after {} ({}); fix the instance and sweep again.",
-                                selected.id.as_str(),
-                                again.detail
-                            ));
-                    }
-                    doctor = Some(again);
-                }
+                let outcome = crate::gates::run_gate(&context, &selected.id, rule);
                 let evidence = VerificationEvidence::Execution {
                     requirement_id: format!("gate:{}", selected.id.as_str()),
                     snapshot: snapshot.clone(),
@@ -585,13 +415,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         Some(layout) if records_receipts => {
             let mut gate_receipts = Vec::new();
             for (selected, outcome) in selection.rules.iter().zip(&outcomes) {
-                let feature_ref = match &selected.rule.enforcer {
-                    Enforcer::Drive { feature } => agreement
-                        .as_ref()
-                        .and_then(|state| state.in_force(feature))
-                        .and_then(|record| record.reference().ok()),
-                    _ => None,
-                };
                 match persist_gate_receipt(
                     layout,
                     &run_id,
@@ -599,10 +422,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                     outcome,
                     &fingerprint,
                     &checked_at,
-                    &DriveBinding {
-                        feature: feature_ref,
-                        doctor: doctor.as_ref(),
-                    },
                 ) {
                     Ok(Some(reference)) => gate_receipts.push(reference),
                     Ok(None) => {}
@@ -613,21 +432,10 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         }
         _ => Vec::new(),
     };
-    let sweep_findings = request
-        .findings
+    let sweep_findings = (request.gate_mode == GateMode::Sweep)
         .then(|| findings::findings(&project, &selection.rules, &outcomes));
-    let sweep = (request.gate_mode == GateMode::Sweep && !request.findings).then(|| {
-        super::dash::sweep_report(agreement.as_ref(), &selection, &outcomes, layout.as_ref())
-    });
     if requirements.is_empty() {
-        let mut response = nothing_ran(
-            request_id,
-            &request,
-            &selection,
-            &outcomes,
-            sweep,
-            &gate_receipts,
-        );
+        let mut response = nothing_ran(request_id, &request, &selection, &outcomes, &gate_receipts);
         attach_findings(&mut response, sweep_findings.as_deref());
         return response;
     }
@@ -673,21 +481,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         // listed below for repair or labelling.
         state = ServiceState::Success;
         summary = "No must rule applies to this check; should results are listed.".into();
-    }
-    if let Some(sweep) = &sweep {
-        let proven = sweep["tally"]["proven"].as_u64().unwrap_or(0);
-        let total = sweep["features"].as_array().map_or(0, Vec::len) as u64;
-        if state == ServiceState::Success && proven < total && !request.findings {
-            // A sweep promises every mapped feature; anything short of
-            // proven leaves the sweep unknown, not green.
-            state = ServiceState::Unknown;
-        }
-        summary = format!(
-            "Sweep: {proven} of {total} feature(s) proven, {} failed, {} unreachable, {} skipped. {summary}",
-            sweep["tally"]["failed"],
-            sweep["tally"]["unreachable"],
-            sweep["tally"]["skipped"],
-        );
     }
     let flags = outcomes
         .iter()
@@ -739,12 +532,8 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         "gate_receipts": gate_receipts,
         "gates": outcomes,
         "flags": flags,
-        "mutations": mutation_runs,
-        "mutation_receipts": mutation_receipts,
         "run_id": if selection.rules.is_empty() { None } else { Some(run_id) },
         "evidence_root": layout.as_ref().map(|layout| crate::gates::evidence_root(layout).display().to_string()),
-        "doctor": doctor,
-        "sweep": sweep,
         "ci": request.ci,
         "selection": selection_json(&request, &selection),
     });
@@ -752,8 +541,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     response
 }
 
-/// What a check adds beside its gates: sweep findings (with `--format
-/// findings`).
+/// What a sweep adds beside its gates: its findings.
 fn attach_findings(
     response: &mut ServiceResponse,
     sweep_findings: Option<&[findings::SweepFinding]>,
@@ -771,8 +559,6 @@ fn selection_json(request: &CheckRequest, selection: &Selection) -> Value {
         "skipped_drafts": selection.skipped_drafts,
         "changed_paths": selection.changed_paths,
         "base": request.base,
-        "features_affected": selection.features_affected,
-        "change_steps": request.steps,
     })
 }
 
@@ -791,21 +577,19 @@ fn next_actions(state: ServiceState, outcomes: &[GateOutcome]) -> Vec<String> {
                 failing
             }
         }
-        _ => vec!["restore the rule's checker, driver or evidence, then wh check".into()],
+        _ => vec!["restore the rule's checker or evidence, then wh check".into()],
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn nothing_ran(
     request_id: String,
     request: &CheckRequest,
     selection: &Selection,
     outcomes: &[GateOutcome],
-    sweep: Option<Value>,
     gate_receipts: &[RecordRef],
 ) -> ServiceResponse {
-    // Rules are in force, but none runs at pre-commit (command and drive
-    // rules run at pre-push): the commit is not blocked on them.
+    // Rules are in force, but none runs at pre-commit (command rules run at
+    // pre-push): the commit is not blocked on them.
     let deferred = request.gate_mode == GateMode::Staged
         && selection.rules.is_empty()
         && !selection.rule_ids.is_empty()
@@ -836,7 +620,6 @@ fn nothing_ran(
     response.data = json!({
         "gates": outcomes,
         "gate_receipts": gate_receipts,
-        "sweep": sweep,
         "ci": request.ci,
         "selection": selection_json(request, selection),
     });
@@ -876,7 +659,6 @@ fn dry_run_response(
                 "timeout_seconds": request.timeout_seconds.unwrap_or(crate::gates::DEFAULT_GATE_TIMEOUT.as_secs()),
             })
         }).collect::<Vec<_>>(),
-        "doctor_required": selection.rules.iter().any(|selected| matches!(selected.rule.enforcer, Enforcer::Drive { .. })),
         "environment_allowlist": crate::gates::ENV_ALLOWLIST,
         "selection": selection_json(request, selection),
     });
@@ -892,18 +674,8 @@ pub(crate) fn select_rules(
 ) -> Result<Selection, String> {
     let mut selection = Selection::default();
     let Some(state) = agreement else {
-        if !request.features.is_empty() {
-            return Err("No agreement exists, so no feature can be proven yet.".into());
-        }
         return Ok(selection);
     };
-    for id in state.agreement_ids(|body| matches!(body, RecordBody::Feature(_))) {
-        if let Some(record) = state.in_force(&id) {
-            if let RecordBody::Feature(feature) = &record.body {
-                selection.features.insert(id, feature.clone());
-            }
-        }
-    }
     let rule_ids = crate::proof::rule_ids(state);
     for id in &rule_ids {
         selection.rule_ids.insert(id.as_str().to_string());
@@ -915,7 +687,6 @@ pub(crate) fn select_rules(
         .cloned()
         .collect::<BTreeSet<_>>();
     let mut wanted: Option<BTreeSet<String>> = (!named.is_empty()).then_some(named);
-    let mut feature_filter = request.features.clone();
     let rule_of = |id: &RecordId| -> Option<Rule> {
         state
             .in_force(id)
@@ -944,33 +715,14 @@ pub(crate) fn select_rules(
                 request.base.as_deref(),
                 request.pushed.is_none(),
             )?;
-            for (id, feature) in &selection.features {
-                let touched = changed
-                    .iter()
-                    .filter(|path| feature.covers_path(path))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if !touched.is_empty() {
-                    feature_filter.push(id.as_str().to_string());
-                    selection.features_affected.push(json!({
-                        "feature": id.as_str(),
-                        "name": feature.name,
-                        "paths": touched,
-                        "map_review": "Behaviour in these paths changed; confirm the feature entry still describes it, or revise it with wh change --kind feature.",
-                    }));
-                }
-            }
             selection.changed_paths = changed;
-            // Repository-wide rules always apply to a change; drive rules
-            // apply when the change touches their feature.
+            // Every rule applies to a change.
             let always = rule_ids
                 .iter()
-                .filter(|id| {
-                    rule_of(id).is_some_and(|rule| !matches!(rule.enforcer, Enforcer::Drive { .. }))
-                })
+                .filter(|id| rule_of(id).is_some())
                 .map(|id| id.as_str().to_string())
                 .collect::<BTreeSet<_>>();
-            if feature_filter.is_empty() && always.is_empty() {
+            if always.is_empty() {
                 return Ok(selection);
             }
             wanted = Some(match wanted {
@@ -979,24 +731,6 @@ pub(crate) fn select_rules(
             });
         }
         GateMode::All | GateMode::Sweep => {}
-    }
-    if !feature_filter.is_empty() {
-        let mut ids = wanted.take().unwrap_or_default();
-        for feature_id in &feature_filter {
-            let id = RecordId::new(feature_id.as_str())
-                .map_err(|_| format!("{feature_id} is not a valid feature id."))?;
-            let Some(feature) = selection.features.get(&id) else {
-                return Err(format!(
-                    "Feature {feature_id} is not in force; accept its draft before proving it."
-                ));
-            };
-            ids.extend(
-                crate::proof::proving_rules(state, &id, feature)
-                    .iter()
-                    .map(|rule| rule.as_str().to_string()),
-            );
-        }
-        wanted = Some(ids);
     }
     for id in &rule_ids {
         if wanted
@@ -1012,15 +746,8 @@ pub(crate) fn select_rules(
         let Some(rule) = record.body.rule_view() else {
             continue;
         };
-        if request.gate_mode == GateMode::Sweep {
-            let wanted = if request.findings {
-                findings::sweepable(&rule)
-            } else {
-                matches!(rule.enforcer, Enforcer::Drive { .. })
-            };
-            if !wanted {
-                continue;
-            }
+        if request.gate_mode == GateMode::Sweep && !findings::sweepable(&rule) {
+            continue;
         }
         let reference = record.reference().map_err(|error| error.to_string())?;
         selection.rules.push(SelectedRule {
@@ -1028,24 +755,6 @@ pub(crate) fn select_rules(
             reference,
             rule: rule.into_owned(),
         });
-    }
-    if request.gate_mode == GateMode::Sweep {
-        let order = |selected: &SelectedRule| match &selected.rule.enforcer {
-            Enforcer::Drive { feature } => selection
-                .features
-                .get(feature)
-                .map_or((String::from("~"), u32::MAX), |feature| {
-                    (feature.area.clone(), feature.sweep_order)
-                }),
-            _ => (String::from("~"), u32::MAX),
-        };
-        let mut keyed = selection
-            .rules
-            .drain(..)
-            .map(|selected| (order(&selected), selected))
-            .collect::<Vec<_>>();
-        keyed.sort_by(|left, right| left.0.cmp(&right.0));
-        selection.rules = keyed.into_iter().map(|(_, selected)| selected).collect();
     }
     if request.gate_mode != GateMode::Staged {
         if let Some(wanted) = wanted {

@@ -242,7 +242,6 @@ fn each_enforcer_kind_parses_alone_and_matches_the_published_rule_schema() {
         json!({"kind": "formatter", "tool": "rustfmt"}),
         json!({"kind": "test", "command": "cargo test"}),
         json!({"kind": "validator", "command": "wh validate"}),
-        json!({"kind": "drive", "feature": "feature.dashboard"}),
     ];
     let mut kinds = Vec::new();
     for value in minimal {

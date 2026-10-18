@@ -277,8 +277,6 @@ enum DashboardCommand {
         #[serde(default)]
         rules: Vec<String>,
         #[serde(default)]
-        features: Vec<String>,
-        #[serde(default)]
         mode: DashboardCheckMode,
     },
 }
@@ -402,7 +400,6 @@ impl DashboardCommand {
                 paths,
                 language,
                 rules,
-                features,
                 mode,
             } => ServiceRequest::Check(CheckRequest {
                 project_dir,
@@ -410,7 +407,6 @@ impl DashboardCommand {
                 paths,
                 language,
                 rules,
-                features,
                 gate_mode: match mode {
                     DashboardCheckMode::All => crate::service::GateMode::All,
                     DashboardCheckMode::Changed => crate::service::GateMode::Changed,
@@ -449,8 +445,6 @@ enum DashboardChangeKind {
     Mission,
     Principle,
     Rule,
-    Feature,
-    Map,
 }
 
 impl From<DashboardChangeKind> for ChangeKind {
@@ -459,8 +453,6 @@ impl From<DashboardChangeKind> for ChangeKind {
             DashboardChangeKind::Mission => Self::Mission,
             DashboardChangeKind::Principle => Self::Principle,
             DashboardChangeKind::Rule => Self::Rule,
-            DashboardChangeKind::Feature => Self::Feature,
-            DashboardChangeKind::Map => Self::Map,
         }
     }
 }

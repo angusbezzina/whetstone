@@ -371,63 +371,81 @@ fn principles_name_their_pstack_source_or_are_the_owners_own() {
     assert!(bad.validate().is_err());
 }
 
-fn feature_body() -> Feature {
-    Feature {
-        name: "Rules".into(),
-        summary: "Rules grouped by strength".into(),
-        area: "Dashboard".into(),
-        sweep_order: 2,
-        sub_features: vec!["edit: inline draft edit".into()],
-        user_path: "Open wh dash and choose Rules.".into(),
-        drive_steps: vec!["open /".into(), "click #tab-rules".into()],
-        proof: "Rules render grouped by strength.".into(),
-        gotchas: vec![],
-        entry_points: vec!["assets/dashboard/".into(), "src/**/dashboard*.rs".into()],
-        serves: vec![id("mission.project")],
-        constrained_by: vec![id("principle.prove-it-works")],
-        proven_by: vec![id("rule.dashboard-journey")],
-        index_summary: None,
-        harness: None,
-        preconditions: vec![],
-        drive_recipe: vec![],
-        mutations: vec![],
-    }
-}
+/// Stored bodies of kinds and enforcers that are gone: each reads as a
+/// retired record that re-serializes byte for byte.
+const RETIRED_BODIES: &[(&str, &str)] = &[
+    (
+        "feature",
+        r#"{"name":"Rules","summary":"Rules by strength","area":"Dashboard","user_path":"Open Rules.","proof":"They render."}"#,
+    ),
+    (
+        "verification_map",
+        r#"{"title":"Feature map","intro":"How the app is driven."}"#,
+    ),
+    (
+        "rule",
+        r#"{"schema":"whetstone.rule.v2","statement":"Search works.","rationale":"Users search.","strength":"must","enforcer":{"kind":"drive","feature":"feature.search"},"source":{"kind":"owner"}}"#,
+    ),
+    (
+        "standard",
+        r#"{"statement":"Search works.","rationale":"Users search.","strength":"must","enforcement":{"enforcement":"drive","feature":"feature.search"}}"#,
+    ),
+];
 
 #[test]
-fn feature_records_validate_links_paths_and_bounds() {
-    let valid = record("feature.rules", "100", RecordBody::Feature(feature_body()));
-    valid.validate().expect("valid feature");
-    assert_eq!(valid.body.type_name(), "feature");
-    let json = serde_json::to_value(&valid).expect("serialize");
-    assert_eq!(json["record_type"], "feature");
-    for mutate in [
-        |body: &mut Feature| body.proof = " ".into(),
-        |body: &mut Feature| body.entry_points = vec!["../outside".into()],
-        |body: &mut Feature| body.entry_points = vec!["/etc/passwd".into()],
-        |body: &mut Feature| body.serves = vec![id("mission.project"), id("mission.project")],
-        |body: &mut Feature| body.drive_steps = vec!["".into()],
-    ] {
-        let mut body = feature_body();
-        mutate(&mut body);
+fn removed_kinds_and_enforcers_read_as_retired_byte_for_byte() {
+    for (kind, body) in RETIRED_BODIES {
+        let mut stored = serde_json::to_value(record(
+            "record.retired",
+            "100",
+            RecordBody::Mission(Mission {
+                statement: "x".into(),
+                desired_outcomes: Vec::new(),
+            }),
+        ))
+        .expect("serialize");
+        stored["record_type"] = (*kind).into();
+        stored["record"] = serde_json::from_str(body).expect("body");
+        let canonical = serde_json::to_string(&stored).expect("canonical");
+        let record: AgreementRecord = serde_json::from_str(&canonical).expect("parse");
         assert!(
-            record("feature.bad", "100", RecordBody::Feature(body))
-                .validate()
-                .is_err(),
-            "invalid feature accepted"
+            matches!(&record.body, RecordBody::Retired(retired) if retired.record_type == *kind),
+            "{kind} reads as retired"
         );
+        assert_eq!(
+            String::from_utf8(record.canonical_json().expect("json")).expect("utf8"),
+            canonical,
+            "{kind} re-serializes byte for byte"
+        );
+        assert!(matches!(
+            AgreementHistory::default().append(record, None),
+            Err(DomainError::RetiredKind(_))
+        ));
     }
 }
 
 #[test]
-fn feature_entry_points_match_prefixes_and_globs_only() {
-    let feature = feature_body();
-    assert!(feature.covers_path("assets/dashboard/app.js"));
-    assert!(feature.covers_path("./assets/dashboard/index.html"));
-    assert!(feature.covers_path("src/dashboard.rs"));
-    assert!(feature.covers_path("src/nested/dashboard_service.rs"));
-    assert!(!feature.covers_path("assets/dashboardx/app.js"));
-    assert!(!feature.covers_path("src/service.rs"));
+fn paths_match_prefixes_and_globs_only() {
+    assert!(entry_point_matches(
+        "assets/dashboard/",
+        "assets/dashboard/app.js"
+    ));
+    assert!(entry_point_matches(
+        "src/**/dashboard*.rs",
+        "src/dashboard.rs"
+    ));
+    assert!(entry_point_matches(
+        "src/**/dashboard*.rs",
+        "src/nested/dashboard_service.rs"
+    ));
+    assert!(!entry_point_matches(
+        "assets/dashboard/",
+        "assets/dashboardx/app.js"
+    ));
+    assert!(!entry_point_matches(
+        "src/**/dashboard*.rs",
+        "src/service.rs"
+    ));
     assert!(entry_point_matches("tests/*.rs", "tests/a.rs"));
     assert!(!entry_point_matches("tests/*.rs", "tests/nested/a.rs"));
     assert!(entry_point_matches("**/README.md", "docs/deep/README.md"));
