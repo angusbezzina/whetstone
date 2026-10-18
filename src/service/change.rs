@@ -553,29 +553,33 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
             desired_outcomes: Vec::new(),
         }),
         ChangeKind::Principle => {
-            let (pstack, principle_rationale) = match request.definition.as_deref() {
-                Some(ChangeDefinition::Principle { pstack, rationale }) => {
-                    (pstack.clone(), rationale.clone())
-                }
+            let (picked, principle_rationale) = match request.definition.as_deref() {
+                Some(ChangeDefinition::Principle {
+                    pstack,
+                    principle,
+                    rationale,
+                }) => (
+                    principle
+                        .clone()
+                        .or_else(|| pstack.as_ref().map(|id| format!("pstack/{id}"))),
+                    rationale.clone(),
+                ),
                 None => (None, None),
                 Some(_) => return Err(
-                    "A principle's definition is {\"type\": \"principle\", \"pstack\": \"<id>\"}."
+                    "A principle's definition is {\"type\": \"principle\", \"principle\": \"<id or pack/id>\"}."
                         .into(),
                 ),
             };
-            let source = match pstack {
-                Some(id) => {
+            let source = match picked {
+                Some(spec) => {
                     let catalogue = crate::catalogue::catalogue(layout.project_root());
-                    if catalogue.get(&id).is_none() {
+                    let Some(entry) = catalogue.get(&spec) else {
                         return Err(format!(
-                            "{id} is not a pstack principle in the catalogue (pstack {}); pick one of its ids or leave pstack out for your own.",
-                            catalogue.version
+                            "{spec} is not a principle in any loaded pack ({}); name one as <id> or <pack>/<id>, or leave it out for your own.",
+                            catalogue.describe()
                         ));
-                    }
-                    PrincipleSource::Pstack {
-                        id,
-                        version: catalogue.version,
-                    }
+                    };
+                    entry.source()
                 }
                 None => PrincipleSource::Custom,
             };

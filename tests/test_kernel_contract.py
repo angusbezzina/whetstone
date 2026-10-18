@@ -62,6 +62,7 @@ def test_orientation_names_only_the_target_workflows() -> None:
         "check",
         "pull",
         "push",
+        "explain",
     ]
     assert result["data"]["read_only"] is True
 

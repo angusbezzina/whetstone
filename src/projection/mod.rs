@@ -94,7 +94,12 @@ pub struct Onboarding {
     pub missing: Vec<String>,
     pub command: &'static str,
     pub catalogue: Vec<crate::catalogue::CatalogueEntry>,
+    /// The loaded principle packs as `name version`, comma separated.
     pub catalogue_version: String,
+    /// Every loaded principle pack, the default (pstack) first.
+    pub packs: Vec<crate::catalogue::PackSummary>,
+    /// Packs in `whetstone/principles/` that could not be loaded, and why.
+    pub refused_packs: Vec<crate::catalogue::RefusedPack>,
     pub starters: Vec<StarterView>,
     pub legacy: Vec<LegacyItem>,
     pub tools: Vec<crate::setup::ToolState>,
@@ -505,8 +510,9 @@ fn edit_base(record: &AgreementRecord) -> EditBase {
             // The exact shape `wh change --kind principle --definition` takes.
             json!({
                 "type": "principle",
-                "pstack": match &body.source {
+                "principle": match &body.source {
                     crate::domain::PrincipleSource::Pstack { id, .. } => Some(id.clone()),
+                    crate::domain::PrincipleSource::Pack { pack, id, .. } => Some(format!("{pack}/{id}")),
                     _ => None,
                 },
                 "rationale": body.rationale,

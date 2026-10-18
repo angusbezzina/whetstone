@@ -48,9 +48,9 @@ const gate = (id, name, strength, family, mechanism, command, result, extra = {}
 
 const STEPS = [["tools", "Beads and pstack", true], ["mission", "Mission", false], ["principles", "Principles", true], ["exemplars", "Exemplars", true], ["rules", "Rules", false], ["gates", "Gates", false]];
 const CATALOGUE = [
-  { id: "laziness-protocol", group: "core", rule: "Bias toward deletion and the smallest change.", enforceable: "question", suggestion: "Does this change add code the task did not need?" },
-  { id: "prove-it-works", group: "core", rule: "Verify against the real artifact before declaring done.", enforceable: "mechanical", suggestion: null },
-  { id: "boundary-discipline", group: "core", rule: XSS + "Concentrate guards at system boundaries.", enforceable: "question", suggestion: null },
+  { pack: "pstack", pack_version: "0.15.5", id: "laziness-protocol", spec: "laziness-protocol", group: "core", text: "Bias toward deletion and the smallest change.", enforcer_hint: "none" },
+  { pack: "pstack", pack_version: "0.15.5", id: "prove-it-works", spec: "prove-it-works", group: "core", text: "Verify against the real artifact before declaring done.", enforcer_hint: "test" },
+  { pack: "pstack", pack_version: "0.15.5", id: "boundary-discipline", spec: "boundary-discipline", group: "core", text: XSS + "Concentrate guards at system boundaries.", enforcer_hint: "none" },
 ];
 const STARTERS = [
   { id: "rule.prove-it-works", title: "Prove it works before done", detected: "cargo test was detected", strength: "must", family: "mechanical", enforcer: "Test", examples: [example("ran the tests", "pass", "proved")], accepted: false },

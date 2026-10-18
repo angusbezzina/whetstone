@@ -160,6 +160,9 @@ pub(crate) fn skill_markdown(
                     crate::domain::PrincipleSource::Pstack { id, .. } => {
                         format!(" (pstack `principle-{id}`)")
                     }
+                    crate::domain::PrincipleSource::Pack { pack, id, .. } => {
+                        format!(" ({pack} `{id}`)")
+                    }
                     _ => String::new(),
                 };
                 let _ = writeln!(out, "- {}{source}", principle.statement);

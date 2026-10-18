@@ -199,7 +199,9 @@ pub(crate) fn progress(layout: &ProjectLayout, records: Option<&[AgreementRecord
         ],
         missing: missing.clone(),
         command: "wh init",
-        catalogue_version: catalogue.version.clone(),
+        catalogue_version: catalogue.describe(),
+        packs: catalogue.packs,
+        refused_packs: catalogue.refused,
         catalogue: catalogue.principles,
         starters,
         legacy: legacy.into_values().collect(),
@@ -505,12 +507,12 @@ fn agree(
                 current_revision,
                 resume,
                 format!(
-                    "{id} is not a pstack principle in the catalogue (pstack {}). Known ids include prove-it-works, laziness-protocol and boundary-discipline.",
-                    catalogue.version
+                    "{id} is not a principle in any loaded pack ({}). Name one as <id> or <pack>/<id>, for example prove-it-works, or write your own with --custom-principle.",
+                    catalogue.describe()
                 ),
             );
         };
-        let record_id = format!("principle.{id}");
+        let record_id = entry.record_id();
         if RecordId::new(record_id.as_str())
             .ok()
             .is_some_and(|record_id| state.in_force(&record_id).is_some())
@@ -520,14 +522,11 @@ fn agree(
         records.push(agreement_record(
             layout,
             &record_id,
-            format!("{base}:principle:{id}"),
+            format!("{base}:principle:{}", entry.spec),
             RecordBody::Principle(Principle {
-                statement: entry.rule.clone(),
-                source: PrincipleSource::Pstack {
-                    id: id.clone(),
-                    version: catalogue.version.clone(),
-                },
-                rationale: None,
+                statement: entry.text.clone(),
+                source: entry.source(),
+                rationale: entry.rationale.clone(),
             }),
             owner.as_deref(),
         ));

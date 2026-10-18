@@ -702,7 +702,7 @@ fn init_needs_a_mission_and_names_only_catalogue_principles_and_starters() {
                 "--principle",
                 "not-a-principle",
             ],
-            "not-a-principle is not a pstack principle",
+            "not-a-principle is not a principle in any loaded pack",
         ),
         (
             [
@@ -3141,4 +3141,90 @@ fn explain_resolves_a_sweep_finding_and_a_rule_id_to_the_rule_and_its_decisions(
         .as_str()
         .expect("summary")
         .contains("No rule here produces the finding"));
+}
+
+const TEAM_PACK: &str = r#"{
+  "schema": "whetstone.principle-pack.v1",
+  "name": "team",
+  "version": "2.1.0",
+  "source": "our engineering handbook",
+  "license": "internal",
+  "principles": [
+    {"id": "ship-small", "group": "delivery", "text": "Ship in changes a reviewer reads in ten minutes.", "enforcer_hint": "validator", "rationale": "Small changes are reviewed well."}
+  ]
+}"#;
+
+#[test]
+fn a_repository_principle_pack_is_offered_beside_pstack_and_recorded_with_its_version() {
+    let repo = Repo::new();
+    repo.write("whetstone/principles/team.json", TEAM_PACK);
+    repo.commit("pack");
+    let inspect = repo.wh_json(&["init"]);
+    let onboarding = &inspect["data"]["onboarding"];
+    let offered = onboarding["catalogue"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no catalogue in {inspect}"));
+    assert!(offered
+        .iter()
+        .any(|entry| entry["spec"] == "team/ship-small"
+            && entry["pack_version"] == "2.1.0"
+            && entry["enforcer_hint"] == "validator"));
+    assert!(offered
+        .iter()
+        .any(|entry| entry["spec"] == "prove-it-works"));
+    assert_eq!(onboarding["catalogue_version"], "pstack 0.15.5, team 2.1.0");
+
+    let unknown = repo.agree(
+        "pack-unknown",
+        &[
+            "--mission",
+            "Keep work aligned.",
+            "--principle",
+            "team/nope",
+        ],
+    );
+    assert_eq!(unknown["state"], "needs_input", "{unknown}");
+    let question = unknown.to_string();
+    assert!(
+        question.contains("not a principle in any loaded pack"),
+        "{question}"
+    );
+    assert!(!question.contains("pstack principle"), "{question}");
+
+    let agreed = repo.agree(
+        "pack-agree",
+        &[
+            "--mission",
+            "Keep work aligned.",
+            "--principle",
+            "team/ship-small",
+            "--principle",
+            "prove-it-works",
+            "--starter",
+            "ask-before-public-api",
+        ],
+    );
+    assert_eq!(
+        agreed["data"]["progress"]["agreement_complete"], true,
+        "{agreed}"
+    );
+    let records = repo.records();
+    let team = records
+        .iter()
+        .find(|record| record.id.as_str() == "principle.team.ship-small")
+        .expect("team principle");
+    let RecordBody::Principle(principle) = &team.body else {
+        panic!("not a principle");
+    };
+    assert_eq!(
+        serde_json::to_value(&principle.source).expect("source"),
+        serde_json::json!({"kind": "pack", "pack": "team", "id": "ship-small", "version": "2.1.0"})
+    );
+    assert_eq!(
+        principle.rationale.as_deref(),
+        Some("Small changes are reviewed well.")
+    );
+    assert!(records
+        .iter()
+        .any(|record| record.id.as_str() == "principle.prove-it-works"));
 }
