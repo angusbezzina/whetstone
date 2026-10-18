@@ -48,6 +48,7 @@ use super::{
 pub const PRIVACY_RELATIVE: &str = "whetstone/privacy.json";
 
 pub(crate) mod findings;
+mod fixes;
 mod persist;
 mod question;
 mod review;
@@ -888,9 +889,11 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         }
         _ => (Vec::new(), Vec::new()),
     };
-    let sweep_findings = request
-        .findings
-        .then(|| findings::findings(&project, &selection.rules, &outcomes));
+    let sweep_findings = request.findings.then(|| {
+        let mut found = findings::findings(&project, &selection.rules, &outcomes);
+        fixes::attach(&project, &selection.rules, &mut found);
+        found
+    });
     let sweep = (request.gate_mode == GateMode::Sweep && !request.findings).then(|| {
         super::dash::sweep_report(agreement.as_ref(), &selection, &outcomes, layout.as_ref())
     });

@@ -35,6 +35,13 @@ pub(crate) struct SweepFinding {
     pub(crate) responsibility: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) unsure: Option<String>,
+    /// The tool's own fix, as a unified diff that applies at the repository
+    /// root with `git apply` (formatters and lints that can rewrite files).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) fix: Option<String>,
+    /// What the finding is about: a repository path, or `repository`.
+    #[serde(skip)]
+    pub(crate) subject: String,
 }
 
 /// Whether a rule's flags are sweep work: below must (or a must rule still in
@@ -180,7 +187,10 @@ pub(crate) fn findings(
             } else {
                 format!("{subject}#{count}")
             };
+            let path = subject.split('#').next().unwrap_or_default().to_string();
             result.push(SweepFinding {
+                subject: path,
+                fix: None,
                 fingerprint: fingerprint(&outcome.id, &repository, &subject),
                 subject_digest,
                 class: rule.sweep_class().label(),
@@ -221,6 +231,8 @@ mod tests {
     #[test]
     fn findings_carry_priority_always_and_unsure_only_when_set() {
         let finding = |unsure: Option<&str>| SweepFinding {
+            subject: "src/app.py".into(),
+            fix: None,
             fingerprint: "sha256:f".into(),
             subject_digest: "sha256:d".into(),
             class: "discuss",
