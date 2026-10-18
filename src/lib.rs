@@ -1,4 +1,5 @@
 pub mod agreement;
+pub mod annotations;
 mod ast;
 pub mod beads;
 pub mod catalogue;

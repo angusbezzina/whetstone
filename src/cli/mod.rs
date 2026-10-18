@@ -285,11 +285,13 @@ enum Command {
         /// Drive every mapped feature in sweep order.
         #[arg(long)]
         sweep: bool,
-        /// With --sweep: `findings` runs only the rules below must and prints
+        /// `findings` (with --sweep) runs only the rules below must and prints
         /// a JSON array, one finding per flag {fingerprint, subjectDigest, class,
-        /// priority, title, responsibility, unsure?}, for a sweep's controller
-        /// (findings.json).
-        #[arg(long, value_enum, requires = "sweep")]
+        /// priority, title, responsibility, unsure?, fix?}, for a sweep's
+        /// runner (findings.json). `annotations` prints each flag as a GitHub
+        /// workflow command (::error for must, ::warning for should), only on
+        /// lines the change touched when --base is given.
+        #[arg(long, value_enum)]
         format: Option<CheckFormatArg>,
         /// Also prove each feature with its recorded mutations applied (in an
         /// isolated worktree); a proof that still passes is hollow.
@@ -496,6 +498,7 @@ enum DashHookArg {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CheckFormatArg {
     Findings,
+    Annotations,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -854,6 +857,12 @@ pub fn run() -> i32 {
             hook,
             pushed,
         }) => {
+            if format == Some(CheckFormatArg::Findings) && !sweep {
+                eprintln!("error: --format findings reports a sweep's flags; add --sweep");
+                return 2;
+            }
+            let annotate = format == Some(CheckFormatArg::Annotations);
+            let annotation_base = base.clone();
             let hand_rule = rules.first().cloned();
             let request = CheckRequest {
                 project_dir,
@@ -926,6 +935,27 @@ pub fn run() -> i32 {
                 }
                 Some(CheckHookArg::PreCommit | CheckHookArg::PrePush) => {
                     return run_git_hook(&service, request, hook == Some(CheckHookArg::PreCommit))
+                }
+                None if annotate => {
+                    let root = request
+                        .project_dir
+                        .canonicalize()
+                        .unwrap_or_else(|_| request.project_dir.clone());
+                    let response = service.execute(ServiceRequest::Check(request));
+                    if explicit_json {
+                        emit_response(&response, true);
+                    } else {
+                        print!(
+                            "{}",
+                            crate::annotations::render(
+                                &root,
+                                &response.data,
+                                annotation_base.as_deref()
+                            )
+                        );
+                        println!("{}", response.summary);
+                    }
+                    return response.state.exit_code();
                 }
                 None if request.findings => {
                     // Findings mode prints only the findings (a JSON array, one per line)

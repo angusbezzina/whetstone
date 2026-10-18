@@ -6,9 +6,11 @@
 #
 # The check runs the full `wh check` for the pull request's commits against
 # the rules the team accepted and shared (`wh push`), never against a
-# contributor's private drafts. Jev questions run when the repository has a
-# TYPESAFE_API_KEY secret; without it they report unavailable, and a must rule
-# never passes on an unavailable answer.
+# contributor's private drafts. Each flag on a line the pull request touched is
+# shown beside the code as an annotation: an error for a must rule, a warning
+# for a should rule (`wh explain <rule>` says why it exists). Jev questions run
+# when the repository has a TYPESAFE_API_KEY secret; without it they report
+# unavailable, and a must rule never passes on an unavailable answer.
 name: whetstone
 
 on:
@@ -52,5 +54,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          wh check --ci --base "$BASE_REF" --json > whetstone-policy.json || { cat whetstone-policy.json; exit 1; }
-          cat whetstone-policy.json
+          wh check --ci --base "$BASE_REF" --format annotations
