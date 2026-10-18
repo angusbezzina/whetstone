@@ -75,9 +75,9 @@ fn digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
-/// The flagged path and line in a failure location (`src/a.rs:12:4`), when
-/// the location names a file in the repository.
-fn located(project: &Path, location: &str) -> Option<(String, Option<usize>)> {
+/// The flagged path, line and column in a failure location
+/// (`src/a.rs:12:4`), when the location names a file in the repository.
+fn located(project: &Path, location: &str) -> Option<(String, Option<usize>, Option<usize>)> {
     let mut parts = location.split(':');
     let path = parts.next()?.trim().trim_start_matches("./");
     if path.is_empty() || !crate::domain::safe_relative_path(path) {
@@ -86,10 +86,54 @@ fn located(project: &Path, location: &str) -> Option<(String, Option<usize>)> {
     if !project.join(path).is_file() {
         return None;
     }
-    let line = parts
-        .next()
-        .and_then(|line| line.trim().parse::<usize>().ok());
-    Some((path.to_string(), line))
+    let mut number = || {
+        parts
+            .next()
+            .and_then(|number| number.trim().parse::<usize>().ok())
+    };
+    let line = number();
+    let column = number();
+    Some((path.to_string(), line, column))
+}
+
+/// One flag of a rule before it is numbered: what it is about, where in the
+/// subject it sits, the digest of what was flagged, where to say it is, and
+/// why the rule doubts it.
+#[derive(Debug, Clone)]
+struct Flag {
+    subject: String,
+    position: (usize, usize),
+    subject_digest: String,
+    place: String,
+    unsure: Option<String>,
+}
+
+/// The subject each flag is fingerprinted under. The same rule flagging one
+/// subject more than once numbers the repeats in source order (the second is
+/// `#2`), so a flag added later in the subject never changes the fingerprint
+/// of one before it.
+fn numbered(mut flagged: Vec<Flag>) -> Vec<(String, Flag)> {
+    flagged.sort_by(|left, right| {
+        (&left.subject, left.position).cmp(&(&right.subject, right.position))
+    });
+    let mut seen = BTreeMap::<String, usize>::new();
+    flagged
+        .into_iter()
+        .map(|flag| {
+            let count = seen.entry(flag.subject.clone()).or_insert(0);
+            *count += 1;
+            let subject = if *count == 1 {
+                flag.subject.clone()
+            } else {
+                format!("{}#{count}", flag.subject)
+            };
+            (subject, flag)
+        })
+        .collect()
+}
+
+fn fingerprint(rule: &str, repository: &str, subject: &str) -> String {
+    digest(format!("{rule}\0{repository}\0{subject}").as_bytes())
 }
 
 /// What was flagged: the flagged line's text when the location names one,
@@ -128,63 +172,56 @@ pub(crate) fn findings(
         if !sweepable(rule) {
             continue;
         }
-        // (subject, digest of what was flagged, where to say it is, why the
-        // rule doubts it)
-        let mut flagged = Vec::<(String, String, String, Option<String>)>::new();
         let doubt =
             |path: Option<&str>, text: &str| rule.sweep_unsure_for(path, text).map(str::to_owned);
-        for failure in &outcome.failures {
+        let mut flagged = Vec::new();
+        for (index, failure) in outcome.failures.iter().enumerate() {
             match located(project, &failure.location) {
-                Some((path, line)) => {
+                Some((path, line, column)) => {
                     let content = flagged_content(project, &path, line);
                     let text =
                         format!("{}\n{}", String::from_utf8_lossy(&content), failure.message);
-                    flagged.push((
-                        path.clone(),
-                        digest(&content),
-                        path.clone(),
-                        doubt(Some(&path), &text),
-                    ));
+                    flagged.push(Flag {
+                        subject: path.clone(),
+                        position: line
+                            .map_or((usize::MAX, index), |line| (line, column.unwrap_or(0))),
+                        subject_digest: digest(&content),
+                        place: path.clone(),
+                        unsure: doubt(Some(&path), &text),
+                    });
                 }
-                None => flagged.push((
-                    "repository".into(),
-                    digest(format!("{}\0{}", failure.location, failure.message).as_bytes()),
-                    failure.location.clone(),
-                    doubt(None, &format!("{}\n{}", failure.location, failure.message)),
-                )),
+                None => flagged.push(Flag {
+                    subject: "repository".into(),
+                    position: (usize::MAX, index),
+                    subject_digest: digest(
+                        format!("{}\0{}", failure.location, failure.message).as_bytes(),
+                    ),
+                    place: failure.location.clone(),
+                    unsure: doubt(None, &format!("{}\n{}", failure.location, failure.message)),
+                }),
             }
         }
         if flagged.is_empty() {
-            flagged.push((
-                "repository".into(),
-                digest(outcome.summary.as_bytes()),
-                "the repository".into(),
-                doubt(None, &outcome.summary),
-            ));
+            flagged.push(Flag {
+                subject: "repository".into(),
+                position: (0, 0),
+                subject_digest: digest(outcome.summary.as_bytes()),
+                place: "the repository".into(),
+                unsure: doubt(None, &outcome.summary),
+            });
         }
-        // The same rule flagging one subject twice: the second is `#2`, so
-        // each flag is its own finding and the first keeps its fingerprint.
-        flagged.sort();
-        let mut seen = BTreeMap::<String, usize>::new();
-        for (subject, subject_digest, place, unsure) in flagged {
-            let count = seen.entry(subject.clone()).or_insert(0);
-            *count += 1;
-            let subject = if *count == 1 {
-                subject
-            } else {
-                format!("{subject}#{count}")
-            };
+        for (subject, flag) in numbered(flagged) {
             result.push(SweepFinding {
-                fingerprint: digest(format!("{}\0{repository}\0{subject}", outcome.id).as_bytes()),
-                subject_digest,
+                fingerprint: fingerprint(&outcome.id, &repository, &subject),
+                subject_digest: flag.subject_digest,
                 class: rule.sweep_class().label(),
                 priority: rule.sweep_priority(),
-                title: format!("{} ({place})", rule.statement)
+                title: format!("{} ({})", rule.statement, flag.place)
                     .chars()
                     .take(300)
                     .collect(),
                 responsibility: outcome.id.clone(),
-                unsure,
+                unsure: flag.unsure,
             });
         }
     }
@@ -211,6 +248,47 @@ pub(crate) fn json_array(findings: &[SweepFinding]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_added_repeat_never_changes_an_earlier_fingerprint() {
+        let flag = |line: usize, content: &str| Flag {
+            subject: "src/app.py".into(),
+            position: (line, 1),
+            subject_digest: digest(content.as_bytes()),
+            place: "src/app.py".into(),
+            unsure: None,
+        };
+        let fingerprints = |flagged: Vec<Flag>| {
+            numbered(flagged)
+                .into_iter()
+                .map(|(subject, _)| fingerprint("rule.print", "example/app", &subject))
+                .collect::<Vec<_>>()
+        };
+        let two = fingerprints(vec![flag(1, "print('x')"), flag(2, "print('x')")]);
+        let three = fingerprints(vec![
+            flag(3, "print('x')"),
+            flag(1, "print('x')"),
+            flag(2, "print('x')"),
+        ]);
+        assert_eq!(two.len(), 2);
+        assert_ne!(two[0], two[1], "each repeat is its own finding");
+        assert_eq!(
+            two[0],
+            fingerprint("rule.print", "example/app", "src/app.py"),
+            "the first occurrence is fingerprinted by rule, repository and subject"
+        );
+        assert_eq!(three[..2], two[..], "the earlier fingerprints hold");
+        assert_eq!(three.len(), 3);
+
+        // A later flag whose content digest sorts first still numbers after
+        // the earlier ones.
+        let mut contents = ["print('x')", "print('y')"];
+        contents.sort_by_key(|content| std::cmp::Reverse(digest(content.as_bytes())));
+        let [earlier, later] = contents;
+        let before = fingerprints(vec![flag(1, earlier), flag(2, earlier)]);
+        let added = fingerprints(vec![flag(1, earlier), flag(2, earlier), flag(3, later)]);
+        assert_eq!(added[..2], before[..]);
+    }
 
     #[test]
     fn findings_carry_priority_always_and_unsure_only_when_set() {
