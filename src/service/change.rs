@@ -63,6 +63,10 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
     if request.lesson.is_some() || request.kind == Some(ChangeKind::Lesson) {
         return super::lesson::change(&layout, request_id, &request);
     }
+    if request.from_text.is_some() || request.from_file.is_some() || request.from_finding.is_some()
+    {
+        return super::compile::compile(&layout, &private, request_id, &request);
+    }
     if !request.probe {
         return propose(&layout, &private, request_id, &request);
     }
@@ -188,6 +192,9 @@ fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String
         request.lesson,
         request.from_lesson,
         layout.project_id(),
+    ) + &format!(
+        "\0{:?}\0{:?}\0{:?}\0{}\0{}",
+        request.from_text, request.from_file, request.from_finding, request.probe, request.allow_unvalidated
     );
     format!(
         "change-{}",
@@ -768,7 +775,7 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
     })
 }
 
-fn state_of(layout: &ProjectLayout) -> Result<AgreementState, StorageError> {
+pub(super) fn state_of(layout: &ProjectLayout) -> Result<AgreementState, StorageError> {
     Ok(AgreementState::from_records(
         load_records(layout)?.union().0,
     ))

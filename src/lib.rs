@@ -4,6 +4,7 @@ pub mod beads;
 pub mod catalogue;
 mod check;
 mod cli;
+pub mod compile;
 pub mod contract;
 pub mod dashboard;
 pub mod dashboard_service;

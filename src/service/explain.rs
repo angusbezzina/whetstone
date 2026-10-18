@@ -198,12 +198,12 @@ fn needs(request_id: String, summary: String) -> ServiceResponse {
     response
 }
 
-fn looks_like_fingerprint(target: &str) -> bool {
+pub(crate) fn looks_like_fingerprint(target: &str) -> bool {
     let hex = target.strip_prefix("sha256:").unwrap_or(target);
     hex.len() >= 12 && hex.chars().all(|character| character.is_ascii_hexdigit())
 }
 
-fn normalize(target: &str) -> String {
+pub(crate) fn normalize(target: &str) -> String {
     let hex = target.strip_prefix("sha256:").unwrap_or(target);
     format!("sha256:{}", hex.to_ascii_lowercase())
 }
@@ -211,7 +211,7 @@ fn normalize(target: &str) -> String {
 /// The finding with this fingerprint in a findings file: `(rule, subject
 /// title, file)`. A given file must exist and parse; the default one is used
 /// only when present.
-fn from_findings_file(
+pub(crate) fn from_findings_file(
     root: &Path,
     given: Option<&Path>,
     fingerprint: &str,
@@ -268,7 +268,7 @@ fn from_findings_file(
 
 /// Recompute fingerprints for every rule over every subject a sweep could
 /// have named, and return the one that matches.
-fn recompute(
+pub(crate) fn recompute(
     root: &Path,
     rule_ids: &[RecordId],
     fingerprint: &str,

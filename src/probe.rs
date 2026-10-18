@@ -139,9 +139,9 @@ pub fn probe(layout: &ProjectLayout, id: &str, rule: &Rule) -> ProbeReport {
                 )),
                 Ok(run) => {
                     let total = run.failures.len();
-                    let mut report = report.finish(run.failures, total);
+                    let mut report = report;
                     report.files_in_scope = run.files_checked;
-                    report
+                    report.finish(run.failures, total)
                 }
             }
         }
@@ -162,7 +162,13 @@ pub fn probe(layout: &ProjectLayout, id: &str, rule: &Rule) -> ProbeReport {
         Enforcer::Formatter { tool: command }
         | Enforcer::Test { command }
         | Enforcer::Validator { command } => match gates::parse_command(command) {
-            Ok(_) => run_command(layout, id, rule, report),
+            Ok(sequences) => match missing_script(root, &sequences) {
+                Some(script) => report.refuse(format!(
+                    "the script {script} does not exist; write it first (see {})",
+                    crate::scripts::README
+                )),
+                None => run_command(layout, id, rule, report),
+            },
             Err(error) => report.refuse(format!("the command is not usable: {error}")),
         },
         other => report.refuse(format!(
@@ -170,6 +176,17 @@ pub fn probe(layout: &ProjectLayout, id: &str, rule: &Rule) -> ProbeReport {
             other.kind()
         )),
     }
+}
+
+/// A script under `whetstone/checks/` that a command names but that is not
+/// there: running it would report the shell's error as a finding.
+fn missing_script(root: &Path, sequences: &[Vec<String>]) -> Option<String> {
+    sequences
+        .iter()
+        .flatten()
+        .map(|token| token.trim_start_matches("./"))
+        .find(|token| token.starts_with(crate::domain::SCRIPTS_DIR) && !root.join(token).is_file())
+        .map(str::to_owned)
 }
 
 /// Run a command enforcer once over the whole repository, as the gate does.

@@ -405,7 +405,10 @@
             "starter",
             "hardening",
             "migration",
-            "lesson"
+            "lesson",
+            "prose",
+            "finding",
+            "pack"
           ]
         },
         "reference": {

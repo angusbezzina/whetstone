@@ -390,6 +390,13 @@ pub enum RuleSourceKind {
     Migration,
     /// Drafted from an admitted lesson (the reference is its key).
     Lesson,
+    /// Compiled from prose guidance (the reference is `file:line`).
+    Prose,
+    /// Drafted from a sweep finding (the reference is its fingerprint or
+    /// `rule@location`).
+    Finding,
+    /// Imported from a rule pack (the reference is `pack@version`).
+    Pack,
 }
 
 impl RuleSourceKind {
@@ -403,6 +410,9 @@ impl RuleSourceKind {
             Self::Hardening => "hardening",
             Self::Migration => "migration",
             Self::Lesson => "lesson",
+            Self::Prose => "prose",
+            Self::Finding => "finding",
+            Self::Pack => "pack",
         }
     }
 }

@@ -285,6 +285,12 @@ enum DashboardCommand {
         /// Probe the rule's enforcer on the repository first.
         #[serde(default)]
         probe: bool,
+        /// Compile rule drafts from prose pasted into the dashboard.
+        #[serde(default)]
+        from_text: Option<String>,
+        /// Draft a rule from a flag: `<rule id>@<location>` or a fingerprint.
+        #[serde(default)]
+        from_finding: Option<String>,
     },
     Check {
         #[serde(default)]
@@ -438,6 +444,8 @@ impl DashboardCommand {
                 tune,
                 lesson,
                 probe,
+                from_text,
+                from_finding,
             } => ServiceRequest::Change(ChangeRequest {
                 project_dir,
                 request_id,
@@ -491,6 +499,10 @@ impl DashboardCommand {
                 from_lesson: None,
                 probe,
                 allow_unvalidated: false,
+                from_text,
+                from_file: None,
+                from_finding,
+                findings: None,
             }),
             Self::Check {
                 request_id,

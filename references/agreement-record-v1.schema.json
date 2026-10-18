@@ -1485,7 +1485,10 @@
             "starter",
             "hardening",
             "migration",
-            "lesson"
+            "lesson",
+            "prose",
+            "finding",
+            "pack"
           ]
         },
         "reference": {
@@ -1657,6 +1660,32 @@
                 },
                 "record": {
                   "$ref": "#/$defs/record_ref"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "pack",
+                "id",
+                "version"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "pack"
+                },
+                "pack": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9-]{1,64}$"
+                },
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9-]{1,64}$"
+                },
+                "version": {
+                  "$ref": "#/$defs/nonempty"
                 }
               }
             }

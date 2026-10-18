@@ -21,6 +21,7 @@ use crate::storage::{ProjectLayout, RecordStore, StorageError, StoreKind};
 
 mod change;
 pub(crate) mod check;
+mod compile;
 mod dash;
 pub(crate) mod explain;
 mod init;
@@ -347,6 +348,15 @@ pub struct ChangeRequest {
     /// With `probe`: record the draft even when the probe says it is not
     /// validatable here (the rationale says why).
     pub allow_unvalidated: bool,
+    /// Compile rules from this prose: probed drafts for what names an
+    /// enforcer, and the rest returned as needing one.
+    pub from_text: Option<String>,
+    /// Compile rules from this file (CONTRIBUTING, a style guide, notes).
+    pub from_file: Option<PathBuf>,
+    /// Draft a rule from a finding: its fingerprint, or `<rule id>@<path[:line]>`.
+    pub from_finding: Option<String>,
+    /// With `from_finding`: the sweep's findings file.
+    pub findings: Option<PathBuf>,
 }
 
 /// Which in-force rules a check runs besides the compiled-in scanner.

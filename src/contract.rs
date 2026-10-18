@@ -72,9 +72,7 @@ pub fn merged(existing: Option<&str>, block: &str) -> (String, Outcome) {
             return (text, outcome);
         }
     }
-    let separator = if existing.is_empty() {
-        ""
-    } else if existing.ends_with("\n\n") {
+    let separator = if existing.is_empty() || existing.ends_with("\n\n") {
         ""
     } else if existing.ends_with('\n') {
         "\n"

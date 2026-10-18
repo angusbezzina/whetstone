@@ -228,10 +228,27 @@ enum Command {
         /// cannot start). Shows how many places it matched, with samples.
         #[arg(long)]
         probe: bool,
-        /// With --probe: record the draft even though the probe says it is
-        /// not validatable here; --rationale says why.
-        #[arg(long, requires = "probe")]
+        /// With --probe or --from-*: record a draft even though the probe
+        /// says it is not validatable here; --rationale says why.
+        #[arg(long)]
         allow_unvalidated: bool,
+        /// Compile rules from prose: list items and sentences that say must,
+        /// never, should, avoid or prefer. What names its enforcer (a
+        /// formatter, a lint code, a command, a script, a known construct) is
+        /// probed and recorded as a draft; the rest is returned as needing an
+        /// enforcer. Nothing takes force until a person accepts it.
+        #[arg(long, conflicts_with_all = ["from_file", "from_finding", "accept", "withdraw", "retire"])]
+        from_text: Option<String>,
+        /// Compile rules from a file (CONTRIBUTING.md, a style guide, notes).
+        #[arg(long, conflicts_with_all = ["from_text", "from_finding", "accept", "withdraw", "retire"])]
+        from_file: Option<PathBuf>,
+        /// Draft a must rule from a finding that keeps coming back: its
+        /// fingerprint, or <rule id>@<path[:line]>.
+        #[arg(long, conflicts_with_all = ["from_text", "from_file", "accept", "withdraw", "retire"])]
+        from_finding: Option<String>,
+        /// With --from-finding: the sweep's findings file.
+        #[arg(long, requires = "from_finding")]
+        findings: Option<PathBuf>,
     },
 
     /// Run the rules and return actionable findings, or record a review, a
@@ -732,6 +749,10 @@ pub fn run() -> i32 {
             from_lesson,
             probe,
             allow_unvalidated,
+            from_text,
+            from_file,
+            from_finding,
+            findings,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
             project_dir,
             request_id,
@@ -790,6 +811,10 @@ pub fn run() -> i32 {
             from_lesson,
             probe,
             allow_unvalidated,
+            from_text,
+            from_file,
+            from_finding,
+            findings,
         })),
         Some(Command::Check {
             project_dir,
