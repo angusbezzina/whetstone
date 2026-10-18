@@ -15,12 +15,11 @@ pub const MAX_RULE_LIST_ITEMS: usize = 32;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Strength {
-    /// Blocks: nothing but a mechanical pass, a proof or a review passes it.
+    /// Blocks the commit, push or CI check: nothing but a mechanical pass or
+    /// a proof passes it.
     Must,
-    /// Flags for repair; a person may accept the flag and continue.
+    /// Flags, never blocks the gate, and becomes a sweep finding.
     Should,
-    /// Shown to agents and people; never blocks.
-    Advisory,
 }
 
 impl Strength {
@@ -28,7 +27,6 @@ impl Strength {
         match self {
             Self::Must => "must",
             Self::Should => "should",
-            Self::Advisory => "advisory",
         }
     }
 }
@@ -384,7 +382,7 @@ impl Rule {
             .map(|unsure| unsure.reason.trim())
     }
 
-    /// An earlier `Standard` read as a v2 rule (`may` is advisory).
+    /// An earlier `Standard` read as a v2 rule (`may` is should).
     pub fn from_standard(standard: &super::Standard) -> Self {
         use super::{Enforcement, StandardStrength};
         let enforcer = match &standard.enforcement {
@@ -417,8 +415,7 @@ impl Rule {
             rationale,
             strength: match standard.strength {
                 StandardStrength::Must => Strength::Must,
-                StandardStrength::Should => Strength::Should,
-                StandardStrength::May => Strength::Advisory,
+                StandardStrength::Should | StandardStrength::May => Strength::Should,
             },
             enforcer,
             examples: Vec::new(),
@@ -458,7 +455,8 @@ pub(super) enum StoredRead {
 impl Rule {
     /// Read a stored rule revision that does not parse as a current rule:
     /// one held by a retired enforcer or in shadow is history, and otherwise
-    /// the dropped fields are ignored. `None` when the revision is not of either shape
+    /// the dropped fields are ignored and strength `advisory` is read as
+    /// should. `None` when the revision is not of either shape
     /// (it is then malformed).
     pub(super) fn from_stored(record: &serde_json::Value) -> Option<StoredRead> {
         let kind = record
@@ -472,6 +470,10 @@ impl Rule {
         let mut mapped = false;
         for field in DROPPED_RULE_FIELDS {
             mapped |= fields.remove(*field).is_some();
+        }
+        if fields.get("strength").and_then(serde_json::Value::as_str) == Some("advisory") {
+            fields.insert("strength".into(), "should".into());
+            mapped = true;
         }
         if !mapped {
             return None;

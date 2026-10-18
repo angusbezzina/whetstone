@@ -62,7 +62,7 @@ function view(mode) {
     rule("rule.no-unsafe", "No unsafe blocks.", "must", "AST query", "(unsafe_block) @match", { runs_at: "pre-commit, pre-push and CI", examples: [example("pub fn run(p: *const u8) -> u8 { unsafe { *p } }", "flag", "An unsafe block.")], enforcerRecord: { kind: "ast", query: "(unsafe_block) @match", language: "rust" } }),
     rule("rule.tests", "Rust tests pass.", "must", "Test", "cargo test", { result: label("warn", "pass · stale") }),
     rule("rule.no-todo", XSS + "No TODO comments.", "should", "Test", "false", { result: label("fail", "fail · 1"), pending: { version: 2, title: "No TODO or FIXME", proposal: "proposal.a" } }),
-    rule("rule.plain-words", "Name things in plain words.", "advisory", "Validator", "scripts/plain-words", { result: label("muted", "advisory"), enforcerRecord: { kind: "validator", command: "scripts/plain-words" } }),
+    rule("rule.plain-words", "Name things in plain words.", "should", "Validator", "scripts/plain-words", { result: label("pass", "pass"), enforcerRecord: { kind: "validator", command: "scripts/plain-words" } }),
   ];
   const feature = {
     ...entry("feature.dashboard", "feature", "Dashboard", { state: label("fail", "fail · 2") }),
@@ -94,7 +94,7 @@ function view(mode) {
         gate("rule.no-todo", "No TODO comments.", "should", "Test", "false", label("fail", "fail · 1"), { failures: [{ location: "exit code 1", message: XSS + "$ false" }], brief, evidence: [{ kind: "whetstone_evidence", locator: "run1/rule_no-todo.log", digest: null }] }),
         gate("rule.draft", "No raw regex as enforcement.", "should", "AST query", "(regex)", label("draft", "draft · not run"), { eligible: false, last_run: null }),
       ] : [],
-      advisory: 1, receipts: [], driver: { configured: true, path: "whetstone/verify/drive.mjs", label: "verification driver present" },
+      receipts: [], driver: { configured: true, path: "whetstone/verify/drive.mjs", label: "verification driver present" },
     },
     attention: established ? [
       { priority: 1, tone: "fail", kind: "agent_repair", kind_label: "agent repair", title: "Failing rule: No TODO comments", text: "1 failure in the latest check.", actor: "your coding agent", next: "Hand the brief to the agent.", route: "checks", focus: "rule.no-todo", action_label: "Open the failing rule", agent_instruction: brief },
@@ -268,8 +268,8 @@ try {
   // Rules: grouped by strength, enforcer, runs at, examples, edits.
   await click("#tab-rules");
   await cdp.waitFor("document.querySelector('#r-must')", "rules did not render");
-  check(await cdp.evaluate("[...document.querySelectorAll('#rules .panel .ph h2')].map(h => h.firstChild.textContent).join('|') === 'Mission|Principles|Must|Should|Advisory|Earlier records|Features'"), "rules render mission, principles, strengths, legacy and features in order");
-  check(await count("#r-must .rec") === 2 && await count("#r-should .rec") === 1 && await count("#r-advisory .rec") === 1, "every rule sits under its strength");
+  check(await cdp.evaluate("[...document.querySelectorAll('#rules .panel .ph h2')].map(h => h.firstChild.textContent).join('|') === 'Mission|Principles|Must|Should|Earlier records|Features'"), "rules render mission, principles, strengths, legacy and features in order");
+  check(await count("#r-must .rec") === 2 && await count("#r-should .rec") === 2, "every rule sits under its strength");
   check(await cdp.evaluate("/pre-commit, pre-push and CI/.test(document.querySelector('[data-id=\"rule.no-unsafe\"]').textContent)"), "a rule says where it runs");
   check(await cdp.evaluate("document.querySelector('[data-id=\"rule.no-todo\"] .ver').textContent.includes('draft v2 pending')"), "a pending draft is labelled while the accepted rule stays in force");
   check(await cdp.evaluate("document.querySelector('[data-id=\"rule.no-unsafe\"] details.ex pre').textContent.includes('unsafe')"), "labelled examples sit behind a disclosure");
@@ -285,13 +285,14 @@ try {
   check(edit.definition.enforcer.kind === "ast" && edit.definition.examples.length === 1 && edit.definition.type === "rule", "the enforcer and labelled examples are kept");
   await click("#record-draft");
   await cdp.waitFor("document.querySelector('#announce').textContent.includes('private draft')", "recording did not announce");
-  await click("#r-advisory .addrow .btn");
-  await cdp.waitFor("document.querySelector('#r-advisory .editor.open form')", "the add-rule editor did not open");
-  check(await cdp.evaluate("[...document.querySelectorAll('#r-advisory .editor.open [name=enforcer] option')].map(o => o.value).join() === 'test,lint,formatter,ast,validator,drive'"), "the enforcer picker lists the enforcer kinds");
-  await fill("#r-advisory .editor.open form", { content: "Ask a person before deleting data.", enforcer: "validator", value: "scripts/check-deletes", rationale: "Data is irreplaceable" });
+  await click("#r-should .addrow .btn");
+  await cdp.waitFor("document.querySelector('#r-should .editor.open form')", "the add-rule editor did not open");
+  check(await cdp.evaluate("[...document.querySelectorAll('#r-should .editor.open [name=enforcer] option')].map(o => o.value).join() === 'test,lint,formatter,ast,validator,drive'"), "the enforcer picker lists the enforcer kinds");
+  check(await cdp.evaluate("[...document.querySelectorAll('#r-should .editor.open [name=strength] option')].map(o => o.value).join() === 'must,should'"), "the strength picker lists must and should");
+  await fill("#r-should .editor.open form", { content: "Ask a person before deleting data.", enforcer: "validator", value: "scripts/check-deletes", rationale: "Data is irreplaceable" });
   await cdp.waitFor("document.querySelector('#record-draft')", "the new rule review did not render");
   const added = last((c) => c.workflow === "change" && c.preview === true);
-  check(added.record_id === "rule.ask-a-person-before-deleting-data" && added.definition.strength === "advisory" && q(added.definition.enforcer) === q({ kind: "validator", command: "scripts/check-deletes" }), "a new rule posts one strength and one enforcer");
+  check(added.record_id === "rule.ask-a-person-before-deleting-data" && added.definition.strength === "should" && q(added.definition.enforcer) === q({ kind: "validator", command: "scripts/check-deletes" }), "a new rule posts one strength and one enforcer");
   await click('[data-id="principle.prove-it-works"] .e button');
   await cdp.waitFor("document.querySelector('.editor.open form [name=content]')", "the principle editor did not open");
   await fill(".editor.open form", { rationale: "Keep it" });

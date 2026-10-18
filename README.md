@@ -17,8 +17,9 @@ system, and agents guessing instead of asking.
    offers the starter rules the repository can hold, and turns your mission,
    principles and example codebases into proposed rules. You accept each one in the dashboard.
    Accepted rules are records in Beads.
-2. **Enforce each rule mechanically.** Every rule has one strength (must,
-   should or advisory) and one mechanical enforcer (AST, linter, formatter,
+2. **Enforce each rule mechanically.** Every rule has one strength (must
+   blocks the gate; should flags and becomes a sweep finding) and one
+   mechanical enforcer (AST, linter, formatter,
    test, validator) scored against the rule's examples.
 3. **Brief before building, prove before shipping.** Agents run pstack's
    `/how`, `/why` and `/blast-radius` first. Checks run at git pre-commit

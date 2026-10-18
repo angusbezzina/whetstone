@@ -156,7 +156,7 @@ pub(crate) fn progress(layout: &ProjectLayout, records: Option<&[AgreementRecord
             OnboardingStep {
                 key: "tools",
                 label: "Beads and pstack",
-                hint: "installed and pinned, so records and briefs work",
+                hint: "installed and pinned, so records work",
                 done: tools.ready,
                 optional: true,
             },

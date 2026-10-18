@@ -54,7 +54,7 @@
     },
     {
       "id": "R-006",
-      "name": "strength is must, should or advisory only",
+      "name": "strength is must or should only",
       "record_type": "rule",
       "record": {
         "schema": "whetstone.rule.v2",
@@ -192,6 +192,21 @@
       "expect": "retired"
     },
     {
+      "id": "R-019",
+      "name": "a stored advisory rule loads as should",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Prefer small functions.",
+        "rationale": "Readability.",
+        "strength": "advisory",
+        "enforcer": { "kind": "lint", "tool": "ruff check .", "code": "C901" },
+        "source": { "kind": "owner" }
+      },
+      "expect": "stored",
+      "rule_view_strength": "should"
+    },
+    {
       "id": "P-020",
       "name": "a pstack principle is pinned to its id and version",
       "record_type": "principle",
@@ -281,7 +296,7 @@
     },
     {
       "id": "M-040",
-      "name": "an earlier may-standard is enforced as an advisory rule",
+      "name": "an earlier may-standard is enforced as a should rule",
       "record_type": "standard",
       "record": {
         "statement": "Run the tests.",
@@ -290,7 +305,7 @@
         "enforcement": { "enforcement": "test", "command_ref": "cargo test" }
       },
       "expect": "valid",
-      "rule_view_strength": "advisory"
+      "rule_view_strength": "should"
     },
     {
       "id": "M-041",

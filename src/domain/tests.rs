@@ -284,7 +284,7 @@ fn earlier_standards_read_as_rules() {
     };
     let rule = Rule::from_standard(&standard);
     rule.validate().expect("valid");
-    assert_eq!(rule.strength, Strength::Advisory);
+    assert_eq!(rule.strength, Strength::Should, "an earlier may is should");
     assert!(matches!(rule.enforcer, Enforcer::Test { ref command } if command == "cargo test"));
     assert!(rule.rationale.contains("cargo test -q"));
 }

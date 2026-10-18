@@ -568,15 +568,9 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                 };
                 (outcome, evidence)
             };
-            {
-                let advisory = rule.strength == Strength::Advisory;
-                requirements.push(VerificationRequirement {
+            requirements.push(VerificationRequirement {
                     id: format!("gate:{}", selected.id.as_str()),
-                    kind: if advisory {
-                        RequirementKind::AdvisoryGuidance
-                    } else {
-                        RequirementKind::NativeCheck
-                    },
+                    kind: RequirementKind::NativeCheck,
                     required: rule.strength == Strength::Must,
                     checker_manifest: Some(selected.reference.digest.clone()),
                     governing_records: vec![selected.reference.clone()],
@@ -586,22 +580,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                     verification_command: format!("wh check --rule {}", selected.id.as_str()),
                     freshness_seconds: 3_600,
                 });
-                {
-                    if advisory {
-                        evidence_items.push(VerificationEvidence::Advisory {
-                            requirement_id: format!("gate:{}", selected.id.as_str()),
-                            evidence: EvidencePointer {
-                                source: "whetstone_advisory".into(),
-                                locator: selected.id.as_str().into(),
-                                digest: digest_bytes(outcome.summary.as_bytes()),
-                            },
-                            summary: outcome.summary.clone(),
-                        });
-                    } else {
-                        evidence_items.push(evidence);
-                    }
-                }
-            }
+            evidence_items.push(evidence);
             outcomes.push(outcome);
         }
     }
@@ -697,12 +676,11 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         .iter()
         .any(|requirement| requirement.required)
     {
-        // Only should and advisory rules ran: there is no must rule to hold,
+        // Only should rules ran: there is no must rule to hold,
         // so the check itself neither passes nor fails a must; its flags are
         // listed below for repair or labelling.
         state = ServiceState::Success;
-        summary =
-            "No must rule applies to this check; should and advisory results are listed.".into();
+        summary = "No must rule applies to this check; should results are listed.".into();
     }
     if let Some(sweep) = &sweep {
         let proven = sweep["tally"]["proven"].as_u64().unwrap_or(0);

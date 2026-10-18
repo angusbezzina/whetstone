@@ -1,10 +1,9 @@
 //! The pre-push gate through real `git push` to a bare remote, with the
 //! hooks `wh init --action wire --hooks` installs. A push is refused unless
 //! the pushed commit itself holds every must rule: it must be checked out
-//! with no uncommitted tracked changes, a broken mechanical rule or a failed
-//! re-proof blocks it, and a must review needs an attestation at the pushed
-//! commit. A new branch is checked against the remote's default branch. A
-//! repository whose only rule is a review can still commit.
+//! with no uncommitted tracked changes, and a broken mechanical rule or a
+//! failed re-proof blocks it. A new branch is checked against the remote's
+//! default branch.
 
 use std::ffi::OsString;
 use std::fs;

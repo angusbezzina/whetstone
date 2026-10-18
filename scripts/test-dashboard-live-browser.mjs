@@ -70,7 +70,7 @@ try {
   // Rules: grouped by strength, one enforcer, where it runs, examples.
   await click("#tab-rules");
   await cdp.waitFor("document.querySelector('#r-must .rec')", "rules did not render");
-  check(await cdp.evaluate("[...document.querySelectorAll('#rules .panel .ph h2')].map(h => h.firstChild.textContent).slice(0, 5).join('|') === 'Mission|Principles|Must|Should|Advisory'"), "rules are grouped mission, principles, then by strength");
+  check(await cdp.evaluate("[...document.querySelectorAll('#rules .panel .ph h2')].map(h => h.firstChild.textContent).slice(0, 4).join('|') === 'Mission|Principles|Must|Should'"), "rules are grouped mission, principles, then by strength");
   check(await cdp.evaluate("document.querySelectorAll('#r-principles .rec').length === 3"), "three principles are recorded");
   check(await cdp.evaluate("document.querySelectorAll('#r-must .rec').length === 1 && document.querySelectorAll('#r-should .rec').length === 0"), "one must rule and no should rule");
   check(await cdp.evaluate("/pre-push/.test(document.querySelector('[data-id=\"rule.prove-it-works\"]').textContent)"), "a rule names where it runs");

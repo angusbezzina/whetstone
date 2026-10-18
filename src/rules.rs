@@ -1122,8 +1122,7 @@ pub fn legacy_rules_as_v2(
             },
             strength: match rule.severity.as_str() {
                 "must" => Strength::Must,
-                "should" => Strength::Should,
-                _ => Strength::Advisory,
+                _ => Strength::Should,
             },
             enforcer,
             examples,

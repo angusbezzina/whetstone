@@ -85,6 +85,10 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   scanners, and the ask-before-public-API starter: pre-commit runs AST rules
   only. A stored rule held by either is read as retired history. A design
   token rule can be expressed as a validator rule.
+- The `advisory` strength: a rule is must (blocks the gate) or should
+  (flags, never blocks, and becomes a sweep finding). A stored advisory rule
+  loads as should with its digest unchanged, and earlier `may` standards
+  and YAML rules map to should; `wh change` refuses `advisory`.
 
 ## [0.13.0] - 2026-10-15
 

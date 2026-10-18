@@ -63,8 +63,7 @@
     "strength": {
       "enum": [
         "must",
-        "should",
-        "advisory"
+        "should"
       ]
     },
     "enforcer": {

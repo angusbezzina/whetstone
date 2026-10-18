@@ -1365,7 +1365,7 @@ fn rule_definitions_hold_one_strength_and_one_enforcer() {
         r#"{"kind":"validator","command":"python3 scripts/check.py"}"#,
         r#"{"kind":"drive","feature":"feature.search"}"#,
     ];
-    for (index, strength) in ["must", "should", "advisory"].into_iter().enumerate() {
+    for (index, strength) in ["must", "should"].into_iter().enumerate() {
         for (offset, enforcer) in enforcers.iter().enumerate() {
             let definition =
                 format!(r#"{{"type":"rule","strength":"{strength}","enforcer":{enforcer}}}"#);
@@ -1395,6 +1395,7 @@ fn rule_definitions_hold_one_strength_and_one_enforcer() {
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"true","query":"(identifier)"}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"vibes"}}"#,
         r#"{"type":"rule","strength":"may","enforcer":{"kind":"test","command":"true"}}"#,
+        r#"{"type":"rule","strength":"advisory","enforcer":{"kind":"test","command":"true"}}"#,
         r#"{"type":"rule","strength":"must"}"#,
         r#"{"type":"standard","strength":"must","enforcement":{"enforcement":"test","command_ref":"cargo test"}}"#,
     ] {

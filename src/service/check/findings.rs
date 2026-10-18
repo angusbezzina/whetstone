@@ -1,6 +1,6 @@
-//! Sweep findings: `wh check --sweep --format findings` runs only the rules
-//! below must (should or advisory) and turns each flag into one
-//! finding for a night sweep's controller to work (Messo's, inside Virgil).
+//! Sweep findings: `wh check --sweep --format findings` runs only the should
+//! rules and turns each flag into one finding for a night sweep's controller
+//! to work (Messo's, inside Virgil).
 //!
 //! A finding is `{fingerprint, subjectDigest, class, priority, title,
 //! responsibility, unsure?}`: `priority` (0 most urgent to 4) is the rule's,
@@ -293,12 +293,12 @@ mod tests {
             class: "discuss",
             priority: 2,
             title: "Print is a smell. (src/app.py)".into(),
-            responsibility: "rule.print-advisory".into(),
+            responsibility: "rule.print-doubtful".into(),
             unsure: unsure.map(str::to_owned),
         };
         assert_eq!(
             json_array(&[finding(None), finding(Some("borderline"))]),
-            "[\n{\"fingerprint\":\"sha256:f\",\"subjectDigest\":\"sha256:d\",\"class\":\"discuss\",\"priority\":2,\"title\":\"Print is a smell. (src/app.py)\",\"responsibility\":\"rule.print-advisory\"},\n{\"fingerprint\":\"sha256:f\",\"subjectDigest\":\"sha256:d\",\"class\":\"discuss\",\"priority\":2,\"title\":\"Print is a smell. (src/app.py)\",\"responsibility\":\"rule.print-advisory\",\"unsure\":\"borderline\"}\n]\n"
+            "[\n{\"fingerprint\":\"sha256:f\",\"subjectDigest\":\"sha256:d\",\"class\":\"discuss\",\"priority\":2,\"title\":\"Print is a smell. (src/app.py)\",\"responsibility\":\"rule.print-doubtful\"},\n{\"fingerprint\":\"sha256:f\",\"subjectDigest\":\"sha256:d\",\"class\":\"discuss\",\"priority\":2,\"title\":\"Print is a smell. (src/app.py)\",\"responsibility\":\"rule.print-doubtful\",\"unsure\":\"borderline\"}\n]\n"
         );
     }
 }

@@ -220,8 +220,7 @@ pub(crate) fn skill_markdown(
         );
         for (strength, label, meaning) in [
             (crate::domain::Strength::Must, "Must", "blocks the commit, push or CI check until it holds; only a mechanical pass or a proof passes it"),
-            (crate::domain::Strength::Should, "Should", "flags for repair; the owner may accept or dismiss the flag"),
-            (crate::domain::Strength::Advisory, "Advisory", "shown to you and the owner; never blocks"),
+            (crate::domain::Strength::Should, "Should", "flags for repair, never blocks the gate, and becomes a sweep finding"),
         ] {
             let matching = rule_records
                 .iter()

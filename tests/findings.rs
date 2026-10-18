@@ -229,7 +229,7 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
             json!({"sweep_unsure": [{"paths": ["src/**"], "reason": " "}]}),
         ),
     ] {
-        let mut definition = rule("advisory", None);
+        let mut definition = rule("should", None);
         for (key, value) in bad.as_object().expect("object") {
             definition[key] = value.clone();
         }
@@ -239,19 +239,19 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
             "{name}: {refused}"
         );
     }
-    let mut doubtful = rule("advisory", None);
+    let mut doubtful = rule("should", None);
     doubtful["sweep_unsure"] = json!([{"matching": "print\\('one'\\)", "reason": "a one-off print in a demo is borderline"}]);
-    let advisory = draft_rule(
+    let doubtful = draft_rule(
         root,
-        "advisory",
-        "rule.print-advisory",
+        "doubtful",
+        "rule.print-doubtful",
         "Print is a smell.",
         doubtful,
         &[],
     );
     accept(
         root,
-        advisory["data"]["proposal"]["id"]
+        doubtful["data"]["proposal"]["id"]
             .as_str()
             .expect("proposal"),
     );
@@ -277,7 +277,7 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
             .map(|rule| rule["sweep_class"].clone())
     };
     assert_eq!(class_of("rule.print-should"), Some(json!("draft_pr")));
-    assert_eq!(class_of("rule.print-advisory"), Some(json!("discuss")));
+    assert_eq!(class_of("rule.print-doubtful"), Some(json!("discuss")));
     assert_eq!(class_of("rule.print-must"), Some(json!("discuss")));
     let priority_of = |id: &str| {
         dash["data"]["current"]["rules"]
@@ -287,7 +287,7 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
     };
     assert_eq!(priority_of("rule.print-should"), Some(json!(0)));
     assert_eq!(
-        priority_of("rule.print-advisory"),
+        priority_of("rule.print-doubtful"),
         Some(json!(2)),
         "no priority reads as 2"
     );
@@ -333,7 +333,7 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
         .map(String::from)
         .into_iter()
         .collect::<BTreeSet<_>>();
-        if finding["responsibility"] == "rule.print-advisory" {
+        if finding["responsibility"] == "rule.print-doubtful" {
             expected.insert("unsure".into());
         }
         assert_eq!(keys, expected, "{finding}");
@@ -375,11 +375,11 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
             .expect(id)
     };
     assert_eq!(by_rule("rule.print-should")["class"], "draft_pr");
-    assert_eq!(by_rule("rule.print-advisory")["class"], "discuss");
+    assert_eq!(by_rule("rule.print-doubtful")["class"], "discuss");
     assert_eq!(by_rule("rule.print-should")["priority"], 0);
-    assert_eq!(by_rule("rule.print-advisory")["priority"], 2);
+    assert_eq!(by_rule("rule.print-doubtful")["priority"], 2);
     assert_eq!(
-        by_rule("rule.print-advisory")["unsure"],
+        by_rule("rule.print-doubtful")["unsure"],
         "a one-off print in a demo is borderline"
     );
 
@@ -394,14 +394,14 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
         .expect("still flagged");
     assert_eq!(after["fingerprint"], before["fingerprint"]);
     assert_ne!(after["subjectDigest"], before["subjectDigest"]);
-    let advisory_after = serde_json::from_slice::<Vec<Value>>(&changed.stdout)
+    let doubtful_after = serde_json::from_slice::<Vec<Value>>(&changed.stdout)
         .expect("findings")
         .into_iter()
-        .find(|finding| finding["responsibility"] == "rule.print-advisory")
+        .find(|finding| finding["responsibility"] == "rule.print-doubtful")
         .expect("still flagged");
     assert!(
-        advisory_after.get("unsure").is_none(),
-        "the doubt covers only the flags its pattern matches: {advisory_after}"
+        doubtful_after.get("unsure").is_none(),
+        "the doubt covers only the flags its pattern matches: {doubtful_after}"
     );
 
     // A should flag is never required; the must rule's is.

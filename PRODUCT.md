@@ -18,8 +18,8 @@ self-contained static HTML file under `planning/direction-demo/`.
 
 Whetstone lets people delegate more to coding agents and trust the result. The
 owner's mission, the pstack principles they pick and the codebases they admire
-become a short list of agreed rules. Every rule has one strength (must, should
-or advisory) and exactly one mechanical enforcer. Agents and people in any
+become a short list of agreed rules. Every rule has one strength (must or
+should) and exactly one mechanical enforcer. Agents and people in any
 tool are briefed on the rules before building and checked at pre-commit,
 pre-push and CI. Every consequential change is an append-only, inspectable
 decision. The direction is in `planning/direction.md` and Beads
@@ -97,7 +97,7 @@ product's own dashboard files):
 ## Terminology
 
 Mission, principle (a pstack principle or the owner's own), exemplar codebase,
-rule (one strength must/should/advisory and one mechanical enforcer), flag,
+rule (one strength must/should and one mechanical enforcer), flag,
 check (a run of rules), receipt, local draft, accepted,
 superseded, owner.
 

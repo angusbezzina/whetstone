@@ -240,7 +240,6 @@ pub struct LastCheck {
 pub struct ChecksView {
     pub last_complete: Option<LastCheck>,
     pub gates: Vec<GateRun>,
-    pub advisory: usize,
     pub receipts: Vec<EvidenceSummary>,
     pub driver: DriverState,
 }
@@ -630,11 +629,7 @@ pub fn gate_brief(
 }
 
 fn strength_order(strength: &str) -> u8 {
-    match strength {
-        "must" => 0,
-        "should" => 1,
-        _ => 2,
-    }
+    u8::from(strength != "must")
 }
 
 /// `id@revision#digest`, the stable text form of a record reference.
@@ -872,10 +867,6 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
         features,
         checks: ChecksView {
             last_complete,
-            advisory: gate_runs
-                .iter()
-                .filter(|run| run.eligible && run.strength == "advisory")
-                .count(),
             gates: gate_runs,
             receipts,
             driver,

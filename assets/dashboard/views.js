@@ -2,7 +2,7 @@ let h,st,dt;const chev='M6 3l5 5-5 5',D=(c,...x)=>h("div",{class:c},...x),B=(c,o
 function icon(path){const n="http://www.w3.org/2000/svg",s=document.createElementNS(n,"svg"),p=document.createElementNS(n,"path");s.setAttribute("viewBox","0 0 16 16");s.setAttribute("fill","none");s.setAttribute("stroke","currentColor");s.setAttribute("stroke-width","1.5");s.setAttribute("aria-hidden","true");p.setAttribute("d",path);s.append(p);return s}
 const F={q:"",asOf:"",kind:"decision"};
 const PREFIX={mission:"mission",principle:"principle",rule:"rule",feature:"feature"};
-const GROUPS=[["must","Must","fails the check until repaired"],["should","Should","flags for review; never blocks"],["advisory","Advisory","briefed to agents; never checked"]];
+const GROUPS=[["must","Must","fails the check until repaired"],["should","Should","flags for review; never blocks"]];
 const ed=(a,fn,...x)=>e=>{const t=e.currentTarget;a.editor().then(m=>m[fn](a,...x,t))};
 function head(title,sub,...extra){return D("viewhead",T("h1",0,title),T("p","sub",sub),...extra)}
 function ver(x){return D("ver",T("b",0,"v"+x.version)," · ",x.lifecycle==="draft"?T("i",0,"draft"):"accepted",x.pending?[h("br"),T("i",0,"draft v"+x.pending.version+" pending")]:null)}
@@ -16,7 +16,7 @@ function rule(a,r){return rec(a,r,false,D("d",D("enf",r.enforcer+" ",r.command?T
 function links(label,list){return list.length?P("lk",label+" ",list.map((l,i)=>[i?", ":null,l.title])):null}
 function feature(a,f){const r=rec(a,f,false,D("d",f.summary+" ",h("br"),links("serves",f.serves),links("proven by",f.proven_by),h("br"),P("k","proof "),f.proof,f.drift?.length?[h("br"),P("k","changed since proof "),f.drift.join(", ")]:null));r.classList.add("feat");return r}
 function rules(a){const el=a.$("rules"),c=a.W.value?.data?.current;el.textContent="";if(!c)return;
-el.append(head("Rules","The mission, your principles and the rules drawn from them. Each rule has one strength and one enforcer: a mechanical check, else a Jev question. Edits are private drafts until you accept them."));
+el.append(head("Rules","The mission, your principles and the rules drawn from them. Each rule has one strength and one mechanical enforcer. Edits are private drafts until you accept them."));
 if(!c.established&&!c.rules.length){el.append(T("p","notice","No rule is agreed yet. Start onboarding on Home, or run wh init."),B("",{text:"Open onboarding",onclick:()=>a.show("home","onboard")}));return}
 const by=s=>c.rules.filter(r=>r.strength===s);
 el.append(panel(a,"r-mission","Mission","why the project exists",c.mission?[c.mission]:[],x=>rec(a,x,true),c.mission?null:[{kind:"mission",record_id:"mission.project",content:"",definition:null},"State the mission"]));
@@ -37,7 +37,6 @@ const det=h("div",{class:"bdetail"+(open?" open":""),id},h("div",{},D("in",h("di
 exp.addEventListener("click",()=>{const o=!det.classList.contains("open");det.classList.toggle("open",o);exp.setAttribute("aria-expanded",String(o))});
 board.append(h("div",{class:"brow",role:"row","data-id":g.id,id:"gate-"+g.id},D("name",g.name,T("span","strength",g.strength),P("how",g.mechanism+" · ",T("code",0,g.command)),g.eligible?null:T("small",0,"draft · not checked until accepted")),T("span","when",g.last_run?dt(g.last_run):"never"),h("span",{class:"state "+g.result.tone,text:g.result.label}),exp),det)}
 if(!k.gates.length)board.append(T("div","empty","No checked rule is in force. Add one in Rules."));el.append(board);
-el.append(D("advisory",T("span",0,k.advisory+" advisory "+(k.advisory===1?"rule is":"rules are")+" briefed to agents and never counted as checks."),B("quiet",{text:"See rules",onclick:()=>a.show("rules","r-advisory")})));
 el.append(D("skill",h("span",{},"Verification skill ",st(c.skill.label),c.skill.hosts.length?" · "+c.skill.hosts.join(", "):null),h("span",{},k.driver.label+" ",k.driver.path?T("code",0,k.driver.path):null),!c.skill.current?T("code","cmd","wh init --action wire --hooks"):null));
 }
 function changelog(a){const el=a.$("changelog"),c=a.W.value?.data?.current,o=a.$("cl-q"),sel=o&&document.activeElement===o?[o.selectionStart,o.selectionEnd]:null;el.textContent="";if(!c?.established)return;

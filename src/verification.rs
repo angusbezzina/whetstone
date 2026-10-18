@@ -53,7 +53,6 @@ pub struct SnapshotBinding {
 pub enum RequirementKind {
     /// A mechanical check: scanner, command, drive, tokens or surface.
     NativeCheck,
-    AdvisoryGuidance,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,11 +151,6 @@ pub(crate) enum VerificationEvidence {
         requirement_id: String,
         reason: String,
     },
-    Advisory {
-        requirement_id: String,
-        evidence: EvidencePointer,
-        summary: String,
-    },
 }
 
 /// Opaque evidence batch produced only by trusted in-process adapters.
@@ -187,7 +181,6 @@ pub enum CheckState {
     Unavailable,
     Stale,
     Skipped,
-    Advisory,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -307,14 +300,6 @@ pub fn aggregate(
                 evaluated_at_unix,
                 redactions,
             )?
-        } else if requirement.kind == RequirementKind::AdvisoryGuidance {
-            failed_result(
-                &requirement,
-                CheckState::Advisory,
-                EvidenceFreshness::Missing,
-                "advisory_not_observed",
-                "Advisory guidance has no current observation and does not affect completion.",
-            )
         } else {
             failed_result(
                 &requirement,
@@ -503,15 +488,6 @@ fn resolve_observation(
             findings,
             ..
         } => {
-            if requirement.kind != RequirementKind::NativeCheck {
-                return Ok(failed_result(
-                    requirement,
-                    CheckState::Unknown,
-                    EvidenceFreshness::Missing,
-                    "evidence_kind_mismatch",
-                    "Mechanical evidence cannot substitute for advisory guidance.",
-                ));
-            }
             let (state, reason) = match state {
                 ObservedState::Success => (CheckState::Success, "check_succeeded"),
                 ObservedState::Violated => (CheckState::Violated, "check_violated"),
@@ -539,28 +515,6 @@ fn resolve_observation(
             "required_check_skipped",
             &bounded(reason, redactions),
         )),
-        VerificationEvidence::Advisory {
-            evidence, summary, ..
-        } => {
-            if requirement.kind != RequirementKind::AdvisoryGuidance {
-                return Ok(failed_result(
-                    requirement,
-                    CheckState::Unknown,
-                    EvidenceFreshness::Missing,
-                    "evidence_kind_mismatch",
-                    "Advisory evidence cannot satisfy a required check.",
-                ));
-            }
-            let mut result = failed_result(
-                requirement,
-                CheckState::Advisory,
-                EvidenceFreshness::Fresh,
-                "advisory",
-                &bounded(summary, redactions),
-            );
-            result.evidence = Some(sanitize_pointer(evidence, redactions)?);
-            Ok(result)
-        }
         VerificationEvidence::Execution {
             snapshot,
             receipt,
@@ -569,15 +523,6 @@ fn resolve_observation(
             findings,
             ..
         } => {
-            if requirement.kind != RequirementKind::NativeCheck {
-                return Ok(failed_result(
-                    requirement,
-                    CheckState::Unknown,
-                    EvidenceFreshness::Missing,
-                    "evidence_kind_mismatch",
-                    "Execution evidence cannot substitute for advisory guidance.",
-                ));
-            }
             let expected_manifest = requirement.checker_manifest.as_ref();
             let manifest_matches =
                 expected_manifest.is_some_and(|digest| digest.as_str() == receipt.manifest_digest);
@@ -755,17 +700,9 @@ fn validate_plan(plan: &VerificationPlan) -> Result<(), VerificationError> {
                 requirement.id
             )));
         }
-        if requirement.kind == RequirementKind::NativeCheck
-            && requirement.checker_manifest.is_none()
-        {
+        if requirement.checker_manifest.is_none() {
             return Err(VerificationError::InvalidPlan(format!(
                 "native check {} lacks a checker manifest digest",
-                requirement.id
-            )));
-        }
-        if requirement.kind == RequirementKind::AdvisoryGuidance && requirement.required {
-            return Err(VerificationError::InvalidPlan(format!(
-                "advisory {} cannot be required",
                 requirement.id
             )));
         }
@@ -779,8 +716,7 @@ fn evidence_id(evidence: &VerificationEvidence) -> &str {
     match evidence {
         VerificationEvidence::NativeCheck { requirement_id, .. }
         | VerificationEvidence::Execution { requirement_id, .. }
-        | VerificationEvidence::Skipped { requirement_id, .. }
-        | VerificationEvidence::Advisory { requirement_id, .. } => requirement_id,
+        | VerificationEvidence::Skipped { requirement_id, .. } => requirement_id,
     }
 }
 
@@ -902,7 +838,6 @@ fn check_state_name(state: CheckState) -> &'static str {
         CheckState::Unavailable => "UNAVAILABLE",
         CheckState::Stale => "STALE",
         CheckState::Skipped => "SKIPPED",
-        CheckState::Advisory => "ADVISORY",
     }
 }
 
@@ -1007,7 +942,6 @@ mod tests {
                 requirement("native", RequirementKind::NativeCheck, true),
                 requirement("acceptance", RequirementKind::NativeCheck, true),
                 requirement("review", RequirementKind::NativeCheck, true),
-                requirement("advice", RequirementKind::AdvisoryGuidance, false),
             ],
         }
     }
@@ -1092,11 +1026,6 @@ mod tests {
             native(ExecutionState::Success, true),
             observed("acceptance", ObservedState::Success),
             observed("review", ObservedState::Success),
-            VerificationEvidence::Advisory {
-                requirement_id: "advice".into(),
-                evidence: pointer("advice"),
-                summary: "consider a smaller interface".into(),
-            },
         ]
     }
 
@@ -1105,11 +1034,11 @@ mod tests {
         let report = aggregate(&plan(), &complete_evidence(), 120, &[]).expect("complete report");
         assert_eq!(report.state, VerificationState::Success);
         assert_eq!(report.schema, VERIFICATION_SCHEMA);
-        assert_eq!(report.results.len(), 4);
-        assert_eq!(report.results[0].state, CheckState::Success);
-        assert_eq!(report.results[1].state, CheckState::Advisory);
-        assert_eq!(report.results[2].state, CheckState::Success);
-        assert_eq!(report.results[3].state, CheckState::Success);
+        assert_eq!(report.results.len(), 3);
+        assert!(report
+            .results
+            .iter()
+            .all(|result| result.state == CheckState::Success));
         assert!(report.human_summary().contains("(success)"));
 
         let partial = aggregate(&plan(), &[native(ExecutionState::Success, true)], 120, &[])
@@ -1231,40 +1160,6 @@ mod tests {
             .find(|result| result.requirement_id == "native")
             .expect("native result");
         assert_eq!(native.reason_code, "untrusted_execution_receipt");
-    }
-
-    #[test]
-    fn evidence_variants_cannot_substitute_for_another_requirement_kind() {
-        let substitutions = vec![(
-            "review",
-            VerificationEvidence::Advisory {
-                requirement_id: "review".into(),
-                evidence: pointer("wrong-advisory"),
-                summary: "an advisory is not a review".into(),
-            },
-        )];
-        for (target, substitution) in substitutions {
-            let evidence = complete_evidence()
-                .into_iter()
-                .map(|item| {
-                    if evidence_id(&item) == target {
-                        substitution.clone()
-                    } else {
-                        item
-                    }
-                })
-                .collect::<Vec<_>>();
-            let report = aggregate(&plan(), &evidence, 120, &[])
-                .expect("substitution is represented as unknown");
-            assert_eq!(report.state, VerificationState::Unknown);
-            let result = report
-                .results
-                .iter()
-                .find(|result| result.requirement_id == target)
-                .expect("substituted result");
-            assert_eq!(result.state, CheckState::Unknown);
-            assert_eq!(result.reason_code, "evidence_kind_mismatch");
-        }
     }
 
     #[test]

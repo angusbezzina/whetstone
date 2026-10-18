@@ -253,7 +253,7 @@ fn the_web_driver_proves_a_dashboard_feature_with_screenshots_and_locates_failur
             "expect text=Needs attention",
             "screenshot home",
             "click #tab-rules",
-            "expect-count #rules h2 6",
+            "expect-count #rules h2 5",
             "expect #rules [data-id='rule.toolchain']",
             "expect text=The toolchain answers.",
             "screenshot rules",
