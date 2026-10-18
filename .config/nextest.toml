@@ -1,0 +1,5 @@
+# Starting Chrome can miss its 20 s deadline while every other test binary
+# runs at once. A retried pass is reported as FLAKY; a real failure fails both.
+[[profile.default.overrides]]
+filter = "binary(dashboard_browser_live)"
+retries = 1
