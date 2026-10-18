@@ -9,15 +9,15 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-BIN = ROOT / "target" / "release" / "whetstone"
+BIN = ROOT / "target" / "debug" / "whetstone"
 
 
 @pytest.fixture(scope="session", autouse=True)
-def release_binary() -> None:
+def debug_binary() -> None:
     # Always build: cargo is a no-op when the binary is current, and a stale
     # binary would test a surface that no longer exists.
     subprocess.run(
-        ["cargo", "build", "--quiet", "--release", "--bin", "whetstone"],
+        ["cargo", "build", "--quiet", "--bin", "whetstone"],
         cwd=ROOT,
         check=True,
         timeout=900,
