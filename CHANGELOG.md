@@ -47,6 +47,9 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 - A checker's process group is signalled until it is empty, so a descendant
   forking as the group is killed can no longer hold its output open.
+- Repeated sweep findings of one rule on one file are numbered in source
+  order, so a flag added later in the file never changes an earlier
+  finding's fingerprint (and never un-dismisses it in Messo).
 
 ## [0.13.0] - 2026-10-15
 
