@@ -419,15 +419,6 @@ pub struct DoctorResult {
     pub detail: String,
 }
 
-/// A brief an agent recorded, as the brief enforcer sees it.
-#[derive(Debug, Clone)]
-pub struct BriefView {
-    pub area: String,
-    pub recorded_at: String,
-    pub commit: Option<String>,
-    pub skills: Vec<String>,
-}
-
 /// Everything a gate run needs, prepared once per `wh check`.
 pub struct GateContext<'a> {
     pub project_root: &'a Path,
@@ -444,8 +435,6 @@ pub struct GateContext<'a> {
     pub changed: &'a [String],
     /// Where public surfaces are compared from: the last pushed revision.
     pub surface_base: Option<&'a str>,
-    /// Briefs recorded for this change.
-    pub briefs: &'a [BriefView],
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -453,7 +442,7 @@ pub struct GateOutcome {
     pub id: String,
     pub name: String,
     pub strength: Strength,
-    /// The enforcement ladder rung: mechanical, question or review.
+    /// The enforcement ladder rung: mechanical or question.
     pub family: &'static str,
     pub mechanism: String,
     pub command: String,
@@ -516,18 +505,9 @@ pub fn mechanism_label(rule: &Rule) -> (String, String) {
                 surfaces.join(", ")
             },
         ),
-        Enforcer::Brief { skills } => (
-            "Brief".into(),
-            if skills.is_empty() {
-                "/how, /why or /blast-radius".into()
-            } else {
-                skills.join(", ")
-            },
-        ),
         Enforcer::Question {
             question, model, ..
         } => ("Jev question".into(), format!("{question} ({model})")),
-        Enforcer::Review { reviewer } => ("Review".into(), reviewer.label()),
     }
 }
 
@@ -740,8 +720,8 @@ pub fn skipped_outcome(id: &RecordId, rule: &Rule, reason: &str) -> GateOutcome 
     GateOutcome::new(id, rule).unknown(reason)
 }
 
-/// Run one mechanical enforcer. Question and review enforcers are resolved by
-/// the judgment and attestation paths, never here.
+/// Run one mechanical enforcer. Question enforcers are resolved by the
+/// judgment path, never here.
 pub fn run_gate(context: &GateContext<'_>, id: &RecordId, rule: &Rule) -> GateOutcome {
     let outcome = GateOutcome::new(id, rule);
     match &rule.enforcer {
@@ -763,10 +743,9 @@ pub fn run_gate(context: &GateContext<'_>, id: &RecordId, rule: &Rule) -> GateOu
             sizes,
         } => run_tokens_gate(context, outcome, rule, tokens, stylesheets, *sizes),
         Enforcer::PublicSurface { surfaces } => run_surface_gate(context, outcome, rule, surfaces),
-        Enforcer::Brief { skills } => run_brief_gate(context, outcome, rule, skills),
-        Enforcer::Question { .. } | Enforcer::Review { .. } => {
-            let outcome = outcome
-                .unknown("This rule is held by a question or a review, not a mechanical check.");
+        Enforcer::Question { .. } => {
+            let outcome =
+                outcome.unknown("This rule is held by a question, not a mechanical check.");
             finish(context, outcome, None, json!({}))
         }
     }
@@ -1148,92 +1127,12 @@ fn run_surface_gate(
     )
 }
 
-fn run_brief_gate(
-    context: &GateContext<'_>,
-    mut outcome: GateOutcome,
-    rule: &Rule,
-    skills: &[String],
-) -> GateOutcome {
-    let touched = context
-        .changed
-        .iter()
-        .filter(|path| rule.applies_to(path))
-        .cloned()
-        .collect::<Vec<_>>();
-    if touched.is_empty() {
-        outcome.state = VerificationAxis::Pass;
-        outcome.summary = "The change touches no area this rule briefs.".into();
-        outcome.evidence.push(EvidenceRef {
-            system: "whetstone_brief".into(),
-            locator: "no matching change".into(),
-            digest: None,
-        });
-        return finish(context, outcome, None, json!({"touched": []}));
-    }
-    let head = head_commit(context.project_root);
-    let covering = context.briefs.iter().find(|brief| {
-        let area_covers =
-            touched.iter().any(|path| {
-                crate::domain::entry_point_matches(brief.area.trim_start_matches("./"), path)
-                    || rule.paths.iter().any(|pattern| pattern == &brief.area)
-                    || context
-                        .features
-                        .get(&RecordId::new(brief.area.as_str()).unwrap_or_else(|_| {
-                            RecordId::new("unknown.feature").expect("constant id")
-                        }))
-                        .is_some_and(|feature| touched.iter().any(|path| feature.covers_path(path)))
-            });
-        // Every skill the rule names must have run, not just one of them.
-        let skills_ok = skills.is_empty()
-            || skills.iter().all(|skill| {
-                brief
-                    .skills
-                    .iter()
-                    .any(|ran| ran.trim_start_matches('/') == skill.trim_start_matches('/'))
-            });
-        let current = brief.commit.is_none() || brief.commit == head;
-        area_covers && skills_ok && current
-    });
-    match covering {
-        Some(brief) => {
-            outcome.state = VerificationAxis::Pass;
-            outcome.summary = format!(
-                "A brief for {} ({}) was recorded at {}.",
-                brief.area,
-                brief.skills.join(", "),
-                brief.recorded_at
-            );
-            outcome.evidence.push(EvidenceRef {
-                system: "whetstone_brief".into(),
-                locator: format!("{}@{}", brief.area, brief.recorded_at),
-                digest: None,
-            });
-        }
-        None => {
-            outcome = outcome.unknown(format!(
-                "No brief covers {}: run pstack {} and record it with wh check --brief --area <feature or path>. Missing evidence is not a pass.",
-                touched.iter().take(3).cloned().collect::<Vec<_>>().join(", "),
-                if skills.is_empty() { "/how, /why and /blast-radius".to_string() } else { skills.join(", ") }
-            ));
-            outcome.failures = touched
-                .iter()
-                .take(MAX_FAILURES)
-                .map(|path| ArtifactFailure {
-                    location: path.clone(),
-                    message: "changed without a recorded brief".into(),
-                })
-                .collect();
-        }
-    }
-    finish(context, outcome, None, json!({"touched": touched}))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// Pass, flag and unavailable for every enforcer kind `run_gate`
-    /// dispatches (question, review and drive have their own suites).
+    /// dispatches (question and drive have their own suites).
     #[test]
     fn every_enforcer_kind_passes_flags_and_is_honest_when_unavailable() {
         let temp = tempfile::tempdir().expect("temp");
@@ -1288,17 +1187,8 @@ mod tests {
                     .collect(),
             )
         };
-        let briefs = vec![BriefView {
-            area: "lib.rs".into(),
-            recorded_at: "2026-09-28T00:00:00Z".into(),
-            commit: None,
-            skills: vec!["how".into(), "why".into()],
-        }];
         let changed = vec!["lib.rs".to_string()];
-        let run = |enforcer: serde_json::Value,
-                   set: &FileSet,
-                   base: Option<&str>,
-                   briefs: &[BriefView]| {
+        let run = |enforcer: serde_json::Value, set: &FileSet, base: Option<&str>| {
             let context = GateContext {
                 project_root: root,
                 run_dir: &run_dir,
@@ -1310,7 +1200,6 @@ mod tests {
                 files: set,
                 changed: &changed,
                 surface_base: base,
-                briefs,
             };
             run_gate(&context, &id, &rule(enforcer)).state
         };
@@ -1328,13 +1217,11 @@ mod tests {
                     json!({"kind": "ast", "query": "(unsafe_block) @match", "language": "rust"}),
                     &clean,
                     None,
-                    &[],
                 ),
                 run(
                     json!({"kind": "ast", "query": "(unsafe_block) @match", "language": "rust"}),
                     &files(&[("lib.rs", "fn f(p: *const u8) -> u8 { unsafe { *p } }\n")]),
                     None,
-                    &[],
                 ),
             ),
             (
@@ -1343,44 +1230,22 @@ mod tests {
                     json!({"kind": "lint", "tool": "echo clean", "code": "F401"}),
                     &clean,
                     None,
-                    &[],
                 ),
                 run(
                     json!({"kind": "lint", "tool": "echo lib.rs:1:1: F401 unused", "code": "F401"}),
                     &clean,
                     None,
-                    &[],
                 ),
             ),
             (
                 "formatter",
-                run(
-                    json!({"kind": "formatter", "tool": "true"}),
-                    &clean,
-                    None,
-                    &[],
-                ),
-                run(
-                    json!({"kind": "formatter", "tool": "false"}),
-                    &clean,
-                    None,
-                    &[],
-                ),
+                run(json!({"kind": "formatter", "tool": "true"}), &clean, None),
+                run(json!({"kind": "formatter", "tool": "false"}), &clean, None),
             ),
             (
                 "test",
-                run(
-                    json!({"kind": "test", "command": "true"}),
-                    &clean,
-                    None,
-                    &[],
-                ),
-                run(
-                    json!({"kind": "test", "command": "false"}),
-                    &clean,
-                    None,
-                    &[],
-                ),
+                run(json!({"kind": "test", "command": "true"}), &clean, None),
+                run(json!({"kind": "test", "command": "false"}), &clean, None),
             ),
             (
                 "validator",
@@ -1388,13 +1253,11 @@ mod tests {
                     json!({"kind": "validator", "command": "true"}),
                     &clean,
                     None,
-                    &[],
                 ),
                 run(
                     json!({"kind": "validator", "command": "false"}),
                     &clean,
                     None,
-                    &[],
                 ),
             ),
             (
@@ -1403,38 +1266,20 @@ mod tests {
                     json!({"kind": "design_tokens", "tokens": "tokens.css"}),
                     &files(&[("a.css", ".a { color: var(--accent); }\n")]),
                     None,
-                    &[],
                 ),
                 run(
                     json!({"kind": "design_tokens", "tokens": "tokens.css"}),
                     &files(&[("a.css", ".a { color: #123456; }\n")]),
                     None,
-                    &[],
                 ),
             ),
             (
                 "public_surface",
-                run(json!({"kind": "public_surface"}), &clean, Some("HEAD"), &[]),
+                run(json!({"kind": "public_surface"}), &clean, Some("HEAD")),
                 run(
                     json!({"kind": "public_surface"}),
                     &files(&[("lib.rs", "pub fn run(b: u16) -> u8 { 0 }\n")]),
                     Some("HEAD"),
-                    &[],
-                ),
-            ),
-            (
-                "brief",
-                run(
-                    json!({"kind": "brief", "skills": ["how", "why"]}),
-                    &clean,
-                    None,
-                    &briefs,
-                ),
-                run(
-                    json!({"kind": "brief", "skills": ["how", "why", "blast-radius"]}),
-                    &clean,
-                    None,
-                    &briefs,
                 ),
             ),
         ];
@@ -1442,12 +1287,8 @@ mod tests {
             assert_eq!(*passed, pass, "{kind} passes a clean change");
             assert_ne!(*flagged, pass, "{kind} never passes a breaking change");
         }
-        // Flagged means fail, except a brief that is missing a skill, which is
-        // missing evidence (unknown), never a pass.
         for (kind, _, flagged) in &cases {
-            if *kind != "brief" {
-                assert_eq!(*flagged, fail, "{kind} flags a breaking change");
-            }
+            assert_eq!(*flagged, fail, "{kind} flags a breaking change");
         }
         // Unavailable: the enforcer cannot run, and says so as unknown.
         let unavailable = [
@@ -1457,7 +1298,6 @@ mod tests {
                     json!({"kind": "ast", "query": "(not a query", "language": "rust"}),
                     &clean,
                     None,
-                    &[],
                 ),
             ),
             (
@@ -1466,26 +1306,15 @@ mod tests {
                     json!({"kind": "lint", "tool": missing, "code": "F401"}),
                     &clean,
                     None,
-                    &[],
                 ),
             ),
             (
                 "formatter",
-                run(
-                    json!({"kind": "formatter", "tool": missing}),
-                    &clean,
-                    None,
-                    &[],
-                ),
+                run(json!({"kind": "formatter", "tool": missing}), &clean, None),
             ),
             (
                 "test",
-                run(
-                    json!({"kind": "test", "command": missing}),
-                    &clean,
-                    None,
-                    &[],
-                ),
+                run(json!({"kind": "test", "command": missing}), &clean, None),
             ),
             (
                 "validator",
@@ -1493,7 +1322,6 @@ mod tests {
                     json!({"kind": "validator", "command": missing}),
                     &clean,
                     None,
-                    &[],
                 ),
             ),
             (
@@ -1502,21 +1330,11 @@ mod tests {
                     json!({"kind": "design_tokens", "tokens": "missing-tokens.css"}),
                     &files(&[("a.css", ".a { color: red; }\n")]),
                     None,
-                    &[],
                 ),
             ),
             (
                 "public_surface",
-                run(json!({"kind": "public_surface"}), &clean, None, &[]),
-            ),
-            (
-                "brief",
-                run(
-                    json!({"kind": "brief", "skills": ["how"]}),
-                    &clean,
-                    None,
-                    &[],
-                ),
+                run(json!({"kind": "public_surface"}), &clean, None),
             ),
         ];
         for (kind, state) in unavailable {

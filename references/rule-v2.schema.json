@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/angusbezzina/whetstone/references/rule-v2.schema.json",
   "title": "Whetstone rule v2 (whetstone.rule.v2)",
-  "description": "One statement, one strength, exactly one enforcer (mechanical, a literal Jev question, or a review), labelled examples, a source and privacy.",
+  "description": "One statement, one strength, exactly one enforcer (mechanical or a literal Jev question), labelled examples, a source and privacy.",
   "$ref": "#/$defs/rule",
   "$defs": {
     "rule": {
@@ -231,25 +231,6 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "kind"
-          ],
-          "properties": {
-            "kind": {
-              "const": "brief"
-            },
-            "skills": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
             "kind",
             "question"
           ],
@@ -300,54 +281,6 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 10000
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "kind",
-            "reviewer"
-          ],
-          "properties": {
-            "kind": {
-              "const": "review"
-            },
-            "reviewer": {
-              "$ref": "#/$defs/reviewer"
-            }
-          }
-        }
-      ]
-    },
-    "reviewer": {
-      "oneOf": [
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "by"
-          ],
-          "properties": {
-            "by": {
-              "const": "interrogate"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "by",
-            "name"
-          ],
-          "properties": {
-            "by": {
-              "const": "person"
-            },
-            "name": {
-              "$ref": "#/$defs/nonempty"
             }
           }
         }

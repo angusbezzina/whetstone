@@ -36,7 +36,7 @@ fn envelope(case: &Value) -> Value {
     );
     let receipt = matches!(
         case["record_type"].as_str(),
-        Some("judgment" | "attestation" | "brief" | "verification_receipt")
+        Some("judgment" | "verification_receipt")
     );
     json!({
         "schema_version": 1,
@@ -88,11 +88,12 @@ fn the_catalogue_is_versioned_unique_and_covers_every_expectation() {
     // Every enforcer family and every retired kind the catalogue names is real.
     for case in &cases {
         if let Some(family) = case["family"].as_str() {
-            assert!(["mechanical", "question", "review"].contains(&family));
+            assert!(["mechanical", "question"].contains(&family));
         }
         if case["expect"] == "retired" {
+            let kind = case["record_type"].as_str().expect("type");
             assert!(
-                RETIRED_KINDS.contains(&case["record_type"].as_str().expect("type")),
+                RETIRED_KINDS.contains(&kind) || kind == "rule",
                 "{}",
                 case["id"]
             );
@@ -271,9 +272,7 @@ fn each_enforcer_kind_parses_alone_and_matches_the_published_rule_schema() {
         json!({"kind": "drive", "feature": "feature.dashboard"}),
         json!({"kind": "design_tokens", "tokens": "assets/tokens.css"}),
         json!({"kind": "public_surface"}),
-        json!({"kind": "brief"}),
         json!({"kind": "question", "question": "Is this public?"}),
-        json!({"kind": "review", "reviewer": {"by": "interrogate"}}),
     ];
     let mut kinds = Vec::new();
     for value in minimal {
@@ -347,15 +346,7 @@ fn the_record_schema_lists_current_kinds_and_retires_the_removed_ones() {
             "{kind} is still writable in the schema"
         );
     }
-    for kind in [
-        "mission",
-        "principle",
-        "rule",
-        "judgment",
-        "attestation",
-        "brief",
-        "flag_decision",
-    ] {
+    for kind in ["mission", "principle", "rule", "judgment", "flag_decision"] {
         assert!(writable.contains(kind), "{kind} is not published");
         assert_eq!(
             schema["$defs"][kind]["additionalProperties"], false,

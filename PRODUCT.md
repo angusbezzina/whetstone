@@ -20,8 +20,7 @@ Whetstone lets people delegate more to coding agents and trust the result. The
 owner's mission, the pstack principles they pick and the codebases they admire
 become a short list of agreed rules. Every rule has one strength (must, should
 or advisory) and exactly one enforcer, chosen in this order: a mechanical
-check, a literal yes/no Jev question (TypeSafe System One), or a review by
-pstack's `/interrogate` or a person. Agents and people in any tool are briefed
+check, then a literal yes/no Jev question (TypeSafe System One). Agents and people in any tool are briefed
 on the rules before building and checked at pre-commit, pre-push and CI.
 Every consequential change is an append-only,
 inspectable decision. The direction is in `planning/direction.md` and Beads
@@ -101,9 +100,9 @@ product's own dashboard files):
 ## Terminology
 
 Mission, principle (a pstack principle or the owner's own), exemplar codebase,
-rule (one strength must/should/advisory and one enforcer: mechanical check,
-Jev question or review), shadow mode, flag (accepted or dismissed), raised
-hand, brief, check (a run of rules), receipt, local draft, accepted,
+rule (one strength must/should/advisory and one enforcer: mechanical check
+or Jev question), shadow mode, flag (accepted or dismissed), check (a run of
+rules), receipt, local draft, accepted,
 superseded, owner.
 
 ## Brand commitments

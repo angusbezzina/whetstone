@@ -65,6 +65,12 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   rule says it cannot decide. Stored `hand_raise` and `hand_answer` records
   are read as retired history, and a stored rule with `hand_raise` loads
   without it, its digest unchanged.
+- Review attestations and briefs: `wh check --attest`, `--brief` and their
+  flags, the `review` and `brief` enforcers, and the `/interrogate` or named
+  reviewer. Stored attestations, briefs and earlier guidance records are
+  read as retired history, and so is a stored rule held by a review or brief
+  enforcer. The prove-it-works starter is offered only when a test command
+  is detected.
 
 ## [0.13.0] - 2026-10-15
 

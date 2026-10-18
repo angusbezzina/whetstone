@@ -8,8 +8,8 @@ use serde::Serialize;
 
 use crate::agreement::{AgreementState, Lifecycle};
 use crate::domain::{
-    AgreementRecord, AttestationVerdict, Enforcer, JudgmentOutcome, LocalReviewVerdict, RecordBody,
-    RecordId, RecordRef, VerificationAxis,
+    AgreementRecord, Enforcer, JudgmentOutcome, LocalReviewVerdict, RecordBody, RecordId,
+    RecordRef, VerificationAxis,
 };
 use crate::history::HistoryInspection;
 use crate::proof::{EVIDENCE_SYSTEM, GATE_SUBJECT_PREFIX};
@@ -61,15 +61,9 @@ pub(crate) fn area_of(record: &AgreementRecord) -> &'static str {
     match &record.body {
         RecordBody::Mission(_) => "mission",
         RecordBody::Principle(_) => "principles",
-        RecordBody::Rule(_)
-        | RecordBody::StoredRule(_)
-        | RecordBody::Standard(_)
-        | RecordBody::Guidance(_) => "rules",
+        RecordBody::Rule(_) | RecordBody::StoredRule(_) | RecordBody::Standard(_) => "rules",
         RecordBody::Feature(_) | RecordBody::VerificationMap(_) => "features",
-        RecordBody::VerificationReceipt(_)
-        | RecordBody::Judgment(_)
-        | RecordBody::Attestation(_)
-        | RecordBody::Brief(_) => "checks",
+        RecordBody::VerificationReceipt(_) | RecordBody::Judgment(_) => "checks",
         RecordBody::FlagDecision(_) => "rules",
         RecordBody::Retired(_) => "history",
         _ => "governance",
@@ -301,40 +295,6 @@ fn journal_entry(
     }
     if let Some(record) = records.first().filter(|_| records.len() == 1) {
         match &record.body {
-            RecordBody::Attestation(body) => {
-                return base(
-                    "verification",
-                    format!("Review attested: {}", body.rule.id.as_str()),
-                    match body.verdict {
-                        AttestationVerdict::Pass => StateLabel::new("pass", "pass"),
-                        AttestationVerdict::Fail => StateLabel::new("fail", "fail"),
-                    },
-                    "checks",
-                    format!("{}: {}", body.reviewer.label(), body.notes),
-                );
-            }
-            RecordBody::Brief(body) => {
-                return base(
-                    "verification",
-                    format!("Brief recorded: {}", body.area),
-                    StateLabel::new("muted", "recorded"),
-                    "checks",
-                    format!(
-                        "Ran {}. Reuse: {}. Could break: {}.",
-                        body.skills.join(", "),
-                        if body.reuse.is_empty() {
-                            "nothing named".into()
-                        } else {
-                            body.reuse.join("; ")
-                        },
-                        if body.risks.is_empty() {
-                            "nothing named".into()
-                        } else {
-                            body.risks.join("; ")
-                        }
-                    ),
-                );
-            }
             RecordBody::FlagDecision(body) => {
                 return base(
                     "decision",
@@ -612,8 +572,7 @@ fn record_evidence(record: &AgreementRecord) -> String {
 
 /// The decision history as a show-me-your-work TSV: accepted changes
 /// (retirements, strength changes and shadow promotions included), check
-/// receipts, Jev answers (with redactions), review attestations, briefs and
-/// flag decisions, in time order.
+/// receipts, Jev answers (with redactions) and flag decisions, in time order.
 pub fn decision_trail(state: &AgreementState) -> String {
     let mut rows = Vec::<(String, String, [String; 5])>::new();
     let acceptance = |record: &AgreementRecord| -> Option<(String, String)> {
@@ -860,47 +819,6 @@ pub fn decision_trail(state: &AgreementState) -> String {
                     ],
                 ));
             }
-            RecordBody::Attestation(body) => rows.push((
-                body.attested_at.clone(),
-                id,
-                [
-                    "review".into(),
-                    format!(
-                        "Review of {} by {}",
-                        body.rule.id.as_str(),
-                        body.reviewer.label()
-                    ),
-                    body.notes.clone(),
-                    format!("commit {}", &body.commit[..body.commit.len().min(12)]),
-                    match body.verdict {
-                        AttestationVerdict::Pass => "pass".into(),
-                        AttestationVerdict::Fail => "fail".into(),
-                    },
-                ],
-            )),
-            RecordBody::Brief(body) => rows.push((
-                body.recorded_at.clone(),
-                id,
-                [
-                    "brief".into(),
-                    format!("Brief for {}", body.area),
-                    body.notes.clone(),
-                    format!(
-                        "reuse: {}; risks: {}",
-                        if body.reuse.is_empty() {
-                            "none named".into()
-                        } else {
-                            body.reuse.join(", ")
-                        },
-                        if body.risks.is_empty() {
-                            "none named".into()
-                        } else {
-                            body.risks.join(", ")
-                        }
-                    ),
-                    format!("ran {}", body.skills.join(", ")),
-                ],
-            )),
             RecordBody::FlagDecision(body) => rows.push((
                 body.decided_at.clone(),
                 id,

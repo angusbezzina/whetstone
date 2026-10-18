@@ -307,10 +307,11 @@ try {
   await cdp.waitFor("document.querySelector('#announce').textContent.includes('private draft')", "recording did not announce");
   await click("#r-advisory .addrow .btn");
   await cdp.waitFor("document.querySelector('#r-advisory .editor.open form')", "the add-rule editor did not open");
-  await fill("#r-advisory .editor.open form", { content: "Ask a person before deleting data.", enforcer: "review", value: "Sam", rationale: "Data is irreplaceable" });
+  check(await cdp.evaluate("[...document.querySelectorAll('#r-advisory .editor.open [name=enforcer] option')].map(o => o.value).join() === 'test,lint,formatter,ast,validator,drive,design_tokens,public_surface,question'"), "the enforcer picker lists the enforcer kinds");
+  await fill("#r-advisory .editor.open form", { content: "Ask a person before deleting data.", enforcer: "validator", value: "scripts/check-deletes", rationale: "Data is irreplaceable" });
   await cdp.waitFor("document.querySelector('#record-draft')", "the new rule review did not render");
   const added = last((c) => c.workflow === "change" && c.preview === true);
-  check(added.record_id === "rule.ask-a-person-before-deleting-data" && added.definition.strength === "advisory" && q(added.definition.enforcer) === q({ kind: "review", reviewer: { by: "person", name: "Sam" } }), "a new rule posts one strength and one enforcer");
+  check(added.record_id === "rule.ask-a-person-before-deleting-data" && added.definition.strength === "advisory" && q(added.definition.enforcer) === q({ kind: "validator", command: "scripts/check-deletes" }), "a new rule posts one strength and one enforcer");
   await click('[data-id="principle.prove-it-works"] .e button');
   await cdp.waitFor("document.querySelector('.editor.open form [name=content]')", "the principle editor did not open");
   await fill(".editor.open form", { rationale: "Keep it" });

@@ -10,11 +10,11 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::json;
 
-use crate::domain::{AttestationVerdict, FlagVerdict, Reviewer};
+use crate::domain::FlagVerdict;
 use crate::service::{
-    AttestRequest, BriefRequest, ChangeDefinition, ChangeKind, ChangeRequest, CheckRequest,
-    CommandService, DashRequest, FlagRequest, GateMode, InitAction, InitRequest, ReviewRequest,
-    ServiceRequest, ServiceResponse, ServiceState,
+    ChangeDefinition, ChangeKind, ChangeRequest, CheckRequest, CommandService, DashRequest,
+    FlagRequest, GateMode, InitAction, InitRequest, ReviewRequest, ServiceRequest, ServiceResponse,
+    ServiceState,
 };
 use crate::{check, dashboard, dashboard_service, output, rules};
 
@@ -38,6 +38,8 @@ struct Cli {
     command: Option<Command>,
 }
 
+// Parsed once per process, so the size of its largest variant does not matter.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Command {
     /// Inspect the project, agree the mission, principles and rules, install
@@ -213,8 +215,7 @@ enum Command {
         from_lesson: Option<String>,
     },
 
-    /// Run the rules and return actionable findings, or record a review or a
-    /// brief.
+    /// Run the rules and return actionable findings.
     Check {
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
@@ -273,36 +274,6 @@ enum Command {
         /// rules only, never a contributor's private drafts. Use with --base.
         #[arg(long, conflicts_with_all = ["sweep", "maintain_outcome", "staged"])]
         ci: bool,
-        /// Record a review verdict for this rule at the current commit.
-        #[arg(long, requires = "verdict")]
-        attest: Option<String>,
-        /// The review verdict (with --attest).
-        #[arg(long, value_enum)]
-        verdict: Option<VerdictArg>,
-        /// Who reviewed: interrogate (pstack's /interrogate) or a person's name.
-        #[arg(long, default_value = "interrogate")]
-        reviewer: String,
-        /// Notes for an attestation or a brief.
-        #[arg(long)]
-        notes: Option<String>,
-        /// Evidence for an attestation: a repository path or URL.
-        #[arg(long)]
-        evidence: Option<String>,
-        /// Record a brief (pstack /how, /why, /blast-radius) for --area.
-        #[arg(long, requires = "area")]
-        brief: bool,
-        /// The feature id or path the brief covers.
-        #[arg(long)]
-        area: Option<String>,
-        /// A pstack skill the brief came from (repeatable).
-        #[arg(long = "skill")]
-        skills: Vec<String>,
-        /// Existing code, components or tokens the work reuses (repeatable).
-        #[arg(long = "reuse")]
-        reuse: Vec<String>,
-        /// What the change could break (repeatable).
-        #[arg(long = "risk")]
-        risks: Vec<String>,
         /// Run as a Git gate: `pre-commit` or `pre-push`.
         #[arg(long, value_enum)]
         hook: Option<CheckHookArg>,
@@ -427,12 +398,6 @@ enum MaintainOutcomeArg {
     Clean,
     Changed,
     Blocked,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum VerdictArg {
-    Pass,
-    Fail,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -699,16 +664,6 @@ pub fn run() -> i32 {
             maintain_outcome,
             maintain_evidence,
             ci,
-            attest,
-            verdict,
-            reviewer,
-            notes,
-            evidence,
-            brief,
-            area,
-            skills,
-            reuse,
-            risks,
             hook,
             pushed,
         }) => {
@@ -740,29 +695,6 @@ pub fn run() -> i32 {
                 base,
                 pushed,
                 steps,
-                attest: attest.map(|rule| AttestRequest {
-                    rule,
-                    verdict: match verdict {
-                        Some(VerdictArg::Fail) => AttestationVerdict::Fail,
-                        _ => AttestationVerdict::Pass,
-                    },
-                    reviewer: if reviewer.trim_start_matches('/') == "interrogate" {
-                        Reviewer::Interrogate
-                    } else {
-                        Reviewer::Person {
-                            name: reviewer.clone(),
-                        }
-                    },
-                    notes: notes.clone().unwrap_or_default(),
-                    evidence,
-                }),
-                brief: (brief).then(|| BriefRequest {
-                    area: area.clone().unwrap_or_default(),
-                    skills,
-                    reuse,
-                    risks,
-                    notes: notes.clone().unwrap_or_default(),
-                }),
                 mutate,
                 findings: format == Some(CheckFormatArg::Findings),
             };

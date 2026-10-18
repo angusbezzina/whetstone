@@ -19,7 +19,7 @@ function links(label,list){return list.length?P("lk",label+" ",list.map((l,i)=>[
 function feature(a,f){const r=rec(a,f,false,D("d",f.summary+" ",h("br"),links("serves",f.serves),links("proven by",f.proven_by),h("br"),P("k","proof "),f.proof,f.drift?.length?[h("br"),P("k","changed since proof "),f.drift.join(", ")]:null));r.classList.add("feat");return r}
 function suggestion(a,c,s){const r=c.rules.find(x=>x.id===s.rule);return h("div",{class:"row sug","data-id":"sug-"+s.rule},D("name",s.kind+": "+(r?.title||s.rule)),st({tone:"draft",label:s.draft?"draft "+s.draft.strength:"needs a check"}),D("meta",s.reason,s.examples?.length?h("ul",{},s.examples.map(x=>h("li",{},T("code",0,x)))):null))}
 function rules(a){const el=a.$("rules"),c=a.W.value?.data?.current;el.textContent="";if(!c)return;
-el.append(head("Rules","The mission, your principles and the rules drawn from them. Each rule has one strength and one enforcer: a mechanical check, else a Jev question, else a review. Edits are private drafts until you accept them."));
+el.append(head("Rules","The mission, your principles and the rules drawn from them. Each rule has one strength and one enforcer: a mechanical check, else a Jev question. Edits are private drafts until you accept them."));
 if(!c.established&&!c.rules.length){el.append(T("p","notice","No rule is agreed yet. Start onboarding on Home, or run wh init."),B("",{text:"Open onboarding",onclick:()=>a.show("home","onboard")}));return}
 const by=s=>c.rules.filter(r=>r.strength===s);
 el.append(panel(a,"r-mission","Mission","why the project exists",c.mission?[c.mission]:[],x=>rec(a,x,true),c.mission?null:[{kind:"mission",record_id:"mission.project",content:"",definition:null},"State the mission"]));

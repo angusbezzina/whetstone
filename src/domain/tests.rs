@@ -276,16 +276,13 @@ fn a_rule_has_one_strength_one_enforcer_and_valid_examples() {
         rule(Enforcer::PublicSurface {
             surfaces: vec!["everything".into()],
         }),
-        rule(Enforcer::Review {
-            reviewer: Reviewer::Person { name: " ".into() },
-        }),
     ] {
         assert!(broken.validate().is_err(), "{broken:?} was accepted");
     }
 }
 
 #[test]
-fn earlier_standards_and_guidance_read_as_rules() {
+fn earlier_standards_read_as_rules() {
     let standard = Standard {
         statement: "Tests pass".into(),
         rationale: "Owner-confirmed first gate".into(),
@@ -300,13 +297,6 @@ fn earlier_standards_and_guidance_read_as_rules() {
     assert_eq!(rule.strength, Strength::Advisory);
     assert!(matches!(rule.enforcer, Enforcer::Test { ref command } if command == "cargo test"));
     assert!(rule.rationale.contains("cargo test -q"));
-    let body = RecordBody::Guidance(Guidance {
-        statement: "Prefer small diffs".into(),
-        rationale: "Review cost".into(),
-        examples: Vec::new(),
-    });
-    let view = body.rule_view().expect("rule view");
-    assert_eq!(view.enforcer.family(), EnforcerFamily::Review);
 }
 
 #[test]

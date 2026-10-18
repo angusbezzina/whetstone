@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
-    ActorKind, AgreementRecord, ContentDigest, Enforcer, Privacy, RecordId, Reviewer, RuleExample,
+    ActorKind, AgreementRecord, ContentDigest, Enforcer, Privacy, RecordId, RuleExample,
     RuleSource, Strength, SweepClass, Trust,
 };
 use crate::storage::{ProjectLayout, StorageError};
@@ -346,26 +346,6 @@ pub enum GateMode {
     Sweep,
 }
 
-/// A review verdict submitted through `wh check`.
-#[derive(Debug, Clone)]
-pub struct AttestRequest {
-    pub rule: String,
-    pub verdict: crate::domain::AttestationVerdict,
-    pub reviewer: Reviewer,
-    pub notes: String,
-    pub evidence: Option<String>,
-}
-
-/// A brief an agent recorded before building.
-#[derive(Debug, Clone, Default)]
-pub struct BriefRequest {
-    pub area: String,
-    pub skills: Vec<String>,
-    pub reuse: Vec<String>,
-    pub risks: Vec<String>,
-    pub notes: String,
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct CheckRequest {
     pub project_dir: PathBuf,
@@ -393,10 +373,6 @@ pub struct CheckRequest {
     /// With exactly one `--feature`: change-specific drive steps run after
     /// the accepted ones in the same session and recorded in the receipt.
     pub steps: Vec<String>,
-    /// Record a review attestation instead of running rules.
-    pub attest: Option<AttestRequest>,
-    /// Record a brief instead of running rules.
-    pub brief: Option<BriefRequest>,
     /// Also prove each selected feature with its recorded mutations applied,
     /// in an isolated worktree; a proof that still passes is hollow.
     pub mutate: bool,

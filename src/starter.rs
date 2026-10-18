@@ -1,14 +1,14 @@
-//! Three starter rules that work on day one, chosen by what the repository
-//! looks like. Each comes with labelled examples and the cheapest enforcer
-//! that can hold it; the owner accepts or skips each one.
+//! Starter rules that work on day one, chosen by what the repository looks
+//! like. Each comes with labelled examples and the cheapest enforcer that
+//! can hold it; the owner accepts or skips each one.
 
 use std::path::Path;
 
 use serde::Serialize;
 
 use crate::domain::{
-    ContextUnit, Enforcer, ExampleVerdict, Privacy, Reviewer, Rule, RuleExample, RuleSource,
-    RuleSourceKind, Strength, DEFAULT_JEV_MODEL, RULE_SCHEMA_V2,
+    ContextUnit, Enforcer, ExampleVerdict, Privacy, Rule, RuleExample, RuleSource, RuleSourceKind,
+    Strength, DEFAULT_JEV_MODEL, RULE_SCHEMA_V2,
 };
 
 pub const PROVE_IT_WORKS: &str = "rule.prove-it-works";
@@ -86,25 +86,18 @@ fn surface_paths(root: &Path) -> Vec<String> {
     paths
 }
 
+/// The starter rules this repository can hold mechanically.
 pub fn starters(root: &Path) -> Vec<Starter> {
-    let (prove_enforcer, prove_detected) = match detected_test_command(root) {
-        Some((command, from)) => (
-            Enforcer::Test { command },
-            format!("Proves with the test command from {from} at pre-push; map a feature later to prove it by driving the app."),
-        ),
-        None => (
-            Enforcer::Review {
-                reviewer: Reviewer::Interrogate,
-            },
-            "No test command was detected, so /interrogate reviews that the change was proven; replace it with a test or drive proof when one exists.".into(),
-        ),
-    };
-    let prove = Rule {
+    let mut starters = Vec::new();
+    // Prove-it-works is held by the repository's own test command; without
+    // one nothing mechanical holds it, so it is not offered.
+    if let Some((command, from)) = detected_test_command(root) {
+        let prove = Rule {
         schema: RULE_SCHEMA_V2.into(),
         statement: "Prove it works before calling it done.".into(),
         rationale: "Work is finished when the real artifact has been run and checked, not when it compiles or an agent says so.".into(),
         strength: Strength::Must,
-        enforcer: prove_enforcer,
+        enforcer: Enforcer::Test { command },
         examples: vec![
             example(
                 "Changed the parser and ran the test suite; it passed.",
@@ -127,6 +120,13 @@ pub fn starters(root: &Path) -> Vec<Starter> {
         sweep_priority: None,
         sweep_unsure: Vec::new(),
     };
+        starters.push(Starter {
+        id: PROVE_IT_WORKS,
+        title: "Prove it works before done",
+        detected: format!("Proves with the test command from {from} at pre-push; map a feature later to prove it by driving the app."),
+        rule: prove,
+    });
+    }
     let surface_paths = surface_paths(root);
     let api = Rule {
         schema: RULE_SCHEMA_V2.into(),
@@ -202,14 +202,7 @@ pub fn starters(root: &Path) -> Vec<Starter> {
         sweep_priority: None,
         sweep_unsure: Vec::new(),
     };
-    vec![
-        Starter {
-            id: PROVE_IT_WORKS,
-            title: "Prove it works before done",
-            detected: prove_detected,
-            rule: prove,
-        },
-        Starter {
+    starters.push(Starter {
             id: ASK_BEFORE_PUBLIC_API,
             title: "Ask before changing a public API",
             detected: if surface_paths.is_empty() {
@@ -221,14 +214,14 @@ pub fn starters(root: &Path) -> Vec<Starter> {
                 )
             },
             rule: api,
-        },
-        Starter {
+        });
+    starters.push(Starter {
             id: TESTS_ONLY_WHEN_ASKED,
             title: "Only add tests when the task asks",
             detected: "Asks Jev about each new test file at pre-push, in shadow: answers are recorded, not enforced, until you promote it.".into(),
             rule: tests,
-        },
-    ]
+        });
+    starters
 }
 
 #[cfg(test)]
@@ -239,8 +232,10 @@ mod tests {
     fn starters_pick_the_cheapest_enforcer_the_repository_supports() {
         let temp = tempfile::tempdir().expect("temp");
         let bare = starters(temp.path());
-        assert_eq!(bare.len(), 3);
-        assert!(matches!(bare[0].rule.enforcer, Enforcer::Review { .. }));
+        assert!(
+            bare.iter().all(|starter| starter.id != PROVE_IT_WORKS),
+            "without a test command nothing mechanical proves the work"
+        );
         std::fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").expect("write");
         let rust = starters(temp.path());
         assert!(

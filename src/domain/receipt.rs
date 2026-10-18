@@ -1,12 +1,12 @@
 //! Receipts and decisions that record what happened around a rule: check
-//! results, Jev answers, review attestations, briefs and flag decisions.
-//! Each is its own record, never a rewrite of another.
+//! results, Jev answers and flag decisions. Each is its own record, never a
+//! rewrite of another.
 
 use serde::{Deserialize, Serialize};
 
 use super::{
     looks_like_utc_timestamp, require_text, ContentDigest, DomainError, EvidenceRef, RecordId,
-    RecordRef, Reviewer,
+    RecordRef,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,97 +193,6 @@ impl JudgmentReceipt {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AttestationVerdict {
-    Pass,
-    Fail,
-}
-
-/// A review verdict (pstack `/interrogate` or a named person) for one rule
-/// revision at one commit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Attestation {
-    pub rule: RecordRef,
-    pub commit: String,
-    /// The Git tree of exactly what was reviewed (the working tree at
-    /// attestation). The attestation holds only while the checked content
-    /// has this tree; absent on earlier attestations, which hold at their
-    /// commit only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tree: Option<String>,
-    pub reviewer: Reviewer,
-    pub verdict: AttestationVerdict,
-    pub notes: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub evidence: Vec<EvidenceRef>,
-    pub attested_at: String,
-}
-
-impl Attestation {
-    pub(super) fn validate(&self) -> Result<(), DomainError> {
-        require_commit(&self.commit)?;
-        if let Some(tree) = &self.tree {
-            require_commit(tree)?;
-        }
-        require_text(&self.notes)?;
-        if let Reviewer::Person { name } = &self.reviewer {
-            require_text(name)?;
-        }
-        if !looks_like_utc_timestamp(&self.attested_at) {
-            return Err(DomainError::InvalidTimestamp(self.attested_at.clone()));
-        }
-        Ok(())
-    }
-}
-
-/// What an agent learned before building: the code, components and tokens it
-/// will reuse and what could break, from pstack `/how`, `/why` and
-/// `/blast-radius`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Brief {
-    /// A feature id or a repository path or glob the brief covers.
-    pub area: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub commit: Option<String>,
-    pub skills: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub reuse: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub risks: Vec<String>,
-    pub notes: String,
-    pub recorded_at: String,
-}
-
-impl Brief {
-    pub(super) fn validate(&self) -> Result<(), DomainError> {
-        require_text(&self.area)?;
-        require_text(&self.notes)?;
-        if self.skills.is_empty() || self.skills.len() > 8 {
-            return Err(DomainError::InvalidField(
-                "a brief names one to eight skills it ran",
-            ));
-        }
-        for item in self.skills.iter().chain(&self.reuse).chain(&self.risks) {
-            require_text(item)?;
-        }
-        if self.reuse.len() > 32 || self.risks.len() > 32 {
-            return Err(DomainError::InvalidField(
-                "a brief lists at most 32 reuse and 32 risk items",
-            ));
-        }
-        if let Some(commit) = &self.commit {
-            require_commit(commit)?;
-        }
-        if !looks_like_utc_timestamp(&self.recorded_at) {
-            return Err(DomainError::InvalidTimestamp(self.recorded_at.clone()));
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum FlagVerdict {
     /// The flag was right: the rule was broken.
     Accept,
@@ -321,15 +230,5 @@ impl FlagDecision {
             return Err(DomainError::InvalidTimestamp(self.decided_at.clone()));
         }
         Ok(())
-    }
-}
-
-fn require_commit(commit: &str) -> Result<(), DomainError> {
-    if matches!(commit.len(), 40 | 64) && commit.chars().all(|c| c.is_ascii_hexdigit()) {
-        Ok(())
-    } else {
-        Err(DomainError::InvalidField(
-            "a commit is a full hexadecimal object id",
-        ))
     }
 }

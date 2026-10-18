@@ -1,9 +1,8 @@
 //! Rule record v2 (`whetstone.rule.v2`): one statement, one strength, exactly
 //! one enforcer, labelled examples, a source and privacy.
 //!
-//! Earlier `Standard` and `Guidance` records stay readable and are enforced
-//! through [`Rule::from_standard`] and [`Rule::from_guidance`]; every new
-//! revision is written as a v2 rule.
+//! Earlier `Standard` records stay readable and are enforced through
+//! [`Rule::from_standard`]; every new revision is written as a v2 rule.
 
 use serde::{Deserialize, Serialize};
 
@@ -50,7 +49,6 @@ impl Strength {
 pub enum EnforcerFamily {
     Mechanical,
     Question,
-    Review,
 }
 
 impl EnforcerFamily {
@@ -58,7 +56,6 @@ impl EnforcerFamily {
         match self {
             Self::Mechanical => "mechanical",
             Self::Question => "question",
-            Self::Review => "review",
         }
     }
 }
@@ -89,27 +86,8 @@ impl ContextUnit {
     }
 }
 
-/// Who reviews a review-enforced rule.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "by", rename_all = "snake_case", deny_unknown_fields)]
-pub enum Reviewer {
-    /// pstack's `/interrogate`, run by the agent, verdict attested.
-    Interrogate,
-    /// A named person.
-    Person { name: String },
-}
-
-impl Reviewer {
-    pub fn label(&self) -> String {
-        match self {
-            Self::Interrogate => "/interrogate".into(),
-            Self::Person { name } => name.clone(),
-        }
-    }
-}
-
 /// The one thing that holds a rule, in order of preference: a mechanical
-/// check, a literal yes/no Jev question, or a review.
+/// check or a literal yes/no Jev question.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Enforcer {
@@ -144,12 +122,6 @@ pub enum Enforcer {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         surfaces: Vec<String>,
     },
-    /// A brief (pstack `/how`, `/why`, `/blast-radius`) must be recorded for a
-    /// change that touches the rule's paths.
-    Brief {
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        skills: Vec<String>,
-    },
     /// A literal yes/no question for Jev. Yes means the rule is broken.
     Question {
         question: String,
@@ -180,8 +152,6 @@ pub enum Enforcer {
         #[serde(default = "default_precision_bar")]
         precision_bar_bp: u16,
     },
-    /// pstack's `/interrogate` or a named person attests the verdict.
-    Review { reviewer: Reviewer },
 }
 
 fn default_model() -> String {
@@ -216,7 +186,6 @@ impl Enforcer {
     pub fn family(&self) -> EnforcerFamily {
         match self {
             Self::Question { .. } => EnforcerFamily::Question,
-            Self::Review { .. } => EnforcerFamily::Review,
             _ => EnforcerFamily::Mechanical,
         }
     }
@@ -231,9 +200,7 @@ impl Enforcer {
             Self::Drive { .. } => "drive",
             Self::DesignTokens { .. } => "design_tokens",
             Self::PublicSurface { .. } => "public_surface",
-            Self::Brief { .. } => "brief",
             Self::Question { .. } => "question",
-            Self::Review { .. } => "review",
         }
     }
 
@@ -284,12 +251,6 @@ impl Enforcer {
                 }
                 Ok(())
             }
-            Self::Brief { skills } => {
-                for skill in skills {
-                    require_text(skill)?;
-                }
-                Ok(())
-            }
             Self::Question {
                 question,
                 yes_means,
@@ -321,10 +282,6 @@ impl Enforcer {
                 }
                 Ok(())
             }
-            Self::Review { reviewer } => match reviewer {
-                Reviewer::Interrogate => Ok(()),
-                Reviewer::Person { name } => require_text(name),
-            },
         }
     }
 }
@@ -717,52 +674,33 @@ impl Rule {
             sweep_unsure: Vec::new(),
         }
     }
-
-    /// Earlier advisory `Guidance` read as an advisory rule reviewed by
-    /// `/interrogate`.
-    pub fn from_guidance(guidance: &super::Guidance) -> Self {
-        let mut rationale = guidance.rationale.clone();
-        if !guidance.examples.is_empty() {
-            rationale.push_str(&format!(" Examples: {}.", guidance.examples.join("; ")));
-        }
-        Self {
-            schema: RULE_SCHEMA_V2.into(),
-            statement: guidance.statement.clone(),
-            rationale,
-            strength: Strength::Advisory,
-            enforcer: Enforcer::Review {
-                reviewer: Reviewer::Interrogate,
-            },
-            examples: Vec::new(),
-            source: RuleSource {
-                kind: RuleSourceKind::Migration,
-                reference: Some("guidance".into()),
-                provenance: Vec::new(),
-            },
-            paths: Vec::new(),
-            privacy: Privacy::default(),
-            shadow: false,
-            sweep: None,
-            sweep_priority: None,
-            sweep_unsure: Vec::new(),
-        }
-    }
 }
 
 /// Fields of stored rule revisions that the current model drops on read.
 const DROPPED_RULE_FIELDS: &[&str] = &["hand_raise"];
+/// Enforcer kinds of stored rule revisions that nothing holds any more.
+const RETIRED_ENFORCERS: &[&str] = &["review", "brief"];
 
 /// How [`Rule::from_stored`] reads a stored rule revision.
 pub(super) enum StoredRead {
     /// Read as this rule.
-    Mapped(Rule),
+    Mapped(Box<Rule>),
+    /// Held by an enforcer that is gone: kept as history only.
+    Retired,
 }
 
 impl Rule {
     /// Read a stored rule revision that does not parse as a current rule:
-    /// the dropped fields are ignored. `None` when the revision is not of
-    /// that shape (it is then malformed).
+    /// one held by a retired enforcer is history, and otherwise the dropped
+    /// fields are ignored. `None` when the revision is not of either shape
+    /// (it is then malformed).
     pub(super) fn from_stored(record: &serde_json::Value) -> Option<StoredRead> {
+        let kind = record
+            .pointer("/enforcer/kind")
+            .and_then(serde_json::Value::as_str);
+        if kind.is_some_and(|kind| RETIRED_ENFORCERS.contains(&kind)) {
+            return Some(StoredRead::Retired);
+        }
         let mut fields = record.as_object()?.clone();
         let mut mapped = false;
         for field in DROPPED_RULE_FIELDS {
@@ -773,7 +711,7 @@ impl Rule {
         }
         serde_json::from_value(serde_json::Value::Object(fields))
             .ok()
-            .map(StoredRead::Mapped)
+            .map(|rule| StoredRead::Mapped(Box::new(rule)))
     }
 }
 

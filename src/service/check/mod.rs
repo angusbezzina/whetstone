@@ -1,11 +1,10 @@
 //! `wh check`: run every applicable rule the cheapest reliable way and
-//! return actionable findings, or record a review attestation or a brief.
+//! return actionable findings.
 //!
 //! Modes: the staged index (pre-commit: mechanical content checks only), the
 //! change since a base (pre-push and CI), everything, or a sweep of every
-//! mapped feature. Mechanical enforcers run through `crate::gates`, question
-//! enforcers through `crate::judgment`, and review enforcers are satisfied by
-//! attestations bound to the commit and rule revision.
+//! mapped feature. Mechanical enforcers run through `crate::gates` and
+//! question enforcers through `crate::judgment`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -17,17 +16,17 @@ use sha2::{Digest, Sha256};
 use crate::agreement::AgreementState;
 use crate::check;
 use crate::domain::{
-    AgreementRecord, Attestation, AttestationVerdict, Brief, ContentDigest, Enforcer,
-    EnforcerFamily, EvidenceRef, ExternalRef, ExternalSystem, Feature, Freshness, JudgmentOutcome,
-    JudgmentReceipt, PolicyStateSnapshot, ProvenanceKind, RecordBody, RecordId, RecordRef, Rule,
-    Strength, VerificationAxis, VerificationReceipt,
+    AgreementRecord, ContentDigest, Enforcer, EnforcerFamily, EvidenceRef, ExternalRef,
+    ExternalSystem, Feature, Freshness, JudgmentOutcome, JudgmentReceipt, PolicyStateSnapshot,
+    ProvenanceKind, RecordBody, RecordId, RecordRef, Rule, Strength, VerificationAxis,
+    VerificationReceipt,
 };
-use crate::gates::{BriefView, FileSet, GateOutcome};
+use crate::gates::{FileSet, GateOutcome};
 use crate::judgment::{self, Answer, UnitSource};
 use crate::proof::ArtifactFailure;
 use crate::storage::{ProjectLayout, StorageError};
 use crate::verification::{
-    self, AttestationState, EvidencePointer, Finding, RequirementKind, TrustedEvidenceSet,
+    self, EvidencePointer, Finding, ObservedState, RequirementKind, TrustedEvidenceSet,
     VerificationEvidence, VerificationPlan, VerificationRequirement,
 };
 
@@ -37,9 +36,8 @@ use super::record::{
     record_maintain_outcome, scan_findings, service_state, with_head, DriveBinding,
 };
 use super::{
-    bounded_input, bounded_list, bounded_request_id, domain_response, load_records, storage_error,
-    unix_now, unknown_response, utc_now, AttestRequest, BriefRequest, CheckRequest, GateMode,
-    RequiredSnapshot, ServiceEvidence, ServiceResponse, ServiceState,
+    bounded_request_id, load_records, storage_error, unix_now, unknown_response, utc_now,
+    CheckRequest, GateMode, RequiredSnapshot, ServiceEvidence, ServiceResponse, ServiceState,
 };
 
 /// The repository's own privacy settings, applied to every question.
@@ -48,11 +46,9 @@ pub const PRIVACY_RELATIVE: &str = "whetstone/privacy.json";
 mod findings;
 mod persist;
 mod question;
-mod review;
 
 use persist::*;
 use question::*;
-use review::*;
 
 /// An in-force rule chosen for this check.
 pub(crate) struct SelectedRule {
@@ -153,18 +149,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                 request.maintain_evidence.as_deref(),
             );
         }
-        if let Some(attest) = request.attest.clone() {
-            return record_attestation(layout, request_id, &attest);
-        }
-        if let Some(brief) = request.brief.clone() {
-            return record_brief(layout, request_id, &brief);
-        }
-    } else if request.attest.is_some() || request.brief.is_some() {
-        return unknown_response(
-            "check",
-            request_id,
-            "Recording an attestation or a brief needs a Git repository.".into(),
-        );
     }
     // CI enforces what the team accepted and shared, never a contributor's
     // private drafts; a local check sees both stores.
@@ -295,35 +279,35 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     let skipped = array_len(&result, "skipped") - delegated;
     let warnings = array_len(&result, "warnings");
     let native_state = if violations > 0 {
-        AttestationState::Violated
+        ObservedState::Violated
     } else if configuration_issues > 0
         || rules_applied == 0
         || files_scanned == 0
         || skipped > 0
         || warnings > 0
     {
-        AttestationState::Unknown
+        ObservedState::Unknown
     } else {
-        AttestationState::Success
+        ObservedState::Success
     };
     // With accepted rules, a scanner that has no project rules is simply not
     // part of this check rather than an unknown requirement.
     let include_native =
         include_native && (selection.rules.is_empty() || rules_applied > 0 || violations > 0);
     let native_summary = match native_state {
-        AttestationState::Success if delegated > 0 => format!(
+        ObservedState::Success if delegated > 0 => format!(
             "The compiled-in scanner applied {rules_applied} rules to {files_scanned} files without violations; {delegated} rule signals are delegated to the linter configuration (binding verified, enforced by the linter, not run here)."
         ),
-        AttestationState::Success => format!(
+        ObservedState::Success => format!(
             "The compiled-in scanner applied {rules_applied} rules to {files_scanned} files without violations."
         ),
-        AttestationState::Violated => format!(
+        ObservedState::Violated => format!(
             "The compiled-in scanner found {violations} violations; incomplete evidence remains visible in the findings."
         ),
-        AttestationState::Unknown => format!(
+        ObservedState::Unknown => format!(
             "The compiled-in scanner could not establish complete evidence ({configuration_issues} configuration issues, {skipped} skipped checks, {warnings} warnings)."
         ),
-        AttestationState::Unavailable => "The compiled-in scanner was unavailable.".into(),
+        ObservedState::Unavailable => "The compiled-in scanner was unavailable.".into(),
     };
     let findings = scan_findings(&project, &result);
     let scan_digest = digest_json(&result);
@@ -369,7 +353,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         Err(_) => String::new(),
     };
     // Each check is its own run: the same workspace can get a different
-    // verdict once an attestation, brief or accepted rule changes.
+    // verdict once an accepted rule changes.
     let started_at = format!("{}:{}", utc_now(), std::process::id());
     let run_id = {
         let digest = digest_bytes(
@@ -410,24 +394,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         _ => None,
     };
     let head = crate::gates::head_commit(&project);
-    // What a review attestation must have reviewed: the index at pre-commit,
-    // the pushed commit at pre-push (the tree is clean then), the working
-    // tree otherwise.
-    let attested = agreement.as_ref().is_some_and(|state| {
-        state
-            .records()
-            .iter()
-            .any(|record| matches!(record.body, RecordBody::Attestation(_)))
-    });
-    let checked_tree = if !attested {
-        None
-    } else if staged {
-        crate::gates::files::index_tree(&project)
-    } else if request.pushed.is_some() {
-        crate::gates::files::head_tree(&project)
-    } else {
-        crate::gates::files::worktree_tree(&project)
-    };
     // Public surfaces compare with what this commit builds on at pre-commit,
     // and with the last pushed revision otherwise (HEAD when never pushed).
     let surface_base = if staged {
@@ -439,7 +405,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             .or_else(|| crate::gates::files::last_pushed_revision(&project))
             .or_else(|| head.clone())
     };
-    let briefs = agreement.as_ref().map(brief_views).unwrap_or_default();
     let repository_privacy = read_privacy(&project);
     let mut outcomes = Vec::new();
     let mut judgment_records = Vec::new();
@@ -503,7 +468,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                     files: &files,
                     changed: &selection.changed_paths,
                     surface_base: surface_base.as_deref(),
-                    briefs: &briefs,
                 };
                 for (index, mutation) in mapped.mutations.iter().enumerate() {
                     let run = crate::gates::run_mutation(
@@ -532,13 +496,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         for selected in &selection.rules {
             let rule = &selected.rule;
             let is_drive = matches!(rule.enforcer, Enforcer::Drive { .. });
-            let family =
-                if rule.privacy.local_only && rule.enforcer.family() == EnforcerFamily::Question {
-                    EnforcerFamily::Review
-                } else {
-                    rule.enforcer.family()
-                };
-            let (outcome, requirement_kind, evidence) = match family {
+            let (outcome, requirement_kind, evidence) = match rule.enforcer.family() {
                 EnforcerFamily::Mechanical => {
                     let context = crate::gates::GateContext {
                         project_root: &project,
@@ -553,7 +511,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                         files: &files,
                         changed: &content_changed,
                         surface_base: surface_base.as_deref(),
-                        briefs: &briefs,
                     };
                     let mut outcome = match (&halted, is_drive) {
                         (Some(reason), true) => {
@@ -643,6 +600,12 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                     };
                     (outcome, RequirementKind::NativeCheck, Some(evidence))
                 }
+                EnforcerFamily::Question if rule.privacy.local_only => {
+                    let outcome = GateOutcome::new(&selected.id, rule).unknown(
+                        "This rule is local-only, so Jev is never asked and nothing else holds it.",
+                    );
+                    (outcome, RequirementKind::Judgment, None)
+                }
                 EnforcerFamily::Question => {
                     let run = run_question(
                         layout,
@@ -659,96 +622,27 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                         outcomes.push(run.outcome);
                         continue;
                     }
-                    let attested = current_attestation(
-                        agreement.as_ref(),
-                        selected,
-                        head.as_deref(),
-                        checked_tree.as_deref(),
-                    );
-                    let evidence = match attested {
-                        Some(attestation) => attestation_evidence(selected, attestation, &snapshot),
-                        None => VerificationEvidence::Judgment {
-                            requirement_id: format!("gate:{}", selected.id.as_str()),
-                            snapshot: snapshot.clone(),
-                            outcome: run.aggregate,
-                            evidence: EvidencePointer {
-                                source: "whetstone_judgment".into(),
-                                locator: format!("{run_id}:{}", selected.id.as_str()),
-                                digest: digest_bytes(run.outcome.summary.as_bytes()),
-                            },
-                            observed_at_unix: unix_now(),
-                            summary: run.outcome.summary.clone(),
-                            findings: run
-                                .outcome
-                                .failures
-                                .iter()
-                                .map(|failure| gate_finding(selected, failure))
-                                .collect(),
+                    let evidence = VerificationEvidence::Judgment {
+                        requirement_id: format!("gate:{}", selected.id.as_str()),
+                        snapshot: snapshot.clone(),
+                        outcome: run.aggregate,
+                        evidence: EvidencePointer {
+                            source: "whetstone_judgment".into(),
+                            locator: format!("{run_id}:{}", selected.id.as_str()),
+                            digest: digest_bytes(run.outcome.summary.as_bytes()),
                         },
+                        observed_at_unix: unix_now(),
+                        summary: run.outcome.summary.clone(),
+                        findings: run
+                            .outcome
+                            .failures
+                            .iter()
+                            .map(|failure| gate_finding(selected, failure))
+                            .collect(),
                     };
                     // Shadow answers are recorded and shown, never enforced.
                     let evidence = (!rule.in_shadow()).then_some(evidence);
                     (run.outcome, RequirementKind::Judgment, evidence)
-                }
-                EnforcerFamily::Review => {
-                    let mut outcome = GateOutcome::new(&selected.id, rule);
-                    // A review scoped to some paths is owed only by a change
-                    // that touches them.
-                    let partial = matches!(request.gate_mode, GateMode::Staged | GateMode::Changed);
-                    if partial
-                        && !rule.paths.is_empty()
-                        && !content_changed.iter().any(|path| rule.applies_to(path))
-                    {
-                        outcome.state = VerificationAxis::Pass;
-                        outcome.summary =
-                            "The change touches none of this rule's paths, so no review is owed."
-                                .into();
-                        not_applicable.push(selected.id.as_str().to_string());
-                        outcomes.push(outcome);
-                        continue;
-                    }
-                    let attested = current_attestation(
-                        agreement.as_ref(),
-                        selected,
-                        head.as_deref(),
-                        checked_tree.as_deref(),
-                    );
-                    match attested {
-                        Some(attestation) => {
-                            outcome.state = match attestation.verdict {
-                                AttestationVerdict::Pass => VerificationAxis::Pass,
-                                AttestationVerdict::Fail => VerificationAxis::Fail,
-                            };
-                            outcome.summary = format!(
-                                "{} attested {} at {}: {}",
-                                attestation.reviewer.label(),
-                                match attestation.verdict {
-                                    AttestationVerdict::Pass => "pass",
-                                    AttestationVerdict::Fail => "fail",
-                                },
-                                &attestation.commit[..attestation.commit.len().min(12)],
-                                attestation.notes
-                            );
-                            let evidence = attestation_evidence(selected, attestation, &snapshot);
-                            (outcome, RequirementKind::Review, Some(evidence))
-                        }
-                        None => {
-                            outcome = outcome.unknown(format!(
-                                "No review attestation for this commit: run {} and record it with wh check --attest {} --verdict pass|fail{}. Missing review is not a pass.",
-                                match &rule.enforcer {
-                                    Enforcer::Review { reviewer } => reviewer.label(),
-                                    _ => "/interrogate".into(),
-                                },
-                                selected.id.as_str(),
-                                if rule.privacy.local_only {
-                                    " (local-only: Jev is never called for this rule)"
-                                } else {
-                                    ""
-                                }
-                            ));
-                            (outcome, RequirementKind::Review, None)
-                        }
-                    }
                 }
             };
             // Shadow results (a Jev question's or a rule drafted from a
@@ -1314,4 +1208,52 @@ pub(crate) fn select_rules(
         }
     }
     Ok(selection)
+}
+
+/// Why the working tree is not exactly the commit being pushed, if it is
+/// not. The check runs commands and reads files in the working tree, so it
+/// can only vouch for a push when that tree is the pushed commit.
+fn pushed_mismatch(project: &Path, pushed: &str) -> Option<String> {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(project)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    if pushed.len() < 7
+        || !pushed
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return Some(format!(
+            "{pushed} is not a commit id; the pre-push hook passes the pushed commit."
+        ));
+    }
+    let head = git(&["rev-parse", "--verify", "--quiet", "HEAD"])?;
+    let pushed_commit = git(&[
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        "--end-of-options",
+        &format!("{pushed}^{{commit}}"),
+    ]);
+    if pushed_commit.as_deref() != Some(head.as_str()) {
+        return Some(format!(
+            "The push sends {} but {} is checked out; the check reads the working tree, so it cannot vouch for a commit that is not checked out. Check out the branch you push (or push the checked-out one), then push again.",
+            &pushed[..pushed.len().min(12)],
+            &head[..head.len().min(12)]
+        ));
+    }
+    let dirty = git(&["status", "--porcelain", "--untracked-files=no"]).unwrap_or_default();
+    if !dirty.is_empty() {
+        return Some(
+            "Tracked files have uncommitted changes, so the working tree is not what you push. Commit or stash them, then push again."
+                .into(),
+        );
+    }
+    None
 }

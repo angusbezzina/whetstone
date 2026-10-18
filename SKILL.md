@@ -117,11 +117,7 @@ resume token. A retry with the same request ID must keep the same input.
   default 2) orders the work, and `sweep_unsure` (`[{"paths": [...] or
   "matching": "<regex>", "reason": "..."}]`) parks the doubtful flags until a
   person raises them; a doubt that covers every flag is refused.
-- Before building, run pstack's `/how`, `/why` and `/blast-radius` and record
-  them with `wh check --brief --area <feature|path> --skill how --skill why`.
-- A review rule passes only with an attestation at this commit:
-  `wh check --attest <rule> --verdict pass|fail --reviewer interrogate
-  --notes "..."`.
+- Before building, run pstack's `/how`, `/why` and `/blast-radius`.
 - `wh push` previews an exact package of accepted records and needs
   `--confirm <token>`. `wh pull` receives shared records and never executes
   or accepts them.
@@ -136,7 +132,7 @@ The earlier direction's `wh push --propose`, `wh change --activate`,
 - Prefer five trusted rules to fifty noisy ones.
 - Every rule gets one enforcer. Use a mechanical check (native linter, AST,
   test, drive proof) when one can hold the rule. Otherwise use a literal
-  yes/no question with examples. Use review only as the last resort.
+  yes/no question with examples.
 - Send native-linter concerns to native linters; do not duplicate them. Use
   AST rules only for structural, type-independent properties. Raw regex is
   not enforcement.

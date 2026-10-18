@@ -472,7 +472,7 @@ pub fn pre_push_hook() -> String {
 # Installed by `wh init --action wire --hooks`. Runs any hook that was here
 # before (kept as pre-push{CHAINED_SUFFIX}), then the full `wh check` for the
 # commits being pushed: mechanical rules, Jev questions (unless shadow or
-# local-only), review attestations and fresh proofs.
+# local-only) and fresh proofs.
 hook_dir=$(dirname "$0")
 refs=$(cat)
 if [ -x "$hook_dir/pre-push{CHAINED_SUFFIX}" ]; then

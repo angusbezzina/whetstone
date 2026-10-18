@@ -511,48 +511,6 @@ fn every_kind_of_decision_leaves_a_trail_row_and_a_journal_entry() {
     assert_eq!(rule_view(root, "rule.no-todo")["strength"], "should");
     assert_eq!(rule_view(root, "rule.shadow-todo")["shadow"], false);
 
-    let brief = wh(
-        root,
-        &[
-            "check",
-            "--request-id",
-            "brief-1",
-            "--brief",
-            "--area",
-            "notes",
-            "--skill",
-            "how",
-            "--reuse",
-            "the notes module",
-            "--risk",
-            "note parsing",
-            "--notes",
-            "How notes are stored.",
-            "--json",
-        ],
-        &offline(),
-    );
-    assert_eq!(brief["state"], "success", "{brief}");
-    let attested = wh(
-        root,
-        &[
-            "check",
-            "--request-id",
-            "attest-1",
-            "--attest",
-            "rule.no-todo",
-            "--verdict",
-            "pass",
-            "--reviewer",
-            "Ada",
-            "--notes",
-            "Read the change; no TODO.",
-            "--json",
-        ],
-        &offline(),
-    );
-    assert_eq!(attested["state"], "success", "{attested}");
-
     let rows = trail_rows(root);
     let dump = rows
         .iter()
@@ -590,13 +548,6 @@ fn every_kind_of_decision_leaves_a_trail_row_and_a_journal_entry() {
             "Asked Jev about",
             "redacted sha256:",
         ),
-        ("brief", "brief", "Brief for notes", "ran how"),
-        (
-            "attestation",
-            "review",
-            "Review of rule.no-todo by Ada",
-            "pass",
-        ),
     ] {
         assert!(
             has_row(&rows, phase, decision, rest),
@@ -626,8 +577,6 @@ fn every_kind_of_decision_leaves_a_trail_row_and_a_journal_entry() {
         ("strength change", "strength must → should"),
         ("shadow promotion", "promoted from shadow"),
         ("Jev receipt", "rule.no-todo (Jev)"),
-        ("brief", "Brief recorded: notes"),
-        ("attestation", "Review attested: rule.no-todo"),
     ] {
         assert!(
             entries.iter().any(|entry| entry.contains(needle)),

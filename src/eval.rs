@@ -5,7 +5,7 @@
 //! surface) run on each example directly. Jev questions are scored only from
 //! recorded answers (judgment receipts, or a cassette in
 //! `WHETSTONE_JEV_CASSETTE`), so CI never needs the network. Command-based
-//! enforcers (tests, linters, drives, briefs, reviews) are not scored by
+//! enforcers (tests, linters, drives) are not scored by
 //! examples, and the report says so rather than counting them as passes.
 
 use std::collections::BTreeMap;

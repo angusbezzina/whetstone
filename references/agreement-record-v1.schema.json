@@ -49,7 +49,6 @@
         "principle",
         "rule",
         "standard",
-        "guidance",
         "feature",
         "verification_map",
         "proposal",
@@ -57,8 +56,6 @@
         "retirement",
         "verification_receipt",
         "judgment",
-        "attestation",
-        "brief",
         "flag_decision",
         "lesson",
         "lesson_check"
@@ -77,9 +74,6 @@
         },
         {
           "$ref": "#/$defs/standard"
-        },
-        {
-          "$ref": "#/$defs/guidance"
         },
         {
           "$ref": "#/$defs/feature"
@@ -101,12 +95,6 @@
         },
         {
           "$ref": "#/$defs/judgment"
-        },
-        {
-          "$ref": "#/$defs/attestation"
-        },
-        {
-          "$ref": "#/$defs/brief"
         },
         {
           "$ref": "#/$defs/flag_decision"
@@ -181,22 +169,6 @@
         "properties": {
           "record": {
             "$ref": "#/$defs/standard"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "record_type": {
-            "const": "guidance"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "record": {
-            "$ref": "#/$defs/guidance"
           }
         }
       }
@@ -309,38 +281,6 @@
         "properties": {
           "record": {
             "$ref": "#/$defs/judgment"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "record_type": {
-            "const": "attestation"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "record": {
-            "$ref": "#/$defs/attestation"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "record_type": {
-            "const": "brief"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "record": {
-            "$ref": "#/$defs/brief"
           }
         }
       }
@@ -726,29 +666,6 @@
         }
       ]
     },
-    "guidance": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "statement",
-        "rationale"
-      ],
-      "properties": {
-        "statement": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "rationale": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "examples": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "description": "Earlier advisory guidance; read as an advisory rule reviewed by /interrogate."
-    },
     "proposal_binding": {
       "type": "object",
       "additionalProperties": false,
@@ -1124,38 +1041,6 @@
         "advisory"
       ]
     },
-    "reviewer": {
-      "oneOf": [
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "by"
-          ],
-          "properties": {
-            "by": {
-              "const": "interrogate"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "by",
-            "name"
-          ],
-          "properties": {
-            "by": {
-              "const": "person"
-            },
-            "name": {
-              "$ref": "#/$defs/nonempty"
-            }
-          }
-        }
-      ]
-    },
     "enforcer": {
       "oneOf": [
         {
@@ -1313,25 +1198,6 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "kind"
-          ],
-          "properties": {
-            "kind": {
-              "const": "brief"
-            },
-            "skills": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
             "kind",
             "question"
           ],
@@ -1382,22 +1248,6 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 10000
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "kind",
-            "reviewer"
-          ],
-          "properties": {
-            "kind": {
-              "const": "review"
-            },
-            "reviewer": {
-              "$ref": "#/$defs/reviewer"
             }
           }
         }
@@ -1682,98 +1532,6 @@
           "$ref": "#/$defs/nonempty"
         },
         "answered_at": {
-          "$ref": "#/$defs/timestamp"
-        }
-      }
-    },
-    "attestation": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "rule",
-        "commit",
-        "reviewer",
-        "verdict",
-        "notes",
-        "attested_at"
-      ],
-      "properties": {
-        "rule": {
-          "$ref": "#/$defs/record_ref"
-        },
-        "commit": {
-          "type": "string",
-          "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
-        },
-        "tree": {
-          "type": "string",
-          "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
-        },
-        "reviewer": {
-          "$ref": "#/$defs/reviewer"
-        },
-        "verdict": {
-          "enum": [
-            "pass",
-            "fail"
-          ]
-        },
-        "notes": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "evidence": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/evidence_ref"
-          }
-        },
-        "attested_at": {
-          "$ref": "#/$defs/timestamp"
-        }
-      }
-    },
-    "brief": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "area",
-        "skills",
-        "notes",
-        "recorded_at"
-      ],
-      "properties": {
-        "area": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "commit": {
-          "type": "string"
-        },
-        "skills": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 8,
-          "items": {
-            "$ref": "#/$defs/nonempty"
-          }
-        },
-        "reuse": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "risks": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "notes": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "recorded_at": {
           "$ref": "#/$defs/timestamp"
         }
       }
@@ -2151,7 +1909,10 @@
       "repair_authority_reservation",
       "repair_operation_claim",
       "hand_raise",
-      "hand_answer"
+      "hand_answer",
+      "attestation",
+      "brief",
+      "guidance"
     ]
   }
 }

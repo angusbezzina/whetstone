@@ -14,8 +14,8 @@ use serde_json::{json, Value};
 
 use crate::agreement::{AgreementState, Lifecycle};
 use crate::domain::{
-    AgreementRecord, AttestationVerdict, Enforcer, Feature, Freshness, JudgmentOutcome,
-    PrincipleSource, RecordBody, RecordId, RecordRef, Rule, VerificationAxis,
+    AgreementRecord, Enforcer, Feature, Freshness, JudgmentOutcome, PrincipleSource, RecordBody,
+    RecordId, RecordRef, Rule, VerificationAxis,
 };
 use crate::learning::RuleStats;
 use crate::proof::{latest_gate_receipt, read_artifact, rule_ids, Changes, EVIDENCE_SYSTEM};
@@ -377,7 +377,6 @@ pub fn runs_at(rule: &Rule) -> &'static str {
             "pre-push and CI, in shadow (recorded, not enforced)"
         }
         crate::domain::EnforcerFamily::Question => "pre-push and CI",
-        crate::domain::EnforcerFamily::Review => "pre-push and CI, once attested",
     }
 }
 
@@ -385,10 +384,7 @@ pub(crate) fn kind_of(record: &AgreementRecord) -> &'static str {
     match &record.body {
         RecordBody::Mission(_) => "mission",
         RecordBody::Principle(_) => "principle",
-        RecordBody::Rule(_)
-        | RecordBody::StoredRule(_)
-        | RecordBody::Standard(_)
-        | RecordBody::Guidance(_) => "rule",
+        RecordBody::Rule(_) | RecordBody::StoredRule(_) | RecordBody::Standard(_) => "rule",
         RecordBody::Feature(_) => "feature",
         RecordBody::VerificationMap(_) => "map",
         RecordBody::Retirement(_) => "retirement",
@@ -415,7 +411,6 @@ pub fn record_title(record: &AgreementRecord) -> String {
         RecordBody::Principle(body) => body.statement.clone(),
         RecordBody::Rule(body) => body.statement.clone(),
         RecordBody::StoredRule(body) => body.rule.statement.clone(),
-        RecordBody::Guidance(body) => body.statement.clone(),
         RecordBody::Standard(body) => body.statement.clone(),
         RecordBody::Feature(body) => body.name.clone(),
         RecordBody::VerificationMap(body) => body.title.clone(),
@@ -424,12 +419,6 @@ pub fn record_title(record: &AgreementRecord) -> String {
         RecordBody::Judgment(body) => {
             format!("Jev {} on {}", body.outcome.label(), body.rule.id.as_str())
         }
-        RecordBody::Attestation(body) => format!(
-            "Review of {} by {}",
-            body.rule.id.as_str(),
-            body.reviewer.label()
-        ),
-        RecordBody::Brief(body) => format!("Brief for {}", body.area),
         RecordBody::FlagDecision(body) => {
             format!("Flag {} on {}", body.verdict.label(), body.rule.as_str())
         }
@@ -480,10 +469,7 @@ fn edit_base(record: &AgreementRecord) -> EditBase {
                 "rationale": body.rationale,
             }),
         ),
-        body @ (RecordBody::Rule(_)
-        | RecordBody::StoredRule(_)
-        | RecordBody::Standard(_)
-        | RecordBody::Guidance(_)) => {
+        body @ (RecordBody::Rule(_) | RecordBody::StoredRule(_) | RecordBody::Standard(_)) => {
             let rule = body.rule_view().map(std::borrow::Cow::into_owned);
             (
                 "rule",
@@ -549,10 +535,7 @@ fn detail(key: &'static str, value: impl Into<String>, code: bool) -> Detail {
 
 fn details_for(record: &AgreementRecord) -> Vec<Detail> {
     match &record.body {
-        body @ (RecordBody::Rule(_)
-        | RecordBody::StoredRule(_)
-        | RecordBody::Standard(_)
-        | RecordBody::Guidance(_)) => {
+        body @ (RecordBody::Rule(_) | RecordBody::StoredRule(_) | RecordBody::Standard(_)) => {
             let Some(rule) = body.rule_view() else {
                 return Vec::new();
             };
@@ -1066,10 +1049,7 @@ fn attention(
             tone: "warn",
             kind: "stale_result",
             kind_label: "not current",
-            title: if gate.family == "review" {
-                // A check cannot run a review: someone attests it.
-                format!("Not attested yet: {}", gate.name.trim_end_matches('.'))
-            } else if gate.last_run.is_some() {
+            title: if gate.last_run.is_some() {
                 format!("Not current: {}", gate.name.trim_end_matches('.'))
             } else {
                 format!("Never run: {}", gate.name.trim_end_matches('.'))
@@ -1077,14 +1057,7 @@ fn attention(
             text: "A result that predates the current code, or no result at all, is not a pass."
                 .into(),
             actor: "you or your agent".into(),
-            next: if gate.family == "review" {
-                format!(
-                    "Review the change (/interrogate or the named reviewer), then record it with wh check --attest {} --verdict pass|fail.",
-                    gate.id
-                )
-            } else {
-                format!("Run {} on the current revision.", gate.recheck)
-            },
+            next: format!("Run {} on the current revision.", gate.recheck),
             route: "checks",
             focus: Some(gate.id.clone()),
             action_label: "Open checks",

@@ -21,8 +21,7 @@ system, and agents guessing instead of asking.
    strength (must, should or advisory) and one enforcer, chosen in this order:
    a mechanical check (linter, AST, design tokens, public API), then a literal
    yes/no question for Jev (TypeSafe System One) scored against the rule's
-   examples, then a review by pstack's `/interrogate` or a person. Jev can
-   raise a flag but can never pass a must rule.
+   examples. Jev can raise a flag but can never pass a must rule.
 3. **Brief before building, prove before shipping.** Agents run pstack's
    `/how`, `/why` and `/blast-radius` first. Checks run at git pre-commit
    (fast, staged files), pre-push (the full `wh check` with fresh proofs) and
@@ -62,9 +61,8 @@ and the plan in epic `whetstone-ppq` is built:
   or `--url <git url>`) into rule drafts with provenance.
 - **Rules.** One strength and one enforcer per rule
   ([rule schema](references/rule-v2.schema.json)): AST, lint, formatter, test,
-  validator, drive, design tokens, public surface or brief; a Jev question
-  (in shadow until promoted); or a review by `/interrogate` or a named person
-  (`wh check --attest`). Earlier standards and guidance are read as rules, and
+  validator, drive, design tokens or public surface; or a Jev question (in
+  shadow until promoted). Earlier standards are read as rules, and
   `wh change --migrate` turns earlier values, philosophy and YAML rules into
   drafts.
 - **Jev.** Questions go through the driver's `ask` command to TypeSafe System
@@ -76,7 +74,6 @@ and the plan in epic `whetstone-ppq` is built:
 - **Gates.** `wh init --action wire --hooks` installs git pre-commit (staged
   content, mechanical rules only) and pre-push (`wh check --base <remote>`)
   hooks, chaining any existing hook. `--ci` writes the `whetstone/policy` required status workflow.
-- **Briefs.** `wh check --brief` records a pstack brief that brief-enforced rules require.
 - **Learning.** `wh change --accept-flag` and `--dismiss-flag` label flags.
   Each rule then has a false-flag rate, and `wh change --tune` drafts
   demotions for noisy rules and promotions for accurate shadow questions.
@@ -101,7 +98,6 @@ wh change --kind rule --record-id rule.no-todo --content "..." --rationale "..."
 wh check --staged                                           # what pre-commit runs
 wh check --base origin/main                                 # what pre-push runs
 wh check --sweep                                            # drive every mapped feature
-wh check --attest rule.api-review --verdict pass --reviewer interrogate --notes "..."
 wh dash                                                     # local dashboard
 wh dash --trail                                             # decision trail as TSV
 wh push                                                     # review the exact package, then --confirm <token>

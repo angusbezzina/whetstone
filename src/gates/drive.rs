@@ -92,7 +92,6 @@ pub fn run_mutation(
             files: context.files,
             changed: context.changed,
             surface_base: context.surface_base,
-            briefs: context.briefs,
         };
         Ok(run_drive_gate(
             &mutated,

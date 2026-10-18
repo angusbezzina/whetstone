@@ -36,20 +36,6 @@ pub(super) fn latest_judgments<'a>(
         .unwrap_or_default()
 }
 
-pub(super) fn latest_attestation<'a>(
-    state: &'a AgreementState,
-    id: &RecordId,
-) -> Option<&'a crate::domain::Attestation> {
-    state
-        .records()
-        .iter()
-        .filter_map(|record| match &record.body {
-            RecordBody::Attestation(body) if &body.rule.id == id => Some(body),
-            _ => None,
-        })
-        .max_by(|left, right| left.attested_at.cmp(&right.attested_at))
-}
-
 pub(super) struct RunView {
     pub(super) result: StateLabel,
     pub(super) last_run: Option<String>,
@@ -255,59 +241,12 @@ pub(super) fn question_run(
     }
 }
 
-pub(super) fn review_run(
-    state: &AgreementState,
-    id: &RecordId,
-    shown: &AgreementRecord,
-    head: Option<&str>,
-    eligible: bool,
-) -> RunView {
-    let Some(attestation) = latest_attestation(state, id) else {
-        let mut view = not_run(eligible);
-        if eligible {
-            view.result = StateLabel::new("warn", "not attested");
-        }
-        return view;
-    };
-    let bound = shown
-        .reference()
-        .ok()
-        .is_some_and(|reference| reference == attestation.rule);
-    let current = bound && head == Some(attestation.commit.as_str());
-    RunView {
-        result: match (attestation.verdict, current) {
-            (AttestationVerdict::Pass, true) => StateLabel::new("pass", "attested"),
-            (AttestationVerdict::Pass, false) => StateLabel::new("warn", "attested · stale"),
-            (AttestationVerdict::Fail, _) => StateLabel::new("fail", "review failed"),
-        },
-        last_run: Some(attestation.attested_at.clone()),
-        current,
-        summary: Some(format!(
-            "{} at {}: {}",
-            attestation.reviewer.label(),
-            &attestation.commit[..attestation.commit.len().min(12)],
-            attestation.notes
-        )),
-        failures: Vec::new(),
-        evidence: attestation
-            .evidence
-            .iter()
-            .map(|evidence| EvidenceSummary {
-                kind: evidence.system.clone(),
-                locator: evidence.locator.clone(),
-                digest: evidence.digest.as_ref().map(|d| d.as_str().to_string()),
-            })
-            .collect(),
-    }
-}
-
 pub(super) fn gate_runs(
     state: &AgreementState,
     input: &ProjectionInput<'_>,
     features: &[FeatureEntry],
     owner: &str,
 ) -> (Vec<GateRun>, Option<LastCheck>) {
-    let head = crate::gates::head_commit(input.project_root);
     let mut runs = Vec::new();
     let mut last_at: Option<String> = None;
     let mut tally = Tally::default();
@@ -329,10 +268,7 @@ pub(super) fn gate_runs(
             crate::domain::EnforcerFamily::Mechanical => {
                 mechanical_run(state, input, &id, shown, eligible)
             }
-            crate::domain::EnforcerFamily::Question if !rule.privacy.local_only => {
-                question_run(state, &id, &rule, eligible)
-            }
-            _ => review_run(state, &id, shown, head.as_deref(), eligible),
+            crate::domain::EnforcerFamily::Question => question_run(state, &id, &rule, eligible),
         };
         if let Some(at) = &view.last_run {
             if last_at.as_deref().map_or(true, |last| at.as_str() > last) {

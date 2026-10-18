@@ -1026,7 +1026,7 @@ fn a_rule_change_is_drafted_accepted_checked_flagged_and_dismissed() {
                 "type": "rule",
                 "strength": "must",
                 "enforcer": {"kind": "test", "command": "cargo test"},
-                "enforcers": [{"kind": "review", "reviewer": {"by": "interrogate"}}]
+                "enforcers": [{"kind": "lint", "tool": "ruff", "code": "F401"}]
             }
         })
         .to_string(),

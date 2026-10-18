@@ -1385,18 +1385,9 @@ fn rule_definitions_hold_one_strength_and_one_enforcer_of_each_family() {
             "mechanical",
             r#"{"kind":"public_surface","surfaces":["cli","json"]}"#,
         ),
-        ("mechanical", r#"{"kind":"brief","skills":["how"]}"#),
         (
             "question",
             r#"{"kind":"question","question":"Does this hunk add a test nobody asked for?"}"#,
-        ),
-        (
-            "review",
-            r#"{"kind":"review","reviewer":{"by":"interrogate"}}"#,
-        ),
-        (
-            "review",
-            r#"{"kind":"review","reviewer":{"by":"person","name":"Ada"}}"#,
         ),
     ];
     for (index, strength) in ["must", "should", "advisory"].into_iter().enumerate() {
@@ -1430,7 +1421,9 @@ fn rule_definitions_hold_one_strength_and_one_enforcer_of_each_family() {
     // Two enforcers, an unknown kind or strength, or stray fields never parse.
     for definition in [
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"true"},"enforcers":[{"kind":"lint","tool":"ruff","code":"F401"}]}"#,
-        r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"true"},"enforcer":{"kind":"review","reviewer":{"by":"interrogate"}}}"#,
+        r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"true"},"enforcer":{"kind":"lint","tool":"ruff","code":"F401"}}"#,
+        r#"{"type":"rule","strength":"must","enforcer":{"kind":"review","reviewer":{"by":"interrogate"}}}"#,
+        r#"{"type":"rule","strength":"must","enforcer":{"kind":"brief","skills":["how"]}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"true","query":"(identifier)"}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"vibes"}}"#,
         r#"{"type":"rule","strength":"may","enforcer":{"kind":"test","command":"true"}}"#,
@@ -1468,7 +1461,6 @@ fn rule_definitions_hold_one_strength_and_one_enforcer_of_each_family() {
         r#"{"kind":"question","question":"Is it?","threshold_bp":0}"#,
         r#"{"kind":"public_surface","surfaces":["gui"]}"#,
         r#"{"kind":"design_tokens","tokens":"/etc/tokens.css"}"#,
-        r#"{"kind":"review","reviewer":{"by":"person","name":" "}}"#,
         r#"{"kind":"lint","tool":"ruff","code":""}"#,
     ]
     .into_iter()
@@ -2311,87 +2303,6 @@ fn flags_are_labelled_accepted_or_dismissed_as_flag_decisions() {
     assert_eq!(verdicts, [FlagVerdict::Accept, FlagVerdict::Dismiss]);
 }
 
-#[test]
-fn an_attestation_passes_a_must_review_rule_only_at_its_commit() {
-    let repo = Repo::new();
-    repo.write("README.md", "fixture\n");
-    repo.commit("base");
-    repo.rule(
-        "rule.reviewed",
-        r#"{"type":"rule","strength":"must","enforcer":{"kind":"review","reviewer":{"by":"person","name":"Ada"}}}"#,
-    );
-    let (code, unreviewed) = repo.check(&["--rule", "rule.reviewed"]);
-    assert_eq!(code, Some(3), "{unreviewed}");
-    assert_eq!(unreviewed["state"], "unknown");
-    assert_eq!(gate(&unreviewed, "rule.reviewed")["state"], "unknown");
-
-    // Only a rule in force can be attested.
-    let draft_attest = repo.wh(&[
-        "check",
-        "--attest",
-        "rule.not-in-force",
-        "--verdict",
-        "pass",
-        "--reviewer",
-        "Ada",
-        "--notes",
-        "Looks right.",
-    ]);
-    assert_eq!(draft_attest.status.code(), Some(3));
-
-    let attested = repo.wh_json(&[
-        "check",
-        "--request-id",
-        "attest-1",
-        "--attest",
-        "rule.reviewed",
-        "--verdict",
-        "pass",
-        "--reviewer",
-        "Ada",
-        "--notes",
-        "Read the whole change.",
-    ]);
-    assert_eq!(attested["state"], "success", "{attested}");
-    let head = git(&repo.root, &["rev-parse", "HEAD"]).trim().to_string();
-    assert_eq!(attested["data"]["detail"]["commit"], head.as_str());
-    let (code, reviewed) = repo.check(&["--rule", "rule.reviewed"]);
-    assert_eq!(code, Some(0), "{reviewed}");
-    assert_eq!(gate(&reviewed, "rule.reviewed")["state"], "pass");
-
-    // A new commit makes the attestation stale: missing review is not a pass.
-    repo.write("README.md", "fixture, changed\n");
-    repo.commit("change after review");
-    let (code, stale) = repo.check(&["--rule", "rule.reviewed"]);
-    assert_eq!(code, Some(3), "{stale}");
-    assert_eq!(gate(&stale, "rule.reviewed")["state"], "unknown");
-
-    // A failing review at the new commit fails the check.
-    let failed = repo.wh_json(&[
-        "check",
-        "--request-id",
-        "attest-2",
-        "--attest",
-        "rule.reviewed",
-        "--verdict",
-        "fail",
-        "--reviewer",
-        "Ada",
-        "--notes",
-        "This breaks the contract.",
-    ]);
-    assert_eq!(failed["state"], "success");
-    let (code, rejected) = repo.check(&["--rule", "rule.reviewed"]);
-    assert_eq!(code, Some(1), "{rejected}");
-    assert_eq!(gate(&rejected, "rule.reviewed")["state"], "fail");
-    let attestations = repo
-        .records()
-        .into_iter()
-        .filter(|record| matches!(record.body, RecordBody::Attestation(_)))
-        .count();
-    assert_eq!(attestations, 2);
-}
-
 const QUESTION_MUST: &str = r#"{"type":"rule","strength":"must","enforcer":{"kind":"question","question":"Does this hunk add a test nobody asked for?","shadow":false}}"#;
 const QUESTION_SHOULD: &str = r#"{"type":"rule","strength":"should","enforcer":{"kind":"question","question":"Does this hunk rename a public symbol?","shadow":false}}"#;
 
@@ -2491,74 +2402,6 @@ fn a_must_question_rule_never_passes_on_a_jev_clear() {
     assert_ne!(output.status.code(), Some(0));
 }
 
-#[test]
-fn a_recorded_brief_satisfies_a_brief_rule_for_the_change_it_covers() {
-    let repo = Repo::new();
-    repo.write("src/app.py", "def read_config():\n    pass\n");
-    repo.write("docs/notes.md", "notes\n");
-    repo.commit("base");
-    repo.rule(
-        "rule.briefed",
-        r#"{"type":"rule","strength":"must","enforcer":{"kind":"brief","skills":["how"]},"paths":["src/**"]}"#,
-    );
-    repo.write("src/app.py", "def read_config():\n    return 2\n");
-
-    let (code, missing) = repo.check(&["--changed", "--rule", "rule.briefed"]);
-    assert_eq!(code, Some(3), "{missing}");
-    assert_eq!(gate(&missing, "rule.briefed")["state"], "unknown");
-
-    let incomplete = repo.wh(&["check", "--brief", "--area", "src", "--notes", "No skill."]);
-    assert_eq!(incomplete.status.code(), Some(3));
-
-    // A brief from another skill does not cover a rule that asks for /how.
-    let why = repo.wh_json(&[
-        "check",
-        "--request-id",
-        "brief-why",
-        "--brief",
-        "--area",
-        "src",
-        "--skill",
-        "why",
-        "--notes",
-        "Why this exists.",
-    ]);
-    assert_eq!(why["state"], "success", "{why}");
-    let (code, still) = repo.check(&["--changed", "--rule", "rule.briefed"]);
-    assert_eq!(code, Some(3), "{still}");
-
-    let how = repo.wh_json(&[
-        "check",
-        "--request-id",
-        "brief-how",
-        "--brief",
-        "--area",
-        "src",
-        "--skill",
-        "how",
-        "--reuse",
-        "read_config",
-        "--risk",
-        "config loading",
-        "--notes",
-        "How config loading works.",
-    ]);
-    assert_eq!(how["state"], "success", "{how}");
-    assert!(how["data"]["brief"].is_object());
-    let (code, briefed) = repo.check(&["--changed", "--rule", "rule.briefed"]);
-    assert_eq!(code, Some(0), "{briefed}");
-    assert_eq!(gate(&briefed, "rule.briefed")["state"], "pass");
-    let briefs = repo
-        .records()
-        .into_iter()
-        .filter(|record| matches!(record.body, RecordBody::Brief(_)))
-        .count();
-    assert_eq!(briefs, 2);
-}
-
-/// Write legacy (retired-kind) records into the private store the way an
-/// earlier Whetstone left them: byte-for-byte beads that can no longer be
-/// created through the store.
 fn seed_legacy_records(root: &Path, indices: &[usize]) {
     let layout = ProjectLayout::resolve(root).expect("layout");
     let dir = layout.private_store();

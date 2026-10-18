@@ -105,7 +105,7 @@
         "statement": "Keep diffs small.",
         "rationale": "Review cost.",
         "strength": "may",
-        "enforcer": { "kind": "review", "reviewer": { "by": "interrogate" } },
+        "enforcer": { "kind": "test", "command": "cargo test" },
         "source": { "kind": "owner" }
       },
       "expect": "parse_error"
@@ -237,17 +237,17 @@
     },
     {
       "id": "R-015",
-      "name": "a named reviewer has a name",
+      "name": "a review-enforced rule is read as history",
       "record_type": "rule",
       "record": {
         "schema": "whetstone.rule.v2",
         "statement": "Architecture changes are reviewed.",
         "rationale": "Boundaries.",
         "strength": "must",
-        "enforcer": { "kind": "review", "reviewer": { "by": "person", "name": " " } },
+        "enforcer": { "kind": "review", "reviewer": { "by": "person", "name": "Ada" } },
         "source": { "kind": "owner" }
       },
-      "expect": "invalid"
+      "expect": "retired"
     },
     {
       "id": "R-016",
@@ -323,7 +323,7 @@
     },
     {
       "id": "E-032",
-      "name": "an attestation names a full commit",
+      "name": "a review attestation is read, never written",
       "record_type": "attestation",
       "record": {
         "rule": { "id": "rule.review", "revision": 1, "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
@@ -333,14 +333,14 @@
         "notes": "Reviewed.",
         "attested_at": "2026-09-10T12:00:00Z"
       },
-      "expect": "invalid"
+      "expect": "retired"
     },
     {
       "id": "E-033",
-      "name": "a brief names the skills it ran",
+      "name": "a brief is read, never written",
       "record_type": "brief",
       "record": { "area": "src/**", "skills": [], "notes": "Nothing ran.", "recorded_at": "2026-09-10T12:00:00Z" },
-      "expect": "invalid"
+      "expect": "retired"
     },
     {
       "id": "E-034",
@@ -387,12 +387,10 @@
     },
     {
       "id": "M-041",
-      "name": "earlier guidance is an advisory rule reviewed by interrogate",
+      "name": "earlier guidance is read, never written",
       "record_type": "guidance",
       "record": { "statement": "Prefer small diffs.", "rationale": "Review cost." },
-      "expect": "valid",
-      "family": "review",
-      "rule_view_strength": "advisory"
+      "expect": "retired"
     },
     {
       "id": "X-050",

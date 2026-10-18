@@ -4,10 +4,10 @@
 //! deliberately contain no Beads, GitHub, CLI or dashboard concerns.
 //!
 //! Removed record kinds (values and philosophy, metrics, exceptions,
-//! mandates, activation, observations, repair sessions, team decisions and
-//! raised hands) stay readable as [`RetiredRecord`]s with their original
-//! bytes and digests, so history is never rewritten; they can no longer be
-//! created.
+//! mandates, activation, observations, repair sessions, team decisions,
+//! raised hands, review attestations, briefs and earlier guidance) stay
+//! readable as [`RetiredRecord`]s with their original bytes and digests, so
+//! history is never rewritten; they can no longer be created.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -117,7 +117,6 @@ impl AgreementRecord {
             }
             RecordBody::LocalReview(body) => links.push(body.proposal.clone()),
             RecordBody::Judgment(body) => links.push(body.rule.clone()),
-            RecordBody::Attestation(body) => links.push(body.rule.clone()),
             RecordBody::FlagDecision(body) => links.push(body.receipt.clone()),
             _ => {}
         }
@@ -399,6 +398,9 @@ pub const RETIRED_KINDS: &[&str] = &[
     "repair_operation_claim",
     "hand_raise",
     "hand_answer",
+    "attestation",
+    "brief",
+    "guidance",
 ];
 
 /// A record of a removed kind, kept exactly as stored so its digest still
@@ -447,7 +449,6 @@ pub enum RecordBody {
     Rule(Rule),
     StoredRule(StoredRule),
     Standard(Standard),
-    Guidance(Guidance),
     Feature(Feature),
     VerificationMap(VerificationMap),
     Proposal(Proposal),
@@ -455,8 +456,6 @@ pub enum RecordBody {
     Retirement(Retirement),
     VerificationReceipt(VerificationReceipt),
     Judgment(JudgmentReceipt),
-    Attestation(Attestation),
-    Brief(Brief),
     FlagDecision(FlagDecision),
     Lesson(Lesson),
     LessonCheck(LessonCheck),
@@ -470,7 +469,6 @@ enum BodyRef<'a> {
     Principle(&'a Principle),
     Rule(&'a Rule),
     Standard(&'a Standard),
-    Guidance(&'a Guidance),
     Feature(&'a Feature),
     VerificationMap(&'a VerificationMap),
     Proposal(&'a Proposal),
@@ -478,8 +476,6 @@ enum BodyRef<'a> {
     Retirement(&'a Retirement),
     VerificationReceipt(&'a VerificationReceipt),
     Judgment(&'a JudgmentReceipt),
-    Attestation(&'a Attestation),
-    Brief(&'a Brief),
     FlagDecision(&'a FlagDecision),
     Lesson(&'a Lesson),
     LessonCheck(&'a LessonCheck),
@@ -492,7 +488,6 @@ enum BodyOwned {
     Principle(Principle),
     Rule(Rule),
     Standard(Standard),
-    Guidance(Guidance),
     Feature(Feature),
     VerificationMap(VerificationMap),
     Proposal(Proposal),
@@ -500,8 +495,6 @@ enum BodyOwned {
     Retirement(Retirement),
     VerificationReceipt(VerificationReceipt),
     Judgment(JudgmentReceipt),
-    Attestation(Attestation),
-    Brief(Brief),
     FlagDecision(FlagDecision),
     Lesson(Lesson),
     LessonCheck(LessonCheck),
@@ -526,7 +519,6 @@ impl Serialize for RecordBody {
             Self::Principle(value) => BodyRef::Principle(value),
             Self::Rule(value) => BodyRef::Rule(value),
             Self::Standard(value) => BodyRef::Standard(value),
-            Self::Guidance(value) => BodyRef::Guidance(value),
             Self::Feature(value) => BodyRef::Feature(value),
             Self::VerificationMap(value) => BodyRef::VerificationMap(value),
             Self::Proposal(value) => BodyRef::Proposal(value),
@@ -534,8 +526,6 @@ impl Serialize for RecordBody {
             Self::Retirement(value) => BodyRef::Retirement(value),
             Self::VerificationReceipt(value) => BodyRef::VerificationReceipt(value),
             Self::Judgment(value) => BodyRef::Judgment(value),
-            Self::Attestation(value) => BodyRef::Attestation(value),
-            Self::Brief(value) => BodyRef::Brief(value),
             Self::FlagDecision(value) => BodyRef::FlagDecision(value),
             Self::Lesson(value) => BodyRef::Lesson(value),
             Self::LessonCheck(value) => BodyRef::LessonCheck(value),
@@ -564,7 +554,11 @@ impl<'de> Deserialize<'de> for RecordBody {
                 Ok(rule) => Ok(Self::Rule(rule)),
                 Err(error) => match Rule::from_stored(&raw.record) {
                     Some(StoredRead::Mapped(rule)) => Ok(Self::StoredRule(StoredRule {
-                        rule,
+                        rule: *rule,
+                        record: raw.record,
+                    })),
+                    Some(StoredRead::Retired) => Ok(Self::Retired(RetiredRecord {
+                        record_type: raw.record_type,
                         record: raw.record,
                     })),
                     None => Err(D::Error::custom(error)),
@@ -581,7 +575,6 @@ impl<'de> Deserialize<'de> for RecordBody {
             BodyOwned::Principle(value) => Self::Principle(value),
             BodyOwned::Rule(value) => Self::Rule(value),
             BodyOwned::Standard(value) => Self::Standard(value),
-            BodyOwned::Guidance(value) => Self::Guidance(value),
             BodyOwned::Feature(value) => Self::Feature(value),
             BodyOwned::VerificationMap(value) => Self::VerificationMap(value),
             BodyOwned::Proposal(value) => Self::Proposal(value),
@@ -589,8 +582,6 @@ impl<'de> Deserialize<'de> for RecordBody {
             BodyOwned::Retirement(value) => Self::Retirement(value),
             BodyOwned::VerificationReceipt(value) => Self::VerificationReceipt(value),
             BodyOwned::Judgment(value) => Self::Judgment(value),
-            BodyOwned::Attestation(value) => Self::Attestation(value),
-            BodyOwned::Brief(value) => Self::Brief(value),
             BodyOwned::FlagDecision(value) => Self::FlagDecision(value),
             BodyOwned::Lesson(value) => Self::Lesson(value),
             BodyOwned::LessonCheck(value) => Self::LessonCheck(value),
@@ -606,7 +597,6 @@ impl RecordBody {
             Self::Principle(_) => "principle",
             Self::Rule(_) | Self::StoredRule(_) => "rule",
             Self::Standard(_) => "standard",
-            Self::Guidance(_) => "guidance",
             Self::Feature(_) => "feature",
             Self::VerificationMap(_) => "verification_map",
             Self::Proposal(_) => "proposal",
@@ -614,8 +604,6 @@ impl RecordBody {
             Self::Retirement(_) => "retirement",
             Self::VerificationReceipt(_) => "verification_receipt",
             Self::Judgment(_) => "judgment",
-            Self::Attestation(_) => "attestation",
-            Self::Brief(_) => "brief",
             Self::FlagDecision(_) => "flag_decision",
             Self::Lesson(_) => "lesson",
             Self::LessonCheck(_) => "lesson_check",
@@ -623,17 +611,14 @@ impl RecordBody {
         }
     }
 
-    /// The rule this body enforces: a v2 rule, or an earlier standard or
-    /// guidance read through its migration.
+    /// The rule this body enforces: a v2 rule, or an earlier standard read
+    /// through its migration.
     pub fn rule_view(&self) -> Option<std::borrow::Cow<'_, Rule>> {
         match self {
             Self::Rule(rule) => Some(std::borrow::Cow::Borrowed(rule)),
             Self::StoredRule(stored) => Some(std::borrow::Cow::Borrowed(&stored.rule)),
             Self::Standard(standard) => {
                 Some(std::borrow::Cow::Owned(Rule::from_standard(standard)))
-            }
-            Self::Guidance(guidance) => {
-                Some(std::borrow::Cow::Owned(Rule::from_guidance(guidance)))
             }
             _ => None,
         }
@@ -643,11 +628,7 @@ impl RecordBody {
     pub fn is_receipt(&self) -> bool {
         matches!(
             self,
-            Self::VerificationReceipt(_)
-                | Self::Judgment(_)
-                | Self::Attestation(_)
-                | Self::Brief(_)
-                | Self::LessonCheck(_)
+            Self::VerificationReceipt(_) | Self::Judgment(_) | Self::LessonCheck(_)
         )
     }
 
@@ -658,10 +639,6 @@ impl RecordBody {
             Self::Rule(value) => value.validate(),
             Self::StoredRule(value) => value.rule.validate(),
             Self::Standard(value) => value.validate(),
-            Self::Guidance(value) => {
-                require_text(&value.statement)?;
-                require_text(&value.rationale)
-            }
             Self::Feature(value) => value.validate(),
             Self::VerificationMap(value) => value.validate(),
             Self::Proposal(value) => value.validate(),
@@ -672,8 +649,6 @@ impl RecordBody {
             }
             Self::VerificationReceipt(value) => value.validate(),
             Self::Judgment(value) => value.validate(),
-            Self::Attestation(value) => value.validate(),
-            Self::Brief(value) => value.validate(),
             Self::FlagDecision(value) => value.validate(),
             Self::Lesson(value) => value.validate(),
             Self::LessonCheck(value) => value.validate(),
@@ -810,17 +785,6 @@ impl Standard {
             Enforcement::Drive { .. } => Ok(()),
         }
     }
-}
-
-/// Earlier advisory guidance; read as an advisory rule reviewed by
-/// `/interrogate` ([`Rule::from_guidance`]).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Guidance {
-    pub statement: String,
-    pub rationale: String,
-    #[serde(default)]
-    pub examples: Vec<String>,
 }
 
 pub const MAX_FEATURE_LIST_ITEMS: usize = 64;

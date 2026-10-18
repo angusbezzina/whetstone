@@ -522,7 +522,6 @@ pub fn record_class(body: &RecordBody) -> &'static str {
         | RecordBody::Rule(_)
         | RecordBody::StoredRule(_)
         | RecordBody::Standard(_)
-        | RecordBody::Guidance(_)
         | RecordBody::Feature(_)
         | RecordBody::VerificationMap(_)
         | RecordBody::Lesson(_) => "record",
@@ -532,11 +531,11 @@ pub fn record_class(body: &RecordBody) -> &'static str {
         | RecordBody::FlagDecision(_) => "decision",
         RecordBody::VerificationReceipt(_)
         | RecordBody::Judgment(_)
-        | RecordBody::Attestation(_)
-        | RecordBody::Brief(_)
         | RecordBody::LessonCheck(_) => "receipt",
         RecordBody::Retired(retired) => match retired.record_type.as_str() {
-            "core_value"
+            "rule"
+            | "guidance"
+            | "core_value"
             | "implementation_philosophy"
             | "metric_definition"
             | "source_snapshot"

@@ -14,14 +14,13 @@ use whetstone::beads::{
     ascii_json, ensure_bd_version, BeadsStore, METADATA_SCHEMA, MINIMUM_BD_VERSION, MIN_BD_VERSION,
 };
 use whetstone::domain::{
-    AgreementRecord, Attestation, AttestationVerdict, AuthorizationAxis, Brief, ContentDigest,
-    DomainError, Enforcer, EvidenceRef, ExternalRef, ExternalSystem, FlagDecision, FlagVerdict,
-    Freshness, JudgmentOutcome, JudgmentReceipt, LocalReview, LocalReviewVerdict, Mission,
-    PolicyStateSnapshot, PrincipalKind, PrincipalRef, Principle, PrincipleSource, Privacy,
-    Proposal, ProposalState, Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId,
-    RecordRef, RetiredRecord, Reviewer, Rule, RuleSource, Scope, Strength, VerificationAxis,
-    VerificationReceipt, DEFAULT_JEV_MODEL, LOCAL_REVIEW_ASSURANCE, RETIRED_KINDS, RULE_SCHEMA_V2,
-    SCHEMA_VERSION_V1,
+    AgreementRecord, AuthorizationAxis, ContentDigest, DomainError, Enforcer, EvidenceRef,
+    ExternalRef, ExternalSystem, FlagDecision, FlagVerdict, Freshness, JudgmentOutcome,
+    JudgmentReceipt, LocalReview, LocalReviewVerdict, Mission, PolicyStateSnapshot, PrincipalKind,
+    PrincipalRef, Principle, PrincipleSource, Privacy, Proposal, ProposalState, Provenance,
+    ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, RecordRef, RetiredRecord, Rule,
+    RuleSource, Scope, Strength, VerificationAxis, VerificationReceipt, DEFAULT_JEV_MODEL,
+    LOCAL_REVIEW_ASSURANCE, RETIRED_KINDS, RULE_SCHEMA_V2, SCHEMA_VERSION_V1,
 };
 use whetstone::storage::{AppendRequest, RecordStore, StorageError, StoreKind};
 
@@ -587,41 +586,6 @@ fn every_record_kind_lands_in_its_bead_type_with_its_digest() {
         ),
         (
             record(
-                "attestation.fixture",
-                1,
-                "attest:fixture",
-                RecordBody::Attestation(Attestation {
-                    rule: rule_ref.clone(),
-                    commit: COMMIT.into(),
-                    tree: None,
-                    reviewer: Reviewer::Interrogate,
-                    verdict: AttestationVerdict::Pass,
-                    notes: "Reviewed the diff.".into(),
-                    evidence: Vec::new(),
-                    attested_at: "2026-09-10T12:04:00Z".into(),
-                }),
-            ),
-            "receipt",
-        ),
-        (
-            record(
-                "brief.fixture",
-                1,
-                "brief:fixture",
-                RecordBody::Brief(Brief {
-                    area: "src/**".into(),
-                    commit: None,
-                    skills: vec!["how".into(), "why".into()],
-                    reuse: vec!["the shared service".into()],
-                    risks: Vec::new(),
-                    notes: "Reuse the service.".into(),
-                    recorded_at: "2026-09-10T12:05:00Z".into(),
-                }),
-            ),
-            "receipt",
-        ),
-        (
-            record(
                 "decision.flag_fixture",
                 1,
                 "flag:fixture",
@@ -667,7 +631,7 @@ fn every_record_kind_lands_in_its_bead_type_with_its_digest() {
             DomainError::OperationalRecordCannotGrantAuthority
         ))
     ));
-    assert_eq!(fresh.all_records().expect("records").len(), 8);
+    assert_eq!(fresh.all_records().expect("records").len(), 6);
 }
 
 #[test]

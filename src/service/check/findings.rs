@@ -39,14 +39,10 @@ pub(crate) struct SweepFinding {
 
 /// Whether a rule's flags are sweep work: below must (or a must rule still in
 /// shadow, which blocks nobody), and enforced from the repository's content.
-/// Drive proofs and reviews are not swept: they are the feature sweep and a
-/// person's verdict.
+/// Drive proofs are not swept: they are the feature sweep.
 pub(crate) fn sweepable(rule: &Rule) -> bool {
     (rule.strength != Strength::Must || rule.in_shadow())
-        && !matches!(
-            rule.enforcer,
-            Enforcer::Drive { .. } | Enforcer::Review { .. } | Enforcer::Brief { .. }
-        )
+        && !matches!(rule.enforcer, Enforcer::Drive { .. })
 }
 
 /// The repository's identity in a fingerprint: its origin remote when it has
