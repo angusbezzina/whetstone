@@ -7,13 +7,12 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::domain::{
-    ContextUnit, Enforcer, ExampleVerdict, Privacy, Rule, RuleExample, RuleSource, RuleSourceKind,
-    Strength, DEFAULT_JEV_MODEL, RULE_SCHEMA_V2,
+    Enforcer, ExampleVerdict, Rule, RuleExample, RuleSource, RuleSourceKind, Strength,
+    RULE_SCHEMA_V2,
 };
 
 pub const PROVE_IT_WORKS: &str = "rule.prove-it-works";
 pub const ASK_BEFORE_PUBLIC_API: &str = "rule.ask-before-public-api";
-pub const TESTS_ONLY_WHEN_ASKED: &str = "rule.tests-only-when-asked";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Starter {
@@ -114,8 +113,6 @@ pub fn starters(root: &Path) -> Vec<Starter> {
         ],
         source: source("prove-it-works"),
         paths: Vec::new(),
-        privacy: Privacy::default(),
-        shadow: false,
         sweep: None,
         sweep_priority: None,
         sweep_unsure: Vec::new(),
@@ -152,52 +149,6 @@ pub fn starters(root: &Path) -> Vec<Starter> {
         ],
         source: source("boundary-discipline"),
         paths: surface_paths.clone(),
-        privacy: Privacy::default(),
-        shadow: false,
-        sweep: None,
-        sweep_priority: None,
-        sweep_unsure: Vec::new(),
-    };
-    let tests = Rule {
-        schema: RULE_SCHEMA_V2.into(),
-        statement: "Only add tests when the task asks for them.".into(),
-        rationale: "Unrequested tests are code someone must maintain; add them when the task calls for them or a bug needs a regression test.".into(),
-        strength: Strength::Should,
-        enforcer: Enforcer::Question {
-            question: "Does this change add a test that its commit message does not ask for or explain?".into(),
-            yes_means: Some("A new test appears and the commit message is about something else".into()),
-            no_means: Some("The commit asks for the test, or it is a regression test for the fix it describes".into()),
-            unit: ContextUnit::AddedFile,
-            model: DEFAULT_JEV_MODEL.into(),
-            shadow: true,
-            threshold_bp: 5_000,
-            confidence_bar_bp: 4_000,
-            promote_after: 50,
-            precision_bar_bp: 9_000,
-        },
-        examples: vec![
-            example(
-                "commit: Fix typo in the README\nadded file tests/readme_links_test.rs\n#[test] fn links_resolve() {}",
-                ExampleVerdict::Flag,
-                "A typo fix does not ask for a new test.",
-                Some("tests/readme_links_test.rs"),
-            ),
-            example(
-                "commit: Add tests for parser edge cases\nadded file tests/parser_edges.rs\n#[test] fn empty_input() {}",
-                ExampleVerdict::Pass,
-                "The task is the tests.",
-                Some("tests/parser_edges.rs"),
-            ),
-        ],
-        source: source("laziness-protocol"),
-        paths: vec![
-            "tests/**".into(),
-            "**/*_test.*".into(),
-            "**/*.test.*".into(),
-            "**/test_*.py".into(),
-        ],
-        privacy: Privacy::default(),
-        shadow: false,
         sweep: None,
         sweep_priority: None,
         sweep_unsure: Vec::new(),
@@ -214,12 +165,6 @@ pub fn starters(root: &Path) -> Vec<Starter> {
                 )
             },
             rule: api,
-        });
-    starters.push(Starter {
-            id: TESTS_ONLY_WHEN_ASKED,
-            title: "Only add tests when the task asks",
-            detected: "Asks Jev about each new test file at pre-push, in shadow: answers are recorded, not enforced, until you promote it.".into(),
-            rule: tests,
         });
     starters
 }

@@ -442,8 +442,6 @@ pub struct GateOutcome {
     pub id: String,
     pub name: String,
     pub strength: Strength,
-    /// The enforcement ladder rung: mechanical or question.
-    pub family: &'static str,
     pub mechanism: String,
     pub command: String,
     pub state: VerificationAxis,
@@ -454,8 +452,6 @@ pub struct GateOutcome {
     pub elapsed_ms: u64,
     pub program: Option<String>,
     pub program_digest: Option<String>,
-    /// Recorded and shown, never enforced (a question rule in shadow).
-    pub shadow: bool,
 }
 
 impl GateOutcome {
@@ -465,7 +461,6 @@ impl GateOutcome {
             id: id.as_str().into(),
             name: rule.statement.clone(),
             strength: rule.strength,
-            family: rule.enforcer.family().label(),
             mechanism,
             command,
             state: VerificationAxis::Unknown,
@@ -476,7 +471,6 @@ impl GateOutcome {
             elapsed_ms: 0,
             program: None,
             program_digest: None,
-            shadow: rule.in_shadow(),
         }
     }
 
@@ -505,9 +499,6 @@ pub fn mechanism_label(rule: &Rule) -> (String, String) {
                 surfaces.join(", ")
             },
         ),
-        Enforcer::Question {
-            question, model, ..
-        } => ("Jev question".into(), format!("{question} ({model})")),
     }
 }
 
@@ -720,8 +711,7 @@ pub fn skipped_outcome(id: &RecordId, rule: &Rule, reason: &str) -> GateOutcome 
     GateOutcome::new(id, rule).unknown(reason)
 }
 
-/// Run one mechanical enforcer. Question enforcers are resolved by the
-/// judgment path, never here.
+/// Run one rule's enforcer.
 pub fn run_gate(context: &GateContext<'_>, id: &RecordId, rule: &Rule) -> GateOutcome {
     let outcome = GateOutcome::new(id, rule);
     match &rule.enforcer {
@@ -743,11 +733,6 @@ pub fn run_gate(context: &GateContext<'_>, id: &RecordId, rule: &Rule) -> GateOu
             sizes,
         } => run_tokens_gate(context, outcome, rule, tokens, stylesheets, *sizes),
         Enforcer::PublicSurface { surfaces } => run_surface_gate(context, outcome, rule, surfaces),
-        Enforcer::Question { .. } => {
-            let outcome =
-                outcome.unknown("This rule is held by a question, not a mechanical check.");
-            finish(context, outcome, None, json!({}))
-        }
     }
 }
 
@@ -1132,7 +1117,7 @@ mod tests {
     use super::*;
 
     /// Pass, flag and unavailable for every enforcer kind `run_gate`
-    /// dispatches (question and drive have their own suites).
+    /// dispatches (drive has its own suite).
     #[test]
     fn every_enforcer_kind_passes_flags_and_is_honest_when_unavailable() {
         let temp = tempfile::tempdir().expect("temp");

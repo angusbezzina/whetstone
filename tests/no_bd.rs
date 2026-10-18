@@ -36,7 +36,6 @@ fn run(args: &[&str], cwd: &Path, path: &Path, home: &Path) -> Output {
         .env_remove("BEADS_DIR")
         .env_remove("FAKE_VIRGIL_STATE")
         .env_remove("FAKE_VIRGIL_LOG")
-        .env("WHETSTONE_JEV_OFFLINE", "1")
         .output()
         .expect("run whetstone")
 }

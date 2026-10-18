@@ -114,7 +114,6 @@ pub(crate) fn progress(layout: &ProjectLayout, records: Option<&[AgreementRecord
                 title: starter.title.into(),
                 detected: starter.detected,
                 strength: starter.rule.strength.label(),
-                family: starter.rule.enforcer.family().label(),
                 enforcer: mechanism,
                 examples: starter
                     .rule

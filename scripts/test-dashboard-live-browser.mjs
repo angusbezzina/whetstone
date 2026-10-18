@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Live browser proof against the real dashboard service and private store:
 // agree the first rules through onboarding, draft and accept a rule from
-// Rules, run the checks, label the flag it raises, and prove everything
-// persists across a reload at every agreed width.
+// Rules, run the checks, and prove everything persists across a reload at
+// every agreed width.
 
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -55,26 +55,25 @@ try {
   await click("#start-onboarding");
   await cdp.waitFor("document.querySelector('#init-form #ob-principles input')", "the onboarding form did not open");
   check(await cdp.evaluate("document.querySelectorAll('#ob-principles input[name=principle]').length >= 10"), "the pstack principle catalogue is offered");
-  check(await cdp.evaluate("document.querySelectorAll('#ob-starters input[name=starter]:checked').length === 3"), "the three starter rules are offered and preselected");
+  check(await cdp.evaluate("document.querySelectorAll('#ob-starters input[name=starter]:checked').length === 1"), "the starter rule this repository can hold is offered and preselected");
   await shot("onboarding-form-1280");
   await cdp.evaluate(`(() => { for (const id of ["prove-it-works", "laziness-protocol"]) document.querySelector('#ob-principles input[value="' + id + '"]').checked = true; return true; })()`);
   await fill("#init-form", { mission: "Keep project intent inspectable.", custom_principles: "Prefer boring code." });
   await cdp.waitFor("document.querySelector('#confirm-init')", "the exact agreement review did not render", 20_000);
-  check(await cdp.evaluate("document.querySelectorAll('#onboard .review .row').length === 7"), "the review lists mission, three principles and three rules");
+  check(await cdp.evaluate("document.querySelectorAll('#onboard .review .row').length === 5"), "the review lists mission, three principles and the starter rule");
   await click("#confirm-init");
   await cdp.waitFor("document.querySelector('#mission-line')?.textContent === 'Keep project intent inspectable.'", "the agreement did not establish the dashboard", 45_000);
   check(await cdp.evaluate("document.querySelector('#tab-checks').getAttribute('aria-disabled') === 'false'"), "checks open after the agreement");
-  check(await cdp.evaluate("document.querySelectorAll('#home-rules .row').length === 3"), "home lists the three rules in force");
+  check(await cdp.evaluate("document.querySelectorAll('#home-rules .row').length === 1"), "home lists the rule in force");
   check(await cdp.evaluate("document.querySelectorAll('#attention-primary .btn.primary').length === 1 && document.querySelectorAll('#home .btn.primary').length === 1"), "home has exactly one primary action");
 
-  // Rules: grouped by strength, one enforcer, shadow status, examples.
+  // Rules: grouped by strength, one enforcer, where it runs, examples.
   await click("#tab-rules");
   await cdp.waitFor("document.querySelector('#r-must .rec')", "rules did not render");
   check(await cdp.evaluate("[...document.querySelectorAll('#rules .panel .ph h2')].map(h => h.firstChild.textContent).slice(0, 5).join('|') === 'Mission|Principles|Must|Should|Advisory'"), "rules are grouped mission, principles, then by strength");
   check(await cdp.evaluate("document.querySelectorAll('#r-principles .rec').length === 3"), "three principles are recorded");
-  check(await cdp.evaluate("document.querySelectorAll('#r-must .rec').length === 2 && document.querySelectorAll('#r-should .rec').length === 1"), "two must rules and one should rule");
-  check(await cdp.evaluate("/shadow/.test(document.querySelector('[data-id=\"rule.tests-only-when-asked\"] .badge')?.textContent)"), "the Jev starter shows its shadow status");
-  check(await cdp.evaluate("/question/.test(document.querySelector('[data-id=\"rule.tests-only-when-asked\"] .fam').textContent) && /pre-push/.test(document.querySelector('[data-id=\"rule.tests-only-when-asked\"]').textContent)"), "a rule names its enforcer family and where it runs");
+  check(await cdp.evaluate("document.querySelectorAll('#r-must .rec').length === 1 && document.querySelectorAll('#r-should .rec').length === 0"), "one must rule and no should rule");
+  check(await cdp.evaluate("/pre-commit/.test(document.querySelector('[data-id=\"rule.ask-before-public-api\"]').textContent)"), "a rule names where it runs");
   check(await cdp.evaluate("document.querySelector('[data-id=\"rule.ask-before-public-api\"] details.ex li') !== null"), "labelled examples sit behind a disclosure");
 
   // Draft a should rule whose check fails, then accept it in the changelog.
@@ -93,7 +92,7 @@ try {
   await click("#confirm-review");
   await cdp.waitFor("document.querySelector('#draft-count').textContent === '0'", "the draft was not accepted", 45_000);
 
-  // Run the checks for real; the should rule fails and raises a flag.
+  // Run the checks for real; the should rule fails.
   await click("#tab-checks");
   await cdp.waitFor("document.querySelector('#run-btn')", "checks did not render");
   await click("#run-btn");
@@ -109,13 +108,6 @@ try {
     })()`),
     "the failing rule's evidence opens from Checks",
   );
-  check(await cdp.evaluate("document.querySelectorAll('#flags .row.flag').length === 1"), "the failure is listed as a flag to label");
-  await click("#flags .row.flag .btn.quiet");
-  await cdp.waitFor("document.querySelector('#flags .editor.open textarea')", "the flag label form did not open");
-  await fill("#flags .editor.open form", { rationale: "The command is a placeholder, not a real check." });
-  await cdp.waitFor("document.querySelectorAll('#flags .row.flag').length === 0", "the flag was not labelled", 45_000);
-  await click("#tab-rules");
-  await cdp.waitFor("/1 false/.test(document.querySelector('[data-id=\"rule.no-todo-comments\"] .stats')?.textContent || '')", "the dismissed flag did not reach the rule's record");
 
   // Persistence and a read of the same records after reload.
   await cdp.navigate(`${origin}/`);
@@ -125,7 +117,7 @@ try {
   check(await cdp.evaluate("!document.querySelector('[data-id=\"rule.no-todo-comments\"]').classList.contains('draft')"), "the accepted rule persists");
   await click("#tab-checks");
   await cdp.waitFor("document.querySelector('#gate-rule\\\\.no-todo-comments')", "checks did not reload");
-  check(await cdp.evaluate("document.querySelector('#gate-rule\\\\.no-todo-comments .state').classList.contains('fail') && document.querySelectorAll('#flags .row.flag').length === 0"), "the result and the flag label persist");
+  check(await cdp.evaluate("document.querySelector('#gate-rule\\\\.no-todo-comments .state').classList.contains('fail')"), "the result persists");
   for (const width of [320, 390, 768, 1280]) {
     await cdp.viewport(width);
     for (const tab of TABS) {

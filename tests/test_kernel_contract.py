@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
 
@@ -33,7 +32,6 @@ def run(*args: str, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
         text=True,
         timeout=120,
         check=False,
-        env={**os.environ, "WHETSTONE_JEV_OFFLINE": "1"},
     )
 
 

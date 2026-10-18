@@ -55,8 +55,7 @@ pub const HOSTS: [(&str, &str); 4] = [
 
 /// Files `wh init --action wire` writes: the driver, its config, the CI
 /// workflow and the verification skill in every host. They are Whetstone's
-/// own wiring, not the project's code, so content gates and Jev questions
-/// never read them (otherwise the commit that installs the gates is blocked
+/// own wiring, not the project's code, so content gates never read them (otherwise the commit that installs the gates is blocked
 /// by them).
 pub fn is_generated(path: &str) -> bool {
     path == crate::gates::DRIVER_RELATIVE

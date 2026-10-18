@@ -83,8 +83,6 @@ fn rule(enforcer: Enforcer) -> Rule {
         }],
         source: RuleSource::owner(),
         paths: vec!["src/**".into()],
-        privacy: Privacy::default(),
-        shadow: false,
         sweep: None,
         sweep_priority: None,
         sweep_unsure: Vec::new(),
@@ -237,26 +235,23 @@ fn a_rule_has_one_strength_one_enforcer_and_valid_examples() {
         sizes: true,
     });
     tokens.validate().expect("valid rule");
-    assert_eq!(tokens.enforcer.family(), EnforcerFamily::Mechanical);
     assert!(tokens.enforcer.runs_staged());
     assert!(tokens.applies_to("src/app.css"));
     assert!(!tokens.applies_to("docs/a.css"));
     let json = serde_json::to_value(&tokens).expect("json");
     assert_eq!(json["enforcer"]["kind"], "design_tokens");
-    let question = serde_json::from_value::<Rule>(serde_json::json!({
-        "schema": RULE_SCHEMA_V2,
-        "statement": "No unrequested tests",
-        "rationale": "Maintenance cost",
-        "strength": "should",
-        "enforcer": {"kind": "question", "question": "Does this add a test nobody asked for?"},
-        "source": {"kind": "starter"}
-    }))
-    .expect("question rule");
-    assert!(question.in_shadow(), "new question rules start in shadow");
-    assert!(matches!(
-        question.enforcer,
-        Enforcer::Question { ref model, threshold_bp: 5_000, promote_after: 50, .. } if model == DEFAULT_JEV_MODEL
-    ));
+    assert!(
+        serde_json::from_value::<Rule>(serde_json::json!({
+            "schema": RULE_SCHEMA_V2,
+            "statement": "No unrequested tests",
+            "rationale": "Maintenance cost",
+            "strength": "should",
+            "enforcer": {"kind": "question", "question": "Does this add a test nobody asked for?"},
+            "source": {"kind": "starter"}
+        }))
+        .is_err(),
+        "a rule is held by a mechanical check"
+    );
     for broken in [
         {
             let mut rule = tokens.clone();
@@ -266,11 +261,6 @@ fn a_rule_has_one_strength_one_enforcer_and_valid_examples() {
         {
             let mut rule = tokens.clone();
             rule.paths = vec!["../outside".into()];
-            rule
-        },
-        {
-            let mut rule = tokens.clone();
-            rule.privacy.redact_patterns = vec!["(".into()];
             rule
         },
         rule(Enforcer::PublicSurface {
@@ -329,8 +319,8 @@ fn retired_kinds_keep_their_bytes_and_digests_and_cannot_be_created() {
         }
     }
     assert_eq!(
-        retired, 5,
-        "value, philosophy, metric, exception and mandate"
+        retired, 6,
+        "value, philosophy, metric, exception, mandate and guidance"
     );
 }
 
@@ -379,54 +369,6 @@ fn principles_name_their_pstack_source_or_are_the_owners_own() {
         }),
     );
     assert!(bad.validate().is_err());
-}
-
-#[test]
-fn judgment_receipts_carry_digests_and_honest_unavailability() {
-    let mut judgment = JudgmentReceipt {
-        rule: reference("rule.tests", 'b'),
-        model: DEFAULT_JEV_MODEL.into(),
-        question_digest: digest('c'),
-        input_digest: digest('d'),
-        unit: "tests/a.rs".into(),
-        commit: None,
-        outcome: JudgmentOutcome::Flag,
-        probability_bp: Some(9_100),
-        confidence_bp: Some(8_200),
-        shadow: true,
-        redaction: None,
-        input_tokens: Some(300),
-        request_id: None,
-        detail: "Jev answered flag".into(),
-        answered_at: "2026-09-28T10:00:00Z".into(),
-    };
-    let mut receipt = record(
-        "verification.judgment_x",
-        "100",
-        RecordBody::Judgment(judgment.clone()),
-    );
-    receipt.provenance.authority = ProvenanceAuthority::CandidateOnly;
-    receipt.validate().expect("valid judgment");
-    judgment.outcome = JudgmentOutcome::Unavailable;
-    let mut unavailable = record(
-        "verification.judgment_y",
-        "100",
-        RecordBody::Judgment(judgment.clone()),
-    );
-    unavailable.provenance.authority = ProvenanceAuthority::CandidateOnly;
-    assert!(
-        unavailable.validate().is_err(),
-        "an unavailable judgment cannot carry a probability"
-    );
-    judgment.probability_bp = None;
-    judgment.confidence_bp = None;
-    let mut honest = record(
-        "verification.judgment_z",
-        "100",
-        RecordBody::Judgment(judgment),
-    );
-    honest.provenance.authority = ProvenanceAuthority::CandidateOnly;
-    honest.validate().expect("honest unavailable judgment");
 }
 
 fn feature_body() -> Feature {

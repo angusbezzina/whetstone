@@ -1,13 +1,9 @@
 //! Snapshot-bound aggregation of trusted verification evidence.
 //!
 //! This module never runs a checker, repairs source, changes policy, or grants
-//! authority. It converts already-trusted observations (mechanical runs and
-//! Jev judgments) into a compact, deterministic receipt and rejects replay
-//! against a changed or stale snapshot.
-//!
-//! A judgment can flag a rule but never pass a must rule: a clear Jev answer
-//! on a required requirement aggregates to unknown. Only a mechanical pass
-//! turns a must rule green.
+//! authority. It converts already-trusted mechanical observations into a
+//! compact, deterministic receipt and rejects replay against a changed or
+//! stale snapshot. Only a mechanical pass turns a must rule green.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -18,7 +14,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::domain::{ContentDigest, JudgmentOutcome, RecordRef};
+use crate::domain::{ContentDigest, RecordRef};
 use crate::execution::{ExecutionReceipt, ExecutionState, RECEIPT_SCHEMA as EXECUTION_SCHEMA};
 
 pub const VERIFICATION_SCHEMA: &str = "whetstone.verification-receipt.v1";
@@ -57,8 +53,6 @@ pub struct SnapshotBinding {
 pub enum RequirementKind {
     /// A mechanical check: scanner, command, drive, tokens or surface.
     NativeCheck,
-    /// A Jev question.
-    Judgment,
     AdvisoryGuidance,
 }
 
@@ -152,16 +146,6 @@ pub(crate) enum VerificationEvidence {
         receipt: Box<ExecutionReceipt>,
         evidence: EvidencePointer,
         observed_at_unix: u64,
-        findings: Vec<Finding>,
-    },
-    /// Jev's answers about the units a question rule asked about.
-    Judgment {
-        requirement_id: String,
-        snapshot: SnapshotBinding,
-        outcome: JudgmentOutcome,
-        evidence: EvidencePointer,
-        observed_at_unix: u64,
-        summary: String,
         findings: Vec<Finding>,
     },
     Skipped {
@@ -525,7 +509,7 @@ fn resolve_observation(
                     CheckState::Unknown,
                     EvidenceFreshness::Missing,
                     "evidence_kind_mismatch",
-                    "Mechanical evidence cannot substitute for a question or advisory guidance.",
+                    "Mechanical evidence cannot substitute for advisory guidance.",
                 ));
             }
             let (state, reason) = match state {
@@ -533,48 +517,6 @@ fn resolve_observation(
                 ObservedState::Violated => (CheckState::Violated, "check_violated"),
                 ObservedState::Unknown => (CheckState::Unknown, "checker_unknown"),
                 ObservedState::Unavailable => (CheckState::Unavailable, "checker_unavailable"),
-            };
-            observed_result(
-                requirement,
-                expected,
-                snapshot,
-                state,
-                reason,
-                summary,
-                evidence,
-                *observed_at_unix,
-                findings,
-                evaluated_at_unix,
-                redactions,
-            )
-        }
-        VerificationEvidence::Judgment {
-            snapshot,
-            outcome,
-            evidence,
-            observed_at_unix,
-            summary,
-            findings,
-            ..
-        } => {
-            if requirement.kind != RequirementKind::Judgment {
-                return Ok(failed_result(
-                    requirement,
-                    CheckState::Unknown,
-                    EvidenceFreshness::Missing,
-                    "evidence_kind_mismatch",
-                    "A Jev answer cannot substitute for a mechanical check or advisory guidance.",
-                ));
-            }
-            let (state, reason) = match outcome {
-                JudgmentOutcome::Flag => (CheckState::Violated, "judgment_flagged"),
-                JudgmentOutcome::LowConfidence => (CheckState::Unknown, "judgment_low_confidence"),
-                JudgmentOutcome::Unavailable => (CheckState::Unavailable, "judgment_unavailable"),
-                // A judgment can flag but never pass a must rule.
-                JudgmentOutcome::Clear if requirement.required => {
-                    (CheckState::Unknown, "judgment_cannot_pass_must")
-                }
-                JudgmentOutcome::Clear => (CheckState::Success, "judgment_clear"),
             };
             observed_result(
                 requirement,
@@ -606,7 +548,7 @@ fn resolve_observation(
                     CheckState::Unknown,
                     EvidenceFreshness::Missing,
                     "evidence_kind_mismatch",
-                    "Advisory evidence cannot satisfy a required check or question.",
+                    "Advisory evidence cannot satisfy a required check.",
                 ));
             }
             let mut result = failed_result(
@@ -633,7 +575,7 @@ fn resolve_observation(
                     CheckState::Unknown,
                     EvidenceFreshness::Missing,
                     "evidence_kind_mismatch",
-                    "Execution evidence cannot substitute for a question or advisory guidance.",
+                    "Execution evidence cannot substitute for advisory guidance.",
                 ));
             }
             let expected_manifest = requirement.checker_manifest.as_ref();
@@ -837,7 +779,6 @@ fn evidence_id(evidence: &VerificationEvidence) -> &str {
     match evidence {
         VerificationEvidence::NativeCheck { requirement_id, .. }
         | VerificationEvidence::Execution { requirement_id, .. }
-        | VerificationEvidence::Judgment { requirement_id, .. }
         | VerificationEvidence::Skipped { requirement_id, .. }
         | VerificationEvidence::Advisory { requirement_id, .. } => requirement_id,
     }
@@ -1294,39 +1235,14 @@ mod tests {
 
     #[test]
     fn evidence_variants_cannot_substitute_for_another_requirement_kind() {
-        let substitutions = vec![
-            (
-                "acceptance",
-                VerificationEvidence::Execution {
-                    requirement_id: "acceptance".into(),
-                    snapshot: snapshot(),
-                    receipt: Box::new(execution(ExecutionState::Success, true)),
-                    evidence: pointer("wrong-execution"),
-                    observed_at_unix: 100,
-                    findings: Vec::new(),
-                },
-            ),
-            (
-                "native",
-                VerificationEvidence::Judgment {
-                    requirement_id: "native".into(),
-                    snapshot: snapshot(),
-                    outcome: JudgmentOutcome::Clear,
-                    evidence: pointer("wrong-judgment"),
-                    observed_at_unix: 100,
-                    summary: "a Jev answer is not a mechanical check".into(),
-                    findings: Vec::new(),
-                },
-            ),
-            (
-                "review",
-                VerificationEvidence::Advisory {
-                    requirement_id: "review".into(),
-                    evidence: pointer("wrong-advisory"),
-                    summary: "an advisory is not a review".into(),
-                },
-            ),
-        ];
+        let substitutions = vec![(
+            "review",
+            VerificationEvidence::Advisory {
+                requirement_id: "review".into(),
+                evidence: pointer("wrong-advisory"),
+                summary: "an advisory is not a review".into(),
+            },
+        )];
         for (target, substitution) in substitutions {
             let evidence = complete_evidence()
                 .into_iter()
@@ -1440,88 +1356,6 @@ mod tests {
             replay(&tampered, &snapshot(), 120),
             Err(VerificationError::ReceiptTampered)
         ));
-    }
-
-    fn judgment(id: &str, outcome: JudgmentOutcome) -> VerificationEvidence {
-        VerificationEvidence::Judgment {
-            requirement_id: id.into(),
-            snapshot: snapshot(),
-            outcome,
-            evidence: pointer(id),
-            observed_at_unix: 100,
-            summary: format!("Jev answered {}", outcome.label()),
-            findings: Vec::new(),
-        }
-    }
-
-    fn judgment_plan(required: bool) -> VerificationPlan {
-        VerificationPlan {
-            subject: "question rule".into(),
-            snapshot: snapshot(),
-            requirements: vec![
-                requirement("anchor", RequirementKind::NativeCheck, true),
-                requirement("question", RequirementKind::Judgment, required),
-            ],
-        }
-    }
-
-    #[test]
-    fn no_combination_of_jev_answers_turns_a_must_rule_green() {
-        let outcomes = [
-            JudgmentOutcome::Flag,
-            JudgmentOutcome::Clear,
-            JudgmentOutcome::LowConfidence,
-            JudgmentOutcome::Unavailable,
-        ];
-        // Every answer, and every pair of answers for the same requirement
-        // (duplicates are ambiguous), leaves a must question short of green.
-        let mut cases = outcomes
-            .iter()
-            .map(|outcome| vec![judgment("question", *outcome)])
-            .collect::<Vec<_>>();
-        for left in outcomes {
-            for right in outcomes {
-                cases.push(vec![
-                    judgment("question", left),
-                    judgment("question", right),
-                ]);
-            }
-        }
-        for answers in cases {
-            let mut evidence = vec![observed("anchor", ObservedState::Success)];
-            evidence.extend(answers.clone());
-            let report = aggregate(&judgment_plan(true), &evidence, 120, &[]).expect("report");
-            let question = report
-                .results
-                .iter()
-                .find(|result| result.requirement_id == "question")
-                .expect("question result");
-            assert_ne!(question.state, CheckState::Success, "{answers:?}");
-            assert_ne!(report.state, VerificationState::Success, "{answers:?}");
-        }
-        // A should rule may pass on a clear answer; a flag still fails it.
-        let should_clear = aggregate(
-            &judgment_plan(false),
-            &[
-                observed("anchor", ObservedState::Success),
-                judgment("question", JudgmentOutcome::Clear),
-            ],
-            120,
-            &[],
-        )
-        .expect("report");
-        assert_eq!(should_clear.state, VerificationState::Success);
-        let must_flag = aggregate(
-            &judgment_plan(true),
-            &[
-                observed("anchor", ObservedState::Success),
-                judgment("question", JudgmentOutcome::Flag),
-            ],
-            120,
-            &[],
-        )
-        .expect("report");
-        assert_eq!(must_flag.state, VerificationState::Violated);
     }
 
     #[test]

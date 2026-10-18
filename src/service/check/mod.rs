@@ -3,8 +3,8 @@
 //!
 //! Modes: the staged index (pre-commit: mechanical content checks only), the
 //! change since a base (pre-push and CI), everything, or a sweep of every
-//! mapped feature. Mechanical enforcers run through `crate::gates` and
-//! question enforcers through `crate::judgment`.
+//! mapped feature. Every enforcer is mechanical and runs through
+//! `crate::gates`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -16,13 +16,11 @@ use sha2::{Digest, Sha256};
 use crate::agreement::AgreementState;
 use crate::check;
 use crate::domain::{
-    AgreementRecord, ContentDigest, Enforcer, EnforcerFamily, EvidenceRef, ExternalRef,
-    ExternalSystem, Feature, Freshness, JudgmentOutcome, JudgmentReceipt, PolicyStateSnapshot,
-    ProvenanceKind, RecordBody, RecordId, RecordRef, Rule, Strength, VerificationAxis,
-    VerificationReceipt,
+    ContentDigest, Enforcer, EvidenceRef, ExternalRef, ExternalSystem, Feature, Freshness,
+    PolicyStateSnapshot, ProvenanceKind, RecordBody, RecordId, RecordRef, Rule, Strength,
+    VerificationAxis, VerificationReceipt,
 };
 use crate::gates::{FileSet, GateOutcome};
-use crate::judgment::{self, Answer, UnitSource};
 use crate::proof::ArtifactFailure;
 use crate::storage::{ProjectLayout, StorageError};
 use crate::verification::{
@@ -40,15 +38,10 @@ use super::{
     CheckRequest, GateMode, RequiredSnapshot, ServiceEvidence, ServiceResponse, ServiceState,
 };
 
-/// The repository's own privacy settings, applied to every question.
-pub const PRIVACY_RELATIVE: &str = "whetstone/privacy.json";
-
 mod findings;
 mod persist;
-mod question;
 
 use persist::*;
-use question::*;
 
 /// An in-force rule chosen for this check.
 pub(crate) struct SelectedRule {
@@ -405,11 +398,8 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             .or_else(|| crate::gates::files::last_pushed_revision(&project))
             .or_else(|| head.clone())
     };
-    let repository_privacy = read_privacy(&project);
     let mut outcomes = Vec::new();
-    let mut judgment_records = Vec::new();
     let mut doctor = None;
-    let mut not_applicable = Vec::new();
     let mut mutation_runs = Vec::new();
     let mut mutation_receipts = Vec::new();
     if let (Some(layout), false) = (layout.as_ref(), selection.rules.is_empty()) {
@@ -432,21 +422,14 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             crate::gates::DEFAULT_GATE_TIMEOUT,
             std::time::Duration::from_secs,
         );
-        // What the content gates and Jev read: the change without
-        // Whetstone's own wiring.
+        // What the content gates read: the change without Whetstone's own
+        // wiring.
         let content_changed = selection
             .changed_paths
             .iter()
             .filter(|path| !crate::skill::is_generated(path))
             .cloned()
             .collect::<Vec<_>>();
-        let unit_source = UnitSource {
-            project_root: &project,
-            files: &files,
-            staged,
-            base: request.base.as_deref(),
-            changed: &content_changed,
-        };
         // Mutations run first, so a hollow proof they reveal decides this
         // check, not only the next one.
         if request.mutate {
@@ -496,166 +479,117 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         for selected in &selection.rules {
             let rule = &selected.rule;
             let is_drive = matches!(rule.enforcer, Enforcer::Drive { .. });
-            let (outcome, requirement_kind, evidence) = match rule.enforcer.family() {
-                EnforcerFamily::Mechanical => {
-                    let context = crate::gates::GateContext {
-                        project_root: &project,
-                        run_dir: &run_dir,
-                        run_id: &run_id,
-                        features: &selection.features,
-                        doctor: doctor.as_ref(),
-                        timeout,
-                        change_steps: change_steps
-                            .as_ref()
-                            .map(|(id, steps)| (id, steps.as_slice())),
-                        files: &files,
-                        changed: &content_changed,
-                        surface_base: surface_base.as_deref(),
-                    };
-                    let mut outcome = match (&halted, is_drive) {
-                        (Some(reason), true) => {
-                            crate::gates::skipped_outcome(&selected.id, rule, reason)
-                        }
-                        _ => crate::gates::run_gate(&context, &selected.id, rule),
-                    };
-                    // A proof that fails and then passes on one retry is
-                    // flaky: quarantined with the reason, never a pass.
-                    if is_drive && outcome.state == VerificationAxis::Fail && halted.is_none() {
-                        let first = outcome.summary.clone();
-                        let retry = crate::gates::run_gate(&context, &selected.id, rule);
-                        if retry.state == VerificationAxis::Pass {
-                            outcome = retry.unknown(format!(
+            let (outcome, evidence) = {
+                let context = crate::gates::GateContext {
+                    project_root: &project,
+                    run_dir: &run_dir,
+                    run_id: &run_id,
+                    features: &selection.features,
+                    doctor: doctor.as_ref(),
+                    timeout,
+                    change_steps: change_steps
+                        .as_ref()
+                        .map(|(id, steps)| (id, steps.as_slice())),
+                    files: &files,
+                    changed: &content_changed,
+                    surface_base: surface_base.as_deref(),
+                };
+                let mut outcome = match (&halted, is_drive) {
+                    (Some(reason), true) => {
+                        crate::gates::skipped_outcome(&selected.id, rule, reason)
+                    }
+                    _ => crate::gates::run_gate(&context, &selected.id, rule),
+                };
+                // A proof that fails and then passes on one retry is
+                // flaky: quarantined with the reason, never a pass.
+                if is_drive && outcome.state == VerificationAxis::Fail && halted.is_none() {
+                    let first = outcome.summary.clone();
+                    let retry = crate::gates::run_gate(&context, &selected.id, rule);
+                    if retry.state == VerificationAxis::Pass {
+                        outcome = retry.unknown(format!(
                                 "Flaky: the proof failed ({first}) and passed on one retry; it is quarantined until it passes first time."
                             ));
-                            outcome.evidence.push(EvidenceRef {
-                                system: crate::gates::QUARANTINE_EVIDENCE.into(),
-                                locator: first.chars().take(300).collect(),
-                                digest: None,
-                            });
-                        }
+                        outcome.evidence.push(EvidenceRef {
+                            system: crate::gates::QUARANTINE_EVIDENCE.into(),
+                            locator: first.chars().take(300).collect(),
+                            digest: None,
+                        });
                     }
-                    // A proof that survived its recorded mutation is hollow.
-                    if let (Enforcer::Drive { feature }, VerificationAxis::Pass) =
-                        (&rule.enforcer, outcome.state)
-                    {
-                        let fresh = mutation_runs
-                            .iter()
-                            .find(|run: &&crate::gates::MutationOutcome| {
-                                run.feature == feature.as_str() && run.verdict == "hollow"
-                            })
-                            .map(|run| {
-                                format!(
-                                    "it still passed with \"{}\" applied; strengthen its drive steps",
-                                    run.mutation
-                                )
-                            });
-                        if let Some(detail) = fresh.or_else(|| {
-                            agreement
-                                .as_ref()
-                                .and_then(|state| hollow_proof(state, feature))
-                        }) {
-                            outcome = outcome.unknown(format!("Hollow proof: {detail}"));
-                        }
+                }
+                // A proof that survived its recorded mutation is hollow.
+                if let (Enforcer::Drive { feature }, VerificationAxis::Pass) =
+                    (&rule.enforcer, outcome.state)
+                {
+                    let fresh = mutation_runs
+                        .iter()
+                        .find(|run: &&crate::gates::MutationOutcome| {
+                            run.feature == feature.as_str() && run.verdict == "hollow"
+                        })
+                        .map(|run| {
+                            format!(
+                                "it still passed with \"{}\" applied; strengthen its drive steps",
+                                run.mutation
+                            )
+                        });
+                    if let Some(detail) = fresh.or_else(|| {
+                        agreement
+                            .as_ref()
+                            .and_then(|state| hollow_proof(state, feature))
+                    }) {
+                        outcome = outcome.unknown(format!("Hollow proof: {detail}"));
                     }
-                    if is_drive
-                        && halted.is_none()
-                        && outcome.state != VerificationAxis::Pass
-                        && !outcome
-                            .summary
-                            .starts_with(crate::gates::UNREACHABLE_PREFIX)
-                        && doctor.as_ref().is_some_and(|result| result.ok)
-                    {
-                        let again = crate::gates::run_doctor(&project, &run_dir);
-                        if !again.ok {
-                            halted = Some(format!(
+                }
+                if is_drive
+                    && halted.is_none()
+                    && outcome.state != VerificationAxis::Pass
+                    && !outcome
+                        .summary
+                        .starts_with(crate::gates::UNREACHABLE_PREFIX)
+                    && doctor.as_ref().is_some_and(|result| result.ok)
+                {
+                    let again = crate::gates::run_doctor(&project, &run_dir);
+                    if !again.ok {
+                        halted = Some(format!(
                                 "Skipped: doctor failed after {} ({}); fix the instance and sweep again.",
                                 selected.id.as_str(),
                                 again.detail
                             ));
-                        }
-                        doctor = Some(again);
                     }
-                    let evidence = VerificationEvidence::Execution {
-                        requirement_id: format!("gate:{}", selected.id.as_str()),
-                        snapshot: snapshot.clone(),
-                        receipt: Box::new(gate_execution_receipt(selected, &outcome)),
-                        evidence: EvidencePointer {
-                            source: crate::proof::EVIDENCE_SYSTEM.into(),
-                            locator: outcome.evidence.last().map_or_else(
-                                || run_id.clone(),
-                                |evidence| evidence.locator.clone(),
-                            ),
-                            digest: outcome
-                                .evidence
-                                .last()
-                                .and_then(|evidence| evidence.digest.clone())
-                                .unwrap_or_else(|| digest_bytes(outcome.summary.as_bytes())),
-                        },
-                        observed_at_unix: unix_now(),
-                        findings: outcome
-                            .failures
-                            .iter()
-                            .map(|failure| gate_finding(selected, failure))
-                            .collect(),
-                    };
-                    (outcome, RequirementKind::NativeCheck, Some(evidence))
+                    doctor = Some(again);
                 }
-                EnforcerFamily::Question if rule.privacy.local_only => {
-                    let outcome = GateOutcome::new(&selected.id, rule).unknown(
-                        "This rule is local-only, so Jev is never asked and nothing else holds it.",
-                    );
-                    (outcome, RequirementKind::Judgment, None)
-                }
-                EnforcerFamily::Question => {
-                    let run = run_question(
-                        layout,
-                        &run_dir,
-                        &run_id,
-                        selected,
-                        &unit_source,
-                        &repository_privacy,
-                        head.as_deref(),
-                    );
-                    judgment_records.extend(run.receipts);
-                    if run.units == 0 {
-                        not_applicable.push(selected.id.as_str().to_string());
-                        outcomes.push(run.outcome);
-                        continue;
-                    }
-                    let evidence = VerificationEvidence::Judgment {
-                        requirement_id: format!("gate:{}", selected.id.as_str()),
-                        snapshot: snapshot.clone(),
-                        outcome: run.aggregate,
-                        evidence: EvidencePointer {
-                            source: "whetstone_judgment".into(),
-                            locator: format!("{run_id}:{}", selected.id.as_str()),
-                            digest: digest_bytes(run.outcome.summary.as_bytes()),
-                        },
-                        observed_at_unix: unix_now(),
-                        summary: run.outcome.summary.clone(),
-                        findings: run
-                            .outcome
-                            .failures
-                            .iter()
-                            .map(|failure| gate_finding(selected, failure))
-                            .collect(),
-                    };
-                    // Shadow answers are recorded and shown, never enforced.
-                    let evidence = (!rule.in_shadow()).then_some(evidence);
-                    (run.outcome, RequirementKind::Judgment, evidence)
-                }
+                let evidence = VerificationEvidence::Execution {
+                    requirement_id: format!("gate:{}", selected.id.as_str()),
+                    snapshot: snapshot.clone(),
+                    receipt: Box::new(gate_execution_receipt(selected, &outcome)),
+                    evidence: EvidencePointer {
+                        source: crate::proof::EVIDENCE_SYSTEM.into(),
+                        locator: outcome
+                            .evidence
+                            .last()
+                            .map_or_else(|| run_id.clone(), |evidence| evidence.locator.clone()),
+                        digest: outcome
+                            .evidence
+                            .last()
+                            .and_then(|evidence| evidence.digest.clone())
+                            .unwrap_or_else(|| digest_bytes(outcome.summary.as_bytes())),
+                    },
+                    observed_at_unix: unix_now(),
+                    findings: outcome
+                        .failures
+                        .iter()
+                        .map(|failure| gate_finding(selected, failure))
+                        .collect(),
+                };
+                (outcome, evidence)
             };
-            // Shadow results (a Jev question's or a rule drafted from a
-            // lesson) are recorded and shown, never enforced.
-            let enforced = !rule.in_shadow();
-            if enforced {
+            {
                 let advisory = rule.strength == Strength::Advisory;
                 requirements.push(VerificationRequirement {
                     id: format!("gate:{}", selected.id.as_str()),
                     kind: if advisory {
                         RequirementKind::AdvisoryGuidance
                     } else {
-                        requirement_kind
+                        RequirementKind::NativeCheck
                     },
                     required: rule.strength == Strength::Must,
                     checker_manifest: Some(selected.reference.digest.clone()),
@@ -666,7 +600,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                     verification_command: format!("wh check --rule {}", selected.id.as_str()),
                     freshness_seconds: 3_600,
                 });
-                if let Some(evidence) = evidence {
+                {
                     if advisory {
                         evidence_items.push(VerificationEvidence::Advisory {
                             requirement_id: format!("gate:{}", selected.id.as_str()),
@@ -688,17 +622,12 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     let checked_at = utc_now();
     // CI records nothing, and neither does a staged check: the index is not
     // a commit yet, so a receipt would bind to the wrong one (pre-push
-    // checks the same content again and records it). Gate and judgment
-    // receipts are recorded even when only shadow rules ran: their flags are
-    // what a promotion is measured on.
+    // checks the same content again and records it).
     let records_receipts = !request.ci && request.gate_mode != GateMode::Staged;
-    let (gate_receipts, judgment_receipts) = match layout.as_ref() {
+    let gate_receipts = match layout.as_ref() {
         Some(layout) if records_receipts => {
             let mut gate_receipts = Vec::new();
             for (selected, outcome) in selection.rules.iter().zip(&outcomes) {
-                if outcome.family != "mechanical" {
-                    continue;
-                }
                 let feature_ref = match &selected.rule.enforcer {
                     Enforcer::Drive { feature } => agreement
                         .as_ref()
@@ -723,13 +652,9 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                     Err(error) => return storage_error("check", request_id, error),
                 }
             }
-            let judgment_receipts = match persist_all(layout, &judgment_records) {
-                Ok(references) => references,
-                Err(error) => return storage_error("check", request_id, error),
-            };
-            (gate_receipts, judgment_receipts)
+            gate_receipts
         }
-        _ => (Vec::new(), Vec::new()),
+        _ => Vec::new(),
     };
     let sweep_findings = request
         .findings
@@ -744,9 +669,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             &selection,
             &outcomes,
             sweep,
-            &not_applicable,
             &gate_receipts,
-            &judgment_receipts,
         );
         attach_extras(&mut response, sweep_findings.as_deref(), &lesson_checks);
         return response;
@@ -813,15 +736,13 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     let flags = outcomes
         .iter()
         .filter(|outcome| {
-            outcome.state == VerificationAxis::Fail
-                && outcome.strength != Strength::Must
-                && !outcome.shadow
+            outcome.state == VerificationAxis::Fail && outcome.strength != Strength::Must
         })
         .map(|outcome| outcome.id.clone())
         .collect::<Vec<_>>();
     if !flags.is_empty() {
         summary.push_str(&format!(
-            "\n{} should-rule flag(s) to repair, or for the owner to accept or dismiss: {}.",
+            "\n{} should-rule flag(s) to repair: {}.",
             flags.len(),
             flags.join(", ")
         ));
@@ -857,13 +778,11 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         "report": report,
         "raw_scan": result,
         "scanner_included": include_native,
-        "receipt_persisted": receipt_record.is_some() || !gate_receipts.is_empty() || !judgment_receipts.is_empty(),
+        "receipt_persisted": receipt_record.is_some() || !gate_receipts.is_empty(),
         "receipt_record": receipt_record,
         "gate_receipts": gate_receipts,
-        "judgment_receipts": judgment_receipts,
         "gates": outcomes,
         "flags": flags,
-        "not_applicable": not_applicable,
         "mutations": mutation_runs,
         "mutation_receipts": mutation_receipts,
         "run_id": if selection.rules.is_empty() { None } else { Some(run_id) },
@@ -931,13 +850,10 @@ fn nothing_ran(
     selection: &Selection,
     outcomes: &[GateOutcome],
     sweep: Option<Value>,
-    not_applicable: &[String],
     gate_receipts: &[RecordRef],
-    recorded: &[RecordRef],
 ) -> ServiceResponse {
-    let shadow = outcomes.iter().filter(|outcome| outcome.shadow).count();
-    // Rules are in force, but none runs at pre-commit (question, review and
-    // command rules run at pre-push): the commit is not blocked on them.
+    // Rules are in force, but none runs at pre-commit (command and drive
+    // rules run at pre-push): the commit is not blocked on them.
     let deferred = request.gate_mode == GateMode::Staged
         && selection.rules.is_empty()
         && !selection.rule_ids.is_empty()
@@ -945,15 +861,6 @@ fn nothing_ran(
     let summary = if deferred {
         "No fast mechanical rule applies at pre-commit; the other rules in force run at pre-push and in CI."
             .to_string()
-    } else if !not_applicable.is_empty() && shadow == 0 && selection.skipped_drafts.is_empty() {
-        format!(
-            "Nothing to check: no change is in scope for {}.",
-            not_applicable.join(", ")
-        )
-    } else if shadow > 0 {
-        format!(
-            "Only shadow rules ran ({shadow}): their answers are recorded, not enforced, so nothing passed or failed."
-        )
     } else if selection.skipped_drafts.is_empty() {
         "Nothing ran: no scanner rule or in-force rule applies, which is unknown, not a pass."
             .to_string()
@@ -963,12 +870,7 @@ fn nothing_ran(
             selection.skipped_drafts.join(", ")
         )
     };
-    // Shadow answers are not enforced, so a check of shadow rules alone (or
-    // of rules the change does not reach) has no must rule to hold: it
-    // succeeds, and says why, rather than blocking a push.
-    let state = if deferred
-        || ((!not_applicable.is_empty() || shadow > 0) && selection.skipped_drafts.is_empty())
-    {
+    let state = if deferred {
         ServiceState::Success
     } else {
         ServiceState::Unknown
@@ -982,8 +884,6 @@ fn nothing_ran(
     response.data = json!({
         "gates": outcomes,
         "gate_receipts": gate_receipts,
-        "judgment_receipts": recorded,
-        "not_applicable": not_applicable,
         "sweep": sweep,
         "ci": request.ci,
         "selection": selection_json(request, selection),
@@ -1013,11 +913,8 @@ fn dry_run_response(
             json!({
                 "id": selected.id.as_str(),
                 "strength": selected.rule.strength.label(),
-                "family": selected.rule.enforcer.family().label(),
                 "mechanism": mechanism,
                 "command": command,
-                "shadow": selected.rule.in_shadow(),
-                "local_only": selected.rule.privacy.local_only,
                 "argv": match &selected.rule.enforcer {
                     Enforcer::Test { command } | Enforcer::Validator { command } => {
                         crate::gates::parse_command(command).ok()

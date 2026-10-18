@@ -14,8 +14,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
-    ActorKind, AgreementRecord, ContentDigest, Enforcer, Privacy, RecordId, RuleExample,
-    RuleSource, Strength, SweepClass, Trust,
+    ActorKind, AgreementRecord, ContentDigest, Enforcer, RecordId, RuleExample, RuleSource,
+    Strength, SweepClass, Trust,
 };
 use crate::storage::{ProjectLayout, StorageError};
 
@@ -178,14 +178,6 @@ pub struct ReviewRequest {
     pub verdict: crate::domain::LocalReviewVerdict,
 }
 
-/// The owner's label on one flag.
-#[derive(Debug, Clone)]
-pub struct FlagRequest {
-    /// The judgment or gate receipt record id.
-    pub receipt: String,
-    pub verdict: crate::domain::FlagVerdict,
-}
-
 /// Always stored boxed (`Option<Box<ChangeDefinition>>`), so the feature
 /// variant's size never inflates the requests that carry it.
 #[allow(clippy::large_enum_variant)]
@@ -201,11 +193,6 @@ pub enum ChangeDefinition {
         source: Option<RuleSource>,
         #[serde(default)]
         paths: Vec<String>,
-        #[serde(default)]
-        privacy: Privacy,
-        /// Recorded, never enforced, until a promotion is accepted.
-        #[serde(default)]
-        shadow: bool,
         /// How a night sweep works the rule's flags (discuss when absent).
         #[serde(default)]
         sweep: Option<SweepClass>,
@@ -315,20 +302,14 @@ pub struct ChangeRequest {
     pub review: Option<ReviewRequest>,
     /// Propose retiring an accepted record (reviewed archival; history stays).
     pub retire: Option<String>,
-    /// Accept or dismiss one flag.
-    pub flag: Option<FlagRequest>,
     /// Draft principles from earlier values and philosophy records.
     pub migrate: bool,
-    /// Record the tuning drafts (demotion, promotion) the rules' records suggest.
-    pub tune: bool,
-    /// The rule a new mechanical rule replaces a recurring Jev flag of.
-    pub hardens: Option<String>,
     /// Who is asking: a person, or an agent (the default, so nothing passes
     /// as a person by omission).
     pub actor: ActorKind,
     /// Admit, correct or forget a lesson.
     pub lesson: Option<LessonOp>,
-    /// With a rule: the admitted lesson it is drafted from (it starts in shadow).
+    /// With a rule: the admitted lesson it is drafted from.
     pub from_lesson: Option<String>,
 }
 

@@ -71,6 +71,16 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   read as retired history, and so is a stored rule held by a review or brief
   enforcer. The prove-it-works starter is offered only when a test command
   is detected.
+- Jev: the question enforcer, judgment receipts, the driver's `ask` command
+  and every TypeSafe call, redaction, local-only rules, shadow mode and the
+  shadow badges, flag labels (`wh change --accept-flag` and
+  `--dismiss-flag`), the tuning and hardening drafts they fed
+  (`wh change --tune`, `--hardens`), per-rule flag statistics, the
+  dashboard's Flags to label and Suggestions panels, and the Jev half of
+  `wh eval`. The tests-only-when-asked starter is gone. Stored judgments and
+  flag decisions are read as retired history, and so is a stored rule held
+  by a question or recorded in shadow; a stored rule's privacy and shadow
+  fields are dropped on read with its digest unchanged.
 
 ## [0.13.0] - 2026-10-15
 

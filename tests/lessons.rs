@@ -1,7 +1,7 @@
 //! Memory as the whetstone, standalone (whetstone-jpd): lessons are proposed
 //! by anyone and admitted only by a person, anchored to the files they name
-//! so a hash comparison says when they may be stale, and drafted into shadow
-//! rules that link back to them.
+//! so a hash comparison says when they may be stale, and drafted into rules
+//! that link back to them.
 //!
 //! The agent is the real binary (no terminal, so never a person); the
 //! person is the library's service called with a person as the actor, which
@@ -51,10 +51,8 @@ fn run(root: &Path, args: &[&str]) -> Output {
         .current_dir(root)
         .env("GIT_CEILING_DIRECTORIES", root.parent().expect("parent"))
         .env("BD_NON_INTERACTIVE", "1")
-        .env("WHETSTONE_JEV_OFFLINE", "1")
         .env_remove("BEADS_DIR")
         .env_remove("BEADS_DB")
-        .env_remove("TYPESAFE_API_KEY")
         .output()
         .expect("whetstone")
 }
@@ -549,7 +547,7 @@ fn accept(root: &Path, proposal: &str) -> Value {
 }
 
 #[test]
-fn a_rule_drafted_from_an_admitted_lesson_starts_in_shadow_and_walks_back_to_its_lesson() {
+fn a_rule_drafted_from_an_admitted_lesson_walks_back_to_its_lesson() {
     if !have_bd() {
         return;
     }
@@ -610,7 +608,6 @@ fn a_rule_drafted_from_an_admitted_lesson_starts_in_shadow_and_walks_back_to_its
     );
     assert_eq!(drafted["state"], "success", "{drafted}");
     let after = &drafted["data"]["diff"]["after"]["record"];
-    assert_eq!(after["shadow"], true, "{after}");
     assert_eq!(after["source"]["kind"], "lesson");
     assert_eq!(after["source"]["reference"], "no-print-in-src");
     let proposal = drafted["data"]["proposal"]["id"]
@@ -618,7 +615,7 @@ fn a_rule_drafted_from_an_admitted_lesson_starts_in_shadow_and_walks_back_to_its
         .expect("proposal")
         .to_string();
 
-    // It is a shadow-rule proposal in wh dash; nothing accepted it.
+    // It is a rule proposal in wh dash; nothing accepted it.
     let dash = wh(root, &["dash", "--json"]);
     let listed = dash["data"]["current"]["rules"]
         .as_array()
@@ -630,7 +627,6 @@ fn a_rule_drafted_from_an_admitted_lesson_starts_in_shadow_and_walks_back_to_its
         })
         .expect("rule listed");
     assert_eq!(listed["lifecycle"], "draft");
-    assert_eq!(listed["shadow"], true);
     assert_eq!(listed["origin_lesson"], "no-print-in-src");
     assert_eq!(
         lesson(root, "no-print-in-src")["derived_rules"],
@@ -666,7 +662,7 @@ fn a_rule_drafted_from_an_admitted_lesson_starts_in_shadow_and_walks_back_to_its
     assert_eq!(lineage["origin"]["decision"]["verb"], "admit");
     assert_eq!(lineage["origin"]["anchors"][0]["path"], "src/config.py");
 
-    // A shadow rule's flag blocks nobody.
+    // A should rule's flag blocks nobody.
     std::fs::write(root.join("src/config.py"), "print('loading')\n").expect("write");
     let checked = run(root, &["check", "--json", "--rule", "rule.no-print"]);
     let checked_value: Value = serde_json::from_slice(&checked.stdout).expect("json");
@@ -681,17 +677,16 @@ fn a_rule_drafted_from_an_admitted_lesson_starts_in_shadow_and_walks_back_to_its
         })
         .expect("gate");
     assert_eq!(gate["state"], "fail");
-    assert_eq!(gate["shadow"], true);
     assert!(
         checked_value["data"]["gate_receipts"]
             .as_array()
             .is_some_and(|receipts| !receipts.is_empty()),
-        "a shadow flag is still recorded: {}",
+        "the flag is recorded: {}",
         checked_value["data"]
     );
 
-    // Demotion mirrors promotion: once the origin lesson is corrected, the
-    // rule drawn from it goes back to a person; nothing changes force.
+    // Once the origin lesson is corrected, the rule drawn from it goes back
+    // to a person; nothing changes force.
     person(
         root,
         "correct-origin",
@@ -701,21 +696,12 @@ fn a_rule_drafted_from_an_admitted_lesson_starts_in_shadow_and_walks_back_to_its
         Some("Never call print anywhere; use logging."),
         None,
     );
-    let tuned = wh(root, &["change", "--json", "--tune"]);
-    let reviews = tuned["data"]["lesson_reviews"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    assert_eq!(reviews.len(), 1, "{tuned}");
-    assert_eq!(reviews[0]["rule"], "rule.no-print");
-    assert!(reviews[0]["reason"]
+    let dash = wh(root, &["dash", "--json"]);
+    let review = &dash["data"]["memory"]["rules_to_review"][0];
+    assert_eq!(review["rule"], "rule.no-print", "{dash}");
+    assert!(review["reason"]
         .as_str()
         .is_some_and(|reason| reason.contains("superseded by no-print-in-src-2")));
-    let dash = wh(root, &["dash", "--json"]);
-    assert_eq!(
-        dash["data"]["memory"]["rules_to_review"][0]["rule"],
-        "rule.no-print"
-    );
     let listed = dash["data"]["current"]["rules"]
         .as_array()
         .and_then(|rules| {

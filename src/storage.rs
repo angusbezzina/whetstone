@@ -525,13 +525,10 @@ pub fn record_class(body: &RecordBody) -> &'static str {
         | RecordBody::Feature(_)
         | RecordBody::VerificationMap(_)
         | RecordBody::Lesson(_) => "record",
-        RecordBody::Proposal(_)
-        | RecordBody::LocalReview(_)
-        | RecordBody::Retirement(_)
-        | RecordBody::FlagDecision(_) => "decision",
-        RecordBody::VerificationReceipt(_)
-        | RecordBody::Judgment(_)
-        | RecordBody::LessonCheck(_) => "receipt",
+        RecordBody::Proposal(_) | RecordBody::LocalReview(_) | RecordBody::Retirement(_) => {
+            "decision"
+        }
+        RecordBody::VerificationReceipt(_) | RecordBody::LessonCheck(_) => "receipt",
         RecordBody::Retired(retired) => match retired.record_type.as_str() {
             "rule"
             | "guidance"
@@ -540,7 +537,7 @@ pub fn record_class(body: &RecordBody) -> &'static str {
             | "metric_definition"
             | "source_snapshot"
             | "policy_exception" => "record",
-            "decision" | "mandate" | "activation" | "hand_answer" => "decision",
+            "decision" | "mandate" | "activation" | "hand_answer" | "flag_decision" => "decision",
             _ => "receipt",
         },
     }
@@ -646,7 +643,6 @@ pub fn logical_stage(record: &AgreementRecord) -> u8 {
         RecordBody::Proposal(_) => 1,
         RecordBody::LocalReview(_) => 2,
         body if body.is_receipt() => 3,
-        RecordBody::FlagDecision(_) => 4,
         _ => 0,
     }
 }

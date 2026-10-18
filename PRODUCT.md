@@ -19,11 +19,10 @@ self-contained static HTML file under `planning/direction-demo/`.
 Whetstone lets people delegate more to coding agents and trust the result. The
 owner's mission, the pstack principles they pick and the codebases they admire
 become a short list of agreed rules. Every rule has one strength (must, should
-or advisory) and exactly one enforcer, chosen in this order: a mechanical
-check, then a literal yes/no Jev question (TypeSafe System One). Agents and people in any tool are briefed
-on the rules before building and checked at pre-commit, pre-push and CI.
-Every consequential change is an append-only,
-inspectable decision. The direction is in `planning/direction.md` and Beads
+or advisory) and exactly one mechanical enforcer. Agents and people in any
+tool are briefed on the rules before building and checked at pre-commit,
+pre-push and CI. Every consequential change is an append-only, inspectable
+decision. The direction is in `planning/direction.md` and Beads
 epic `whetstone-ppq`.
 
 Mechanism that makes it different:
@@ -32,11 +31,10 @@ Mechanism that makes it different:
 - Network calls and driving stay in the driver.
 - Deterministic, replayable work (schemas, state transitions, check
   execution, receipts) stays in typed services.
-- A Jev answer can raise a flag but never pass a must rule.
+- Only a mechanical pass or a proof passes a must rule.
 - Unknown, stale, skipped or unavailable evidence is never reported as
   success.
-- Rule changes, including demotions and promotions, are drafts a person
-  accepts.
+- Rule changes, including strength changes, are drafts a person accepts.
 - Local drafts stay private until pushed.
 
 Outputs for agents: a generated, pstack-compatible verification skill with a
@@ -71,8 +69,8 @@ product's own dashboard files):
    codebases, then accepting each proposed rule with its examples, strength
    and enforcer.
 2. **Rules** (replaces the five-stage Foundations): mission and principles,
-   then rules grouped by strength, each showing its enforcer, shadow status
-   and false-flag rate. Editing creates a local draft with exact before/after
+   then rules grouped by strength, each showing its enforcer and where it
+   runs. Editing creates a local draft with exact before/after
    review; it never silently overwrites an accepted rule.
 3. **Checks**: execution only. It shows:
    - the last run per rule (pass, flag, fail, unknown, not checked, stale);
@@ -80,8 +78,7 @@ product's own dashboard files):
    - the exact recheck route;
    - the repair brief to hand to the current agent.
 4. **Changelog**: the decision log, newest first, grouped by day. It includes
-   accepted and dismissed flags, strength changes
-   and redactions. Exact records sit behind disclosure.
+   strength changes and redactions. Exact records sit behind disclosure.
 
 ## Durable constraints
 
@@ -100,9 +97,8 @@ product's own dashboard files):
 ## Terminology
 
 Mission, principle (a pstack principle or the owner's own), exemplar codebase,
-rule (one strength must/should/advisory and one enforcer: mechanical check
-or Jev question), shadow mode, flag (accepted or dismissed), check (a run of
-rules), receipt, local draft, accepted,
+rule (one strength must/should/advisory and one mechanical enforcer), flag,
+check (a run of rules), receipt, local draft, accepted,
 superseded, owner.
 
 ## Brand commitments

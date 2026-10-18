@@ -5,8 +5,7 @@
 //! before and after, and an unchanged file records nothing.
 //!
 //! Format: JSON-valued frontmatter (record, revision, strength, enforcer,
-//! source, paths, privacy), an H1 with the statement, the
-//! rationale, then `## Examples` with one `### Flag: <reason>` or
+//! source, paths), an H1 with the statement, the rationale, then `## Examples` with one `### Flag: <reason>` or
 //! `### Pass: <reason>` per example, an optional `Path:` line and the input
 //! in a fenced block.
 
@@ -15,8 +14,7 @@ use std::collections::BTreeMap;
 use serde_json::{json, Value};
 
 use crate::domain::{
-    Enforcer, ExampleVerdict, Privacy, RecordId, Rule, RuleExample, RuleSource, Strength,
-    RULE_SCHEMA_V2,
+    Enforcer, ExampleVerdict, RecordId, Rule, RuleExample, RuleSource, Strength, RULE_SCHEMA_V2,
 };
 
 pub fn rule_slug(id: &RecordId) -> String {
@@ -51,7 +49,6 @@ pub fn render_rule_file(id: &RecordId, revision: u64, rule: &Rule, header: &str)
         ("enforcer", json!(rule.enforcer)),
         ("source", json!(rule.source)),
         ("paths", json!(rule.paths)),
-        ("privacy", json!(rule.privacy)),
     ] {
         out.push_str(&crate::feature_map::frontmatter_line(key, &value));
     }
@@ -116,7 +113,6 @@ pub fn parse_rule_file(text: &str) -> Result<ParsedRule, String> {
     let source: RuleSource =
         serde_json::from_value(field("source")).map_err(|error| format!("source: {error}"))?;
     let paths: Vec<String> = serde_json::from_value(field("paths")).unwrap_or_default();
-    let privacy: Privacy = serde_json::from_value(field("privacy")).unwrap_or_default();
     let rest = &body[end + "\n---\n".len()..];
     let mut lines = rest
         .lines()
@@ -192,8 +188,6 @@ pub fn parse_rule_file(text: &str) -> Result<ParsedRule, String> {
         examples,
         source,
         paths,
-        privacy,
-        shadow: false,
         sweep: None,
         sweep_priority: None,
         sweep_unsure: Vec::new(),
@@ -209,12 +203,14 @@ mod tests {
 
     #[test]
     fn rule_files_round_trip_and_an_edit_changes_only_what_changed() {
-        let rule = crate::starter::starters(std::path::Path::new("/nonexistent"))
+        let temp = tempfile::tempdir().expect("temp");
+        std::fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").expect("write");
+        let rule = crate::starter::starters(temp.path())
             .into_iter()
-            .find(|starter| starter.id == crate::starter::TESTS_ONLY_WHEN_ASKED)
+            .find(|starter| starter.id == crate::starter::PROVE_IT_WORKS)
             .expect("starter")
             .rule;
-        let id = RecordId::new(crate::starter::TESTS_ONLY_WHEN_ASKED).expect("id");
+        let id = RecordId::new(crate::starter::PROVE_IT_WORKS).expect("id");
         let text = render_rule_file(
             &id,
             1,
@@ -224,10 +220,10 @@ mod tests {
         let parsed = parse_rule_file(&text).expect("parse");
         assert_eq!(parsed.id, id);
         assert_eq!(parsed.rule, rule);
-        let edited = text.replace("\"should\"", "\"must\"");
+        let edited = text.replace("\"must\"", "\"should\"");
         let parsed = parse_rule_file(&edited).expect("parse edit");
-        assert_eq!(parsed.rule.strength, Strength::Must);
+        assert_eq!(parsed.rule.strength, Strength::Should);
         assert_eq!(parsed.rule.examples, rule.examples);
-        assert_eq!(rule_slug(&id), "tests-only-when-asked");
+        assert_eq!(rule_slug(&id), "prove-it-works");
     }
 }

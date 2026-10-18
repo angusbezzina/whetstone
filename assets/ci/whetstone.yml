@@ -6,9 +6,7 @@
 #
 # The check runs the full `wh check` for the pull request's commits against
 # the rules the team accepted and shared (`wh push`), never against a
-# contributor's private drafts. Jev questions run when the repository has a
-# TYPESAFE_API_KEY secret; without it they report unavailable, and a must rule
-# never passes on an unavailable answer.
+# contributor's private drafts.
 name: whetstone
 
 on:
@@ -47,7 +45,6 @@ jobs:
         run: bd bootstrap --yes
       - name: whetstone/policy
         env:
-          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
           BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         shell: bash
         run: |

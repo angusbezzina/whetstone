@@ -23,7 +23,6 @@ fn run(args: &[&str], cwd: &Path, path: &Path) -> Output {
         .current_dir(cwd)
         .env("PATH", path)
         .env_remove("BEADS_DIR")
-        .env("WHETSTONE_JEV_OFFLINE", "1")
         .output()
         .expect("run whetstone")
 }

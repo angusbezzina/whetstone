@@ -463,16 +463,15 @@ exec "$WH" check --staged --hook pre-commit
     )
 }
 
-/// The pre-push hook: the full check (mechanical, Jev, reviews, fresh
-/// proofs) for the commits being pushed, after any earlier hook.
+/// The pre-push hook: the full check (mechanical rules and fresh proofs)
+/// for the commits being pushed, after any earlier hook.
 pub fn pre_push_hook() -> String {
     format!(
         r#"#!/bin/sh
 {GIT_HOOK_MARKER}
 # Installed by `wh init --action wire --hooks`. Runs any hook that was here
 # before (kept as pre-push{CHAINED_SUFFIX}), then the full `wh check` for the
-# commits being pushed: mechanical rules, Jev questions (unless shadow or
-# local-only) and fresh proofs.
+# commits being pushed: mechanical rules and fresh proofs.
 hook_dir=$(dirname "$0")
 refs=$(cat)
 if [ -x "$hook_dir/pre-push{CHAINED_SUFFIX}" ]; then

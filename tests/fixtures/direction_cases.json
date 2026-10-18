@@ -21,8 +21,7 @@
         "enforcer": { "kind": "test", "command": "cargo test" },
         "source": { "kind": "starter", "reference": "pstack:prove-it-works" }
       },
-      "expect": "valid",
-      "family": "mechanical"
+      "expect": "valid"
     },
     {
       "id": "R-002",
@@ -41,60 +40,17 @@
     },
     {
       "id": "R-003",
-      "name": "one enforcer cannot mix a question with a command",
+      "name": "one enforcer never carries another enforcer's fields",
       "record_type": "rule",
       "record": {
         "schema": "whetstone.rule.v2",
         "statement": "Tests only when asked.",
         "rationale": "Scope.",
         "strength": "should",
-        "enforcer": { "kind": "question", "question": "Does this change add tests nobody asked for?", "command": "cargo test" },
+        "enforcer": { "kind": "test", "command": "cargo test", "question": "Does this change add tests nobody asked for?" },
         "source": { "kind": "owner" }
       },
       "expect": "parse_error"
-    },
-    {
-      "id": "R-004",
-      "name": "a question starts in shadow with the pinned model and default bars",
-      "record_type": "rule",
-      "record": {
-        "schema": "whetstone.rule.v2",
-        "statement": "Add tests only when the task asks for them.",
-        "rationale": "Unrequested tests widen the change.",
-        "strength": "should",
-        "enforcer": { "kind": "question", "question": "Does this change add tests the task did not ask for?" },
-        "source": { "kind": "starter", "reference": "pstack:laziness-protocol" }
-      },
-      "expect": "valid",
-      "family": "question",
-      "shadow": true,
-      "serializes_enforcer_as": {
-        "kind": "question",
-        "question": "Does this change add tests the task did not ask for?",
-        "unit": "hunk",
-        "model": "jev-1.13.0",
-        "shadow": true,
-        "threshold_bp": 5000,
-        "confidence_bar_bp": 4000,
-        "promote_after": 50,
-        "precision_bar_bp": 9000
-      }
-    },
-    {
-      "id": "R-005",
-      "name": "a promoted question is enforced only when shadow is explicitly false",
-      "record_type": "rule",
-      "record": {
-        "schema": "whetstone.rule.v2",
-        "statement": "Add tests only when asked.",
-        "rationale": "Scope.",
-        "strength": "should",
-        "enforcer": { "kind": "question", "question": "Does this change add unrequested tests?", "shadow": false },
-        "source": { "kind": "owner" }
-      },
-      "expect": "valid",
-      "family": "question",
-      "shadow": false
     },
     {
       "id": "R-006",
@@ -112,7 +68,7 @@
     },
     {
       "id": "R-007",
-      "name": "a local-only question keeps its privacy and redactions",
+      "name": "a local-only question rule is read as history",
       "record_type": "rule",
       "record": {
         "schema": "whetstone.rule.v2",
@@ -125,10 +81,7 @@
         "hand_raise": ["low_confidence", "unavailable"],
         "privacy": { "redact_globs": ["secrets/**"], "redact_patterns": ["[a-z]+@example\\.com"], "local_only": true }
       },
-      "expect": "stored",
-      "family": "question",
-      "shadow": true,
-      "local_only": true
+      "expect": "retired"
     },
     {
       "id": "R-008",
@@ -146,8 +99,7 @@
         ],
         "source": { "kind": "exemplar", "reference": "https://example.test/repo", "provenance": [{ "system": "git", "locator": "src/lib.rs" }] }
       },
-      "expect": "valid",
-      "family": "mechanical"
+      "expect": "valid"
     },
     {
       "id": "R-009",
@@ -175,35 +127,6 @@
         "strength": "must",
         "enforcer": { "kind": "test", "command": "cargo test" },
         "source": { "kind": "owner" }
-      },
-      "expect": "invalid"
-    },
-    {
-      "id": "R-011",
-      "name": "a question threshold is one to ten thousand basis points",
-      "record_type": "rule",
-      "record": {
-        "schema": "whetstone.rule.v2",
-        "statement": "Ask first.",
-        "rationale": "Scope.",
-        "strength": "advisory",
-        "enforcer": { "kind": "question", "question": "Is this public?", "threshold_bp": 0 },
-        "source": { "kind": "owner" }
-      },
-      "expect": "invalid"
-    },
-    {
-      "id": "R-012",
-      "name": "a redaction pattern must be a regular expression",
-      "record_type": "rule",
-      "record": {
-        "schema": "whetstone.rule.v2",
-        "statement": "Never log secrets.",
-        "rationale": "Privacy.",
-        "strength": "should",
-        "enforcer": { "kind": "question", "question": "Does this log a secret?" },
-        "source": { "kind": "owner" },
-        "privacy": { "redact_patterns": ["(unclosed"] }
       },
       "expect": "invalid"
     },
@@ -262,8 +185,39 @@
         "source": { "kind": "starter", "reference": "pstack:boundary-discipline" },
         "hand_raise": ["flag"]
       },
-      "expect": "stored",
-      "family": "mechanical"
+      "expect": "stored"
+    },
+    {
+      "id": "R-017",
+      "name": "a rule's hand-raise triggers, privacy and shadow flag are dropped on read",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Run the tests.",
+        "rationale": "Evidence.",
+        "strength": "must",
+        "enforcer": { "kind": "test", "command": "cargo test" },
+        "source": { "kind": "owner" },
+        "hand_raise": ["unavailable"],
+        "privacy": { "redact_globs": ["secrets/**"] },
+        "shadow": false
+      },
+      "expect": "stored"
+    },
+    {
+      "id": "R-018",
+      "name": "a rule recorded in shadow and never enforced is read as history",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "No print calls.",
+        "rationale": "Use the logger.",
+        "strength": "should",
+        "enforcer": { "kind": "ast", "query": "(call) @match", "language": "python" },
+        "source": { "kind": "lesson", "reference": "use-the-logger" },
+        "shadow": true
+      },
+      "expect": "retired"
     },
     {
       "id": "P-020",
@@ -287,26 +241,8 @@
       "expect": "valid"
     },
     {
-      "id": "E-030",
-      "name": "an unavailable Jev answer has no probability",
-      "record_type": "judgment",
-      "record": {
-        "rule": { "id": "rule.tests-only-when-asked", "revision": 1, "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-        "model": "jev-1.13.0",
-        "question_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "input_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-        "unit": "tests/a.rs",
-        "outcome": "unavailable",
-        "probability_bp": 5100,
-        "shadow": true,
-        "detail": "offline",
-        "answered_at": "2026-09-10T12:00:00Z"
-      },
-      "expect": "invalid"
-    },
-    {
       "id": "E-031",
-      "name": "an honest unavailable Jev answer",
+      "name": "a Jev answer is read, never written",
       "record_type": "judgment",
       "record": {
         "rule": { "id": "rule.tests-only-when-asked", "revision": 1, "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
@@ -319,7 +255,7 @@
         "detail": "WHETSTONE_JEV_OFFLINE is set",
         "answered_at": "2026-09-10T12:00:00Z"
       },
-      "expect": "valid"
+      "expect": "retired"
     },
     {
       "id": "E-032",
@@ -359,7 +295,7 @@
     },
     {
       "id": "E-035",
-      "name": "a flag decision labels one receipt",
+      "name": "a flag label is read, never written",
       "record_type": "flag_decision",
       "record": {
         "receipt": { "id": "judgment.fixture", "revision": 1, "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
@@ -369,7 +305,7 @@
         "decided_by": "Owner",
         "decided_at": "2026-09-10T12:00:00Z"
       },
-      "expect": "valid"
+      "expect": "retired"
     },
     {
       "id": "M-040",
@@ -382,7 +318,6 @@
         "enforcement": { "enforcement": "test", "command_ref": "cargo test" }
       },
       "expect": "valid",
-      "family": "mechanical",
       "rule_view_strength": "advisory"
     },
     {

@@ -281,8 +281,6 @@ fn record_links(record: &AgreementRecord) -> Vec<RecordRef> {
             links.extend(body.replacement.clone());
         }
         RecordBody::LocalReview(body) => links.push(body.proposal.clone()),
-        RecordBody::Judgment(body) => links.push(body.rule.clone()),
-        RecordBody::FlagDecision(body) => links.push(body.receipt.clone()),
         _ => {}
     }
     links.sort();

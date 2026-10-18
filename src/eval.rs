@@ -2,11 +2,9 @@
 //! rule and per enforcer, plus the pstack round-trip contract.
 //!
 //! Mechanical enforcers that read content (AST, design tokens, public
-//! surface) run on each example directly. Jev questions are scored only from
-//! recorded answers (judgment receipts, or a cassette in
-//! `WHETSTONE_JEV_CASSETTE`), so CI never needs the network. Command-based
-//! enforcers (tests, linters, drives) are not scored by
-//! examples, and the report says so rather than counting them as passes.
+//! surface) run on each example directly. Command-based enforcers (tests,
+//! linters, drives) are not scored by examples, and the report says so
+//! rather than counting them as passes.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -15,7 +13,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::agreement::AgreementState;
-use crate::domain::{Enforcer, ExampleVerdict, JudgmentOutcome, RecordBody, Rule};
+use crate::domain::{Enforcer, ExampleVerdict, Rule};
 use crate::gates::FileSet;
 
 /// Precision and recall over one rule's (or one enforcer's) examples.
@@ -25,8 +23,8 @@ pub struct Score {
     pub false_flags: u32,
     pub true_passes: u32,
     pub missed_flags: u32,
-    /// Examples that could not be scored (no recorded answer, or an
-    /// enforcer that examples cannot exercise).
+    /// Examples that could not be scored (an enforcer that examples cannot
+    /// exercise).
     pub unscored: u32,
 }
 
@@ -66,63 +64,12 @@ impl Score {
     }
 }
 
-/// A Jev answer recorded for one exact question and input.
-#[derive(Debug, Clone, Default)]
-pub struct Recordings {
-    /// (question digest, input digest) -> flagged.
-    answers: BTreeMap<(String, String), bool>,
-}
-
-impl Recordings {
-    /// Answers from judgment receipts and, when set, a cassette file of
-    /// `[{"question_digest", "input_digest", "probability"}]` entries.
-    pub fn load(state: Option<&AgreementState>) -> Self {
-        let mut answers = BTreeMap::new();
-        for record in state.map(AgreementState::records).unwrap_or_default() {
-            if let RecordBody::Judgment(body) = &record.body {
-                let flagged = match body.outcome {
-                    JudgmentOutcome::Flag => Some(true),
-                    JudgmentOutcome::Clear => Some(false),
-                    _ => None,
-                };
-                if let Some(flagged) = flagged {
-                    answers.insert(
-                        (
-                            body.question_digest.as_str().to_string(),
-                            body.input_digest.as_str().to_string(),
-                        ),
-                        flagged,
-                    );
-                }
-            }
-        }
-        if let Some(path) = std::env::var_os("WHETSTONE_JEV_CASSETTE") {
-            if let Ok(text) = std::fs::read_to_string(path) {
-                if let Ok(Value::Array(entries)) = serde_json::from_str::<Value>(&text) {
-                    for entry in entries {
-                        let (Some(question), Some(input), Some(probability)) = (
-                            entry["question_digest"].as_str(),
-                            entry["input_digest"].as_str(),
-                            entry["probability"].as_f64(),
-                        ) else {
-                            continue;
-                        };
-                        answers.insert((question.into(), input.into()), probability >= 0.5);
-                    }
-                }
-            }
-        }
-        Self { answers }
-    }
-}
-
 /// Whether the enforcer flags one example, or `None` when examples cannot
 /// exercise it.
 fn flags_example(
     project: &Path,
     rule: &Rule,
     example: &crate::domain::RuleExample,
-    recordings: &Recordings,
 ) -> Result<Option<bool>, String> {
     let path = example.path.clone();
     match &rule.enforcer {
@@ -179,25 +126,6 @@ fn flags_example(
                 !crate::gates::surface::diff(&path, &before, &after).is_empty(),
             ))
         }
-        Enforcer::Question { .. } => {
-            if rule.privacy.local_only {
-                return Ok(None);
-            }
-            let redacted =
-                crate::judgment::redact(&[&rule.privacy], path.as_deref(), &example.input);
-            let Some(request) = crate::judgment::question_request(rule, &redacted.text) else {
-                return Ok(None);
-            };
-            let key = (
-                crate::judgment::question_digest(&request)
-                    .as_str()
-                    .to_string(),
-                crate::judgment::input_digest(&redacted.text)
-                    .as_str()
-                    .to_string(),
-            );
-            Ok(recordings.answers.get(&key).copied())
-        }
         _ => Ok(None),
     }
 }
@@ -209,7 +137,6 @@ pub struct RuleScore {
     pub source: &'static str,
     pub enforcer: &'static str,
     pub strength: &'static str,
-    pub shadow: bool,
     pub examples: usize,
     pub score: Score,
     pub precision: Option<String>,
@@ -219,18 +146,14 @@ pub struct RuleScore {
 }
 
 /// Score a set of rules: `(id, where it came from, rule)`.
-pub fn score_rules(
-    project: &Path,
-    rules: &[(String, &'static str, Rule)],
-    recordings: &Recordings,
-) -> Vec<RuleScore> {
+pub fn score_rules(project: &Path, rules: &[(String, &'static str, Rule)]) -> Vec<RuleScore> {
     let mut result = Vec::new();
     for (id, source, rule) in rules {
         let mut score = Score::default();
         let mut mismatches = Vec::new();
         let mut errors = Vec::new();
         for example in &rule.examples {
-            match flags_example(project, rule, example, recordings) {
+            match flags_example(project, rule, example) {
                 Ok(flagged) => {
                     score.record(example.expected, flagged);
                     if let Some(flagged) = flagged {
@@ -255,7 +178,6 @@ pub fn score_rules(
             source,
             enforcer: rule.enforcer.kind(),
             strength: rule.strength.label(),
-            shadow: rule.in_shadow(),
             examples: rule.examples.len(),
             precision: score.precision(),
             recall: score.recall(),
@@ -290,7 +212,6 @@ pub fn evaluate(project: &Path) -> Value {
         .and_then(|layout| crate::service::load_records(&layout).ok())
         .filter(crate::service::LoadedRecords::exists)
         .map(|loaded| AgreementState::from_records(loaded.union().0));
-    let recordings = Recordings::load(state.as_ref());
     let mut rules = Vec::<(String, &'static str, Rule)>::new();
     if let Some(state) = &state {
         for id in crate::proof::rule_ids(state) {
@@ -311,7 +232,7 @@ pub fn evaluate(project: &Path) -> Value {
     for starter in crate::starter::starters(project) {
         rules.push((starter.id.to_string(), "starter", starter.rule));
     }
-    let scores = score_rules(project, &rules, &recordings);
+    let scores = score_rules(project, &rules);
     let mut by_enforcer = BTreeMap::<&'static str, Score>::new();
     for score in &scores {
         by_enforcer
@@ -362,7 +283,7 @@ mod tests {
             .into_iter()
             .map(|starter| (starter.id.to_string(), "starter", starter.rule))
             .collect::<Vec<_>>();
-        let scores = score_rules(temp.path(), &rules, &Recordings::default());
+        let scores = score_rules(temp.path(), &rules);
         let surface = scores
             .iter()
             .find(|score| score.enforcer == "public_surface")
@@ -370,52 +291,6 @@ mod tests {
         assert_eq!(surface.score.checked(), 2);
         assert_eq!(surface.precision.as_deref(), Some("1.000"));
         assert!(surface.mismatches.is_empty());
-        let question = scores
-            .iter()
-            .find(|score| score.enforcer == "question")
-            .expect("question");
-        assert_eq!(
-            question.score.unscored, 2,
-            "no recorded answers, no network"
-        );
-    }
-
-    #[test]
-    fn recorded_answers_score_a_question_rule() {
-        let rule = crate::starter::starters(Path::new("/nonexistent"))
-            .into_iter()
-            .find(|starter| starter.id == crate::starter::TESTS_ONLY_WHEN_ASKED)
-            .expect("starter")
-            .rule;
-        let mut recordings = Recordings::default();
-        for example in &rule.examples {
-            let redacted =
-                crate::judgment::redact(&[&rule.privacy], example.path.as_deref(), &example.input);
-            let request =
-                crate::judgment::question_request(&rule, &redacted.text).expect("request");
-            recordings.answers.insert(
-                (
-                    crate::judgment::question_digest(&request)
-                        .as_str()
-                        .to_string(),
-                    crate::judgment::input_digest(&redacted.text)
-                        .as_str()
-                        .to_string(),
-                ),
-                // Jev flags the first example (a true flag) and also the
-                // second (a false flag).
-                true,
-            );
-        }
-        let scores = score_rules(
-            Path::new("."),
-            &[("rule.tests".into(), "starter", rule)],
-            &recordings,
-        );
-        assert_eq!(scores[0].score.true_flags, 1);
-        assert_eq!(scores[0].score.false_flags, 1);
-        assert_eq!(scores[0].precision.as_deref(), Some("0.500"));
-        assert_eq!(scores[0].recall.as_deref(), Some("1.000"));
     }
 
     #[test]

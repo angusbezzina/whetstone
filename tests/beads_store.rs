@@ -15,18 +15,15 @@ use whetstone::beads::{
 };
 use whetstone::domain::{
     AgreementRecord, AuthorizationAxis, ContentDigest, DomainError, Enforcer, EvidenceRef,
-    ExternalRef, ExternalSystem, FlagDecision, FlagVerdict, Freshness, JudgmentOutcome,
-    JudgmentReceipt, LocalReview, LocalReviewVerdict, Mission, PolicyStateSnapshot, PrincipalKind,
-    PrincipalRef, Principle, PrincipleSource, Privacy, Proposal, ProposalState, Provenance,
-    ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, RecordRef, RetiredRecord, Rule,
-    RuleSource, Scope, Strength, VerificationAxis, VerificationReceipt, DEFAULT_JEV_MODEL,
-    LOCAL_REVIEW_ASSURANCE, RETIRED_KINDS, RULE_SCHEMA_V2, SCHEMA_VERSION_V1,
+    ExternalRef, ExternalSystem, Freshness, LocalReview, LocalReviewVerdict, Mission,
+    PolicyStateSnapshot, PrincipalKind, PrincipalRef, Principle, PrincipleSource, Proposal,
+    ProposalState, Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId,
+    RecordRef, RetiredRecord, Rule, RuleSource, Scope, Strength, VerificationAxis,
+    VerificationReceipt, LOCAL_REVIEW_ASSURANCE, RETIRED_KINDS, RULE_SCHEMA_V2, SCHEMA_VERSION_V1,
 };
 use whetstone::storage::{AppendRequest, RecordStore, StorageError, StoreKind};
 
 mod conformance;
-
-const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 
 fn owner() -> PrincipalRef {
     PrincipalRef {
@@ -82,8 +79,6 @@ fn rule(statement: &str) -> RecordBody {
         examples: Vec::new(),
         source: RuleSource::owner(),
         paths: Vec::new(),
-        privacy: Privacy::default(),
-        shadow: false,
         sweep: None,
         sweep_priority: None,
         sweep_unsure: Vec::new(),
@@ -247,7 +242,6 @@ fn a_bd_older_than_the_floor_is_refused_by_name() {
             .current_dir(&repo)
             .env("PATH", &path)
             .env("GIT_CEILING_DIRECTORIES", temp.path())
-            .env("WHETSTONE_JEV_OFFLINE", "1")
             .env_remove("BEADS_DIR")
             .output()
             .expect("whetstone");
@@ -559,47 +553,6 @@ fn every_record_kind_lands_in_its_bead_type_with_its_digest() {
             ),
             "record",
         ),
-        (
-            record(
-                "judgment.fixture",
-                1,
-                "judgment:fixture",
-                RecordBody::Judgment(JudgmentReceipt {
-                    rule: rule_ref.clone(),
-                    model: DEFAULT_JEV_MODEL.into(),
-                    question_digest: digest('b'),
-                    input_digest: digest('c'),
-                    unit: "src/lib.rs:1-9".into(),
-                    commit: Some(COMMIT.into()),
-                    outcome: JudgmentOutcome::Unavailable,
-                    probability_bp: None,
-                    confidence_bp: None,
-                    shadow: true,
-                    redaction: None,
-                    input_tokens: None,
-                    request_id: None,
-                    detail: "offline".into(),
-                    answered_at: "2026-09-10T12:03:00Z".into(),
-                }),
-            ),
-            "receipt",
-        ),
-        (
-            record(
-                "decision.flag_fixture",
-                1,
-                "flag:fixture",
-                RecordBody::FlagDecision(FlagDecision {
-                    receipt: gate_ref.clone(),
-                    rule: rule_ref.id.clone(),
-                    verdict: FlagVerdict::Dismiss,
-                    reason: "A false flag.".into(),
-                    decided_by: "Owner".into(),
-                    decided_at: "2026-09-10T12:06:00Z".into(),
-                }),
-            ),
-            "decision",
-        ),
     ];
     let mut expected = vec![
         (rule_ref.clone(), "rule", "record"),
@@ -631,7 +584,7 @@ fn every_record_kind_lands_in_its_bead_type_with_its_digest() {
             DomainError::OperationalRecordCannotGrantAuthority
         ))
     ));
-    assert_eq!(fresh.all_records().expect("records").len(), 6);
+    assert_eq!(fresh.all_records().expect("records").len(), 4);
 }
 
 #[test]
@@ -719,8 +672,8 @@ fn retired_kinds_are_read_back_byte_exact_but_never_appended() {
         }
     }
     assert_eq!(
-        retired_seen, 5,
-        "value, philosophy, metric, exception and mandate are retired"
+        retired_seen, 6,
+        "value, philosophy, metric, exception, mandate and guidance are retired"
     );
     assert_eq!(
         reopened.all_records().expect("records").len(),

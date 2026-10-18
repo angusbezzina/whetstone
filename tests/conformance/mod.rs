@@ -85,8 +85,6 @@ pub fn rule(statement: &str) -> RecordBody {
         examples: Vec::new(),
         source: RuleSource::owner(),
         paths: Vec::new(),
-        privacy: Default::default(),
-        shadow: false,
         sweep: None,
         sweep_priority: None,
         sweep_unsure: Vec::new(),

@@ -55,8 +55,6 @@
         "local_review",
         "retirement",
         "verification_receipt",
-        "judgment",
-        "flag_decision",
         "lesson",
         "lesson_check"
       ]
@@ -92,12 +90,6 @@
         },
         {
           "$ref": "#/$defs/verification_receipt"
-        },
-        {
-          "$ref": "#/$defs/judgment"
-        },
-        {
-          "$ref": "#/$defs/flag_decision"
         },
         {
           "$ref": "#/$defs/lesson"
@@ -265,38 +257,6 @@
         "properties": {
           "record": {
             "$ref": "#/$defs/verification_receipt"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "record_type": {
-            "const": "judgment"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "record": {
-            "$ref": "#/$defs/judgment"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "record_type": {
-            "const": "flag_decision"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "record": {
-            "$ref": "#/$defs/flag_decision"
           }
         }
       }
@@ -1193,63 +1153,6 @@
               }
             }
           }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "kind",
-            "question"
-          ],
-          "properties": {
-            "kind": {
-              "const": "question"
-            },
-            "question": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 1000
-            },
-            "yes_means": {
-              "$ref": "#/$defs/nonempty"
-            },
-            "no_means": {
-              "$ref": "#/$defs/nonempty"
-            },
-            "unit": {
-              "enum": [
-                "hunk",
-                "file",
-                "added_file",
-                "commit"
-              ]
-            },
-            "model": {
-              "$ref": "#/$defs/nonempty"
-            },
-            "shadow": {
-              "type": "boolean"
-            },
-            "threshold_bp": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 10000
-            },
-            "confidence_bar_bp": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 10000
-            },
-            "promote_after": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "precision_bar_bp": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 10000
-            }
-          }
         }
       ]
     },
@@ -1309,30 +1212,6 @@
         }
       }
     },
-    "privacy": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [],
-      "properties": {
-        "redact_globs": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "redact_patterns": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "local_only": {
-          "type": "boolean"
-        }
-      }
-    },
     "rule": {
       "type": "object",
       "additionalProperties": false,
@@ -1377,13 +1256,6 @@
             "type": "string",
             "minLength": 1
           }
-        },
-        "privacy": {
-          "$ref": "#/$defs/privacy"
-        },
-        "shadow": {
-          "type": "boolean",
-          "description": "Recorded and shown, never enforced, until a promotion is accepted (a rule drafted from a lesson starts here)."
         },
         "sweep": {
           "enum": [
@@ -1461,113 +1333,6 @@
               }
             }
           ]
-        }
-      }
-    },
-    "judgment": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "rule",
-        "model",
-        "question_digest",
-        "input_digest",
-        "unit",
-        "outcome",
-        "shadow",
-        "detail",
-        "answered_at"
-      ],
-      "properties": {
-        "rule": {
-          "$ref": "#/$defs/record_ref"
-        },
-        "model": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "question_digest": {
-          "$ref": "#/$defs/digest"
-        },
-        "input_digest": {
-          "$ref": "#/$defs/digest"
-        },
-        "unit": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "commit": {
-          "type": "string"
-        },
-        "outcome": {
-          "enum": [
-            "flag",
-            "clear",
-            "low_confidence",
-            "unavailable"
-          ]
-        },
-        "probability_bp": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 10000
-        },
-        "confidence_bp": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 10000
-        },
-        "shadow": {
-          "type": "boolean"
-        },
-        "redaction": {
-          "$ref": "#/$defs/digest"
-        },
-        "input_tokens": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "request_id": {
-          "type": "string"
-        },
-        "detail": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "answered_at": {
-          "$ref": "#/$defs/timestamp"
-        }
-      }
-    },
-    "flag_decision": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "receipt",
-        "rule",
-        "verdict",
-        "reason",
-        "decided_by",
-        "decided_at"
-      ],
-      "properties": {
-        "receipt": {
-          "$ref": "#/$defs/record_ref"
-        },
-        "rule": {
-          "$ref": "#/$defs/record_id"
-        },
-        "verdict": {
-          "enum": [
-            "accept",
-            "dismiss"
-          ]
-        },
-        "reason": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "decided_by": {
-          "$ref": "#/$defs/nonempty"
-        },
-        "decided_at": {
-          "$ref": "#/$defs/timestamp"
         }
       }
     },
@@ -1912,7 +1677,9 @@
       "hand_answer",
       "attestation",
       "brief",
-      "guidance"
+      "guidance",
+      "judgment",
+      "flag_decision"
     ]
   }
 }

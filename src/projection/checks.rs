@@ -1,40 +1,6 @@
-//! The Checks view: the latest run of every rule, by enforcer family.
+//! The Checks view: the latest run of every rule.
 
 use super::*;
-
-/// The latest Jev answers for a rule in its most recent run.
-pub(super) fn latest_judgments<'a>(
-    state: &'a AgreementState,
-    id: &RecordId,
-) -> Vec<&'a AgreementRecord> {
-    let mut by_run = BTreeMap::<String, Vec<&AgreementRecord>>::new();
-    for record in state.records() {
-        if let RecordBody::Judgment(body) = &record.body {
-            if &body.rule.id == id {
-                let run = record
-                    .idempotency_key
-                    .split(':')
-                    .nth(1)
-                    .unwrap_or_default()
-                    .to_string();
-                by_run.entry(run).or_default().push(record);
-            }
-        }
-    }
-    by_run
-        .into_values()
-        .max_by(|left, right| {
-            let latest = |records: &[&AgreementRecord]| {
-                records
-                    .iter()
-                    .map(|record| record.provenance.recorded_at.clone())
-                    .max()
-                    .unwrap_or_default()
-            };
-            latest(left).cmp(&latest(right))
-        })
-        .unwrap_or_default()
-}
 
 pub(super) struct RunView {
     pub(super) result: StateLabel,
@@ -155,92 +121,6 @@ pub(super) fn not_run(eligible: bool) -> RunView {
     }
 }
 
-pub(super) fn question_run(
-    state: &AgreementState,
-    id: &RecordId,
-    rule: &Rule,
-    eligible: bool,
-) -> RunView {
-    let answers = latest_judgments(state, id);
-    if answers.is_empty() {
-        let mut view = not_run(eligible);
-        if rule.privacy.local_only {
-            view.result = StateLabel::new("muted", "local-only · review");
-        }
-        return view;
-    }
-    let mut counts = BTreeMap::<&'static str, usize>::new();
-    let mut failures = Vec::new();
-    let mut last = String::new();
-    let mut redacted = false;
-    for record in &answers {
-        let RecordBody::Judgment(body) = &record.body else {
-            continue;
-        };
-        *counts.entry(body.outcome.label()).or_default() += 1;
-        redacted |= body.redaction.is_some();
-        if body.answered_at > last {
-            last = body.answered_at.clone();
-        }
-        if matches!(
-            body.outcome,
-            JudgmentOutcome::Flag | JudgmentOutcome::LowConfidence
-        ) {
-            failures.push(Failure {
-                location: body.unit.clone(),
-                message: format!(
-                    "{} (p={})",
-                    body.outcome.label().replace('_', " "),
-                    body.probability_bp.map_or_else(
-                        || "none".to_string(),
-                        |bp| format!("{}.{:02}", bp / 10_000, bp % 10_000 / 100)
-                    )
-                ),
-            });
-        }
-    }
-    let flags = counts.get("flag").copied().unwrap_or(0);
-    let unavailable = counts.get("unavailable").copied().unwrap_or(0);
-    let low = counts.get("low_confidence").copied().unwrap_or(0);
-    let shadow = rule.in_shadow();
-    let result = if unavailable > 0 && flags == 0 {
-        StateLabel::new("warn", "Jev unavailable")
-    } else if flags > 0 && shadow {
-        StateLabel::new("muted", format!("shadow · {flags} flag(s)"))
-    } else if flags > 0 {
-        StateLabel::new("fail", format!("flag · {flags}"))
-    } else if low > 0 {
-        StateLabel::new("warn", "low confidence")
-    } else if shadow {
-        StateLabel::new("muted", "shadow · clear")
-    } else if rule.strength == crate::domain::Strength::Must {
-        StateLabel::new("warn", "clear · needs review to pass")
-    } else {
-        StateLabel::new("pass", "clear")
-    };
-    RunView {
-        result,
-        last_run: Some(last),
-        current: false,
-        summary: Some(format!(
-            "{} answer(s): {}{}",
-            answers.len(),
-            counts
-                .iter()
-                .map(|(label, count)| format!("{count} {}", label.replace('_', " ")))
-                .collect::<Vec<_>>()
-                .join(", "),
-            if redacted {
-                "; text was redacted before sending"
-            } else {
-                ""
-            }
-        )),
-        failures,
-        evidence: Vec::new(),
-    }
-}
-
 pub(super) fn gate_runs(
     state: &AgreementState,
     input: &ProjectionInput<'_>,
@@ -264,18 +144,13 @@ pub(super) fn gate_runs(
             _ => None,
         };
         let eligible = in_force.is_some();
-        let view = match rule.enforcer.family() {
-            crate::domain::EnforcerFamily::Mechanical => {
-                mechanical_run(state, input, &id, shown, eligible)
-            }
-            crate::domain::EnforcerFamily::Question => question_run(state, &id, &rule, eligible),
-        };
+        let view = mechanical_run(state, input, &id, shown, eligible);
         if let Some(at) = &view.last_run {
             if last_at.as_deref().map_or(true, |last| at.as_str() > last) {
                 last_at = Some(at.clone());
             }
         }
-        if eligible && !rule.in_shadow() {
+        if eligible {
             match view.result.tone {
                 "pass" => tally.pass += 1,
                 "fail" => tally.fail += 1,
@@ -302,11 +177,9 @@ pub(super) fn gate_runs(
             id: id.as_str().into(),
             name: rule.statement.clone(),
             strength: rule.strength.label(),
-            family: rule.enforcer.family().label(),
             mechanism,
             command,
             eligible,
-            shadow: rule.in_shadow(),
             result: view.result,
             last_run: view.last_run,
             current: view.current,

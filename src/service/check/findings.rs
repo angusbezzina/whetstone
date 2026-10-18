@@ -1,5 +1,5 @@
 //! Sweep findings: `wh check --sweep --format findings` runs only the rules
-//! below must (should, advisory, or in shadow) and turns each flag into one
+//! below must (should or advisory) and turns each flag into one
 //! finding for a night sweep's controller to work (Messo's, inside Virgil).
 //!
 //! A finding is `{fingerprint, subjectDigest, class, priority, title,
@@ -37,12 +37,11 @@ pub(crate) struct SweepFinding {
     pub(crate) unsure: Option<String>,
 }
 
-/// Whether a rule's flags are sweep work: below must (or a must rule still in
-/// shadow, which blocks nobody), and enforced from the repository's content.
-/// Drive proofs are not swept: they are the feature sweep.
+/// Whether a rule's flags are sweep work: below must, and enforced from the
+/// repository's content. Drive proofs are not swept: they are the feature
+/// sweep.
 pub(crate) fn sweepable(rule: &Rule) -> bool {
-    (rule.strength != Strength::Must || rule.in_shadow())
-        && !matches!(rule.enforcer, Enforcer::Drive { .. })
+    rule.strength != Strength::Must && !matches!(rule.enforcer, Enforcer::Drive { .. })
 }
 
 /// The repository's identity in a fingerprint: its origin remote when it has

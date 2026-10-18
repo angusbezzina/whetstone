@@ -415,7 +415,7 @@ fn admit(
         ),
     );
     response.permitted_actions = vec![
-        format!("wh change --kind rule --from-lesson {key} ... (draft a rule in shadow)"),
+        format!("wh change --kind rule --from-lesson {key} ... (draft a rule from it)"),
         "wh dash".into(),
     ];
     response.data =
@@ -845,8 +845,8 @@ pub(crate) fn record_checks(layout: &ProjectLayout) -> Vec<Value> {
     recorded
 }
 
-/// A rule drafted from a lesson: the lesson must be admitted, the rule
-/// starts in shadow, and its source names the lesson where it lives.
+/// A rule drafted from a lesson: the lesson must be admitted, and the rule's
+/// source names the lesson where it lives.
 pub(crate) fn rule_from_lesson(
     layout: &ProjectLayout,
     key: &str,
@@ -875,7 +875,6 @@ pub(crate) fn rule_from_lesson(
             digest: reference.map(|reference| reference.digest),
         }],
     };
-    rule.shadow = true;
     Ok(())
 }
 
@@ -963,22 +962,9 @@ pub(crate) fn lineage(
     }))
 }
 
-/// Demotion mirrors promotion: a rule whose origin lesson was superseded,
-/// forgotten or corrected twice goes back to a person, listed by
-/// `wh change --tune` and `wh dash` (nothing changes force on its own).
-pub(crate) fn rule_reviews(layout: &ProjectLayout, state: &AgreementState) -> Vec<Value> {
-    if derived_rules(state).is_empty() {
-        return Vec::new();
-    }
-    let Ok(config) = config(layout) else {
-        return Vec::new();
-    };
-    match memory::open_store(layout, &config).find() {
-        Ok(lessons) => reviews_for(state, &lessons, config.backend()),
-        Err(_) => Vec::new(),
-    }
-}
-
+/// A rule whose origin lesson was superseded, forgotten or corrected twice
+/// goes back to a person, listed by `wh dash` (nothing changes force on its
+/// own).
 fn reviews_for(state: &AgreementState, lessons: &[StoredLesson], backend: &str) -> Vec<Value> {
     let derived = derived_rules(state);
     let by_key = lessons

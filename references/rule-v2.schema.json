@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/angusbezzina/whetstone/references/rule-v2.schema.json",
   "title": "Whetstone rule v2 (whetstone.rule.v2)",
-  "description": "One statement, one strength, exactly one enforcer (mechanical or a literal Jev question), labelled examples, a source and privacy.",
+  "description": "One statement, one strength, exactly one mechanical enforcer, labelled examples and a source.",
   "$ref": "#/$defs/rule",
   "$defs": {
     "rule": {
@@ -49,13 +49,6 @@
             "type": "string",
             "minLength": 1
           }
-        },
-        "privacy": {
-          "$ref": "#/$defs/privacy"
-        },
-        "shadow": {
-          "type": "boolean",
-          "description": "Recorded and shown, never enforced, until a promotion is accepted (a rule drafted from a lesson starts here)."
         },
         "sweep": {
           "enum": [
@@ -226,63 +219,6 @@
               }
             }
           }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "kind",
-            "question"
-          ],
-          "properties": {
-            "kind": {
-              "const": "question"
-            },
-            "question": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 1000
-            },
-            "yes_means": {
-              "$ref": "#/$defs/nonempty"
-            },
-            "no_means": {
-              "$ref": "#/$defs/nonempty"
-            },
-            "unit": {
-              "enum": [
-                "hunk",
-                "file",
-                "added_file",
-                "commit"
-              ]
-            },
-            "model": {
-              "$ref": "#/$defs/nonempty"
-            },
-            "shadow": {
-              "type": "boolean"
-            },
-            "threshold_bp": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 10000
-            },
-            "confidence_bar_bp": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 10000
-            },
-            "promote_after": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "precision_bar_bp": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 10000
-            }
-          }
         }
       ]
     },
@@ -339,30 +275,6 @@
           "items": {
             "$ref": "#/$defs/evidence_ref"
           }
-        }
-      }
-    },
-    "privacy": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [],
-      "properties": {
-        "redact_globs": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "redact_patterns": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "local_only": {
-          "type": "boolean"
         }
       }
     },

@@ -1046,8 +1046,7 @@ pub fn legacy_rules_as_v2(
     project: &Path,
 ) -> (Vec<(String, crate::domain::Rule, String)>, Vec<String>) {
     use crate::domain::{
-        Enforcer, ExampleVerdict, Privacy, RuleExample, RuleSource, RuleSourceKind, Strength,
-        RULE_SCHEMA_V2,
+        Enforcer, ExampleVerdict, RuleExample, RuleSource, RuleSourceKind, Strength, RULE_SCHEMA_V2,
     };
     let rules_dir = project.join("whetstone").join("rules");
     let (rules, _) = load_approved_rules(&rules_dir, None);
@@ -1134,8 +1133,6 @@ pub fn legacy_rules_as_v2(
                 provenance: Vec::new(),
             },
             paths: Vec::new(),
-            privacy: Privacy::default(),
-            shadow: false,
             sweep: None,
             sweep_priority: None,
             sweep_unsure: Vec::new(),

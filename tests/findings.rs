@@ -48,10 +48,8 @@ fn run(root: &Path, args: &[&str]) -> Output {
         .current_dir(root)
         .env("GIT_CEILING_DIRECTORIES", root.parent().expect("parent"))
         .env("BD_NON_INTERACTIVE", "1")
-        .env("WHETSTONE_JEV_OFFLINE", "1")
         .env_remove("BEADS_DIR")
         .env_remove("BEADS_DB")
-        .env_remove("TYPESAFE_API_KEY")
         .output()
         .expect("whetstone")
 }

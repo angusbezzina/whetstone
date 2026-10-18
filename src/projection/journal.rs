@@ -8,8 +8,7 @@ use serde::Serialize;
 
 use crate::agreement::{AgreementState, Lifecycle};
 use crate::domain::{
-    AgreementRecord, Enforcer, JudgmentOutcome, LocalReviewVerdict, RecordBody, RecordId,
-    RecordRef, VerificationAxis,
+    AgreementRecord, LocalReviewVerdict, RecordBody, RecordId, RecordRef, VerificationAxis,
 };
 use crate::history::HistoryInspection;
 use crate::proof::{EVIDENCE_SYSTEM, GATE_SUBJECT_PREFIX};
@@ -49,7 +48,7 @@ fn operation_key(record: &AgreementRecord) -> String {
     if let Some(rest) = key.strip_prefix("review:") {
         return format!("review:{rest}");
     }
-    if key.starts_with("check:") || key.starts_with("gate:") || key.starts_with("judgment:") {
+    if key.starts_with("check:") || key.starts_with("gate:") {
         let run = key.split(':').nth(1).unwrap_or(key);
         return format!("check:{run}");
     }
@@ -63,8 +62,7 @@ pub(crate) fn area_of(record: &AgreementRecord) -> &'static str {
         RecordBody::Principle(_) => "principles",
         RecordBody::Rule(_) | RecordBody::StoredRule(_) | RecordBody::Standard(_) => "rules",
         RecordBody::Feature(_) | RecordBody::VerificationMap(_) => "features",
-        RecordBody::VerificationReceipt(_) | RecordBody::Judgment(_) => "checks",
-        RecordBody::FlagDecision(_) => "rules",
+        RecordBody::VerificationReceipt(_) => "checks",
         RecordBody::Retired(_) => "history",
         _ => "governance",
     }
@@ -213,29 +211,19 @@ fn journal_entry(
             ),
         );
     }
-    // Check runs: gate receipts, native scans and Jev answers.
-    if records.iter().all(|record| {
-        matches!(
-            record.body,
-            RecordBody::VerificationReceipt(_) | RecordBody::Judgment(_)
-        )
-    }) {
+    // Check runs: gate receipts and native scans.
+    if records
+        .iter()
+        .all(|record| matches!(record.body, RecordBody::VerificationReceipt(_)))
+    {
         let mut tally = Tally::default();
-        let mut shadow = 0;
         for record in &records {
-            match &record.body {
-                RecordBody::VerificationReceipt(body) => match body.verification {
+            if let RecordBody::VerificationReceipt(body) = &record.body {
+                match body.verification {
                     VerificationAxis::Pass => tally.pass += 1,
                     VerificationAxis::Fail => tally.fail += 1,
                     VerificationAxis::Unknown => tally.unknown += 1,
-                },
-                RecordBody::Judgment(body) if body.shadow => shadow += 1,
-                RecordBody::Judgment(body) => match body.outcome {
-                    JudgmentOutcome::Flag => tally.fail += 1,
-                    JudgmentOutcome::Clear => tally.pass += 1,
-                    _ => tally.unknown += 1,
-                },
-                _ => {}
+                }
             }
         }
         let status = if tally.fail > 0 {
@@ -253,33 +241,14 @@ fn journal_entry(
                     .stable_id
                     .strip_prefix(GATE_SUBJECT_PREFIX)
                     .map(str::to_owned),
-                RecordBody::Judgment(body) => Some(format!("{} (Jev)", body.rule.id.as_str())),
                 _ => None,
             })
             .collect::<std::collections::BTreeSet<_>>();
-        let redacted = records
-            .iter()
-            .filter(|record| {
-                matches!(&record.body, RecordBody::Judgment(body) if body.redaction.is_some())
-            })
-            .count();
         return base(
             "verification",
             format!(
-                "Checks ran: {} pass · {} fail · {} unknown{}{}",
-                tally.pass,
-                tally.fail,
-                tally.unknown,
-                if shadow > 0 {
-                    format!(" · {shadow} shadow")
-                } else {
-                    String::new()
-                },
-                if redacted > 0 {
-                    format!(" · redacted before {redacted} Jev question(s)")
-                } else {
-                    String::new()
-                }
+                "Checks ran: {} pass · {} fail · {} unknown",
+                tally.pass, tally.fail, tally.unknown
             ),
             status,
             "checks",
@@ -294,29 +263,17 @@ fn journal_entry(
         );
     }
     if let Some(record) = records.first().filter(|_| records.len() == 1) {
-        match &record.body {
-            RecordBody::FlagDecision(body) => {
-                return base(
-                    "decision",
-                    format!("Flag {} on {}", body.verdict.label(), body.rule.as_str()),
-                    StateLabel::new("muted", body.verdict.label()),
-                    "rules",
-                    format!("{} ({})", body.reason, body.decided_by),
-                );
-            }
-            RecordBody::Retired(retired) => {
-                return base(
-                    "decision",
-                    record_title(record),
-                    StateLabel::new("muted", "retired kind"),
-                    "history",
-                    format!(
-                        "A {} record of a kind Whetstone no longer writes; kept exactly as recorded.",
-                        retired.record_type.replace('_', " ")
-                    ),
-                );
-            }
-            _ => {}
+        if let RecordBody::Retired(retired) = &record.body {
+            return base(
+                "decision",
+                record_title(record),
+                StateLabel::new("muted", "retired kind"),
+                "history",
+                format!(
+                    "A {} record of a kind Whetstone no longer writes; kept exactly as recorded.",
+                    retired.record_type.replace('_', " ")
+                ),
+            );
         }
     }
     if let Some(review) = records.iter().find_map(|record| match &record.body {
@@ -483,8 +440,8 @@ fn journal_entry(
     entry
 }
 
-/// A strength change or a promotion out of shadow between a rule revision
-/// and the one it supersedes, in words.
+/// A strength or enforcer change between a rule revision and the one it
+/// supersedes, in words.
 fn rule_transition(state: &AgreementState, record: &AgreementRecord) -> Option<String> {
     let after = record.body.rule_view()?;
     let previous = state.get(record.supersedes.as_ref()?)?;
@@ -498,17 +455,6 @@ fn rule_transition(state: &AgreementState, record: &AgreementRecord) -> Option<S
         ));
     }
     match (&before.enforcer, &after.enforcer) {
-        (Enforcer::Question { shadow: true, .. }, Enforcer::Question { shadow: false, .. }) => {
-            changes.push("promoted from shadow".into());
-        }
-        (Enforcer::Question { .. }, next)
-            if next.family() == crate::domain::EnforcerFamily::Mechanical =>
-        {
-            changes.push(format!(
-                "hardened into a {} check",
-                next.kind().replace('_', " ")
-            ));
-        }
         (left, right) if left.kind() != right.kind() => {
             changes.push(format!("enforcer {} → {}", left.kind(), right.kind()));
         }
@@ -571,8 +517,8 @@ fn record_evidence(record: &AgreementRecord) -> String {
 }
 
 /// The decision history as a show-me-your-work TSV: accepted changes
-/// (retirements, strength changes and shadow promotions included), check
-/// receipts, Jev answers (with redactions) and flag decisions, in time order.
+/// (retirements and strength changes included) and check receipts, in time
+/// order.
 pub fn decision_trail(state: &AgreementState) -> String {
     let mut rows = Vec::<(String, String, [String; 5])>::new();
     let acceptance = |record: &AgreementRecord| -> Option<(String, String)> {
@@ -782,62 +728,6 @@ pub fn decision_trail(state: &AgreementState) -> String {
                     ],
                 ));
             }
-            RecordBody::Judgment(body) => {
-                let mut evidence = format!(
-                    "model {} · question {} · input {}",
-                    body.model,
-                    &body.question_digest.as_str()[..19],
-                    &body.input_digest.as_str()[..19]
-                );
-                if let Some(redaction) = &body.redaction {
-                    evidence.push_str(&format!(" · redacted {}", &redaction.as_str()[..19]));
-                }
-                rows.push((
-                    body.answered_at.clone(),
-                    id,
-                    [
-                        "checks".into(),
-                        format!(
-                            "Asked Jev about {} for {}",
-                            body.unit,
-                            body.rule.id.as_str()
-                        ),
-                        rule_title(&body.rule),
-                        evidence,
-                        format!(
-                            "{}{}{}",
-                            body.outcome.label().replace('_', " "),
-                            body.probability_bp
-                                .map(|bp| format!(" (p {}.{:02})", bp / 10_000, bp % 10_000 / 100))
-                                .unwrap_or_default(),
-                            if body.shadow {
-                                ", shadow: not enforced"
-                            } else {
-                                ""
-                            }
-                        ),
-                    ],
-                ));
-            }
-            RecordBody::FlagDecision(body) => rows.push((
-                body.decided_at.clone(),
-                id,
-                [
-                    "rules".into(),
-                    format!("Flag {} on {}", body.verdict.label(), body.rule.as_str()),
-                    body.reason.clone(),
-                    format!(
-                        "whetstone:{}@r{} by {}",
-                        body.receipt.id.as_str(),
-                        body.receipt.revision,
-                        body.decided_by
-                    ),
-                    match body.verdict {
-                        crate::domain::FlagVerdict::Accept => "true flag".into(),
-                        crate::domain::FlagVerdict::Dismiss => "false flag".into(),
-                    },
-                ],
-            )),
             _ => {}
         }
     }

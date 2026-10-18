@@ -159,7 +159,6 @@ fn run(root: &Path, fake: &Fake, args: &[&str]) -> Output {
         .env("FAKE_VIRGIL_STATE", &fake.state)
         .env("GIT_CEILING_DIRECTORIES", root.parent().expect("parent"))
         .env("BD_NON_INTERACTIVE", "1")
-        .env("WHETSTONE_JEV_OFFLINE", "1")
         .env_remove("BEADS_DIR")
         .env_remove("BEADS_DB")
         .output()

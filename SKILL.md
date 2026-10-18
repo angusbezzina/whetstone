@@ -60,7 +60,7 @@ by design. Correct a lesson with `wh change --supersede <key> --content
 "..."` and propose forgetting one with `wh change --forget <key> --rationale
 "..."`; both wait for a person. Admitted lessons arrive at session start;
 treat one marked "may be stale" as a lead to check, never as a rule. A
-lesson that keeps holding can become a rule only as a draft in shadow:
+lesson that keeps holding can become a rule only as a draft:
 `wh change --kind rule --from-lesson <key> ...`.
 
 Where every record lives, lessons included, is one switch,
@@ -103,8 +103,8 @@ resume token. A retry with the same request ID must keep the same input.
   pstack-edited skill files, including rule files, into drafts.
 - `wh change` drafts, previews, accepts, withdraws or retires records
   (`--kind mission|principle|rule|feature|map`), and remembers lessons
-  (`--kind lesson`; `--admit`, `--supersede` and `--forget` are a person's). `--accept-flag` and
-  `--dismiss-flag` label a flag, and `--tune` and `--migrate` record drafts. Accepting is the owner's call.
+  (`--kind lesson`; `--admit`, `--supersede` and `--forget` are a person's). `--migrate`
+  records drafts. Accepting is the owner's call.
 - `wh check` runs the rules: `--staged` for pre-commit, `--changed` or
   `--base` for the change, `--feature` and `--step` to prove one feature,
   `--sweep` for every mapped feature, `--mutate` to test the proofs.
@@ -130,14 +130,13 @@ The earlier direction's `wh push --propose`, `wh change --activate`,
 ## Judgment rules
 
 - Prefer five trusted rules to fifty noisy ones.
-- Every rule gets one enforcer. Use a mechanical check (native linter, AST,
-  test, drive proof) when one can hold the rule. Otherwise use a literal
-  yes/no question with examples.
+- Every rule gets one mechanical enforcer (native linter, formatter, AST,
+  test, validator, drive proof). A concern no check can hold stays guidance,
+  not a rule.
 - Send native-linter concerns to native linters; do not duplicate them. Use
   AST rules only for structural, type-independent properties. Raw regex is
   not enforcement.
-- A judgment answer (a Jev question or another model's opinion) can raise a
-  flag. It never passes a must rule.
+- Another model's opinion can raise a flag. It never passes a must rule.
 - Unknown, stale, skipped or unavailable evidence is never success.
 - Cite current primary sources and say when a capability is unknown.
 - Keep active context short, and query deeper history only when relevant.

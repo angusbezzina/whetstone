@@ -1,4 +1,4 @@
-//! Receipts a check records: gate, mutation and judgment records.
+//! Receipts a check records: gate and mutation records.
 
 use super::*;
 
@@ -277,17 +277,4 @@ pub(super) fn persist_mutation_receipt(
     )
     .map_err(StorageError::Domain)?;
     append_private(layout, &record).map(Some)
-}
-
-pub(super) fn persist_all(
-    layout: &ProjectLayout,
-    records: &[AgreementRecord],
-) -> Result<Vec<RecordRef>, StorageError> {
-    if records.is_empty() || !layout.private_store_exists() {
-        return Ok(Vec::new());
-    }
-    records
-        .iter()
-        .map(|record| append_private(layout, record))
-        .collect()
 }

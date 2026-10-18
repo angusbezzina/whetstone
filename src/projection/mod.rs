@@ -3,8 +3,7 @@
 //!
 //! The browser renders these fields verbatim. Every state carries a human
 //! label and a tone so the UI never invents state or shows raw enum names,
-//! and unknown, stale, not-run, shadow and draft states can never read as a
-//! pass.
+//! and unknown, stale, not-run and draft states can never read as a pass.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -14,10 +13,9 @@ use serde_json::{json, Value};
 
 use crate::agreement::{AgreementState, Lifecycle};
 use crate::domain::{
-    AgreementRecord, Enforcer, Feature, Freshness, JudgmentOutcome, PrincipleSource, RecordBody,
-    RecordId, RecordRef, Rule, VerificationAxis,
+    AgreementRecord, Enforcer, Feature, Freshness, PrincipleSource, RecordBody, RecordId,
+    RecordRef, Rule, VerificationAxis,
 };
-use crate::learning::RuleStats;
 use crate::proof::{latest_gate_receipt, read_artifact, rule_ids, Changes, EVIDENCE_SYSTEM};
 
 mod checks;
@@ -73,7 +71,6 @@ pub struct StarterView {
     pub title: String,
     pub detected: String,
     pub strength: &'static str,
-    pub family: &'static str,
     pub enforcer: String,
     pub examples: Vec<Value>,
     pub accepted: bool,
@@ -166,26 +163,19 @@ pub struct FeatureEntry {
     pub drift: Vec<String>,
 }
 
-/// A rule as the Rules view shows it: strength, enforcer, shadow status and
-/// its record of flags.
+/// A rule as the Rules view shows it: strength, enforcer, where it runs and
+/// how a sweep works its flags.
 #[derive(Debug, Clone, Serialize)]
 pub struct RuleEntry {
     #[serde(flatten)]
     pub entry: Entry,
     pub strength: &'static str,
-    pub family: &'static str,
     pub enforcer: String,
     pub command: String,
-    pub shadow: bool,
-    pub local_only: bool,
     pub runs_at: &'static str,
     pub source: String,
     pub paths: Vec<String>,
     pub examples: Vec<Value>,
-    pub stats: RuleStats,
-    /// Flags still waiting for the owner's label, newest first (at most 20):
-    /// `receipt` is what `wh change --accept-flag|--dismiss-flag` takes.
-    pub unlabelled_flags: Vec<Value>,
     pub result: StateLabel,
     /// How a night sweep works this rule's flags: draft_pr, confirm_first or
     /// discuss (the default).
@@ -216,11 +206,9 @@ pub struct GateRun {
     pub id: String,
     pub name: String,
     pub strength: &'static str,
-    pub family: &'static str,
     pub mechanism: String,
     pub command: String,
     pub eligible: bool,
-    pub shadow: bool,
     pub result: StateLabel,
     pub last_run: Option<String>,
     pub current: bool,
@@ -253,7 +241,6 @@ pub struct ChecksView {
     pub last_complete: Option<LastCheck>,
     pub gates: Vec<GateRun>,
     pub advisory: usize,
-    pub shadow: usize,
     pub receipts: Vec<EvidenceSummary>,
     pub driver: DriverState,
 }
@@ -311,8 +298,6 @@ pub struct DashboardView {
     pub skill: SkillState,
     /// Deterministic map hygiene findings (see `crate::hygiene`).
     pub hygiene: Vec<crate::hygiene::HygieneFinding>,
-    /// Drafts `wh change --tune` would record, with why.
-    pub suggestions: Vec<crate::learning::Suggestion>,
 }
 
 /// Inputs the service computes before projecting.
@@ -361,22 +346,10 @@ pub(crate) fn snippet(text: &str, limit: usize) -> String {
 
 /// Where in the gate ladder a rule runs.
 pub fn runs_at(rule: &Rule) -> &'static str {
-    if rule.privacy.local_only && rule.enforcer.family() == crate::domain::EnforcerFamily::Question
-    {
-        return "review (local-only: Jev is never called)";
-    }
-    if rule.shadow {
-        return "pre-push and CI, in shadow (recorded, not enforced)";
-    }
-    match rule.enforcer.family() {
-        crate::domain::EnforcerFamily::Mechanical if rule.enforcer.runs_staged() => {
-            "pre-commit, pre-push and CI"
-        }
-        crate::domain::EnforcerFamily::Mechanical => "pre-push and CI",
-        crate::domain::EnforcerFamily::Question if rule.in_shadow() => {
-            "pre-push and CI, in shadow (recorded, not enforced)"
-        }
-        crate::domain::EnforcerFamily::Question => "pre-push and CI",
+    if rule.enforcer.runs_staged() {
+        "pre-commit, pre-push and CI"
+    } else {
+        "pre-push and CI"
     }
 }
 
@@ -416,12 +389,6 @@ pub fn record_title(record: &AgreementRecord) -> String {
         RecordBody::VerificationMap(body) => body.title.clone(),
         RecordBody::Retirement(body) => format!("Retire {}", body.target.id.as_str()),
         RecordBody::Proposal(body) => body.title.clone(),
-        RecordBody::Judgment(body) => {
-            format!("Jev {} on {}", body.outcome.label(), body.rule.id.as_str())
-        }
-        RecordBody::FlagDecision(body) => {
-            format!("Flag {} on {}", body.verdict.label(), body.rule.as_str())
-        }
         RecordBody::Retired(retired) => match retired.principle_text() {
             Some((text, _)) => text,
             None => format!("{} (retired kind)", retired.record_type.replace('_', " ")),
@@ -445,8 +412,6 @@ fn rule_definition(rule: &Rule) -> Value {
         "examples": rule.examples,
         "source": rule.source,
         "paths": rule.paths,
-        "privacy": rule.privacy,
-        "shadow": rule.shadow,
         "sweep": rule.sweep,
         "sweep_priority": rule.sweep_priority,
         "sweep_unsure": rule.sweep_unsure,
@@ -796,11 +761,8 @@ fn rule_entries(state: &AgreementState, runs: &[GateRun]) -> Vec<RuleEntry> {
         rules.push(RuleEntry {
             entry: base,
             strength: rule.strength.label(),
-            family: rule.enforcer.family().label(),
             enforcer: mechanism,
             command,
-            shadow: rule.in_shadow(),
-            local_only: rule.privacy.local_only,
             runs_at: runs_at(&rule),
             source: source_label(&rule),
             paths: rule.paths.clone(),
@@ -813,22 +775,6 @@ fn rule_entries(state: &AgreementState, runs: &[GateRun]) -> Vec<RuleEntry> {
                         "expected": example.expected,
                         "reason": example.reason,
                         "path": example.path,
-                    })
-                })
-                .collect(),
-            stats: crate::learning::rule_stats(state, &id),
-            unlabelled_flags: crate::learning::flags(state, &id)
-                .into_iter()
-                .rev()
-                .filter(|flag| flag.verdict.is_none())
-                .take(20)
-                .map(|flag| {
-                    json!({
-                        "receipt": flag.receipt.id.as_str(),
-                        "at": flag.at,
-                        "unit": flag.unit,
-                        "commit": flag.commit,
-                        "shadow": flag.shadow,
                     })
                 })
                 .collect(),
@@ -897,17 +843,8 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
             })
         })
         .collect();
-    let suggestions = crate::learning::suggestions(state);
     let attention = attention(
-        state,
-        input,
-        &owner,
-        &gate_runs,
-        &features,
-        &rules,
-        &suggestions,
-        drafts,
-        &skill,
+        state, input, &owner, &gate_runs, &features, &rules, drafts, &skill,
     );
     DashboardView {
         established,
@@ -939,10 +876,6 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
                 .iter()
                 .filter(|run| run.eligible && run.strength == "advisory")
                 .count(),
-            shadow: gate_runs
-                .iter()
-                .filter(|run| run.eligible && run.shadow)
-                .count(),
             gates: gate_runs,
             receipts,
             driver,
@@ -951,7 +884,6 @@ pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput<'_>) -> Da
         latest_change: None,
         skill,
         hygiene: input.hygiene.clone(),
-        suggestions,
     }
 }
 
@@ -989,7 +921,6 @@ fn attention(
     gates: &[GateRun],
     features: &[FeatureEntry],
     rules: &[RuleEntry],
-    suggestions: &[crate::learning::Suggestion],
     drafts: usize,
     skill: &SkillState,
 ) -> Vec<Attention> {
@@ -997,7 +928,7 @@ fn attention(
     let root = input.project_root.display().to_string();
     for gate in gates
         .iter()
-        .filter(|gate| gate.eligible && !gate.shadow && gate.result.tone == "fail")
+        .filter(|gate| gate.eligible && gate.result.tone == "fail")
     {
         let count = gate.failures.len();
         items.push(Attention {
@@ -1042,7 +973,7 @@ fn attention(
     }
     for gate in gates
         .iter()
-        .filter(|gate| gate.eligible && !gate.shadow && gate.result.tone == "warn")
+        .filter(|gate| gate.eligible && gate.result.tone == "warn")
     {
         items.push(Attention {
             priority: 1,
@@ -1061,32 +992,6 @@ fn attention(
             route: "checks",
             focus: Some(gate.id.clone()),
             action_label: "Open checks",
-            agent_instruction: None,
-        });
-    }
-    for suggestion in suggestions {
-        items.push(Attention {
-            priority: 2,
-            tone: "muted",
-            kind: "tuning",
-            kind_label: suggestion.kind,
-            title: format!(
-                "Suggested {}: {}",
-                suggestion.kind,
-                state
-                    .in_force(
-                        &RecordId::new(suggestion.rule.as_str()).unwrap_or_else(|_| {
-                            RecordId::new("unknown.rule").expect("constant id")
-                        })
-                    )
-                    .map_or_else(|| suggestion.rule.clone(), record_title)
-            ),
-            text: suggestion.reason.clone(),
-            actor: owner.into(),
-            next: "Record it as a draft with wh change --tune, then accept or withdraw it.".into(),
-            route: "rules",
-            focus: Some(suggestion.rule.clone()),
-            action_label: "Open the rule",
             agent_instruction: None,
         });
     }

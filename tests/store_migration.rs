@@ -65,7 +65,6 @@ fn run(root: &Path, args: &[&str]) -> Output {
         .current_dir(root)
         .env("GIT_CEILING_DIRECTORIES", root.parent().expect("parent"))
         .env("BD_NON_INTERACTIVE", "1")
-        .env("WHETSTONE_JEV_OFFLINE", "1")
         .env_remove("BEADS_DIR")
         .env_remove("BEADS_DB")
         .output()
@@ -490,7 +489,7 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
     ] {
         assert!(types.contains(kind), "{kind} is exported: {types:?}");
     }
-    for never in ["lesson", "verification_receipt", "judgment", "lesson_check"] {
+    for never in ["lesson", "verification_receipt", "lesson_check"] {
         assert!(!types.contains(never), "{never} never travels: {types:?}");
     }
     // Each revision carries its resolved lifecycle view, not "accepted".

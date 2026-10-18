@@ -26,11 +26,6 @@ use whetstone::storage::{ProjectLayout, StoreKind};
 const MISSION: &str = "Make project intent inspectable.";
 const CUSTOM_PRINCIPLE: &str = "Evidence before assertion.";
 
-/// Jev is never reached from these tests; every question is unavailable.
-fn jev_offline() {
-    std::env::set_var("WHETSTONE_JEV_OFFLINE", "1");
-}
-
 #[derive(Default)]
 struct Backend {
     inspections: AtomicUsize,
@@ -637,19 +632,11 @@ fn an_unestablished_project_shows_onboarding_and_no_removed_sections() {
         .iter()
         .map(|starter| starter["id"].as_str().expect("id"))
         .collect::<Vec<_>>();
-    assert_eq!(
-        ids,
-        [
-            "rule.prove-it-works",
-            "rule.ask-before-public-api",
-            "rule.tests-only-when-asked"
-        ]
-    );
+    assert_eq!(ids, ["rule.prove-it-works", "rule.ask-before-public-api"]);
     let prove = &starters[0];
-    assert_eq!(prove["family"], "mechanical", "Cargo.toml means cargo test");
+    assert_eq!(prove["enforcer"], "Test", "Cargo.toml means cargo test");
     assert_eq!(prove["strength"], "must");
     assert_eq!(prove["accepted"], false);
-    assert_eq!(starters[2]["family"], "question");
     assert!(
         view["onboarding"]["catalogue"]
             .as_array()
@@ -672,7 +659,6 @@ fn an_unestablished_project_shows_onboarding_and_no_removed_sections() {
 
 #[test]
 fn dashboard_init_agree_records_mission_principles_and_starters() {
-    jev_offline();
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
     let session = Session::open(start(temp.path(), true));
@@ -692,7 +678,7 @@ fn dashboard_init_agree_records_mission_principles_and_starters() {
         "mission": MISSION,
         "principles": ["prove-it-works"],
         "custom_principles": [CUSTOM_PRINCIPLE],
-        "starters": ["rule.ask-before-public-api", "rule.tests-only-when-asked"]
+        "starters": ["rule.ask-before-public-api"]
     });
 
     // A dry run writes nothing and lists the exact records.
@@ -713,7 +699,6 @@ fn dashboard_init_agree_records_mission_principles_and_starters() {
     );
     assert!(planned.contains(&"principle.prove-it-works".to_string()));
     assert!(planned.contains(&"rule.ask-before-public-api".to_string()));
-    assert!(planned.contains(&"rule.tests-only-when-asked".to_string()));
     assert!(!ProjectLayout::resolve(temp.path())
         .expect("layout")
         .private_store_exists());
@@ -722,7 +707,7 @@ fn dashboard_init_agree_records_mission_principles_and_starters() {
     assert_eq!(agreed["state"], "needs_input", "{agreed}");
     assert_eq!(agreed["data"]["progress"]["agreement_complete"], true);
     assert_eq!(agreed["data"]["shared"], false);
-    assert_eq!(agreed["data"]["records"].as_array().map(Vec::len), Some(5));
+    assert_eq!(agreed["data"]["records"].as_array().map(Vec::len), Some(4));
     // Replaying the exact answer is idempotent.
     let replay = session.command(&agree);
     assert_eq!(
@@ -745,14 +730,7 @@ fn dashboard_init_agree_records_mission_principles_and_starters() {
     let api = rule_entry(&view, "rule.ask-before-public-api");
     assert_eq!(api["kind"], "rule");
     assert_eq!(api["strength"], "must");
-    assert_eq!(api["family"], "mechanical");
-    assert_eq!(api["shadow"], false);
-    let tests = rule_entry(&view, "rule.tests-only-when-asked");
-    assert_eq!(tests["strength"], "should");
-    assert_eq!(tests["family"], "question");
-    assert_eq!(tests["shadow"], true, "a starter question starts in shadow");
-    assert_eq!(tests["local_only"], false);
-    assert!(tests["examples"]
+    assert!(api["examples"]
         .as_array()
         .is_some_and(|examples| examples.len() >= 2));
     let starters = view["onboarding"]["starters"].as_array().expect("starters");
@@ -763,7 +741,11 @@ fn dashboard_init_agree_records_mission_principles_and_starters() {
             .map(|starter| starter["accepted"].clone())
     };
     assert_eq!(accepted("rule.ask-before-public-api"), Some(json!(true)));
-    assert_eq!(accepted("rule.prove-it-works"), Some(json!(false)));
+    assert_eq!(
+        accepted("rule.prove-it-works"),
+        None,
+        "without a test command nothing mechanical proves the work"
+    );
 
     // A second mission through init is refused: it is a change now.
     let again = session.command(&json!({
@@ -835,7 +817,8 @@ fn command_backend_preserves_service_stale_rejection_and_fixed_project_scope() {
         r#"{"workflow":"init","action":"wire"}"#,
         r#"{"workflow":"change","kind":"value","record_id":"value.core"}"#,
         r#"{"workflow":"change","kind":"exception","record_id":"exception.one"}"#,
-        r#"{"workflow":"change","flag":{"receipt":"x","verdict":"maybe"}}"#,
+        r#"{"workflow":"change","flag":{"receipt":"x","verdict":"dismiss"}}"#,
+        r#"{"workflow":"change","tune":true}"#,
         r#"{"workflow":"check","mode":"repair"}"#,
         r#"{"workflow":"task","title":"No description"}"#,
         "not json",
@@ -974,8 +957,7 @@ fn dashboard_history_query_rejects_unknown_fields_and_marks_invalid_time_unknown
 }
 
 #[test]
-fn a_rule_change_is_drafted_accepted_checked_flagged_and_dismissed() {
-    jev_offline();
+fn a_rule_change_is_drafted_accepted_checked_and_flagged() {
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
     install_private_agreement(temp.path());
@@ -1088,7 +1070,6 @@ fn a_rule_change_is_drafted_accepted_checked_flagged_and_dismissed() {
     let view = session.inspect()["data"]["current"].clone();
     let pending = rule_entry(&view, "rule.always-flags");
     assert_eq!(pending["lifecycle"], "draft", "{pending}");
-    assert_eq!(pending["stats"]["checks"], 0);
     // The same change replayed is the same draft.
     let replayed = session.confirmed_change(change);
     assert_eq!(replayed["data"]["idempotent_replay"], true, "{replayed}");
@@ -1103,7 +1084,6 @@ fn a_rule_change_is_drafted_accepted_checked_flagged_and_dismissed() {
     let view = session.inspect()["data"]["current"].clone();
     let rule = rule_entry(&view, "rule.always-flags");
     assert_eq!(rule["strength"], "should");
-    assert_eq!(rule["family"], "mechanical");
     assert_eq!(rule["lifecycle"], "accepted", "{rule}");
     assert_eq!(rule["examples"].as_array().map(Vec::len), Some(1));
 
@@ -1142,66 +1122,9 @@ fn a_rule_change_is_drafted_accepted_checked_flagged_and_dismissed() {
         .clone();
     assert_eq!(gate["state"], "fail");
     assert_eq!(gate["strength"], "should");
-    assert_eq!(gate["family"], "mechanical");
-    let receipt = gate_receipt_for(&project, &check, "rule.always-flags");
-    assert!(receipt.starts_with("verification.gate_"), "{receipt}");
 
-    // A label needs a reason, and only a flagging receipt can be labelled.
-    let no_reason = session.command(&json!({
-        "workflow": "change",
-        "request_id": "dash-flag-empty",
-        "flag": {"receipt": receipt, "verdict": "dismiss"}
-    }));
-    assert_eq!(no_reason["state"], "needs_input", "{no_reason}");
-    let unknown = session.command(&json!({
-        "workflow": "change",
-        "request_id": "dash-flag-unknown",
-        "flag": {"receipt": "verification.gate_missing", "verdict": "accept"},
-        "rationale": "No such receipt."
-    }));
-    assert_eq!(unknown["state"], "unknown", "{unknown}");
-
-    let dismissed = session.command(&json!({
-        "workflow": "change",
-        "request_id": "dash-flag",
-        "flag": {"receipt": receipt, "verdict": "dismiss"},
-        "rationale": "The fixture fails on purpose."
-    }));
-    assert_eq!(dismissed["state"], "success", "{dismissed}");
-    assert_eq!(dismissed["data"]["rule"], "rule.always-flags");
-    assert_eq!(dismissed["data"]["verdict"], "dismiss");
-    let view = session.inspect()["data"]["current"].clone();
-    let stats = &rule_entry(&view, "rule.always-flags")["stats"];
-    assert_eq!(stats["flags"], 1, "{stats}");
-    assert_eq!(stats["dismissed"], 1, "{stats}");
-    assert_eq!(stats["accepted"], 0, "{stats}");
-    assert_eq!(stats["undecided"], 0, "{stats}");
-    assert_eq!(stats["false_flag_rate"], "100.0%", "{stats}");
-
-    // A second check flags again; accepting that flag is counted too.
-    let again = session.command(&json!({
-        "workflow": "check",
-        "request_id": "dash-check-2"
-    }));
-    let second = gate_receipt_for(&project, &again, "rule.always-flags");
-    assert_ne!(second, receipt);
-    let accepted = session.command(&json!({
-        "workflow": "change",
-        "request_id": "dash-flag-2",
-        "flag": {"receipt": second, "verdict": "accept"},
-        "rationale": "Right this time."
-    }));
-    assert_eq!(accepted["state"], "success", "{accepted}");
-    let view = session.inspect()["data"]["current"].clone();
-    let stats = &rule_entry(&view, "rule.always-flags")["stats"];
-    assert_eq!(
-        (
-            stats["flags"].clone(),
-            stats["accepted"].clone(),
-            stats["dismissed"].clone()
-        ),
-        (json!(2), json!(1), json!(1)),
-        "{stats}"
+    assert!(
+        gate_receipt_for(&project, &check, "rule.always-flags").starts_with("verification.gate_")
     );
 }
 
@@ -1238,7 +1161,6 @@ fn a_check_of_only_should_rules_still_reports_its_flags() {
     // "State = must rules only; should-rule failures are listed in
     // data.flags and do not fail the check" holds even when the selection
     // has no must rule at all.
-    jev_offline();
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
     install_private_agreement(temp.path());
@@ -1274,7 +1196,6 @@ fn a_check_of_only_should_rules_still_reports_its_flags() {
 
 #[test]
 fn check_modes_reach_the_service_as_changed_staged_and_sweep() {
-    jev_offline();
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
     install_private_agreement(temp.path());
@@ -1311,7 +1232,6 @@ fn check_modes_reach_the_service_as_changed_staged_and_sweep() {
 
 #[test]
 fn mutations_are_observed_but_inspections_and_rejected_bodies_are_not() {
-    jev_offline();
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
     let seen = Arc::new(Mutex::new(Vec::<String>::new()));

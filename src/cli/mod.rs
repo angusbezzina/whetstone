@@ -10,10 +10,9 @@ use std::time::{Duration, Instant};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::json;
 
-use crate::domain::FlagVerdict;
 use crate::service::{
     ChangeDefinition, ChangeKind, ChangeRequest, CheckRequest, CommandService, DashRequest,
-    FlagRequest, GateMode, InitAction, InitRequest, ReviewRequest, ServiceRequest, ServiceResponse,
+    GateMode, InitAction, InitRequest, ReviewRequest, ServiceRequest, ServiceResponse,
     ServiceState,
 };
 use crate::{check, dashboard, dashboard_service, output, rules};
@@ -136,7 +135,7 @@ enum Command {
     },
 
     /// Draft a change for the owner to accept, or record the owner's call on
-    /// a draft or a flag.
+    /// a draft.
     Change {
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
@@ -182,21 +181,9 @@ enum Command {
         /// Propose retiring an accepted record (history stays); needs --rationale.
         #[arg(long, conflicts_with_all = ["accept", "withdraw", "kind", "content", "definition"])]
         retire: Option<String>,
-        /// Label a flag as right: the receipt id that raised it; needs --rationale.
-        #[arg(long, conflicts_with_all = ["dismiss_flag", "accept", "withdraw", "retire", "kind"])]
-        accept_flag: Option<String>,
-        /// Label a flag as wrong (a false flag); needs --rationale.
-        #[arg(long, conflicts_with_all = ["accept_flag", "accept", "withdraw", "retire", "kind"])]
-        dismiss_flag: Option<String>,
         /// Draft principles from earlier values and philosophy records.
-        #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind", "tune"])]
+        #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind"])]
         migrate: bool,
-        /// Record the demotion and promotion drafts the rules' records suggest.
-        #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind", "migrate"])]
-        tune: bool,
-        /// With --kind rule: the Jev rule this mechanical rule hardens.
-        #[arg(long, requires = "kind")]
-        hardens: Option<String>,
         /// Admit a proposed lesson by its key (a person only; agents propose).
         #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind", "supersede", "forget"])]
         admit: Option<String>,
@@ -210,7 +197,7 @@ enum Command {
         /// Forget a lesson, with --rationale (applied by a person, proposed by an agent).
         #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind"])]
         forget: Option<String>,
-        /// With --kind rule: the admitted lesson the rule is drafted from (it starts in shadow).
+        /// With --kind rule: the admitted lesson the rule is drafted from.
         #[arg(long, requires = "kind")]
         from_lesson: Option<String>,
     },
@@ -579,11 +566,7 @@ pub fn run() -> i32 {
             accept,
             withdraw,
             retire,
-            accept_flag,
-            dismiss_flag,
             migrate,
-            tune,
-            hardens,
             admit,
             trust,
             supersede,
@@ -618,20 +601,7 @@ pub fn run() -> i32 {
                     })
                 }),
             retire,
-            flag: accept_flag
-                .map(|receipt| FlagRequest {
-                    receipt,
-                    verdict: FlagVerdict::Accept,
-                })
-                .or_else(|| {
-                    dismiss_flag.map(|receipt| FlagRequest {
-                        receipt,
-                        verdict: FlagVerdict::Dismiss,
-                    })
-                }),
             migrate,
-            tune,
-            hardens,
             actor: crate::memory::detect_actor(),
             lesson: admit
                 .map(|key| crate::service::LessonOp::Admit {

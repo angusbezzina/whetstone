@@ -3,7 +3,7 @@
 //! turn what it demonstrably does into rule drafts with provenance.
 //!
 //! This is the deterministic half. The skill reads the exemplar further and
-//! proposes judgment rules through `wh change --kind rule --source ...`; every
+//! proposes further rules through `wh change --kind rule --source ...`; every
 //! draft names the exact files it came from, and nothing is in force until the
 //! owner accepts it.
 
@@ -15,7 +15,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
-    ContentDigest, Enforcer, EvidenceRef, ExampleVerdict, Privacy, Rule, RuleExample, RuleSource,
+    ContentDigest, Enforcer, EvidenceRef, ExampleVerdict, Rule, RuleExample, RuleSource,
     RuleSourceKind, Strength, RULE_SCHEMA_V2,
 };
 
@@ -184,8 +184,6 @@ fn rule(
             provenance: evidence.to_vec(),
         },
         paths,
-        privacy: Privacy::default(),
-        shadow: false,
         sweep: None,
         sweep_priority: None,
         sweep_unsure: Vec::new(),

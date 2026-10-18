@@ -14,23 +14,18 @@ system, and agents guessing instead of asking.
 ## How it works
 
 1. **Agree the rules once.** `wh init` installs or detects Beads and pstack,
-   offers three starter rules, and turns your mission, principles and example
+   offers starter rules the repository can hold, and turns your mission, principles and example
    codebases into proposed rules. You accept each one in the dashboard.
    Accepted rules are records in Beads.
-2. **Enforce each rule the cheapest reliable way.** Every rule has one
-   strength (must, should or advisory) and one enforcer, chosen in this order:
-   a mechanical check (linter, AST, design tokens, public API), then a literal
-   yes/no question for Jev (TypeSafe System One) scored against the rule's
-   examples. Jev can raise a flag but can never pass a must rule.
+2. **Enforce each rule mechanically.** Every rule has one strength (must,
+   should or advisory) and one mechanical enforcer (linter, formatter, AST,
+   test, validator, design tokens, public API) scored against the rule's
+   examples.
 3. **Brief before building, prove before shipping.** Agents run pstack's
    `/how`, `/why` and `/blast-radius` first. Checks run at git pre-commit
    (fast, staged files), pre-push (the full `wh check` with fresh proofs) and
    as a required CI status. The generated verification skill proves features
    in the running app.
-4. **Get stricter and cheaper over time.** Flags you accept or dismiss give
-   each rule a false-flag rate. Noisy rules are proposed for demotion and
-   recurring Jev flags are proposed as mechanical checks. You accept every
-   change; nothing learns on its own.
 
 The public surface is exactly six commands:
 
@@ -61,30 +56,19 @@ and the plan in epic `whetstone-ppq` is built:
   or `--url <git url>`) into rule drafts with provenance.
 - **Rules.** One strength and one enforcer per rule
   ([rule schema](references/rule-v2.schema.json)): AST, lint, formatter, test,
-  validator, drive, design tokens or public surface; or a Jev question (in
-  shadow until promoted). Earlier standards are read as rules, and
+  validator, drive, design tokens or public surface. Earlier standards are
+  read as rules, and
   `wh change --migrate` turns earlier values, philosophy and YAML rules into
   drafts.
-- **Jev.** Questions go through the driver's `ask` command to TypeSafe System
-  One. Text is redacted in Whetstone before the driver sees it (path globs,
-  patterns, built-in secret patterns and the key itself), receipts record
-  that redaction happened, and a local-only rule never leaves the machine.
-  A Jev answer can flag but never pass a must rule; a low-confidence answer
-  is unknown.
 - **Gates.** `wh init --action wire --hooks` installs git pre-commit (staged
   content, mechanical rules only) and pre-push (`wh check --base <remote>`)
   hooks, chaining any existing hook. `--ci` writes the `whetstone/policy` required status workflow.
-- **Learning.** `wh change --accept-flag` and `--dismiss-flag` label flags.
-  Each rule then has a false-flag rate, and `wh change --tune` drafts
-  demotions for noisy rules and promotions for accurate shadow questions.
-  Recurring accepted flags are offered as hardening candidates
-  (`wh change --kind rule --hardens <rule>`).
 - **Proofs.** Flaky proofs are quarantined as unknown, and
   `wh check --mutate` runs a feature's declared mutations in an isolated
   worktree to catch proofs that pass on broken code.
 
-Still waiting on the owner: a live Jev key run, the milestone walkthroughs and
-the two-week tuning experiment, all tracked under `whetstone-ppq.10`.
+Still waiting on the owner: the milestone walkthroughs, tracked under
+`whetstone-ppq.10`.
 
 ```bash
 wh init                                                     # guided onboarding in the dashboard
@@ -94,7 +78,7 @@ wh init --action agree --mission "..." --principle prove-it-works --starter all 
   --expected-revision 0 --resume <token>
 wh init --action wire --host claude --host codex --hooks --ci
 wh change --kind rule --record-id rule.no-todo --content "..." --rationale "..." \
-  --definition '{"type":"rule","strength":"should","enforcer":{"kind":"question","question":"Does this change add a TODO?"}}'
+  --definition '{"type":"rule","strength":"should","enforcer":{"kind":"ast","query":"(comment) @match","language":"rust"}}'
 wh check --staged                                           # what pre-commit runs
 wh check --base origin/main                                 # what pre-push runs
 wh check --sweep                                            # drive every mapped feature
@@ -146,8 +130,7 @@ wh --help   # lists init, dash, change, check, pull and push
 ```
 
 Requirements: `bd` 1.3.0 or later, Node 22 for the verification driver, and
-Chrome or Chromium for web surfaces. Jev rules need a `TYPESAFE_API_KEY` in
-the environment; without one they report `unavailable`, which is never a pass.
+Chrome or Chromium for web surfaces.
 
 An earlier install of the previous product also answers to `wh` and would open
 its terminal UI instead. If `wh --help` lists commands such as `extract`,

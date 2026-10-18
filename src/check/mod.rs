@@ -341,7 +341,7 @@ pub fn run(opts: CheckOptions<'_>) -> Value {
 /// Source-fidelity is split per planning/skill-cli-boundary.md §2: STRUCTURAL
 /// fidelity (the `source_quote` appears verbatim in the cached source docs) IS
 /// gated here; SEMANTIC fidelity ("the doc actually supports the rule + merits its
-/// severity") is judgment, so it is recorded as a skill-attested scorecard field,
+/// severity") is a person's call, so it is recorded as a skill-attested scorecard field,
 /// never adjudicated by this deterministic command.
 pub fn eval(project_dir: &Path, lang_filter: Option<&str>) -> Value {
     let rules_dir = project_dir.join("whetstone").join("rules");

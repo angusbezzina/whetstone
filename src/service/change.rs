@@ -1,27 +1,24 @@
 //! `wh change`: propose a bounded change as a private draft the owner
 //! accepts, and the owner's other decisions: accepting or withdrawing a
-//! draft, retiring a record, labelling a flag, migrating earlier values and philosophy, and recording tuning drafts.
+//! draft, retiring a record, and migrating earlier values and philosophy.
 
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::agreement::AgreementState;
 use crate::domain::{
-    AgreementRecord, EvidenceRef, FlagDecision, JudgmentOutcome, Principle, PrincipleSource,
-    Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, RecordRef, Rule,
-    RuleSource, RuleSourceKind, VerificationAxis, RULE_SCHEMA_V2, SCHEMA_VERSION_V1,
+    AgreementRecord, EvidenceRef, Principle, PrincipleSource, Provenance, ProvenanceAuthority,
+    ProvenanceKind, RecordBody, RecordId, RecordRef, Rule, RuleSource, RuleSourceKind,
+    RULE_SCHEMA_V2, SCHEMA_VERSION_V1,
 };
 use crate::storage::{ProjectLayout, RecordStore, StorageError};
 
-use super::record::{
-    agreement_record, append_private, ensure_local_change_proposal, key_suffix, receipt_record,
-    ChangeNarrative,
-};
+use super::record::{agreement_record, ensure_local_change_proposal, ChangeNarrative};
 use super::{
     bounded_input, bounded_list, bounded_request_id, domain_response, idempotency_conflict,
     load_records, needs_input, optional_input, owner_name, project_error, resume_token,
     stale_response, storage_error, unknown_response, utc_now, ChangeDefinition, ChangeKind,
-    ChangeRequest, FlagRequest, ReviewRequest, ServiceResponse, ServiceState,
+    ChangeRequest, ReviewRequest, ServiceResponse, ServiceState,
 };
 
 pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
@@ -47,14 +44,8 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
     if let Some(target) = request.retire.clone() {
         return retire_record(&layout, private, request_id, &target, &request);
     }
-    if let Some(flag) = request.flag.clone() {
-        return record_flag(&layout, request_id, &flag, &request);
-    }
     if request.migrate {
         return migrate(&layout, private, request_id, &request);
-    }
-    if request.tune {
-        return tune(&layout, private, request_id, &request);
     }
     if request.lesson.is_some() || request.kind == Some(ChangeKind::Lesson) {
         return super::lesson::change(&layout, request_id, &request);
@@ -68,7 +59,7 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
 /// they differ between the inspection and the confirmation.
 fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String {
     let input = format!(
-        "{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{}\0{}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}",
+        "{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}",
         request.kind,
         request.record_id,
         request.content,
@@ -80,10 +71,7 @@ fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String
         request.impact,
         request.review.as_ref().map(|review| (&review.proposal, review.verdict)),
         request.retire,
-        request.flag.as_ref().map(|flag| (&flag.receipt, flag.verdict)),
         request.migrate,
-        request.tune,
-        request.hardens,
         request.examples,
         request.conflicts,
         request.lesson,
@@ -494,8 +482,6 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
                 examples,
                 source,
                 paths,
-                privacy,
-                shadow,
                 sweep,
                 sweep_priority,
                 sweep_unsure,
@@ -508,20 +494,7 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
             {
                 crate::gates::parse_command(command)?;
             }
-            let source = match (&request.hardens, source) {
-                (Some(hardened), _) => {
-                    if enforcer.family() != crate::domain::EnforcerFamily::Mechanical {
-                        return Err("A hardening draft replaces a Jev question with a mechanical check; give it a mechanical enforcer.".into());
-                    }
-                    RuleSource {
-                        kind: RuleSourceKind::Hardening,
-                        reference: Some(hardened.clone()),
-                        provenance: Vec::new(),
-                    }
-                }
-                (None, Some(source)) => source.clone(),
-                (None, None) => RuleSource::owner(),
-            };
+            let source = source.clone().unwrap_or_else(RuleSource::owner);
             let mut rule = Rule {
                 schema: RULE_SCHEMA_V2.into(),
                 statement: content,
@@ -531,14 +504,12 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
                 examples: examples.clone(),
                 source,
                 paths: paths.clone(),
-                privacy: privacy.clone(),
-                shadow: *shadow,
                 sweep: *sweep,
                 sweep_priority: *sweep_priority,
                 sweep_unsure: sweep_unsure.clone(),
             };
-            // A rule drafted from a lesson starts in shadow and names the
-            // admitted lesson it came from.
+            // A rule drafted from a lesson names the admitted lesson it came
+            // from.
             let origin = request.from_lesson.clone().or_else(|| {
                 (rule.source.kind == RuleSourceKind::Lesson)
                     .then(|| rule.source.reference.clone())
@@ -667,118 +638,6 @@ fn state_of(layout: &ProjectLayout) -> Result<AgreementState, StorageError> {
     Ok(AgreementState::from_records(
         load_records(layout)?.union().0,
     ))
-}
-
-/// The owner labels one flag as right (accept) or wrong (dismiss).
-fn record_flag(
-    layout: &ProjectLayout,
-    request_id: String,
-    flag: &FlagRequest,
-    request: &ChangeRequest,
-) -> ServiceResponse {
-    let state = match state_of(layout) {
-        Ok(state) => state,
-        Err(error) => return storage_error("change", request_id, error),
-    };
-    let Ok(receipt_id) = RecordId::new(flag.receipt.as_str()) else {
-        return unknown_response(
-            "change",
-            request_id,
-            format!("{} is not a receipt id.", flag.receipt),
-        );
-    };
-    let Some(receipt) = state.latest(&receipt_id) else {
-        return unknown_response(
-            "change",
-            request_id,
-            format!("No receipt {} exists; flags are labelled by the receipt that raised them (see wh dash --json).", flag.receipt),
-        );
-    };
-    let (rule, flagged) = match &receipt.body {
-        RecordBody::Judgment(body) => (
-            Some(body.rule.id.clone()),
-            body.outcome == JudgmentOutcome::Flag,
-        ),
-        RecordBody::VerificationReceipt(body) => (
-            body.policy_state
-                .accepted
-                .as_ref()
-                .map(|reference| reference.id.clone()),
-            body.verification == VerificationAxis::Fail,
-        ),
-        _ => (None, false),
-    };
-    let (Some(rule), true) = (rule, flagged) else {
-        return unknown_response(
-            "change",
-            request_id,
-            format!(
-                "{} did not raise a flag, so there is nothing to accept or dismiss.",
-                flag.receipt
-            ),
-        );
-    };
-    let reason = match bounded_input(
-        request.rationale.clone(),
-        "rationale (why the flag is right or wrong)",
-        2_000,
-    ) {
-        Ok(reason) => reason,
-        Err(question) => return needs_input("change", request_id, 0, String::new(), question),
-    };
-    let receipt_ref = match receipt.reference() {
-        Ok(reference) => reference,
-        Err(error) => return domain_response("change", request_id, error),
-    };
-    let decided_at = utc_now();
-    let key = format!("flag:{request_id}:{}", receipt_id.as_str());
-    let decided_by = request
-        .source
-        .clone()
-        .or_else(|| owner_name(layout.project_root()))
-        .unwrap_or_else(|| "the owner".into());
-    let record = match receipt_record(
-        layout,
-        format!("decision.flag_{}", key_suffix(&key, 24)),
-        key,
-        "whetstone:flag-label",
-        ProvenanceKind::HumanAuthored,
-        &decided_at,
-        EvidenceRef {
-            system: "owner_label".into(),
-            locator: decided_by.clone(),
-            digest: None,
-        },
-        RecordBody::FlagDecision(FlagDecision {
-            receipt: receipt_ref,
-            rule: rule.clone(),
-            verdict: flag.verdict,
-            reason,
-            decided_by,
-            decided_at: decided_at.clone(),
-        }),
-    ) {
-        Ok(record) => record,
-        Err(error) => return domain_response("change", request_id, error),
-    };
-    match append_private(layout, &record) {
-        Ok(reference) => {
-            let mut response = ServiceResponse::new(
-                request_id,
-                "change",
-                ServiceState::Success,
-                format!(
-                    "The flag on {} was {}; it counts toward the rule's false-flag rate.",
-                    rule.as_str(),
-                    flag.verdict.label()
-                ),
-            );
-            response.permitted_actions = vec!["wh dash".into(), "wh change --tune".into()];
-            response.data = json!({"decision": reference, "rule": rule, "verdict": flag.verdict});
-            response
-        }
-        Err(error) => storage_error("change", request_id, error),
-    }
 }
 
 /// Earlier values and philosophy become principle drafts the owner reviews;
@@ -924,103 +783,6 @@ fn migrate(
     );
     response.permitted_actions = vec!["wh dash".into(), "wh change --accept <proposal>".into()];
     response.data = json!({"drafts": drafts, "preview_only": request.preview});
-    response
-}
-
-/// Record the demotion and promotion drafts the rules' records suggest, and
-/// list hardening candidates for the skill to write as mechanical rules.
-fn tune(
-    layout: &ProjectLayout,
-    private: &dyn RecordStore,
-    request_id: String,
-    request: &ChangeRequest,
-) -> ServiceResponse {
-    let state = match state_of(layout) {
-        Ok(state) => state,
-        Err(error) => return storage_error("change", request_id, error),
-    };
-    let suggestions = crate::learning::suggestions(&state);
-    let lesson_reviews = super::lesson::rule_reviews(layout, &state);
-    let mut drafts = Vec::new();
-    let mut hardening = Vec::new();
-    for suggestion in &suggestions {
-        let Some(rule) = suggestion.draft.clone() else {
-            hardening.push(json!({
-                "rule": suggestion.rule,
-                "reason": suggestion.reason,
-                "flagged_units": suggestion.examples,
-                "next": format!("wh change --kind rule --record-id {}-mechanical --hardens {} --content <statement> --definition <mechanical rule> --rationale <why>", suggestion.rule, suggestion.rule),
-            }));
-            continue;
-        };
-        let Ok(id) = RecordId::new(suggestion.rule.as_str()) else {
-            continue;
-        };
-        if request.preview {
-            drafts.push(json!({"kind": suggestion.kind, "rule": id, "after": rule, "reason": suggestion.reason}));
-            continue;
-        }
-        let narrative = ChangeNarrative {
-            rationale: suggestion.reason.clone(),
-            source: format!("wh change --tune ({})", suggestion.kind),
-            expected_effect: match suggestion.kind {
-                "promotion" => "The rule's Jev answers are enforced instead of recorded.".into(),
-                _ => "The rule blocks less; flags it raises weigh less.".into(),
-            },
-            impact: "none until accepted".into(),
-            examples: Vec::new(),
-            conflicts: Vec::new(),
-        };
-        let key = format!(
-            "tune:{request_id}:{}:{}:{:x}",
-            suggestion.kind,
-            id.as_str(),
-            Sha256::digest(serde_json::to_vec(&rule).unwrap_or_default())
-        );
-        match draft_with_proposal(
-            layout,
-            private,
-            &key,
-            &id,
-            RecordBody::Rule(rule),
-            &narrative,
-        ) {
-            Ok((reference, proposal)) => drafts.push(json!({
-                "kind": suggestion.kind,
-                "record": reference,
-                "proposal": proposal,
-                "reason": suggestion.reason,
-            })),
-            Err(error) => return storage_error("change", request_id, error),
-        }
-    }
-    let mut response = ServiceResponse::new(
-        request_id,
-        "change",
-        if request.preview {
-            ServiceState::NeedsDecision
-        } else {
-            ServiceState::Success
-        },
-        if drafts.is_empty() && hardening.is_empty() && lesson_reviews.is_empty() {
-            "No rule's record suggests a change yet; nothing was drafted.".to_string()
-        } else {
-            format!(
-                "{} tuning draft(s) {}, {} hardening candidate(s) and {} rule(s) whose lesson moved listed; nothing changes force until you accept.",
-                drafts.len(),
-                if request.preview { "would be recorded" } else { "recorded" },
-                hardening.len(),
-                lesson_reviews.len()
-            )
-        },
-    );
-    response.permitted_actions = vec!["wh dash".into(), "wh change --accept <proposal>".into()];
-    response.data = json!({
-        "drafts": drafts,
-        "hardening": hardening,
-        "lesson_reviews": lesson_reviews,
-        "preview_only": request.preview,
-    });
     response
 }
 

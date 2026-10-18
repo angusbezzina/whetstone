@@ -14,8 +14,6 @@ pub mod feature_map;
 pub mod gates;
 pub mod history;
 pub mod hygiene;
-pub mod judgment;
-pub mod learning;
 pub mod memory;
 pub mod onboarding;
 mod output;

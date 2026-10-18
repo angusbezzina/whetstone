@@ -2,30 +2,20 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use whetstone::beads::BeadsStore;
-use whetstone::domain::{
-    AgreementRecord, AuthorizationAxis, FlagVerdict, JudgmentOutcome, RecordBody, VerificationAxis,
-};
+use whetstone::domain::{AgreementRecord, AuthorizationAxis, RecordBody, VerificationAxis};
 use whetstone::storage::{ProjectLayout, StoreKind};
 
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_whetstone"))
 }
 
-/// Every run keeps Jev offline unless a test explicitly drives a fake one.
 fn run(args: &[&str], cwd: &Path) -> Output {
-    run_with(args, cwd, &[("WHETSTONE_JEV_OFFLINE", Some("1"))])
-}
-
-fn run_with(args: &[&str], cwd: &Path, env: &[(&str, Option<&str>)]) -> Output {
-    let mut command = Command::new(bin());
-    command.args(args).current_dir(cwd).env_remove("BEADS_DIR");
-    for (key, value) in env {
-        match value {
-            Some(value) => command.env(key, value),
-            None => command.env_remove(key),
-        };
-    }
-    command.output().expect("run lean Whetstone binary")
+    Command::new(bin())
+        .args(args)
+        .current_dir(cwd)
+        .env_remove("BEADS_DIR")
+        .output()
+        .expect("run lean Whetstone binary")
 }
 
 fn json(output: &Output) -> serde_json::Value {
@@ -417,6 +407,14 @@ fn removed_flags_and_change_kinds_are_rejected_before_anything_runs() {
 fn init_is_resumable_and_duplicate_requests_never_duplicate_records() {
     let temp = tempfile::tempdir().expect("create init fixture");
     init_git(temp.path());
+    // A test command makes the prove-it-works starter one a check can hold.
+    std::fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"x\"\n")
+        .expect("write Cargo.toml");
+    git(temp.path(), &["add", "-A"]);
+    git(
+        temp.path(),
+        &["commit", "--quiet", "--no-verify", "-m", "base"],
+    );
     let project = temp.path().to_string_lossy();
     let inspect = run(
         &[
@@ -541,15 +539,11 @@ fn init_is_resumable_and_duplicate_requests_never_duplicate_records() {
     assert_eq!(accepted_json["state"], "needs_input");
     let mut ids = record_ids(&accepted_json);
     ids.sort();
-    assert_eq!(ids.len(), 6, "{accepted_json}");
+    assert_eq!(ids.len(), 5, "{accepted_json}");
     assert_eq!(ids[0], "mission.project");
     assert!(ids.contains(&"principle.prove-it-works".to_string()));
     assert!(ids.iter().any(|id| id.starts_with("principle.custom-")));
-    for starter in [
-        "rule.prove-it-works",
-        "rule.ask-before-public-api",
-        "rule.tests-only-when-asked",
-    ] {
+    for starter in ["rule.prove-it-works", "rule.ask-before-public-api"] {
         assert!(ids.contains(&starter.to_string()), "{starter} missing");
     }
     assert_eq!(
@@ -742,6 +736,8 @@ fn init_needs_a_mission_and_names_only_catalogue_principles_and_starters() {
 #[test]
 fn init_completes_an_established_agreement_that_has_no_rule_yet() {
     let repo = Repo::new();
+    repo.write("Cargo.toml", "[package]\nname = \"x\"\n");
+    repo.commit("base");
     let mission_only = repo.agree("mission-only", &["--mission", "Keep work aligned."]);
     assert_eq!(mission_only["state"], "needs_input");
     assert_eq!(record_ids(&mission_only), ["mission.project"]);
@@ -939,6 +935,8 @@ fn init_agree_completes_a_partly_written_batch() {
 #[test]
 fn init_keeps_the_base_revision_when_new_records_have_no_supersedes() {
     let repo = Repo::new();
+    repo.write("Cargo.toml", "[package]\nname = \"x\"\n");
+    repo.commit("base");
     // An accepted principle exists before onboarding.
     let drafted = repo.propose(
         "existing-principle",
@@ -1327,7 +1325,7 @@ fn a_rule_draft_is_only_in_force_once_accepted_and_withdraw_and_retire_keep_hist
 }
 
 #[test]
-fn rule_definitions_hold_one_strength_and_one_enforcer_of_each_family() {
+fn rule_definitions_hold_one_strength_and_one_enforcer() {
     let repo = Repo::new();
     let preview = |request_id: &str, definition: &str| {
         let base = [
@@ -1356,49 +1354,24 @@ fn rule_definitions_hold_one_strength_and_one_enforcer_of_each_family() {
         repo.wh(&args)
     };
     let enforcers = [
-        (
-            "mechanical",
-            r#"{"kind":"ast","query":"(identifier) @match","language":"python"}"#,
-        ),
-        (
-            "mechanical",
-            r#"{"kind":"lint","tool":"ruff check .","code":"F401"}"#,
-        ),
-        (
-            "mechanical",
-            r#"{"kind":"formatter","tool":"ruff format --check ."}"#,
-        ),
-        ("mechanical", r#"{"kind":"test","command":"cargo test"}"#),
-        (
-            "mechanical",
-            r#"{"kind":"validator","command":"python3 scripts/check.py"}"#,
-        ),
-        (
-            "mechanical",
-            r#"{"kind":"drive","feature":"feature.search"}"#,
-        ),
-        (
-            "mechanical",
-            r#"{"kind":"design_tokens","tokens":"src/tokens.css"}"#,
-        ),
-        (
-            "mechanical",
-            r#"{"kind":"public_surface","surfaces":["cli","json"]}"#,
-        ),
-        (
-            "question",
-            r#"{"kind":"question","question":"Does this hunk add a test nobody asked for?"}"#,
-        ),
+        r#"{"kind":"ast","query":"(identifier) @match","language":"python"}"#,
+        r#"{"kind":"lint","tool":"ruff check .","code":"F401"}"#,
+        r#"{"kind":"formatter","tool":"ruff format --check ."}"#,
+        r#"{"kind":"test","command":"cargo test"}"#,
+        r#"{"kind":"validator","command":"python3 scripts/check.py"}"#,
+        r#"{"kind":"drive","feature":"feature.search"}"#,
+        r#"{"kind":"design_tokens","tokens":"src/tokens.css"}"#,
+        r#"{"kind":"public_surface","surfaces":["cli","json"]}"#,
     ];
     for (index, strength) in ["must", "should", "advisory"].into_iter().enumerate() {
-        for (offset, (family, enforcer)) in enforcers.iter().enumerate() {
+        for (offset, enforcer) in enforcers.iter().enumerate() {
             let definition =
                 format!(r#"{{"type":"rule","strength":"{strength}","enforcer":{enforcer}}}"#);
             let output = preview(&format!("family-{index}-{offset}"), &definition);
             assert_eq!(
                 output.status.code(),
                 Some(5),
-                "{strength} {family} {enforcer}: {}",
+                "{strength} {enforcer}: {}",
                 json(&output)
             );
             let value = json(&output);
@@ -1408,15 +1381,6 @@ fn rule_definitions_hold_one_strength_and_one_enforcer_of_each_family() {
             assert_eq!(rule["enforcer"]["kind"], expected["kind"]);
         }
     }
-    // A question starts in shadow unless the owner says otherwise.
-    let question = json(&preview(
-        "question-shadow",
-        r#"{"type":"rule","strength":"must","enforcer":{"kind":"question","question":"Is this a test?"}}"#,
-    ));
-    assert_ne!(
-        question["data"]["diff"]["after"]["record"]["enforcer"]["shadow"],
-        false
-    );
 
     // Two enforcers, an unknown kind or strength, or stray fields never parse.
     for definition in [
@@ -1424,6 +1388,7 @@ fn rule_definitions_hold_one_strength_and_one_enforcer_of_each_family() {
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"true"},"enforcer":{"kind":"lint","tool":"ruff","code":"F401"}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"review","reviewer":{"by":"interrogate"}}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"brief","skills":["how"]}}"#,
+        r#"{"type":"rule","strength":"must","enforcer":{"kind":"question","question":"Is this a test?"}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"true","query":"(identifier)"}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"vibes"}}"#,
         r#"{"type":"rule","strength":"may","enforcer":{"kind":"test","command":"true"}}"#,
@@ -1458,7 +1423,6 @@ fn rule_definitions_hold_one_strength_and_one_enforcer_of_each_family() {
     // Well-formed but invalid enforcers are asked about, never recorded.
     for (index, enforcer) in [
         r#"{"kind":"test","command":"cargo test | tee out"}"#,
-        r#"{"kind":"question","question":"Is it?","threshold_bp":0}"#,
         r#"{"kind":"public_surface","surfaces":["gui"]}"#,
         r#"{"kind":"design_tokens","tokens":"/etc/tokens.css"}"#,
         r#"{"kind":"lint","tool":"ruff","code":""}"#,
@@ -2193,215 +2157,6 @@ fn a_check_of_only_should_rules_lists_the_flag() {
     );
 }
 
-#[test]
-fn flags_are_labelled_accepted_or_dismissed_as_flag_decisions() {
-    let repo = Repo::new();
-    repo.write("README.md", "fixture\n");
-    repo.commit("base");
-    repo.rule(
-        "rule.must-pass",
-        r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"true"}}"#,
-    );
-    repo.rule(
-        "rule.should-fail",
-        r#"{"type":"rule","strength":"should","enforcer":{"kind":"test","command":"false"}}"#,
-    );
-    let (code, checked) = repo.check(&[]);
-    assert_eq!(code, Some(0), "{checked}");
-    let receipt_for = |subject: &str, axis: VerificationAxis| {
-        repo.records()
-            .into_iter()
-            .find(|record| match &record.body {
-                RecordBody::VerificationReceipt(receipt) => {
-                    receipt.subject.stable_id == subject && receipt.verification == axis
-                }
-                _ => false,
-            })
-            .unwrap_or_else(|| panic!("no {axis:?} receipt for {subject}"))
-            .id
-            .as_str()
-            .to_string()
-    };
-    let flagged = receipt_for("gate:rule.should-fail", VerificationAxis::Fail);
-    let passed = receipt_for("gate:rule.must-pass", VerificationAxis::Pass);
-
-    let no_reason = repo.wh(&[
-        "change",
-        "--request-id",
-        "flag-0",
-        "--accept-flag",
-        &flagged,
-    ]);
-    assert_eq!(no_reason.status.code(), Some(6));
-    let not_a_flag = repo.wh(&[
-        "change",
-        "--request-id",
-        "flag-1",
-        "--accept-flag",
-        &passed,
-        "--rationale",
-        "It passed.",
-    ]);
-    assert_eq!(not_a_flag.status.code(), Some(3));
-    assert!(json(&not_a_flag)["summary"]
-        .as_str()
-        .expect("summary")
-        .contains("did not raise a flag"));
-    let unknown = repo.wh(&[
-        "change",
-        "--request-id",
-        "flag-2",
-        "--dismiss-flag",
-        "verification.nothing-here",
-        "--rationale",
-        "No such receipt.",
-    ]);
-    assert_eq!(unknown.status.code(), Some(3));
-
-    let accepted = repo.wh_json(&[
-        "change",
-        "--request-id",
-        "flag-3",
-        "--accept-flag",
-        &flagged,
-        "--rationale",
-        "The rule caught a real problem.",
-    ]);
-    assert_eq!(accepted["state"], "success", "{accepted}");
-    assert_eq!(accepted["data"]["rule"], "rule.should-fail");
-    assert_eq!(accepted["data"]["verdict"], "accept");
-    let dismissed = repo.wh_json(&[
-        "change",
-        "--request-id",
-        "flag-4",
-        "--dismiss-flag",
-        &flagged,
-        "--rationale",
-        "On reflection this was noise.",
-    ]);
-    assert_eq!(dismissed["state"], "success", "{dismissed}");
-    assert_eq!(dismissed["data"]["verdict"], "dismiss");
-
-    let decisions = repo
-        .records()
-        .into_iter()
-        .filter_map(|record| match record.body {
-            RecordBody::FlagDecision(decision) => Some(decision),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(decisions.len(), 2);
-    assert!(decisions
-        .iter()
-        .all(|decision| decision.receipt.id.as_str() == flagged
-            && decision.rule.as_str() == "rule.should-fail"));
-    let mut verdicts = decisions
-        .iter()
-        .map(|decision| decision.verdict)
-        .collect::<Vec<_>>();
-    verdicts.sort_by_key(|verdict| format!("{verdict:?}"));
-    assert_eq!(verdicts, [FlagVerdict::Accept, FlagVerdict::Dismiss]);
-}
-
-const QUESTION_MUST: &str = r#"{"type":"rule","strength":"must","enforcer":{"kind":"question","question":"Does this hunk add a test nobody asked for?","shadow":false}}"#;
-const QUESTION_SHOULD: &str = r#"{"type":"rule","strength":"should","enforcer":{"kind":"question","question":"Does this hunk rename a public symbol?","shadow":false}}"#;
-
-fn judgments(repo: &Repo, rule: &str) -> Vec<JudgmentOutcome> {
-    repo.records()
-        .into_iter()
-        .filter_map(|record| match record.body {
-            RecordBody::Judgment(judgment) if judgment.rule.id.as_str() == rule => {
-                Some(judgment.outcome)
-            }
-            _ => None,
-        })
-        .collect()
-}
-
-#[test]
-fn offline_jev_leaves_a_question_rule_unknown_and_never_passes() {
-    let repo = Repo::new();
-    repo.write("src/app.py", "def read_config():\n    pass\n");
-    repo.commit("base");
-    repo.rule("rule.asked", QUESTION_MUST);
-    repo.write("src/app.py", "def read_config():\n    return 2\n");
-
-    let (code, checked) = repo.check(&["--rule", "rule.asked"]);
-    // The envelope says the enforcer was unavailable; the gate is unknown.
-    assert_eq!(code, Some(4), "{checked}");
-    assert_eq!(checked["state"], "unavailable");
-    let asked = gate(&checked, "rule.asked");
-    assert_eq!(asked["state"], "unknown");
-    assert_eq!(asked["family"], "question");
-    assert_eq!(
-        judgments(&repo, "rule.asked"),
-        [JudgmentOutcome::Unavailable]
-    );
-}
-
-/// A stand-in for the team's driver whose `ask` always answers "no".
-const CLEAR_DRIVER: &str = r#"const command = process.argv[2];
-switch (command) {
-  case "ask":
-    console.log(JSON.stringify({ ok: true, probability: 0.02, model: "fake-jev", request_id: "fake-1" }));
-    break;
-  default:
-    process.exit(2);
-}
-"#;
-
-#[test]
-fn a_must_question_rule_never_passes_on_a_jev_clear() {
-    if Command::new("node").arg("--version").output().is_err() {
-        assert!(
-            std::env::var_os("CI").is_none(),
-            "a tool this test needs is missing in CI"
-        );
-        eprintln!("skipped: node is not installed, so no driver can answer");
-        return;
-    }
-    let repo = Repo::new();
-    repo.write("src/app.py", "def read_config():\n    pass\n");
-    repo.write("whetstone/verify/drive.mjs", CLEAR_DRIVER);
-    repo.commit("base");
-    repo.rule("rule.asked-must", QUESTION_MUST);
-    repo.rule("rule.asked-should", QUESTION_SHOULD);
-    repo.write("src/app.py", "def read_config():\n    return 2\n");
-
-    let online = [("WHETSTONE_JEV_OFFLINE", None)];
-    let output = run_with(
-        &["check", "--json", "--rule", "rule.asked-should"],
-        &repo.root,
-        &online,
-    );
-    let should = json(&output);
-    // The driver answered: a should rule passes on a clear answer...
-    assert_eq!(
-        gate(&should, "rule.asked-should")["state"],
-        "pass",
-        "{should}"
-    );
-    assert_eq!(
-        judgments(&repo, "rule.asked-should"),
-        [JudgmentOutcome::Clear]
-    );
-
-    // ...but a must rule is never passed by Jev, even on the same clear answer.
-    let output = run_with(
-        &["check", "--json", "--rule", "rule.asked-must"],
-        &repo.root,
-        &online,
-    );
-    let must = json(&output);
-    assert_eq!(
-        judgments(&repo, "rule.asked-must"),
-        [JudgmentOutcome::Clear]
-    );
-    assert_eq!(gate(&must, "rule.asked-must")["state"], "unknown", "{must}");
-    assert_ne!(must["state"], "success", "{must}");
-    assert_ne!(output.status.code(), Some(0));
-}
-
 fn seed_legacy_records(root: &Path, indices: &[usize]) {
     let layout = ProjectLayout::resolve(root).expect("layout");
     let dir = layout.private_store();
@@ -2551,21 +2306,4 @@ fn migrate_turns_legacy_values_philosophy_and_rule_files_into_drafts() {
     let again = repo.wh_json(&["change", "--request-id", "migrate-2", "--migrate"]);
     assert_eq!(again["state"], "success");
     assert_eq!(again["data"]["drafts"], serde_json::json!([]));
-}
-
-#[test]
-fn tune_with_no_data_proposes_nothing() {
-    let repo = Repo::new();
-    let agreed = repo.agree("tune-agreement", &AGREEMENT);
-    assert_eq!(agreed["data"]["progress"]["agreement_complete"], true);
-    let before = repo.records().len();
-    let tuned = repo.wh_json(&["change", "--request-id", "tune-1", "--tune"]);
-    assert_eq!(tuned["state"], "success", "{tuned}");
-    assert_eq!(tuned["data"]["drafts"], serde_json::json!([]));
-    assert_eq!(tuned["data"]["hardening"], serde_json::json!([]));
-    assert!(tuned["summary"]
-        .as_str()
-        .expect("summary")
-        .contains("nothing was drafted"));
-    assert_eq!(repo.records().len(), before);
 }

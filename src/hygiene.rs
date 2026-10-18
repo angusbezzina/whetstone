@@ -1,6 +1,6 @@
-//! Deterministic feature-map hygiene: the half of pstack's maintain pass
-//! that needs no judgment. Every finding names the feature and says what to
-//! do; nothing here edits the map, the driver or product code.
+//! Deterministic feature-map hygiene: the half of pstack's maintain pass a
+//! check can do mechanically. Every finding names the feature and says what
+//! to do; nothing here edits the map, the driver or product code.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

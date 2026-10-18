@@ -265,11 +265,7 @@ enum DashboardCommand {
         #[serde(default)]
         retire: Option<String>,
         #[serde(default)]
-        flag: Option<DashboardFlag>,
-        #[serde(default)]
         migrate: bool,
-        #[serde(default)]
-        tune: bool,
         /// Admit, correct or forget a lesson.
         #[serde(default)]
         lesson: Option<DashboardLesson>,
@@ -319,20 +315,6 @@ struct DashboardReview {
 enum DashboardVerdict {
     Accept,
     Withdraw,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DashboardFlag {
-    receipt: String,
-    verdict: DashboardFlagVerdict,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum DashboardFlagVerdict {
-    Accept,
-    Dismiss,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -405,9 +387,7 @@ impl DashboardCommand {
                 preview,
                 review,
                 retire,
-                flag,
                 migrate,
-                tune,
                 lesson,
             } => ServiceRequest::Change(ChangeRequest {
                 project_dir,
@@ -434,16 +414,7 @@ impl DashboardCommand {
                     },
                 }),
                 retire,
-                flag: flag.map(|flag| crate::service::FlagRequest {
-                    receipt: flag.receipt,
-                    verdict: match flag.verdict {
-                        DashboardFlagVerdict::Accept => crate::domain::FlagVerdict::Accept,
-                        DashboardFlagVerdict::Dismiss => crate::domain::FlagVerdict::Dismiss,
-                    },
-                }),
                 migrate,
-                tune,
-                hardens: None,
                 // The backend sets who is asking; a request cannot claim it.
                 actor: crate::domain::ActorKind::Agent,
                 lesson: lesson.map(|lesson| match lesson.verb {

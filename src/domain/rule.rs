@@ -1,5 +1,5 @@
 //! Rule record v2 (`whetstone.rule.v2`): one statement, one strength, exactly
-//! one enforcer, labelled examples, a source and privacy.
+//! one enforcer, labelled examples and a source.
 //!
 //! Earlier `Standard` records stay readable and are enforced through
 //! [`Rule::from_standard`]; every new revision is written as a v2 rule.
@@ -9,8 +9,6 @@ use serde::{Deserialize, Serialize};
 use super::{require_text, safe_relative_path, DomainError, RecordId};
 
 pub const RULE_SCHEMA_V2: &str = "whetstone.rule.v2";
-/// The Jev model pinned when a question does not name one.
-pub const DEFAULT_JEV_MODEL: &str = "jev-1.13.0";
 pub const MAX_RULE_EXAMPLES: usize = 32;
 pub const MAX_RULE_LIST_ITEMS: usize = 32;
 
@@ -33,61 +31,9 @@ impl Strength {
             Self::Advisory => "advisory",
         }
     }
-
-    /// One step weaker, for demotion drafts; advisory stays advisory.
-    pub fn weaker(self) -> Self {
-        match self {
-            Self::Must => Self::Should,
-            Self::Should | Self::Advisory => Self::Advisory,
-        }
-    }
 }
 
-/// Which rung of the enforcement ladder an enforcer is on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EnforcerFamily {
-    Mechanical,
-    Question,
-}
-
-impl EnforcerFamily {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Mechanical => "mechanical",
-            Self::Question => "question",
-        }
-    }
-}
-
-/// The smallest unit of change a question needs; the default is one hunk.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ContextUnit {
-    /// One changed hunk with a few lines of context.
-    #[default]
-    Hunk,
-    /// The whole changed file.
-    File,
-    /// A file the change adds (for example a new test file).
-    AddedFile,
-    /// The commit message and the list of changed paths.
-    Commit,
-}
-
-impl ContextUnit {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Hunk => "hunk",
-            Self::File => "file",
-            Self::AddedFile => "added_file",
-            Self::Commit => "commit",
-        }
-    }
-}
-
-/// The one thing that holds a rule, in order of preference: a mechanical
-/// check or a literal yes/no Jev question.
+/// The one mechanical check that holds a rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Enforcer {
@@ -122,40 +68,6 @@ pub enum Enforcer {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         surfaces: Vec<String>,
     },
-    /// A literal yes/no question for Jev. Yes means the rule is broken.
-    Question {
-        question: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        yes_means: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        no_means: Option<String>,
-        #[serde(default)]
-        unit: ContextUnit,
-        #[serde(default = "default_model")]
-        model: String,
-        /// Answers are recorded and shown, never enforced, until the owner
-        /// accepts a promotion draft.
-        #[serde(default = "default_true")]
-        shadow: bool,
-        /// Probability of yes, in basis points, at or above which the answer
-        /// flags the rule.
-        #[serde(default = "default_threshold")]
-        threshold_bp: u16,
-        /// Confidence (distance from even odds, in basis points) below which
-        /// the answer is too uncertain to act on.
-        #[serde(default = "default_confidence_bar")]
-        confidence_bar_bp: u16,
-        /// Distinct commits of shadow answers before promotion is considered.
-        #[serde(default = "default_promote_after")]
-        promote_after: u32,
-        /// Precision (accepted over labelled flags) a promotion needs.
-        #[serde(default = "default_precision_bar")]
-        precision_bar_bp: u16,
-    },
-}
-
-fn default_model() -> String {
-    DEFAULT_JEV_MODEL.into()
 }
 
 fn default_true() -> bool {
@@ -166,30 +78,7 @@ fn is_true(value: &bool) -> bool {
     *value
 }
 
-fn default_threshold() -> u16 {
-    5_000
-}
-
-fn default_confidence_bar() -> u16 {
-    4_000
-}
-
-fn default_promote_after() -> u32 {
-    50
-}
-
-fn default_precision_bar() -> u16 {
-    9_000
-}
-
 impl Enforcer {
-    pub fn family(&self) -> EnforcerFamily {
-        match self {
-            Self::Question { .. } => EnforcerFamily::Question,
-            _ => EnforcerFamily::Mechanical,
-        }
-    }
-
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Ast { .. } => "ast",
@@ -200,7 +89,6 @@ impl Enforcer {
             Self::Drive { .. } => "drive",
             Self::DesignTokens { .. } => "design_tokens",
             Self::PublicSurface { .. } => "public_surface",
-            Self::Question { .. } => "question",
         }
     }
 
@@ -251,37 +139,6 @@ impl Enforcer {
                 }
                 Ok(())
             }
-            Self::Question {
-                question,
-                yes_means,
-                no_means,
-                model,
-                threshold_bp,
-                confidence_bar_bp,
-                precision_bar_bp,
-                ..
-            } => {
-                require_text(question)?;
-                require_text(model)?;
-                for text in [yes_means, no_means].into_iter().flatten() {
-                    require_text(text)?;
-                }
-                if question.len() > 1_000 {
-                    return Err(DomainError::InvalidField(
-                        "a Jev question must be one literal question under 1000 bytes",
-                    ));
-                }
-                if *threshold_bp == 0
-                    || *threshold_bp > 10_000
-                    || *confidence_bar_bp > 10_000
-                    || *precision_bar_bp > 10_000
-                {
-                    return Err(DomainError::InvalidField(
-                        "question thresholds are basis points from 1 to 10000",
-                    ));
-                }
-                Ok(())
-            }
         }
     }
 }
@@ -322,7 +179,7 @@ pub enum RuleSourceKind {
     Owner,
     /// One of Whetstone's starter rules.
     Starter,
-    /// Replaces a recurring Jev flag with a mechanical check.
+    /// Replaces a recurring flag with a mechanical check.
     Hardening,
     /// Migrated from an earlier record or rule file.
     Migration,
@@ -365,27 +222,6 @@ impl RuleSource {
             reference: None,
             provenance: Vec::new(),
         }
-    }
-}
-
-/// What may leave the machine when a question runs.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Privacy {
-    /// Paths whose text is never sent (replaced by a placeholder).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub redact_globs: Vec<String>,
-    /// Regular expressions whose matches are replaced before sending.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub redact_patterns: Vec<String>,
-    /// Never call Jev for this rule; it routes to review instead.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub local_only: bool,
-}
-
-impl Privacy {
-    pub fn is_default(&self) -> bool {
-        self == &Self::default()
     }
 }
 
@@ -512,13 +348,6 @@ pub struct Rule {
     /// Repository paths or globs the rule applies to; empty means everywhere.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
-    #[serde(default, skip_serializing_if = "Privacy::is_default")]
-    pub privacy: Privacy,
-    /// Recorded and shown, never enforced, whatever the enforcer, until the
-    /// owner accepts a promotion draft (a rule drafted from a lesson starts
-    /// here). A question rule's own `shadow` works the same way.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub shadow: bool,
     /// How a night sweep works this rule's flags; absent means discuss.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sweep: Option<SweepClass>,
@@ -556,18 +385,6 @@ impl Rule {
             }
         }
         bounded_paths(&self.paths)?;
-        bounded_paths(&self.privacy.redact_globs)?;
-        if self.privacy.redact_patterns.len() > MAX_RULE_LIST_ITEMS {
-            return Err(DomainError::InvalidField("too many redaction patterns"));
-        }
-        for pattern in &self.privacy.redact_patterns {
-            require_text(pattern)?;
-            if regex::Regex::new(pattern).is_err() {
-                return Err(DomainError::InvalidField(
-                    "a redaction pattern is not a valid regular expression",
-                ));
-            }
-        }
         if let Some(reference) = &self.source.reference {
             require_text(reference)?;
         }
@@ -597,12 +414,6 @@ impl Rule {
                 .paths
                 .iter()
                 .any(|pattern| super::entry_point_matches(pattern.trim_start_matches("./"), path))
-    }
-
-    /// Whether the rule is in shadow (recorded, not enforced): the rule's
-    /// own flag, or a question rule's.
-    pub fn in_shadow(&self) -> bool {
-        self.shadow || matches!(self.enforcer, Enforcer::Question { shadow: true, .. })
     }
 
     /// How a sweep works this rule's flags (discuss when unset).
@@ -667,8 +478,6 @@ impl Rule {
                 provenance: Vec::new(),
             },
             paths: Vec::new(),
-            privacy: Privacy::default(),
-            shadow: false,
             sweep: None,
             sweep_priority: None,
             sweep_unsure: Vec::new(),
@@ -677,28 +486,30 @@ impl Rule {
 }
 
 /// Fields of stored rule revisions that the current model drops on read.
-const DROPPED_RULE_FIELDS: &[&str] = &["hand_raise"];
+const DROPPED_RULE_FIELDS: &[&str] = &["hand_raise", "privacy", "shadow"];
 /// Enforcer kinds of stored rule revisions that nothing holds any more.
-const RETIRED_ENFORCERS: &[&str] = &["review", "brief"];
+const RETIRED_ENFORCERS: &[&str] = &["review", "brief", "question"];
 
 /// How [`Rule::from_stored`] reads a stored rule revision.
 pub(super) enum StoredRead {
     /// Read as this rule.
     Mapped(Box<Rule>),
-    /// Held by an enforcer that is gone: kept as history only.
+    /// Held by an enforcer that is gone, or recorded in shadow and never
+    /// enforced: kept as history only.
     Retired,
 }
 
 impl Rule {
     /// Read a stored rule revision that does not parse as a current rule:
-    /// one held by a retired enforcer is history, and otherwise the dropped
-    /// fields are ignored. `None` when the revision is not of either shape
+    /// one held by a retired enforcer or in shadow is history, and otherwise
+    /// the dropped fields are ignored. `None` when the revision is not of either shape
     /// (it is then malformed).
     pub(super) fn from_stored(record: &serde_json::Value) -> Option<StoredRead> {
         let kind = record
             .pointer("/enforcer/kind")
             .and_then(serde_json::Value::as_str);
-        if kind.is_some_and(|kind| RETIRED_ENFORCERS.contains(&kind)) {
+        let shadow = record.get("shadow") == Some(&serde_json::Value::Bool(true));
+        if shadow || kind.is_some_and(|kind| RETIRED_ENFORCERS.contains(&kind)) {
             return Some(StoredRead::Retired);
         }
         let mut fields = record.as_object()?.clone();

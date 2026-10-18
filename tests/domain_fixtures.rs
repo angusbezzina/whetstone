@@ -1,7 +1,7 @@
 //! The direction fixture catalogue (`fixtures/direction_cases.json`) run
 //! against the domain: rule v2 validation (one strength, exactly one
-//! enforcer, shadow questions, privacy, examples), receipts, earlier rules
-//! read through their migration, and retired kinds that are read exactly but
+//! enforcer, examples), receipts, earlier rules and stored rule revisions
+//! read through their mapping, and retired kinds that are read exactly but
 //! never written. The published schemas are checked against the same types.
 
 use std::collections::BTreeSet;
@@ -34,10 +34,7 @@ fn envelope(case: &Value) -> Value {
         "fixture.{}",
         case["id"].as_str().expect("case id").to_ascii_lowercase()
     );
-    let receipt = matches!(
-        case["record_type"].as_str(),
-        Some("judgment" | "verification_receipt")
-    );
+    let receipt = matches!(case["record_type"].as_str(), Some("verification_receipt"));
     json!({
         "schema_version": 1,
         "id": id,
@@ -85,11 +82,8 @@ fn the_catalogue_is_versioned_unique_and_covers_every_expectation() {
         .map(|case| case["expect"].as_str().expect("expect").to_string())
         .collect::<BTreeSet<_>>();
     assert_eq!(used, expectations, "every expectation is exercised");
-    // Every enforcer family and every retired kind the catalogue names is real.
+    // Every retired kind the catalogue names is real.
     for case in &cases {
-        if let Some(family) = case["family"].as_str() {
-            assert!(["mechanical", "question"].contains(&family));
-        }
         if case["expect"] == "retired" {
             let kind = case["record_type"].as_str().expect("type");
             assert!(
@@ -196,7 +190,7 @@ fn every_case_meets_its_expectation() {
 }
 
 #[test]
-fn rule_cases_keep_their_family_shadow_privacy_and_defaults() {
+fn rule_cases_keep_their_strength_and_examples() {
     for case in cases() {
         if case["expect"] != "valid" && case["expect"] != "stored" {
             continue;
@@ -205,35 +199,11 @@ fn rule_cases_keep_their_family_shadow_privacy_and_defaults() {
         let record: AgreementRecord =
             serde_json::from_value(envelope(&case)).expect("valid case parses");
         let Some(rule) = record.body.rule_view() else {
-            assert!(
-                case.get("family").is_none(),
-                "{id} names a family but is no rule"
-            );
             continue;
         };
         rule.validate().expect("the rule view is a valid v2 rule");
-        if let Some(family) = case["family"].as_str() {
-            assert_eq!(rule.enforcer.family().label(), family, "{id}");
-        }
-        assert_eq!(
-            rule.in_shadow(),
-            case["shadow"].as_bool().unwrap_or(false),
-            "{id}: only a question in shadow is recorded without being enforced"
-        );
-        assert_eq!(
-            rule.privacy.local_only,
-            case["local_only"].as_bool().unwrap_or(false),
-            "{id}"
-        );
         if let Some(strength) = case["rule_view_strength"].as_str() {
             assert_eq!(rule.strength.label(), strength, "{id}");
-        }
-        if let Some(expected) = case.get("serializes_enforcer_as") {
-            assert_eq!(
-                &serde_json::to_value(&rule.enforcer).expect("enforcer JSON"),
-                expected,
-                "{id}: question defaults are written out"
-            );
         }
         if case["record_type"] == "rule" {
             assert_eq!(
@@ -272,7 +242,6 @@ fn each_enforcer_kind_parses_alone_and_matches_the_published_rule_schema() {
         json!({"kind": "drive", "feature": "feature.dashboard"}),
         json!({"kind": "design_tokens", "tokens": "assets/tokens.css"}),
         json!({"kind": "public_surface"}),
-        json!({"kind": "question", "question": "Is this public?"}),
     ];
     let mut kinds = Vec::new();
     for value in minimal {
@@ -346,7 +315,7 @@ fn the_record_schema_lists_current_kinds_and_retires_the_removed_ones() {
             "{kind} is still writable in the schema"
         );
     }
-    for kind in ["mission", "principle", "rule", "judgment", "flag_decision"] {
+    for kind in ["mission", "principle", "rule"] {
         assert!(writable.contains(kind), "{kind} is not published");
         assert_eq!(
             schema["$defs"][kind]["additionalProperties"], false,

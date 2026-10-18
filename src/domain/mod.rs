@@ -5,9 +5,10 @@
 //!
 //! Removed record kinds (values and philosophy, metrics, exceptions,
 //! mandates, activation, observations, repair sessions, team decisions,
-//! raised hands, review attestations, briefs and earlier guidance) stay
-//! readable as [`RetiredRecord`]s with their original bytes and digests, so
-//! history is never rewritten; they can no longer be created.
+//! raised hands, review attestations, briefs, earlier guidance, Jev
+//! judgments and flag labels) stay readable as [`RetiredRecord`]s with their
+//! original bytes and digests, so history is never rewritten; they can no
+//! longer be created.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -116,8 +117,6 @@ impl AgreementRecord {
                 links.extend(body.replacement.clone());
             }
             RecordBody::LocalReview(body) => links.push(body.proposal.clone()),
-            RecordBody::Judgment(body) => links.push(body.rule.clone()),
-            RecordBody::FlagDecision(body) => links.push(body.receipt.clone()),
             _ => {}
         }
         links
@@ -401,6 +400,8 @@ pub const RETIRED_KINDS: &[&str] = &[
     "attestation",
     "brief",
     "guidance",
+    "judgment",
+    "flag_decision",
 ];
 
 /// A record of a removed kind, kept exactly as stored so its digest still
@@ -455,8 +456,6 @@ pub enum RecordBody {
     LocalReview(LocalReview),
     Retirement(Retirement),
     VerificationReceipt(VerificationReceipt),
-    Judgment(JudgmentReceipt),
-    FlagDecision(FlagDecision),
     Lesson(Lesson),
     LessonCheck(LessonCheck),
     Retired(RetiredRecord),
@@ -475,8 +474,6 @@ enum BodyRef<'a> {
     LocalReview(&'a LocalReview),
     Retirement(&'a Retirement),
     VerificationReceipt(&'a VerificationReceipt),
-    Judgment(&'a JudgmentReceipt),
-    FlagDecision(&'a FlagDecision),
     Lesson(&'a Lesson),
     LessonCheck(&'a LessonCheck),
 }
@@ -494,8 +491,6 @@ enum BodyOwned {
     LocalReview(LocalReview),
     Retirement(Retirement),
     VerificationReceipt(VerificationReceipt),
-    Judgment(JudgmentReceipt),
-    FlagDecision(FlagDecision),
     Lesson(Lesson),
     LessonCheck(LessonCheck),
 }
@@ -525,8 +520,6 @@ impl Serialize for RecordBody {
             Self::LocalReview(value) => BodyRef::LocalReview(value),
             Self::Retirement(value) => BodyRef::Retirement(value),
             Self::VerificationReceipt(value) => BodyRef::VerificationReceipt(value),
-            Self::Judgment(value) => BodyRef::Judgment(value),
-            Self::FlagDecision(value) => BodyRef::FlagDecision(value),
             Self::Lesson(value) => BodyRef::Lesson(value),
             Self::LessonCheck(value) => BodyRef::LessonCheck(value),
         };
@@ -581,8 +574,6 @@ impl<'de> Deserialize<'de> for RecordBody {
             BodyOwned::LocalReview(value) => Self::LocalReview(value),
             BodyOwned::Retirement(value) => Self::Retirement(value),
             BodyOwned::VerificationReceipt(value) => Self::VerificationReceipt(value),
-            BodyOwned::Judgment(value) => Self::Judgment(value),
-            BodyOwned::FlagDecision(value) => Self::FlagDecision(value),
             BodyOwned::Lesson(value) => Self::Lesson(value),
             BodyOwned::LessonCheck(value) => Self::LessonCheck(value),
         })
@@ -603,8 +594,6 @@ impl RecordBody {
             Self::LocalReview(_) => "local_review",
             Self::Retirement(_) => "retirement",
             Self::VerificationReceipt(_) => "verification_receipt",
-            Self::Judgment(_) => "judgment",
-            Self::FlagDecision(_) => "flag_decision",
             Self::Lesson(_) => "lesson",
             Self::LessonCheck(_) => "lesson_check",
             Self::Retired(retired) => &retired.record_type,
@@ -626,10 +615,7 @@ impl RecordBody {
 
     /// Operational evidence rather than agreement content or a decision.
     pub fn is_receipt(&self) -> bool {
-        matches!(
-            self,
-            Self::VerificationReceipt(_) | Self::Judgment(_) | Self::LessonCheck(_)
-        )
+        matches!(self, Self::VerificationReceipt(_) | Self::LessonCheck(_))
     }
 
     pub(crate) fn validate(&self) -> Result<(), DomainError> {
@@ -648,8 +634,6 @@ impl RecordBody {
                 require_text(&value.reason)
             }
             Self::VerificationReceipt(value) => value.validate(),
-            Self::Judgment(value) => value.validate(),
-            Self::FlagDecision(value) => value.validate(),
             Self::Lesson(value) => value.validate(),
             Self::LessonCheck(value) => value.validate(),
             // History is kept as stored; its digest is verified on read.
