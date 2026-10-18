@@ -40,7 +40,7 @@ This repository's rules are kept by Whetstone (`wh`); every agent follows them t
 
 - Before each commit run `wh check --staged --json`; before pushing, `wh check --base {default_branch} --json`.
 - Read the envelope: `state` (`success`, `violated`, `unknown`, ...), each rule in `data.gates[]` with its `state`, `failures` and `evidence`, and `permitted_actions`.
-- A failed must rule blocks: repair the code, never the rule, and check again. A should rule's flag is repaired or left for a person.
+- A failed must rule blocks: repair the code, never the rule, and check again, even when the task asked for the breach. If the task cannot be done without it, raise a hand (`wh check --raise-hand`). A should rule's flag is repaired or left for a person.
 - To understand a finding or a rule: `wh explain <fingerprint or rule id> --json` gives the rule, its enforcer and the decision that accepted it.
 - To change a rule: `wh change --kind rule ... --probe --json` with a `--rationale`, then stop; a person accepts drafts in `wh dash`.
 - To devise rules from prose (CONTRIBUTING, a style guide, review comments): `wh change --kind rule --from-file <path> --json` returns probed drafts and the candidates that still need an enforcer. Give each an enforcer, `--probe` it until it matches what it should, record the draft, and stop for a person to accept.
