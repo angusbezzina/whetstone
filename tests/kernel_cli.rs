@@ -2970,3 +2970,82 @@ fn gate_log(response: &serde_json::Value, gate: &serde_json::Value) -> String {
         .expect("log evidence");
     std::fs::read_to_string(root.join(locator)).expect("gate log")
 }
+
+#[test]
+fn wire_writes_the_agent_contract_and_the_script_scaffold_once() {
+    let repo = Repo::new();
+    repo.write("CLAUDE.md", "See AGENTS.md.\n");
+    repo.write("AGENTS.md", "# Our agents\n\nTeam text stays.\n");
+    repo.commit("base");
+    let agreed = repo.agree("wire-agreement", &AGREEMENT);
+    assert_eq!(
+        agreed["data"]["progress"]["agreement_complete"], true,
+        "{agreed}"
+    );
+
+    let wired = repo.wh_json(&["init", "--action", "wire", "--host", "agents"]);
+    assert_eq!(wired["state"], "success", "{wired}");
+    assert_eq!(wired["data"]["agent_contract"]["status"], "written");
+    let agents = std::fs::read_to_string(repo.root.join("AGENTS.md")).expect("AGENTS.md");
+    assert!(
+        agents.starts_with(
+            "# Our agents\n\nTeam text stays.\n\n<!-- whetstone:agent-contract:start -->"
+        ),
+        "{agents}"
+    );
+    assert!(agents.contains("wh check --staged --json"));
+    assert!(agents.contains("wh explain"));
+    assert!(agents.contains("--probe"));
+    assert!(agents.contains("whetstone/checks/README.md"));
+    let block_lines = agents
+        .lines()
+        .skip_while(|line| !line.contains("agent-contract:start"))
+        .take_while(|line| !line.contains("agent-contract:end"))
+        .count();
+    assert!(block_lines < 25, "the contract is {block_lines} lines");
+    assert_eq!(
+        std::fs::read_to_string(repo.root.join("CLAUDE.md")).expect("CLAUDE.md"),
+        "See AGENTS.md.\n",
+        "a CLAUDE.md that links to AGENTS.md is left alone"
+    );
+    assert!(repo.root.join("whetstone/checks/README.md").is_file());
+    assert!(repo
+        .root
+        .join("whetstone/checks/no-conflict-markers.sh")
+        .is_file());
+
+    // A second wire changes nothing.
+    let again = repo.wh_json(&["init", "--action", "wire", "--host", "agents"]);
+    assert_eq!(
+        again["data"]["agent_contract"]["status"], "unchanged",
+        "{again}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.root.join("AGENTS.md")).expect("AGENTS.md"),
+        agents
+    );
+
+    // Text inside the markers is Whetstone's; text outside is the team's.
+    let edited =
+        agents.replace("every agent follows them", "EDITED") + "\n## Added later\n\nAlso kept.\n";
+    std::fs::write(repo.root.join("AGENTS.md"), &edited).expect("edit");
+    std::fs::write(repo.root.join("whetstone/checks/README.md"), "ours now\n").expect("edit");
+    let rewired = repo.wh_json(&["init", "--action", "wire", "--host", "agents"]);
+    assert_eq!(rewired["data"]["agent_contract"]["status"], "updated");
+    let fixed = std::fs::read_to_string(repo.root.join("AGENTS.md")).expect("AGENTS.md");
+    assert!(!fixed.contains("EDITED"));
+    assert!(fixed.contains("## Added later\n\nAlso kept.\n"));
+    assert!(fixed.starts_with("# Our agents\n\nTeam text stays.\n"));
+    assert_eq!(
+        std::fs::read_to_string(repo.root.join("whetstone/checks/README.md")).expect("README"),
+        "ours now\n",
+        "the scaffold is the team's once written"
+    );
+
+    // Once the scaffold exists, init offers its example as a starter rule.
+    let inspect = repo.wh_json(&["init"]);
+    assert!(
+        inspect.to_string().contains("rule.no-conflict-markers"),
+        "{inspect}"
+    );
+}

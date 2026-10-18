@@ -200,6 +200,29 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
             "scaffolded once; team-owned",
         ));
     }
+    // The agent contract in AGENTS.md: any agent reads it, whatever its host.
+    let contract_block = crate::contract::block(&crate::contract::default_branch(root));
+    let existing_contract = fs::read_to_string(root.join(crate::contract::FILE)).ok();
+    let (contract_text, contract_outcome) =
+        crate::contract::merged(existing_contract.as_deref(), &contract_block);
+    if contract_outcome != crate::contract::Outcome::Unchanged {
+        writes.push((
+            crate::contract::FILE.to_string(),
+            contract_text,
+            "agents",
+            "merged; text outside the Whetstone markers is kept",
+        ));
+    }
+    // Script enforcers: the contract and one working example, once.
+    let scaffold = crate::scripts::missing_scaffold(root);
+    for (path, text) in &scaffold {
+        writes.push((
+            (*path).to_string(),
+            (*text).to_string(),
+            "repository",
+            "scaffolded once; team-owned",
+        ));
+    }
     let mut integration_notes = Vec::new();
     let mut git_hooks = Vec::new();
     if request.hooks {
@@ -317,6 +340,10 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
             "footprint": footprint,
             "integrations": integration_notes,
             "git_hooks": git_hooks,
+            "agent_contract": {
+                "path": crate::contract::FILE,
+                "status": contract_outcome.label(),
+            },
             "preview": generated.first().map(|file| file.contents.clone()),
         });
         return response;
@@ -338,9 +365,20 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
         );
     }
     #[cfg(unix)]
-    if !driver_exists || request.regenerate_driver {
+    {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&driver_path, fs::Permissions::from_mode(0o755));
+        if !driver_exists || request.regenerate_driver {
+            let _ = fs::set_permissions(&driver_path, fs::Permissions::from_mode(0o755));
+        }
+        if scaffold
+            .iter()
+            .any(|(path, _)| *path == crate::scripts::EXAMPLE)
+        {
+            let _ = fs::set_permissions(
+                root.join(crate::scripts::EXAMPLE),
+                fs::Permissions::from_mode(0o755),
+            );
+        }
     }
     let manifest = SkillManifest {
         agreement_digest: agreement_digest.clone(),
@@ -414,6 +452,15 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
         "footprint": footprint,
         "integrations": integration_notes,
         "git_hooks": git_hooks,
+        "agent_contract": {
+            "path": crate::contract::FILE,
+            "status": contract_outcome.label(),
+        },
+        "scripts": {
+            "directory": crate::scripts::DIRECTORY,
+            "contract": crate::scripts::README,
+            "scaffolded": scaffold.iter().map(|(path, _)| *path).collect::<Vec<_>>(),
+        },
     });
     response
 }

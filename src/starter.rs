@@ -14,6 +14,7 @@ use crate::domain::{
 pub const PROVE_IT_WORKS: &str = "rule.prove-it-works";
 pub const ASK_BEFORE_PUBLIC_API: &str = "rule.ask-before-public-api";
 pub const TESTS_ONLY_WHEN_ASKED: &str = "rule.tests-only-when-asked";
+pub const NO_CONFLICT_MARKERS: &str = "rule.no-conflict-markers";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Starter {
@@ -205,7 +206,7 @@ pub fn starters(root: &Path) -> Vec<Starter> {
         sweep_priority: None,
         sweep_unsure: Vec::new(),
     };
-    vec![
+    let mut offered = vec![
         Starter {
             id: PROVE_IT_WORKS,
             title: "Prove it works before done",
@@ -231,7 +232,60 @@ pub fn starters(root: &Path) -> Vec<Starter> {
             detected: "Asks Jev about each new test file at pre-push, in shadow: answers are recorded, not enforced, until you promote it.".into(),
             rule: tests,
         },
-    ]
+    ];
+    // Once wiring has written the script scaffold, its example is a rule too.
+    if root.join(crate::scripts::EXAMPLE).is_file() {
+        offered.push(Starter {
+            id: NO_CONFLICT_MARKERS,
+            title: "No leftover merge conflict markers",
+            detected: format!(
+                "Runs the script {} (a script enforcer; contract in {}) on the staged files at pre-commit and on every change at pre-push.",
+                crate::scripts::EXAMPLE,
+                crate::scripts::README
+            ),
+            rule: conflict_markers(),
+        });
+    }
+    offered
+}
+
+/// The script starter: the scaffold's example as a must rule.
+fn conflict_markers() -> Rule {
+    Rule {
+        schema: RULE_SCHEMA_V2.into(),
+        statement: "Never commit a leftover merge conflict marker.".into(),
+        rationale: "A marker left from a merge breaks the file for everyone, and no linter for every language catches it.".into(),
+        strength: Strength::Must,
+        enforcer: Enforcer::Validator {
+            command: crate::scripts::EXAMPLE_COMMAND.into(),
+        },
+        examples: vec![
+            example(
+                "fn main() {}\n",
+                ExampleVerdict::Pass,
+                "No line starts a conflict marker.",
+                Some("src/main.rs"),
+            ),
+            example(
+                "<<<<<<< HEAD\nfn main() {}\n=======\nfn main() { run() }\n>>>>>>> topic\n",
+                ExampleVerdict::Flag,
+                "The merge was left unresolved.",
+                Some("src/main.rs"),
+            ),
+        ],
+        source: RuleSource {
+            kind: RuleSourceKind::Starter,
+            reference: Some(crate::scripts::EXAMPLE.into()),
+            provenance: Vec::new(),
+        },
+        paths: Vec::new(),
+        hand_raise: Vec::new(),
+        privacy: Privacy::default(),
+        shadow: false,
+        sweep: None,
+        sweep_priority: None,
+        sweep_unsure: Vec::new(),
+    }
 }
 
 #[cfg(test)]
