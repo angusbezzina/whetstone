@@ -14,9 +14,9 @@ in priority order, simple, customisable, versatile, strong and scalable.
 
 ## The plan
 
-1. **Agree the rules once.** `wh init` installs or detects Beads and pstack,
-   offers three starter rules, and turns the owner's mission, chosen pstack
-   principles and exemplar codebases into proposed rules. The owner accepts
+1. **Agree the rules once.** `wh init` installs or detects Beads,
+   offers three starter rules, and turns the owner's mission and chosen
+   pstack principles into proposed rules. The owner accepts
    each one. Accepted rules are Beads records.
 2. **Enforce each rule the cheapest reliable way.** Each rule has one
    strength (must, should or advisory) and exactly one enforcer:

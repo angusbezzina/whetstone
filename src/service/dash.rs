@@ -5,7 +5,6 @@ use serde_json::{json, Value};
 
 use crate::agreement::AgreementState;
 use crate::history::{HistoryError, HistoryInspectionRequest, HistoryInspectionService};
-use crate::onboarding;
 use crate::projection;
 use crate::storage::{ProjectLayout, StorageError};
 
@@ -26,16 +25,6 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
     ) {
         Ok(value) => value,
         Err(summary) => return unknown_response("dash", "invalid-request-id".into(), summary),
-    };
-    let setup = match onboarding::inspect(layout.project_root()) {
-        Ok(value) => value,
-        Err(error) => {
-            return unknown_response(
-                "dash",
-                request_id,
-                format!("Project inspection failed without changing state: {error:?}"),
-            )
-        }
     };
     let as_of = request.as_of.unwrap_or_else(utc_now);
     let page_size = request.page_size.clamp(1, 200);
@@ -172,7 +161,6 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
         "required_workflow": layout.project_root().join(crate::wire::CI_WORKFLOW).is_file(),
     });
     response.data = json!({
-        "setup": setup,
         "progress": progress,
         "progress_state": "available",
         "history": history,

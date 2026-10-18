@@ -71,9 +71,7 @@ resume token. A retry with the same request ID must keep the same input.
 - `wh init --action agree` records the owner's agreement: `--mission`,
   optional `--principle <pstack id>` and `--custom-principle`, and
   `--starter <id|all>`. Pass only answers the owner gave you.
-  `--action setup` detects Beads and pstack and (with `--yes`) installs Beads;
-  `--action exemplar --from <path>` turns a codebase the owner admires into
-  rule drafts.
+  `--action setup` detects Beads and (with `--yes`) installs it.
 - `wh init --action wire --hooks` installs the git pre-commit and pre-push
   hooks. `--ci` adds the required CI status.
 - `wh change` drafts, previews, accepts, withdraws or retires records

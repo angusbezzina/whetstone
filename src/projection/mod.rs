@@ -46,7 +46,7 @@ pub struct Header {
     pub team: &'static str,
 }
 
-/// One onboarding step: mission, principles, exemplars, starter rules, gates.
+/// One onboarding step: tools, mission, principles, starter rules, gates.
 #[derive(Debug, Clone, Serialize)]
 pub struct OnboardingStep {
     pub key: &'static str,

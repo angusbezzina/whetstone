@@ -578,17 +578,7 @@ fn an_unestablished_project_shows_onboarding_and_no_removed_sections() {
         .iter()
         .map(|step| step["key"].as_str().expect("key"))
         .collect::<Vec<_>>();
-    assert_eq!(
-        steps,
-        [
-            "tools",
-            "mission",
-            "principles",
-            "exemplars",
-            "rules",
-            "gates"
-        ]
-    );
+    assert_eq!(steps, ["tools", "mission", "principles", "rules", "gates"]);
     let starters = view["onboarding"]["starters"].as_array().expect("starters");
     let ids = starters
         .iter()

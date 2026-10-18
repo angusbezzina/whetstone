@@ -450,10 +450,10 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
             };
             let source = match pstack {
                 Some(id) => {
-                    let catalogue = crate::catalogue::catalogue(layout.project_root());
+                    let catalogue = crate::catalogue::catalogue();
                     if catalogue.get(&id).is_none() {
                         return Err(format!(
-                            "{id} is not a pstack principle in the catalogue (pstack {}); pick one of its ids or leave pstack out for your own.",
+                            "{id} is not a principle in the catalogue (version {}); pick one of its ids or leave pstack out for your own.",
                             catalogue.version
                         ));
                     }

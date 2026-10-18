@@ -63,9 +63,8 @@ product's own dashboard files):
 
 1. **Home** (default): what needs the owner (flags to accept or
    dismiss, drafts), rule health, and one primary action. Before
-   `wh init`, it shows only onboarding: mission, principles, exemplar
-   codebases, then accepting each proposed rule with its examples, strength
-   and enforcer.
+   `wh init`, it shows only onboarding: mission, principles, then
+   accepting each proposed rule with its examples, strength and enforcer.
 2. **Rules** (replaces the five-stage Foundations): mission and principles,
    then rules grouped by strength, each showing its enforcer and where it
    runs. Editing creates a local draft with exact before/after
@@ -89,7 +88,7 @@ product's own dashboard files):
 
 ## Terminology
 
-Mission, principle (a pstack principle or the owner's own), exemplar codebase,
+Mission, principle (a pstack principle or the owner's own),
 rule (one strength must/should and one mechanical enforcer), flag,
 check (a run of rules), finding, local draft, accepted,
 superseded, owner.

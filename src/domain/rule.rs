@@ -117,8 +117,6 @@ pub enum RuleSourceKind {
     Mission,
     /// Derived from a principle record.
     Principle,
-    /// Distilled from an exemplar codebase.
-    Exemplar,
     /// Written by the owner.
     Owner,
     /// One of Whetstone's starter rules.
@@ -132,7 +130,6 @@ impl RuleSourceKind {
         match self {
             Self::Mission => "mission",
             Self::Principle => "principle",
-            Self::Exemplar => "exemplar",
             Self::Owner => "owner",
             Self::Starter => "starter",
             Self::Migration => "migration",
@@ -140,12 +137,12 @@ impl RuleSourceKind {
     }
 }
 
-/// Where a rule came from, with provenance for exemplars.
+/// Where a rule came from, with provenance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuleSource {
     pub kind: RuleSourceKind,
-    /// The principle id, exemplar locator, starter id or hardened rule id.
+    /// The principle id, starter id or other reference.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
     /// Exact files or commits read to derive the rule (never executed).
@@ -422,7 +419,7 @@ impl Rule {
 /// Fields of stored rule revisions that the current model drops on read.
 const DROPPED_RULE_FIELDS: &[&str] = &["hand_raise", "privacy", "shadow"];
 /// Source kinds of stored rule revisions that read as owner.
-const OWNER_SOURCES: &[&str] = &["hardening", "lesson"];
+const OWNER_SOURCES: &[&str] = &["hardening", "lesson", "exemplar"];
 /// Enforcer kinds of stored rule revisions that nothing holds any more.
 const RETIRED_ENFORCERS: &[&str] = &[
     "review",

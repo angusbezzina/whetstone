@@ -57,7 +57,7 @@ enum Command {
         /// What the project exists to do, in one sentence (agree).
         #[arg(long)]
         mission: Option<String>,
-        /// A pstack principle id from the catalogue (agree; repeatable).
+        /// A principle id from the catalogue (agree; repeatable).
         #[arg(long = "principle")]
         principles: Vec<String>,
         /// A principle in your own words (agree; repeatable).
@@ -73,16 +73,6 @@ enum Command {
         /// opening the dashboard's guided onboarding (inspect).
         #[arg(long)]
         no_open: bool,
-        /// Agent host whose pstack skills to detect: claude, cursor, codex or
-        /// agents (setup; repeatable).
-        #[arg(long = "host")]
-        hosts: Vec<String>,
-        /// A directory to read: an exemplar codebase (exemplar).
-        #[arg(long = "from")]
-        import_from: Option<PathBuf>,
-        /// A Git URL of an exemplar codebase, cloned shallowly with hooks off (exemplar).
-        #[arg(long = "url")]
-        exemplar_url: Option<String>,
         /// Install the Git pre-commit and pre-push gates (wire).
         #[arg(long)]
         hooks: bool,
@@ -309,7 +299,6 @@ enum InitActionArg {
     Cancel,
     Wire,
     Setup,
-    Exemplar,
     Store,
 }
 
@@ -321,7 +310,6 @@ impl From<InitActionArg> for InitAction {
             InitActionArg::Cancel => Self::Cancel,
             InitActionArg::Wire => Self::Wire,
             InitActionArg::Setup => Self::Setup,
-            InitActionArg::Exemplar => Self::Exemplar,
             InitActionArg::Store => Self::Store,
         }
     }
@@ -392,9 +380,6 @@ pub fn run() -> i32 {
             starters,
             dry_run,
             no_open,
-            hosts,
-            import_from,
-            exemplar_url,
             hooks,
             ci,
             yes,
@@ -417,9 +402,6 @@ pub fn run() -> i32 {
                 custom_principles,
                 starters,
                 dry_run,
-                hosts,
-                import_from,
-                exemplar_url,
                 hooks,
                 ci,
                 yes,
@@ -794,7 +776,7 @@ fn format_onboarding_intro(response: &ServiceResponse, url: &str) -> String {
     format!(
         "Whetstone · init · no agreement here yet\n\n\
          Still needed: {missing}. An agreement is a one-line mission and the rules your\n\
-         agent works under; principles from pstack and exemplar repositories are optional.\n\
+         agent works under; principles from the catalogue are optional.\n\
          Nothing is shared, published or committed: recording it writes private state\n\
          inside this repository's Git directory, and no working-tree files.\n\n\
          The dashboard walks you through it, then stays open as your project view:\n\
@@ -1023,7 +1005,7 @@ fn format_init_walkthrough(response: &ServiceResponse) -> Option<String> {
     }
     let _ = writeln!(
         out,
-        "\nRecord it either way:\n\n  wh init        opens the dashboard (so does wh dash), walks you through it,\n                 shows the exact records before saving, then records them.\n\n  wh init --action agree --expected-revision {} --resume <token> \\\n    --mission \"…\" [--principle <pstack id>]... [--custom-principle \"…\"]... \\\n    --starter all\n                 records the same thing without the dashboard. Add --dry-run to\n                 see the exact records first.",
+        "\nRecord it either way:\n\n  wh init        opens the dashboard (so does wh dash), walks you through it,\n                 shows the exact records before saving, then records them.\n\n  wh init --action agree --expected-revision {} --resume <token> \\\n    --mission \"…\" [--principle <catalogue id>]... [--custom-principle \"…\"]... \\\n    --starter all\n                 records the same thing without the dashboard. Add --dry-run to\n                 see the exact records first.",
         response.expected_revision.unwrap_or(0)
     );
     if let Some(token) = &response.resume_token {

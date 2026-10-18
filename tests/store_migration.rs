@@ -581,7 +581,7 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
         "the move's --yes tried no install: {}",
         flipped.data
     );
-    // Tool setup may still need a person (pstack is not installed here), so
+    // Tool setup may still need a person (the virgil CLI may not answer), so
     // the move is read from the switch's own answer inside setup's.
     assert!(
         matches!(

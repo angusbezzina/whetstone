@@ -452,17 +452,7 @@ fn init_is_resumable_and_duplicate_requests_never_duplicate_records() {
         .iter()
         .map(|step| step["key"].as_str().expect("step key"))
         .collect::<Vec<_>>();
-    assert_eq!(
-        steps,
-        [
-            "tools",
-            "mission",
-            "principles",
-            "exemplars",
-            "rules",
-            "gates"
-        ]
-    );
+    assert_eq!(steps, ["tools", "mission", "principles", "rules", "gates"]);
     assert!(handoff["data"]["onboarding"]["starters"]
         .as_array()
         .expect("starters")
@@ -664,10 +654,6 @@ fn init_needs_a_mission_and_names_only_catalogue_principles_and_starters() {
     .expect("write inert imported content");
     let handoff = repo.wh_json(&["init", "--request-id", "explicit-input"]);
     assert_eq!(handoff["state"], "needs_input");
-    assert_eq!(
-        handoff["data"]["setup"]["executable_access"][0],
-        "none during inspection; an accepted rule's command runs only in wh check and the Git hooks"
-    );
     assert!(!repo.root.join(".git/whetstone").exists());
     let token = handoff["resume_token"].as_str().expect("token").to_string();
     let agree = |extra: &[&str]| {
@@ -704,7 +690,7 @@ fn init_needs_a_mission_and_names_only_catalogue_principles_and_starters() {
                 "--principle",
                 "not-a-principle",
             ],
-            "not-a-principle is not a pstack principle",
+            "not-a-principle is not a principle in the catalogue",
         ),
         (
             [
@@ -1041,15 +1027,6 @@ fn init_inspect_and_cancel_from_nested_directory_are_read_only() {
         } else {
             assert_eq!(output.status.code(), Some(6));
         }
-        let response = json(&output);
-        assert_eq!(
-            response["data"]["setup"]["project_root"],
-            temp.path()
-                .canonicalize()
-                .expect("root")
-                .to_string_lossy()
-                .as_ref()
-        );
         assert_eq!(git_status(temp.path()), before);
         assert!(!temp.path().join(".git/whetstone").exists());
         assert!(!nested.join(".git").exists());

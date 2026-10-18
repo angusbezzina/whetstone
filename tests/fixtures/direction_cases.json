@@ -97,7 +97,7 @@
           { "input": "let x = y.unwrap();", "expected": "flag", "reason": "unwrap panics", "path": "src/lib.rs" },
           { "input": "let x = y?;", "expected": "pass", "reason": "propagates the error" }
         ],
-        "source": { "kind": "exemplar", "reference": "https://example.test/repo", "provenance": [{ "system": "git", "locator": "src/lib.rs" }] }
+        "source": { "kind": "owner", "provenance": [{ "system": "git", "locator": "src/lib.rs" }] }
       },
       "expect": "valid"
     },
@@ -232,6 +232,21 @@
         "strength": "should",
         "enforcer": { "kind": "ast", "query": "(call) @match", "language": "python" },
         "source": { "kind": "lesson", "reference": "use-the-logger" }
+      },
+      "expect": "stored",
+      "rule_view_source": "owner"
+    },
+    {
+      "id": "R-022",
+      "name": "a stored rule distilled from an exemplar loads as the owner's",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "No unwrap in library code.",
+        "rationale": "Panics are not errors.",
+        "strength": "should",
+        "enforcer": { "kind": "lint", "tool": "cargo clippy", "code": "clippy::unwrap_used" },
+        "source": { "kind": "exemplar", "reference": "https://example.test/repo", "provenance": [{ "system": "git", "locator": "src/lib.rs" }] }
       },
       "expect": "stored",
       "rule_view_source": "owner"

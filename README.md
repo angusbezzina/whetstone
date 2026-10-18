@@ -13,9 +13,9 @@ system, and agents guessing instead of asking.
 
 ## How it works
 
-1. **Agree the rules once.** `wh init` installs or detects Beads and pstack,
-   offers the starter rules the repository can hold, and turns your mission,
-   principles and example codebases into proposed rules. You accept each one in the dashboard.
+1. **Agree the rules once.** `wh init` installs or detects Beads,
+   offers the starter rules the repository can hold, and turns your mission
+   and principles into proposed rules. You accept each one in the dashboard.
    Accepted rules are records in Beads.
 2. **Enforce each rule mechanically.** Every rule has one strength (must
    blocks the gate; should flags and becomes a sweep finding) and one
@@ -46,13 +46,11 @@ earlier `whetstone-k5r` plan.
 This is a pre-release. The six commands work against the Beads record store
 and the plan in epic `whetstone-ppq` is built:
 
-- **Setup.** `wh init --action setup` detects Beads and pstack, shows the
-  exact install commands, installs Beads after one confirmation (the pstack
-  installs are yours to run), and pins what
-  it found in `whetstone/tools.lock.json`. Onboarding asks for a one-line
-  mission, offers pstack's principles and the prove-it-works starter rule
-  when the repository has a test command, and turns exemplar codebases (`--action exemplar --from <path>`
-  or `--url <git url>`) into rule drafts with provenance.
+- **Setup.** `wh init --action setup` detects Beads, shows the exact install
+  command, and installs `bd` 1.3.0 or later after one confirmation.
+  Onboarding asks for a one-line mission, offers the principles of the
+  catalogue compiled into `wh` (pstack's) and the prove-it-works starter
+  rule when the repository has a test command.
 - **Rules.** One strength and one enforcer per rule
   ([rule schema](references/rule-v2.schema.json)): AST, lint, formatter, test,
   or validator. Earlier standards are read as rules, and

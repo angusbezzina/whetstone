@@ -53,7 +53,7 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   `wh dash --hook session-start`, `wh check --host` and the host checkpoint
   receipts are gone. The Git pre-commit and pre-push gates are the loop
   every tool passes through. `wh init --action setup --yes` installs only
-  Beads; it lists the pstack installs for you to run.
+  Beads.
 - Raised hands: `wh check --raise-hand`, `wh change --answer`, a rule's
   `hand_raise` triggers, the dashboard's Requests view and its Beads task
   queue, and the Virgil task route. A sweep finding's `unsure` is how a
@@ -114,6 +114,14 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   its check runner, `/api/evidence`, the hosted dashboard mode and the
   receipt rows in the changelog and decision trail. Stored check receipts
   are read as retired history.
+- Onboarding extras: `wh init --action exemplar` (`--from`, `--url`) and the
+  dashboard's Exemplars step, the read-only repository discovery `wh init`
+  and `wh dash` reported as `setup`, and the pstack skill detection in
+  `wh init --action setup` with `--host`, its install commands and
+  `whetstone/tools.lock.json`. Setup detects and installs `bd` 1.3.0 or
+  later (or names the virgil CLI under the virgil store), and the principle
+  catalogue is read only from the copy compiled into `wh`. A stored rule
+  distilled from an exemplar loads as the owner's with its digest unchanged.
 
 ## [0.13.0] - 2026-10-15
 

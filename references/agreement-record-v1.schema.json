@@ -772,7 +772,6 @@
           "enum": [
             "mission",
             "principle",
-            "exemplar",
             "owner",
             "starter",
             "migration"

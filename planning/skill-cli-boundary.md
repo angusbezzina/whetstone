@@ -94,7 +94,7 @@ are team edits to the driver, not new Whetstone code.
 ## Rules and enforcers
 
 A rule has one statement, a rationale, one strength (`must`, `should`,
-`advisory`), labelled examples, a source (mission, principle, exemplar or
+`advisory`), labelled examples, a source (mission, principle or
 owner), and exactly one enforcer, chosen in this order:
 
 1. **Mechanical**: native linter, formatter, AST query, test, validator,
@@ -254,19 +254,16 @@ treated as delivered.
 `wh init` inspects the repository read-only, then walks the owner through the
 agreement:
 
-1. It detects Beads and pstack, and offers to install and pin them.
+1. It detects Beads, and offers to install it.
 2. The owner states the mission.
 3. The owner picks principles from pstack's catalogue or writes their own.
-4. The owner optionally names exemplar codebases, which are read and never
-   executed.
-5. The owner accepts or skips three starter rules.
-6. The skill proposes further rules as drafts, each with examples, strength,
+4. The owner accepts or skips three starter rules.
+5. The skill proposes further rules as drafts, each with examples, strength,
    one enforcer and its source.
 
 Nothing is in force until the owner accepts it. `--dry-run` shows the exact
 records and writes nothing. From the terminal this is `--action setup`,
-`--action agree --mission ... --principle ... --starter ...` and
-`--action exemplar --from <path>|--url <url>`; the agreement is complete once
+and `--action agree --mission ... --principle ... --starter ...`; the agreement is complete once
 the mission and at least one rule are in force.
 
 `wh init --action wire` interviews the repository (surface, launch, readiness,

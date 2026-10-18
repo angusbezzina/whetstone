@@ -177,9 +177,6 @@ enum DashboardCommand {
         custom_principles: Vec<String>,
         #[serde(default)]
         starters: Vec<String>,
-        /// A local path or Git URL of an exemplar codebase (action exemplar).
-        #[serde(default)]
-        exemplar: Option<String>,
         #[serde(default)]
         dry_run: bool,
     },
@@ -249,36 +246,20 @@ impl DashboardCommand {
                 principles,
                 custom_principles,
                 starters,
-                exemplar,
                 dry_run,
-            } => {
-                let (import_from, exemplar_url) = match exemplar {
-                    Some(locator)
-                        if locator.starts_with("https://")
-                            || locator.starts_with("git@")
-                            || locator.ends_with(".git") =>
-                    {
-                        (None, Some(locator))
-                    }
-                    Some(locator) => (Some(PathBuf::from(locator)), None),
-                    None => (None, None),
-                };
-                ServiceRequest::Init(InitRequest {
-                    project_dir,
-                    request_id,
-                    action: action.into(),
-                    expected_revision,
-                    resume_token,
-                    mission,
-                    principles,
-                    custom_principles,
-                    starters,
-                    dry_run,
-                    import_from,
-                    exemplar_url,
-                    ..InitRequest::default()
-                })
-            }
+            } => ServiceRequest::Init(InitRequest {
+                project_dir,
+                request_id,
+                action: action.into(),
+                expected_revision,
+                resume_token,
+                mission,
+                principles,
+                custom_principles,
+                starters,
+                dry_run,
+                ..InitRequest::default()
+            }),
             Self::Change {
                 request_id,
                 kind,
@@ -337,7 +318,6 @@ enum DashboardInitAction {
     Inspect,
     Agree,
     Cancel,
-    Exemplar,
 }
 
 impl From<DashboardInitAction> for InitAction {
@@ -346,7 +326,6 @@ impl From<DashboardInitAction> for InitAction {
             DashboardInitAction::Inspect => Self::Inspect,
             DashboardInitAction::Agree => Self::Agree,
             DashboardInitAction::Cancel => Self::Cancel,
-            DashboardInitAction::Exemplar => Self::Exemplar,
         }
     }
 }

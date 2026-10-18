@@ -1,9 +1,8 @@
 //! `wh init`: from mission to agreed rules in five minutes.
 //!
 //! Inspect is read-only. Agree records the owner's mission, the principles
-//! they picked and the starter rules they accepted. Setup detects, installs
-//! and pins Beads and pstack. Exemplar reads a codebase the owner admires and
-//! drafts rules from it. Wire lives in `crate::wire`.
+//! they picked from the catalogue and the starter rules they accepted. Setup
+//! detects and installs the record store's tool. Wire lives in `crate::wire`.
 
 use serde::Serialize;
 use serde_json::json;
@@ -12,15 +11,14 @@ use crate::agreement::AgreementState;
 use crate::domain::{
     AgreementRecord, Mission, Principle, PrincipleSource, RecordBody, RecordId, RecordRef,
 };
-use crate::onboarding;
 use crate::projection::{LegacyItem, Onboarding, OnboardingStep, StarterView};
 use crate::storage::{AppendRequest, ProjectLayout, RecordStore, StorageError};
 
-use super::record::{agreement_record, ChangeNarrative};
+use super::record::agreement_record;
 use super::{
     bounded_input, bounded_request_id, domain_response, idempotency_conflict, latest_record,
     needs_input, owner_name, project_error, resume_token, stale_response, storage_error,
-    unknown_response, InitAction, InitRequest, ServiceEvidence, ServiceResponse, ServiceState,
+    unknown_response, InitAction, InitRequest, ServiceResponse, ServiceState,
 };
 
 /// Where onboarding stands, computed from the records.
@@ -45,17 +43,8 @@ pub(crate) fn progress(layout: &ProjectLayout, records: Option<&[AgreementRecord
         .and_then(|id| state.in_force(&id));
     let principles = state.in_force_matching(|body| matches!(body, RecordBody::Principle(_)));
     let rules = state.in_force_matching(|body| body.rule_view().is_some());
-    let exemplar_rules = rules
-        .iter()
-        .filter(|record| {
-            record
-                .body
-                .rule_view()
-                .is_some_and(|rule| rule.source.kind == crate::domain::RuleSourceKind::Exemplar)
-        })
-        .count();
     let hooks = crate::wire::git_hooks(root);
-    let tools = crate::setup::detect(root, &[]);
+    let tools = crate::setup::detect(root);
     let mut missing = Vec::new();
     if mission.is_none() {
         missing.push("mission".to_string());
@@ -76,7 +65,7 @@ pub(crate) fn progress(layout: &ProjectLayout, records: Option<&[AgreementRecord
         .unwrap_or(0);
     let agreement_complete = missing.is_empty();
     let setup_complete = agreement_complete && hooks.pre_commit && hooks.pre_push;
-    let catalogue = crate::catalogue::catalogue(root);
+    let catalogue = crate::catalogue::catalogue();
     let starters = crate::starter::starters(root)
         .into_iter()
         .map(|starter| {
@@ -130,8 +119,8 @@ pub(crate) fn progress(layout: &ProjectLayout, records: Option<&[AgreementRecord
         steps: vec![
             OnboardingStep {
                 key: "tools",
-                label: "Beads and pstack",
-                hint: "installed and pinned, so records work",
+                label: "Tools",
+                hint: "the record store's tool is installed, so records work",
                 done: tools.ready,
                 optional: true,
             },
@@ -145,15 +134,8 @@ pub(crate) fn progress(layout: &ProjectLayout, records: Option<&[AgreementRecord
             OnboardingStep {
                 key: "principles",
                 label: "Principles",
-                hint: "the pstack principles you hold, or your own",
+                hint: "the catalogue principles you hold, or your own",
                 done: !principles.is_empty(),
-                optional: true,
-            },
-            OnboardingStep {
-                key: "exemplars",
-                label: "Exemplars",
-                hint: "a codebase you admire; rules are drafted from it",
-                done: exemplar_rules > 0,
                 optional: true,
             },
             OnboardingStep {
@@ -215,20 +197,9 @@ pub(super) fn init(request: InitRequest) -> ServiceResponse {
     match request.action {
         InitAction::Wire => return crate::wire::wire(&layout, request_id, &request),
         InitAction::Setup => return setup(&layout, request_id, &request),
-        InitAction::Exemplar => return exemplar(&layout, request_id, &request),
         InitAction::Store => return store_switch(&layout, request_id, &request),
         _ => {}
     }
-    let setup_plan = match onboarding::inspect(layout.project_root()) {
-        Ok(value) => value,
-        Err(error) => {
-            return unknown_response(
-                "init",
-                request_id,
-                format!("Project inspection failed without changing state: {error:?}"),
-            )
-        }
-    };
     let progress = match progress_for(&layout) {
         Ok(progress) => progress,
         Err(error) if request.action == InitAction::Cancel => {
@@ -257,7 +228,6 @@ pub(super) fn init(request: InitRequest) -> ServiceResponse {
             response.expected_revision = Some(current_revision);
             response.permitted_actions = vec!["wh init".into()];
             response.data = json!({
-                "setup": setup_plan,
                 "progress": progress,
                 "cancelled": true,
                 "writes": [],
@@ -266,7 +236,7 @@ pub(super) fn init(request: InitRequest) -> ServiceResponse {
             response
         }
         InitAction::Inspect => {
-            let mut response = inspection_response(request_id, resume, setup_plan, progress);
+            let mut response = inspection_response(request_id, resume, progress);
             propose_store(&layout, &mut response);
             response
         }
@@ -307,12 +277,7 @@ fn propose_store(layout: &ProjectLayout, response: &mut ServiceResponse) {
     });
 }
 
-fn inspection_response(
-    request_id: String,
-    resume: String,
-    setup: onboarding::SetupPlan,
-    progress: Progress,
-) -> ServiceResponse {
+fn inspection_response(request_id: String, resume: String, progress: Progress) -> ServiceResponse {
     let (state, summary) = if progress.setup_complete {
         (
             ServiceState::Success,
@@ -334,15 +299,6 @@ fn inspection_response(
     if state != ServiceState::Success {
         response.resume_token = Some(resume);
     }
-    response.evidence = setup
-        .facts
-        .iter()
-        .map(|fact| ServiceEvidence {
-            kind: format!("detected_{:?}", fact.kind).to_ascii_lowercase(),
-            locator: fact.path.clone(),
-            digest: Some(fact.digest.as_str().into()),
-        })
-        .collect();
     response.blocking_questions = progress
         .missing_decisions
         .iter()
@@ -352,11 +308,7 @@ fn inspection_response(
         })
         .collect();
     response.permitted_actions = if progress.agreement_complete {
-        vec![
-            "wh init --action wire --hooks".into(),
-            "wh check".into(),
-            "wh init --action exemplar --from <path or Git URL>".into(),
-        ]
+        vec!["wh init --action wire --hooks".into(), "wh check".into()]
     } else {
         vec![
             "wh init --action agree --mission <text> --principle <id> --starter all with the returned revision and token".into(),
@@ -364,7 +316,6 @@ fn inspection_response(
         ]
     };
     response.data = json!({
-        "setup": setup,
         "progress": progress,
         "onboarding": progress.onboarding,
         "inspection_writes": [],
@@ -481,7 +432,7 @@ fn agree(
         }
         (None, true) => None,
     };
-    let catalogue = crate::catalogue::catalogue(layout.project_root());
+    let catalogue = crate::catalogue::catalogue();
     let base = format!("{request_id}:base-{target_revision}");
     let mut records = Vec::new();
     if let Some(statement) = mission {
@@ -504,7 +455,7 @@ fn agree(
                 current_revision,
                 resume,
                 format!(
-                    "{id} is not a pstack principle in the catalogue (pstack {}). Known ids include prove-it-works, laziness-protocol and boundary-discipline.",
+                    "{id} is not a principle in the catalogue (version {}). Known ids include prove-it-works, laziness-protocol and boundary-discipline.",
                     catalogue.version
                 ),
             );
@@ -709,11 +660,7 @@ fn agree(
         },
     );
     response.expected_revision = Some(progress.agreement_revision);
-    response.permitted_actions = vec![
-        "wh init --action wire --hooks".into(),
-        "wh check".into(),
-        "wh init --action exemplar --from <path or Git URL>".into(),
-    ];
+    response.permitted_actions = vec!["wh init --action wire --hooks".into(), "wh check".into()];
     response.data = json!({
         "records": references,
         "progress": progress,
@@ -724,7 +671,7 @@ fn agree(
     response
 }
 
-/// Detect Beads and pstack, then (with `--yes`) install Beads and pin both.
+/// Detect the record store's tool, then (with `--yes`) install Beads.
 fn setup(layout: &ProjectLayout, request_id: String, request: &InitRequest) -> ServiceResponse {
     // `--store` chooses the record store first (and moves records into it),
     // so the tools detected next are the ones that store needs: under
@@ -760,13 +707,10 @@ fn setup_tools(
     request: &InitRequest,
 ) -> ServiceResponse {
     let root = layout.project_root();
-    let detected = crate::setup::detect(root, &request.hosts);
+    let detected = crate::setup::detect(root);
     let mut ran = Vec::new();
     let mut failed = Vec::new();
     if request.yes && !request.dry_run {
-        // Only the store tool is installed here. pstack installs write into
-        // the user's agent-host directories, so they are listed for the
-        // person to run.
         for fix in detected
             .tools
             .iter()
@@ -780,22 +724,9 @@ fn setup_tools(
         }
     }
     let after = if ran.is_empty() {
-        detected.clone()
+        detected
     } else {
-        crate::setup::detect(root, &request.hosts)
-    };
-    let lock = crate::setup::lock_for(&after);
-    let lock_written = match (&lock, request.dry_run) {
-        (Some(lock), false) if after.lock.as_ref() != Some(lock) => {
-            match crate::setup::write_lock(root, lock) {
-                Ok(()) => true,
-                Err(error) => {
-                    failed.push(json!({"command": "write the lock", "error": error}));
-                    false
-                }
-            }
-        }
-        _ => false,
+        crate::setup::detect(root)
     };
     let state = if after.ready && failed.is_empty() {
         ServiceState::Success
@@ -809,15 +740,7 @@ fn setup_tools(
         "init",
         state,
         if after.ready {
-            if lock_written {
-                format!(
-                    "{} and pstack are ready; versions are pinned in {}.",
-                    store_tool(root),
-                    crate::setup::LOCK_RELATIVE
-                )
-            } else {
-                format!("{} and pstack are ready.", store_tool(root))
-            }
+            format!("{} is ready.", store_tool(root))
         } else if request.yes {
             "Some tools could not be installed here; run the listed commands yourself.".to_string()
         } else {
@@ -835,104 +758,11 @@ fn setup_tools(
     };
     response.data = json!({
         "tools": after.tools,
-        "skills": after.skills,
         "fixes": after.fixes,
         "ran": ran,
         "failed": failed,
-        "lock": lock,
-        "lock_path": crate::setup::LOCK_RELATIVE,
-        "lock_written": lock_written,
         "dry_run": request.dry_run,
     });
-    response
-}
-
-/// Read an exemplar and record the rules it demonstrates as drafts.
-fn exemplar(layout: &ProjectLayout, request_id: String, request: &InitRequest) -> ServiceResponse {
-    let locator = match (&request.exemplar_url, &request.import_from) {
-        (Some(url), _) => url.clone(),
-        (None, Some(path)) => path.display().to_string(),
-        (None, None) => {
-            return needs_input(
-                "init",
-                request_id,
-                0,
-                String::new(),
-                "Name the exemplar: --from <local path> or --url <Git URL>.".into(),
-            )
-        }
-    };
-    let cache = layout.state_root().join("exemplars");
-    let mut opened = match crate::exemplar::open(&locator, &cache) {
-        Ok(opened) => opened,
-        Err(error) => return unknown_response("init", request_id, error),
-    };
-    let proposals = crate::exemplar::propose(&mut opened);
-    if proposals.is_empty() || request.dry_run {
-        let mut response = ServiceResponse::new(
-            request_id,
-            "init",
-            if proposals.is_empty() {
-                ServiceState::Success
-            } else {
-                ServiceState::NeedsDecision
-            },
-            if proposals.is_empty() {
-                format!("{locator} shows no configuration Whetstone can turn into a mechanical rule; ask your agent to read it and propose rules with wh change --kind rule --source \"exemplar:{locator}\".")
-            } else {
-                format!("Dry run: {} rule draft(s) would be recorded from {locator}; nothing was written.", proposals.len())
-            },
-        );
-        response.data =
-            json!({"exemplar": opened, "proposals": proposals, "dry_run": request.dry_run});
-        return response;
-    }
-    let private = match crate::storage::initialize_private(layout) {
-        Ok(store) => store,
-        Err(error) => return storage_error("init", request_id, error),
-    };
-    let private: &dyn RecordStore = &*private;
-    let mut drafts = Vec::new();
-    for proposal in &proposals {
-        let Ok(id) = RecordId::new(proposal.id.as_str()) else {
-            continue;
-        };
-        let narrative = ChangeNarrative {
-            rationale: proposal.why.clone(),
-            source: format!(
-                "exemplar {}@{}",
-                opened.locator,
-                opened.commit.as_deref().unwrap_or("working-tree")
-            ),
-            expected_effect: "The exemplar's practice becomes a rule here once accepted.".into(),
-            impact: "none until accepted".into(),
-            examples: Vec::new(),
-            conflicts: Vec::new(),
-        };
-        let key = format!("exemplar:{request_id}:{}", proposal.id);
-        match super::change::draft_with_proposal(
-            layout,
-            private,
-            &key,
-            &id,
-            RecordBody::Rule(proposal.rule.clone()),
-            &narrative,
-        ) {
-            Ok((record, proposal)) => drafts.push(json!({"record": record, "proposal": proposal})),
-            Err(error) => return storage_error("init", request_id, error),
-        }
-    }
-    let mut response = ServiceResponse::new(
-        request_id,
-        "init",
-        ServiceState::Success,
-        format!(
-            "{} rule draft(s) from {locator} were recorded with the files they came from; nothing is in force until you accept each.",
-            drafts.len()
-        ),
-    );
-    response.permitted_actions = vec!["wh dash".into(), "wh change --accept <proposal>".into()];
-    response.data = json!({"exemplar": opened, "drafts": drafts, "proposals": proposals});
     response
 }
 

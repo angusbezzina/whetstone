@@ -103,10 +103,8 @@ pub enum InitAction {
     Cancel,
     /// Install the Git hooks and scaffold CI.
     Wire,
-    /// Detect, install and pin Beads and pstack.
+    /// Detect and install the record store's tool.
     Setup,
-    /// Read an exemplar codebase and draft rules from it, with provenance.
-    Exemplar,
     /// Choose the record store for every record kind: Beads or Virgil.
     Store,
 }
@@ -119,7 +117,7 @@ pub struct InitRequest {
     pub expected_revision: Option<u64>,
     pub resume_token: Option<String>,
     pub mission: Option<String>,
-    /// pstack principle ids the owner picked (agree).
+    /// Catalogue principle ids the owner picked (agree).
     pub principles: Vec<String>,
     /// The owner's own principles, in their words (agree).
     pub custom_principles: Vec<String>,
@@ -127,12 +125,6 @@ pub struct InitRequest {
     pub starters: Vec<String>,
     /// Report exact writes without performing them.
     pub dry_run: bool,
-    /// Agent hosts whose pstack skills setup detects (setup).
-    pub hosts: Vec<String>,
-    /// A directory to read: an exemplar codebase (exemplar).
-    pub import_from: Option<PathBuf>,
-    /// A Git URL of an exemplar codebase (exemplar).
-    pub exemplar_url: Option<String>,
     /// Install the Git pre-commit and pre-push hooks (wire).
     pub hooks: bool,
     /// Scaffold the workflow that runs the required whetstone/policy check (wire).
@@ -503,7 +495,7 @@ fn orientation() -> ServiceResponse {
         "orientation".into(),
         "orientation",
         ServiceState::Success,
-        "Whetstone turns your mission, principles and exemplars into rules every agent is briefed on, checked against and told when to ask.",
+        "Whetstone turns your mission and principles into rules every agent is briefed on, checked against and told when to ask.",
     );
     response.permitted_actions = vec![
         "wh init".into(),
@@ -517,7 +509,7 @@ fn orientation() -> ServiceResponse {
         .ok()
         .and_then(|dir| ProjectLayout::resolve(&dir).ok())
         .map(|layout| layout.project_root().to_path_buf());
-    let setup = root.as_deref().map(|root| crate::setup::detect(root, &[]));
+    let setup = root.as_deref().map(crate::setup::detect);
     if let Some(setup) = &setup {
         if !setup.ready {
             response.summary.push_str(" Setup needs attention: ");
