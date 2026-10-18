@@ -595,6 +595,9 @@ fn details_for(record: &AgreementRecord) -> Vec<Detail> {
                 "source",
                 match &body.source {
                     PrincipleSource::Pstack { id, version } => format!("pstack {id} ({version})"),
+                    PrincipleSource::Pack { pack, id, version } => {
+                        format!("{pack} {id} ({version})")
+                    }
                     PrincipleSource::Custom => "the owner's own".into(),
                     PrincipleSource::Migrated { record } => {
                         format!("migrated from {}", record.id.as_str())

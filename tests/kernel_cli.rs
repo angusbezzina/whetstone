@@ -276,7 +276,7 @@ fn bare_json_is_truthful_read_only_orientation() {
     assert_eq!(value["workflow"], "orientation");
     assert_eq!(
         value["data"]["workflows"],
-        serde_json::json!(["init", "dash", "change", "check", "pull", "push"])
+        serde_json::json!(["init", "dash", "change", "check", "pull", "push", "explain"])
     );
     assert_eq!(value["data"]["read_only"], true);
     let actions = value["permitted_actions"]
@@ -306,7 +306,7 @@ fn bare_json_is_truthful_read_only_orientation() {
 }
 
 #[test]
-fn public_help_exposes_exactly_six_workflow_families() {
+fn public_help_exposes_exactly_seven_workflow_families() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let output = run(&["--help"], root);
     assert!(output.status.success());
@@ -320,7 +320,7 @@ fn public_help_exposes_exactly_six_workflow_families() {
         .collect::<Vec<_>>();
     assert_eq!(
         commands,
-        ["init", "dash", "change", "check", "pull", "push"]
+        ["init", "dash", "change", "check", "pull", "push", "explain"]
     );
 }
 
@@ -3048,4 +3048,97 @@ fn wire_writes_the_agent_contract_and_the_script_scaffold_once() {
         inspect.to_string().contains("rule.no-conflict-markers"),
         "{inspect}"
     );
+}
+
+#[test]
+fn explain_resolves_a_sweep_finding_and_a_rule_id_to_the_rule_and_its_decisions() {
+    let repo = Repo::new();
+    repo.write(
+        "src/main.rs",
+        "fn main() {\n    let x: Option<u8> = None;\n    x.unwrap();\n}\n",
+    );
+    repo.commit("source");
+    let agreed = repo.agree("explain-agreement", &AGREEMENT);
+    assert_eq!(
+        agreed["data"]["progress"]["agreement_complete"], true,
+        "{agreed}"
+    );
+    repo.rule(
+        "rule.no-unwrap",
+        &format!(
+            r#"{{"type":"rule","strength":"should","enforcer":{{"kind":"ast","query":"{UNWRAP_QUERY}","language":"rust"}},"paths":["src/**"],"sweep_priority":1}}"#
+        ),
+    );
+
+    let (_, sweep) = repo.check(&["--sweep", "--format", "findings"]);
+    let finding = sweep["data"]["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .find(|finding| finding["responsibility"] == "rule.no-unwrap")
+        .unwrap_or_else(|| panic!("no finding in {sweep}"))
+        .clone();
+    let fingerprint = finding["fingerprint"].as_str().expect("fingerprint");
+
+    // Recomputed from the repository: no findings file is needed.
+    let explained = repo.wh_json(&["explain", fingerprint]);
+    assert_eq!(explained["state"], "success", "{explained}");
+    assert_eq!(explained["data"]["resolved"]["kind"], "fingerprint");
+    assert_eq!(explained["data"]["resolved"]["subject"], "src/main.rs");
+    assert_eq!(explained["data"]["resolved"]["resolved_from"], "recomputed");
+    let rule = &explained["data"]["rule"];
+    assert_eq!(rule["id"], "rule.no-unwrap");
+    assert_eq!(rule["strength"], "should");
+    assert_eq!(rule["enforcer"]["kind"], "ast");
+    assert_eq!(rule["paths"], serde_json::json!(["src/**"]));
+    assert_eq!(rule["sweep"]["class"], "discuss");
+    assert_eq!(rule["sweep"]["priority"], 1);
+    let created = &explained["data"]["created"];
+    assert_eq!(created["verdict"], "accept", "{explained}");
+    assert_eq!(
+        created["rationale"].as_str().map(str::is_empty),
+        Some(false)
+    );
+    assert!(created["proposed_because"].as_str().is_some());
+
+    // From the sweep's findings file, and by a short prefix.
+    let file = repo.root.join("sweep-findings.json");
+    std::fs::write(
+        &file,
+        sweep["data"]["findings_json"].as_str().expect("json"),
+    )
+    .expect("write");
+    let short = &fingerprint[..19];
+    let from_file = repo.wh_json(&["explain", short, "--findings", file.to_str().expect("path")]);
+    assert_eq!(from_file["state"], "success", "{from_file}");
+    assert_eq!(from_file["data"]["rule"]["id"], "rule.no-unwrap");
+    assert!(from_file["data"]["resolved"]["resolved_from"]
+        .as_str()
+        .expect("source")
+        .ends_with("sweep-findings.json"));
+
+    // A rule id works directly, and a person gets readable text.
+    let by_id = repo.wh_json(&["explain", "rule.no-unwrap"]);
+    assert_eq!(by_id["data"]["resolved"]["kind"], "rule");
+    let text = run(&["explain", "rule.no-unwrap"], &repo.root);
+    let text = String::from_utf8_lossy(&text.stdout);
+    assert!(
+        text.contains("Rule rule.no-unwrap · should · in force"),
+        "{text}"
+    );
+    assert!(text.contains("Enforcer: AST query:"), "{text}");
+
+    // Unknown targets fail with a clear message.
+    let unknown = repo.wh(&["explain", "rule.nope"]);
+    assert_eq!(unknown.status.code(), Some(6));
+    assert!(json(&unknown)["summary"]
+        .as_str()
+        .expect("summary")
+        .contains("neither a rule in this agreement nor a finding fingerprint"));
+    let missing = repo.wh(&["explain", "sha256:0123456789abcdef"]);
+    assert_eq!(missing.status.code(), Some(6));
+    assert!(json(&missing)["summary"]
+        .as_str()
+        .expect("summary")
+        .contains("No rule here produces the finding"));
 }

@@ -689,6 +689,13 @@ pub enum PrincipleSource {
     Migrated {
         record: RecordRef,
     },
+    /// A principle from a principle pack other than pstack, pinned to the
+    /// pack's name and version.
+    Pack {
+        pack: String,
+        id: String,
+        version: String,
+    },
 }
 
 /// A coding principle the owner picked; rules cite it as their source.
@@ -723,6 +730,11 @@ impl Principle {
             }
             PrincipleSource::Custom => Ok(()),
             PrincipleSource::Migrated { record } => record.validate(),
+            PrincipleSource::Pack { pack, id, version } => {
+                require_text(pack)?;
+                require_text(id)?;
+                require_text(version)
+            }
         }
     }
 }

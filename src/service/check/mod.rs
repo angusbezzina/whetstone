@@ -47,7 +47,7 @@ use super::{
 /// The repository's own privacy settings, applied to every question.
 pub const PRIVACY_RELATIVE: &str = "whetstone/privacy.json";
 
-mod findings;
+pub(crate) mod findings;
 mod persist;
 mod question;
 mod review;

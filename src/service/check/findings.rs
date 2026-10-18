@@ -75,6 +75,12 @@ fn digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
+/// A finding's fingerprint: the rule, the repository and the subject (a
+/// path, or `repository`, with `#n` for the same rule's nth flag on it).
+pub(crate) fn fingerprint(rule: &str, repository: &str, subject: &str) -> String {
+    digest(format!("{rule}\0{repository}\0{subject}").as_bytes())
+}
+
 /// The flagged path and line in a failure location (`src/a.rs:12:4`), when
 /// the location names a file in the repository.
 fn located(project: &Path, location: &str) -> Option<(String, Option<usize>)> {
@@ -175,7 +181,7 @@ pub(crate) fn findings(
                 format!("{subject}#{count}")
             };
             result.push(SweepFinding {
-                fingerprint: digest(format!("{}\0{repository}\0{subject}", outcome.id).as_bytes()),
+                fingerprint: fingerprint(&outcome.id, &repository, &subject),
                 subject_digest,
                 class: rule.sweep_class().label(),
                 priority: rule.sweep_priority(),

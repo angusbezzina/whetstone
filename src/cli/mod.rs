@@ -1,4 +1,4 @@
-//! Six public workflows backed by one typed service boundary.
+//! Seven public workflows backed by one typed service boundary.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -385,6 +385,21 @@ enum Command {
         /// Show the exact package, destination and base; share nothing.
         #[arg(long)]
         dry_run: bool,
+    },
+
+    /// Explain a finding or a rule: the rule, its exact enforcer, what it
+    /// covers, the principle it serves and the decisions that accepted it.
+    Explain {
+        /// A finding's fingerprint (from findings.json or a pull request) or a rule id.
+        target: String,
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+        #[arg(long)]
+        request_id: Option<String>,
+        /// The sweep's findings file to resolve the fingerprint from
+        /// (default: findings.json at the repository root, when present).
+        #[arg(long)]
+        findings: Option<PathBuf>,
     },
 
     /// Internal schema gate retained for repository maintenance.
@@ -935,6 +950,17 @@ pub fn run() -> i32 {
             confirm,
             dry_run,
         })),
+        Some(Command::Explain {
+            target,
+            project_dir,
+            request_id,
+            findings,
+        }) => service.execute(ServiceRequest::Explain(crate::service::ExplainRequest {
+            project_dir,
+            request_id,
+            target,
+            findings,
+        })),
         Some(Command::Validate { project_dir }) => return validate(&project_dir, machine),
         Some(Command::Eval { project_dir, lang }) => {
             return eval(&project_dir, lang.as_deref(), machine)
@@ -1341,6 +1367,15 @@ fn format_human_response(response: &ServiceResponse) -> String {
     {
         if let Some(walkthrough) = format_init_walkthrough(response) {
             return walkthrough;
+        }
+    }
+    if response.workflow == "explain" {
+        if let Some(text) = response
+            .data
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+        {
+            return text.to_string();
         }
     }
     let mut rendered = String::new();

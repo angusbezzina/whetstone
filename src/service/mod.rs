@@ -20,12 +20,14 @@ use crate::domain::{
 use crate::storage::{ProjectLayout, RecordStore, StorageError, StoreKind};
 
 mod change;
-mod check;
+pub(crate) mod check;
 mod dash;
+pub(crate) mod explain;
 mod init;
 pub(crate) mod lesson;
 pub(crate) mod record;
 
+pub use explain::ExplainRequest;
 pub use record::{agreement_record, digest_bytes, utc_timestamp};
 
 /// Storage and domain failures as envelopes, for workflows outside this module.
@@ -62,6 +64,7 @@ pub enum ServiceRequest {
     Check(CheckRequest),
     Pull(crate::sync::PullRequest),
     Push(crate::sync::PushRequest),
+    Explain(ExplainRequest),
 }
 
 #[derive(Debug, Clone)]
@@ -677,6 +680,7 @@ impl CommandService {
             }
             ServiceRequest::Pull(request) => crate::sync::pull(request),
             ServiceRequest::Push(request) => crate::sync::push(request),
+            ServiceRequest::Explain(request) => explain::explain(request),
         }
     }
 }
@@ -697,6 +701,7 @@ fn orientation() -> ServiceResponse {
         "wh check".into(),
         "wh pull".into(),
         "wh push".into(),
+        "wh explain".into(),
     ];
     let root = std::env::current_dir()
         .ok()
@@ -720,8 +725,8 @@ fn orientation() -> ServiceResponse {
         }
     }
     response.data = json!({
-        "workflows": ["init", "dash", "change", "check", "pull", "push"],
-        "available_now": ["init", "dash", "change", "check", "pull", "push"],
+        "workflows": ["init", "dash", "change", "check", "pull", "push", "explain"],
+        "available_now": ["init", "dash", "change", "check", "pull", "push", "explain"],
         "requires": {"pull": "a shared Beads database with a remote", "push": "a shared Beads database (bd init) and, to transmit, a remote"},
         "tools": setup.as_ref().map(|setup| &setup.tools),
         "fixes": setup.as_ref().map(|setup| &setup.fixes),
