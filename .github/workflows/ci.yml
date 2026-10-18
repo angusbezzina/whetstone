@@ -64,13 +64,13 @@ jobs:
         run: python3 -m ruff format --check scripts/ tests/
 
       - name: 5 - Rule validation
-        run: cargo run --quiet --release -- validate
+        run: cargo run --quiet -- validate
 
       - name: 6 - Scanner-backed golden evaluation
         shell: bash
         run: |
           set -euo pipefail
-          result=$(cargo run --quiet --release -- eval --json)
+          result=$(cargo run --quiet -- eval --json)
           echo "$result" | jq -e '
             .ok == true and
             .rules_evaluated > 0 and
@@ -83,7 +83,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          result=$(cargo run --quiet --release -- scan src --lang rust --json --no-fail)
+          result=$(cargo run --quiet -- scan src --lang rust --json --no-fail)
           echo "$result" | jq -e '
             .violations_count == 0 and
             .config_issues_count == 0 and

@@ -180,9 +180,9 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
 python3 -m ruff format --check scripts/ tests/
-cargo run --quiet --release -- validate
-cargo run --quiet --release -- eval
-cargo run --quiet --release -- scan src --lang rust --json --no-fail
+cargo run --quiet -- validate
+cargo run --quiet -- eval
+cargo run --quiet -- scan src --lang rust --json --no-fail
 python3 -m pytest -q
 ```
 
