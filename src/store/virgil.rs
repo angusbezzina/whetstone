@@ -418,12 +418,19 @@ impl VirgilStore {
         })
     }
 
+    /// A follow-up write (`mark`, `lifecycle`): one that answers a result
+    /// landed, even at exit 7 (replication still arriving).
     fn write_answer(&self, op: &str, request: &Value) -> Result<(), StorageError> {
         let answer = self.invoke(op, request, true)?;
-        if answer.exit != 0 || answer.line.get("error").is_some() {
-            return Err(failure(op, &answer));
+        let landed = answer.line.get("error").is_none()
+            && answer
+                .line
+                .get("result")
+                .is_some_and(|result| !result.is_null());
+        if landed && matches!(answer.exit, 0 | 7) {
+            return Ok(());
         }
-        Ok(())
+        Err(failure(op, &answer))
     }
 
     /// Whether the daemon answers the pinned rulebook contract.

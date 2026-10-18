@@ -506,7 +506,7 @@ if family == "rulebook":
 
     if op == "mark":
         markers[request["marker"]] = request.get("members", [])
-        out(api, {"result": {"marker": request["marker"]}})
+        out(api, {"result": {"marker": request["marker"]}}, failing[0] if failing else 0)
 
     if op == "markers":
         out(
@@ -535,6 +535,7 @@ if family == "rulebook":
                     "lifecycle": found[0]["lifecycle"],
                 }
             },
+            failing[0] if failing else 0,
         )
 
     if op == "import-beads":

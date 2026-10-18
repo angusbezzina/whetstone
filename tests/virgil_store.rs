@@ -499,3 +499,44 @@ fn import_beads_reports_each_revision_and_applies_only_when_asked() {
         "invalid_request"
     );
 }
+
+#[test]
+fn a_follow_up_write_that_answers_a_result_at_exit_7_landed() {
+    // A batch's marker that landed but is still replicating is not a
+    // failure; a refused one still is.
+    let checkout = Checkout::new(true);
+    checkout.knob("fail", json!({"rulebook.mark": [7, true]}));
+    let first = a_rule("rule.virgil-mark-a", "mark:a");
+    let second = a_rule("rule.virgil-mark-b", "mark:b");
+    let requests = [
+        whetstone::storage::AppendRequest {
+            record: &first,
+            expected_revision: None,
+        },
+        whetstone::storage::AppendRequest {
+            record: &second,
+            expected_revision: None,
+        },
+    ];
+    checkout
+        .store()
+        .append_batch(&requests)
+        .expect("landed at exit 7");
+    assert!(checkout
+        .store()
+        .incomplete_batches()
+        .expect("batches")
+        .is_empty());
+
+    let checkout = Checkout::new(true);
+    checkout.knob("fail", json!({"rulebook.mark": [7, false]}));
+    assert_eq!(
+        virgil_code(
+            checkout
+                .store()
+                .append_batch(&requests)
+                .expect_err("refused")
+        ),
+        "store_unavailable"
+    );
+}
