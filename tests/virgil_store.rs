@@ -71,7 +71,6 @@ impl Checkout {
             "knobs": {
                 "attached": if attached { json!([GROUP, REPOSITORY]) } else { json!(null) },
                 "fail": {},
-                "stale_get": false,
                 "page": 100,
             }
         }));
@@ -491,7 +490,7 @@ fn import_beads_reports_each_revision_and_applies_only_when_asked() {
             .reference,
         record.reference().expect("reference")
     );
-    // An export inside the checkout is refused, as the lessons import is.
+    // An export inside the checkout is refused.
     let inside = checkout.root().join("rulebook.json");
     std::fs::write(&inside, export.to_string()).expect("export");
     assert_eq!(

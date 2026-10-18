@@ -6,9 +6,8 @@
 //!
 //! The export holds the shared Beads database's records (what `wh push`
 //! shared) and the private store's accepted package (what `wh push` would
-//! share next), never receipts, drafts, draft ancestry or lessons (lessons
-//! move through `virgil lessons import-beads`). Like the lessons export it
-//! lives outside the repository, private to the person, beside it under
+//! share next), never receipts, drafts, draft ancestry or retired records.
+//! It lives outside the repository, private to the person, under
 //! `~/.whetstone/exports/<project>`: exports, manifests and receipts are
 //! never committed. Nothing in Beads or Git history is rewritten.
 
@@ -85,8 +84,7 @@ impl Export {
 
 /// Whether a record may travel into Records at all.
 fn travels(record: &AgreementRecord) -> bool {
-    record_class(&record.body) != "receipt"
-        && !matches!(record.body, RecordBody::Retired(_) | RecordBody::Lesson(_))
+    record_class(&record.body) != "receipt" && !matches!(record.body, RecordBody::Retired(_))
 }
 
 /// Build the export from the Beads stores, without writing anything.
@@ -169,9 +167,17 @@ pub fn build(layout: &ProjectLayout) -> Result<Export, StorageError> {
     })
 }
 
-/// Where the export is written.
+/// Where the export is written: outside the repository, private to the
+/// person.
 pub fn path(layout: &ProjectLayout) -> Result<PathBuf, String> {
-    crate::memory::export::directory(layout).map(|directory| directory.join(RULEBOOK_FILE))
+    let home = std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .ok_or("HOME is not set, so there is nowhere private to write the export")?;
+    Ok(home
+        .join(".whetstone/exports")
+        .join(&layout.project_id()[..20])
+        .join(RULEBOOK_FILE))
 }
 
 /// Write the export (private, outside the repository); the same records

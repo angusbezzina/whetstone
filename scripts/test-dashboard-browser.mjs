@@ -35,7 +35,7 @@ function rule(id, title, strength, enforcer, command, extra = {}) {
   return {
     ...entry(id, "rule", title, { definition, state: extra.result || label("pass", "pass"), lifecycle: extra.lifecycle || "accepted", pending: extra.pending || null }),
     strength, enforcer, command,
-    runs_at: extra.runs_at || "pre-push and CI", sweep_class: extra.sweep_class || "discuss", origin_lesson: null, source: "owner", paths: [], examples: extra.examples || [],
+    runs_at: extra.runs_at || "pre-push and CI", sweep_class: extra.sweep_class || "discuss", source: "owner", paths: [], examples: extra.examples || [],
     result: extra.result || label("pass", "pass"),
   };
 }

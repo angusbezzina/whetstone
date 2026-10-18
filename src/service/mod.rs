@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 
 use crate::domain::{
     ActorKind, AgreementRecord, ContentDigest, Enforcer, RecordId, RuleExample, RuleSource,
-    Strength, SweepClass, Trust,
+    Strength, SweepClass,
 };
 use crate::storage::{ProjectLayout, StorageError};
 
@@ -23,10 +23,37 @@ mod change;
 mod check;
 mod dash;
 mod init;
-pub(crate) mod lesson;
 pub(crate) mod record;
 
 pub use record::{agreement_record, digest_bytes, utc_timestamp};
+
+/// Environment variables agent hosts set in the shells they run. Any of them
+/// makes the caller an agent, whatever else is true.
+pub const AGENT_MARKERS: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CODEX_SANDBOX",
+    "CODEX_THREAD_ID",
+    "CURSOR_AGENT",
+    "GEMINI_CLI",
+];
+
+/// Who is calling: a person at a terminal, or an agent. Anything that is not
+/// clearly a person (no terminal on stdin, an agent host's marker in the
+/// environment, or a launcher's `VIRGIL_VIA=agent:<client>`) is an agent, so
+/// an agent can never pass as a person by leaving something out.
+pub fn detect_actor() -> ActorKind {
+    use std::io::IsTerminal;
+    let marked = AGENT_MARKERS
+        .iter()
+        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+        || std::env::var("VIRGIL_VIA").is_ok_and(|via| via.starts_with("agent:"));
+    if !marked && std::io::stdin().is_terminal() {
+        ActorKind::Person
+    } else {
+        ActorKind::Agent
+    }
+}
 
 /// Storage and domain failures as envelopes, for workflows outside this module.
 pub(crate) fn record_storage_error(
@@ -141,9 +168,6 @@ pub struct InitRequest {
     pub yes: bool,
     /// The record store (store): `beads` or `virgil`.
     pub store: Option<String>,
-    /// A Virgil group from the retired lessons switch; accepted and not
-    /// read (the scope is the attachment).
-    pub group: Option<String>,
     /// Who asked: confirming an import into Virgil is a person's (store).
     pub actor: crate::domain::ActorKind,
 }
@@ -155,20 +179,6 @@ pub enum ChangeKind {
     Rule,
     Feature,
     Map,
-    /// Remember a lesson (a proposal; a person admits it).
-    Lesson,
-}
-
-/// A person's decision on a lesson, or a proposal to correct or forget one.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LessonOp {
-    /// Admit a proposed lesson (a person only).
-    Admit { key: String, trust: Option<Trust> },
-    /// Correct a lesson with the request's content: applied when a person
-    /// asks, proposed when an agent does.
-    Supersede { key: String },
-    /// Forget a lesson: applied when a person asks, proposed when an agent does.
-    Forget { key: String },
 }
 
 /// Explicit solo review of a pending local draft.
@@ -254,29 +264,6 @@ pub enum ChangeDefinition {
         #[serde(default)]
         entry_contract: Option<String>,
     },
-    /// A lesson's subjects, concepts, audience and extra anchors. The text is
-    /// the request's content; provenance, trust, status and decisions are
-    /// never supplied (they are refused by name).
-    Lesson(LessonDefinition),
-}
-
-/// What a writer may say about a lesson. Any other field is kept so the
-/// refusal can name it: stamped fields are `provenance_is_stamped`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LessonDefinition {
-    #[serde(default)]
-    pub key: Option<String>,
-    #[serde(default)]
-    pub about: Vec<crate::domain::Subject>,
-    #[serde(default)]
-    pub concepts: Vec<String>,
-    #[serde(default)]
-    pub audience: Option<crate::domain::Audience>,
-    /// Paths to anchor beyond the paths the lesson is about.
-    #[serde(default)]
-    pub anchors: Vec<String>,
-    #[serde(flatten)]
-    pub other: std::collections::BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -307,10 +294,6 @@ pub struct ChangeRequest {
     /// Who is asking: a person, or an agent (the default, so nothing passes
     /// as a person by omission).
     pub actor: ActorKind,
-    /// Admit, correct or forget a lesson.
-    pub lesson: Option<LessonOp>,
-    /// With a rule: the admitted lesson it is drafted from.
-    pub from_lesson: Option<String>,
 }
 
 /// Which in-force rules a check runs besides the compiled-in scanner.

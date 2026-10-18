@@ -194,14 +194,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     if request.dry_run {
         return dry_run_response(request_id, &request, &selection);
     }
-    // Every anchored lesson's hash comparison, recorded once per result: the
-    // cheap staleness check, no model call.
-    let lesson_checks = match layout.as_ref() {
-        Some(layout) if !request.ci && !staged && !request.findings => {
-            super::lesson::record_checks(layout)
-        }
-        _ => Vec::new(),
-    };
     let scanner_rules = request
         .rules
         .iter()
@@ -636,7 +628,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             sweep,
             &gate_receipts,
         );
-        attach_extras(&mut response, sweep_findings.as_deref(), &lesson_checks);
+        attach_findings(&mut response, sweep_findings.as_deref());
         return response;
     }
     let plan = VerificationPlan {
@@ -756,23 +748,19 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         "ci": request.ci,
         "selection": selection_json(&request, &selection),
     });
-    attach_extras(&mut response, sweep_findings.as_deref(), &lesson_checks);
+    attach_findings(&mut response, sweep_findings.as_deref());
     response
 }
 
 /// What a check adds beside its gates: sweep findings (with `--format
-/// findings`) and the lesson anchor comparisons it recorded.
-fn attach_extras(
+/// findings`).
+fn attach_findings(
     response: &mut ServiceResponse,
     sweep_findings: Option<&[findings::SweepFinding]>,
-    lesson_checks: &[Value],
 ) {
     if let Some(found) = sweep_findings {
         response.data["findings"] = json!(found);
         response.data["findings_json"] = json!(findings::json_array(found));
-    }
-    if !lesson_checks.is_empty() {
-        response.data["lesson_checks"] = json!(lesson_checks);
     }
 }
 

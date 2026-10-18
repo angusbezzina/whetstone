@@ -13,8 +13,8 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 - One record store switch, `whetstone/store.json` (`{"store":"beads"}` or
   `{"store":"virgil"}`), for every record kind together, chosen with
-  `wh init --action setup --store beads|virgil` (`--action store`, and
-  `--action memory` for one release, choose it without the tool setup).
+  `wh init --action setup --store beads|virgil` (`--action store` chooses
+  it without the tool setup).
   Every caller reaches storage through one `RecordStore` port with a
   conformance suite any adapter runs.
 - The Virgil store: every record lives in the attached repository's
@@ -26,8 +26,7 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   group when they are accepted. The Virgil arm never needs `bd`, and `wh
   push` and `wh pull` are refused by name there (their dry runs succeed).
 - Moving to Virgil exports Beads' records as the file
-  `virgil rulebook import-beads` reads (with admitted lessons through the
-  lessons import), flips only after every exported revision reads back with
+  `virgil rulebook import-beads` reads, flips only after every exported revision reads back with
   its digest (naming any that is missing or differs), and then copies the
   private Beads store into the private scope. `wh dash` names the store and
   the attachment, and reports records left in the store the switch no longer
@@ -35,10 +34,6 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ### Changed
 
-- `whetstone/memory.json` is read for one release with a notice: a Virgil
-  `memory.json` moves lessons and raised hands only, and its `group` is no
-  longer read (the scope is the attachment). Rules stay in Beads until
-  `wh init --action setup --store virgil` moves them.
 - Whetstone needs `bd` 1.3.0 or later (CI pins 1.3.0), and
   `wh init --action setup` offers an upgrade for an older `bd`.
 
@@ -93,6 +88,14 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   labelled examples): `wh eval` runs the scanner's golden examples and the
   pstack round trip. A stored rule whose source is `hardening` loads as the
   owner's with its digest unchanged.
+- Lessons and the memory layer: `wh change --kind lesson`, `--admit`,
+  `--supersede`, `--forget` and `--from-lesson`, the lesson anchor checks
+  `wh check` recorded, the dashboard's Lessons panel and its Admit action,
+  lesson sharing in `wh push`, the Virgil lessons backend and its import,
+  `wh init --action memory`, `--group` and `whetstone/memory.json` (Virgil
+  owns lessons itself; `whetstone/store.json` names the record store).
+  Stored lessons and lesson checks are read as retired history, and a stored
+  rule drafted from a lesson loads as the owner's with its digest unchanged.
 
 ## [0.13.0] - 2026-10-15
 

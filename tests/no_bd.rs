@@ -111,8 +111,7 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
     fs::create_dir_all(root.join(".fake-virgil")).expect("fake state");
     fs::write(
         root.join(".fake-virgil/state.json"),
-        json!({"knobs": {"attached": [GROUP, REPOSITORY], "fail": {}, "stale_get": false, "page": 100}})
-            .to_string(),
+        json!({"knobs": {"attached": [GROUP, REPOSITORY], "fail": {}, "page": 100}}).to_string(),
     )
     .expect("state");
     let wh = |args: &[&str]| run(args, &root, &tools, &home);
@@ -427,8 +426,7 @@ fn setup_with_store_virgil_flips_an_attached_checkout_and_never_offers_bd() {
     fs::create_dir_all(root.join(".fake-virgil")).expect("fake state");
     fs::write(
         root.join(".fake-virgil/state.json"),
-        json!({"knobs": {"attached": [GROUP, REPOSITORY], "fail": {}, "stale_get": false, "page": 100}})
-            .to_string(),
+        json!({"knobs": {"attached": [GROUP, REPOSITORY], "fail": {}, "page": 100}}).to_string(),
     )
     .expect("state");
 

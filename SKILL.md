@@ -44,39 +44,19 @@ Beads epic `whetstone-ppq`.
 - Never weaken a check, edit a rule record by hand, or skip hooks. Rule
   changes go through `wh change` as drafts the owner accepts.
 
-## Remember what you learn
+## Where records live
 
-When you learn something the next agent or person should know (a convention
-the code does not show, a trap, why something is the way it is), propose it
-as a lesson: `wh change --json --kind lesson --content "<the lesson in
-words>" --definition '{"type":"lesson","about":[{"kind":"path","path":"src/x.rs"}],"concepts":["..."]}'`.
-Name the files it depends on in `about` (or `anchors`): Whetstone hashes them
-and flags the lesson as possibly stale when they change. Never supply who
-wrote it, trust, status or a decision: the store stamps provenance, and a
-request carrying them is refused.
-
-You propose; a person admits. `wh change --admit` from an agent is refused
-by design. Correct a lesson with `wh change --supersede <key> --content
-"..."` and propose forgetting one with `wh change --forget <key> --rationale
-"..."`; both wait for a person. Admitted lessons arrive at session start;
-treat one marked "may be stale" as a lead to check, never as a rule. A
-lesson that keeps holding can become a rule only as a draft:
-`wh change --kind rule --from-lesson <key> ...`.
-
-Where every record lives, lessons included, is one switch,
-`whetstone/store.json`: Beads (standalone), or the attached Virgil
-repository's `rulebook` Records (`wh init --action setup --store virgil`),
-where drafts live in your private scope, accepted records reach the group
-when they are accepted, and `wh push` and `wh pull` are the daemon's.
-Proposals are never shared until accepted either way; inside Virgil a person's admit is their `virgil lessons
-remember`, Virgil derives trust from the writer (`--trust` is refused there),
-and a correction rewrites the lesson in place. Flipping to Virgil needs the
-checkout attached to a Virgil repository (`virgil repos attach`); when Beads
-holds records or admitted lessons it writes them, outside the repository, as
-the files `virgil rulebook import-beads` and `virgil lessons import-beads`
-read, prints the dry-run and apply commands, and flips only when a person runs
-the same command with `--yes` after the apply: every revision must read back
-with its digest, and anchored lessons are re-anchored. Never run `--yes` or the import yourself; ask the owner.
+Every record lives behind one switch, `whetstone/store.json`: Beads
+(standalone), or the attached Virgil repository's `rulebook` Records
+(`wh init --action setup --store virgil`), where drafts live in your private
+scope, accepted records reach the group when they are accepted, and `wh push`
+and `wh pull` are the daemon's. Drafts are never shared until accepted either
+way. Flipping to Virgil needs the checkout attached to a Virgil repository
+(`virgil repos attach`); when Beads holds records it writes them, outside the
+repository, as the file `virgil rulebook import-beads` reads, prints the
+dry-run and apply commands, and flips only when a person runs the same command
+with `--yes` after the apply: every revision must read back with its digest.
+Never run `--yes` or the import yourself; ask the owner.
 
 ## Using the CLI
 
@@ -102,9 +82,8 @@ resume token. A retry with the same request ID must keep the same input.
   adds the required CI status. `wh init --action import --from <dir>` turns
   pstack-edited skill files, including rule files, into drafts.
 - `wh change` drafts, previews, accepts, withdraws or retires records
-  (`--kind mission|principle|rule|feature|map`), and remembers lessons
-  (`--kind lesson`; `--admit`, `--supersede` and `--forget` are a person's). `--migrate`
-  records drafts. Accepting is the owner's call.
+  (`--kind mission|principle|rule|feature|map`). `--migrate` records
+  drafts. Accepting is the owner's call.
 - `wh check` runs the rules: `--staged` for pre-commit, `--changed` or
   `--base` for the change, `--feature` and `--step` to prove one feature,
   `--sweep` for every mapped feature, `--mutate` to test the proofs.

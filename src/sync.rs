@@ -152,7 +152,6 @@ fn build_package(
     shared: &BTreeSet<RecordRef>,
     shared_ids: &BTreeSet<RecordId>,
     request: &PushRequest,
-    share_lessons: bool,
 ) -> Package {
     let include_ancestry = request
         .include_ancestry
@@ -171,22 +170,6 @@ fn build_package(
             && !ids.contains(&record.id)
         {
             ids.push(record.id.clone());
-        }
-    }
-    // Team lessons travel with the agreement once a person has decided on
-    // them (admitted, or later superseded or forgotten): every revision, so
-    // the other side sees who proposed and who decided. Personal lessons and
-    // lessons nobody has admitted stay private. Inside Virgil, lessons live
-    // in the group's collection and never travel through Beads.
-    if share_lessons {
-        for record in state.records() {
-            let RecordBody::Lesson(lesson) = &record.body else {
-                continue;
-            };
-            if lesson.audience.is_group() && lesson.decision.is_some() && !ids.contains(&record.id)
-            {
-                ids.push(record.id.clone());
-            }
         }
     }
     if !request.select.is_empty() {
@@ -220,10 +203,7 @@ fn build_package(
             .collect::<Vec<_>>();
         let private_ancestry = chain
             .iter()
-            .filter(|record| {
-                state.lifecycle_of(record) != Lifecycle::Accepted
-                    && !matches!(record.body, RecordBody::Lesson(_))
-            })
+            .filter(|record| state.lifecycle_of(record) != Lifecycle::Accepted)
             .map(|record| {
                 format!(
                     "v{} ({})",
@@ -415,11 +395,7 @@ pub fn push(request: PushRequest) -> ServiceResponse {
         .map(|record| record.id.clone())
         .collect::<BTreeSet<_>>();
     let state = AgreementState::from_records(private_records);
-    // Inside Virgil, lessons live in the group's collection and never
-    // travel through Beads (a legacy memory.json may still say so).
-    let share_lessons = crate::storage::read_lesson_config(layout.project_root())
-        .is_ok_and(|config| config == StoreConfig::Beads);
-    let package = build_package(&state, &shared_refs, &shared_ids, &request, share_lessons);
+    let package = build_package(&state, &shared_refs, &shared_ids, &request);
     let remotes = shared.remotes().unwrap_or_default();
     let destination = json!({
         "database": shared_dir.display().to_string(),
@@ -720,7 +696,7 @@ pub fn pull(request: PullRequest) -> ServiceResponse {
 
 /// Under the Virgil store, share what has been accepted: the same package
 /// `wh push` would build (accepted revisions with the proposals and reviews
-/// that accepted them, never receipts, never draft ancestry, never lessons),
+/// that accepted them, never receipts, never draft ancestry),
 /// copied into the group's Records. `None` under Beads, where sharing waits
 /// for `wh push`. Idempotent: what Records already holds is never copied.
 pub fn publish_accepted(layout: &ProjectLayout) -> Result<Option<Value>, StorageError> {
@@ -766,15 +742,14 @@ pub fn publish_accepted(layout: &ProjectLayout) -> Result<Option<Value>, Storage
 
 /// Every accepted revision (with the proposals and reviews that accepted it)
 /// the shared store does not hold yet, in apply order, and what is held back
-/// with why: the package `wh push` builds with nothing selected, lessons
-/// left out. Under Virgil there is no `wh push --include-ancestry`, so a
+/// with why: the package `wh push` builds with nothing selected. Under Virgil there is no `wh push --include-ancestry`, so a
 /// record held back for its draft ancestry says what does work there.
 pub fn accepted_package(
     state: &AgreementState,
     shared: &BTreeSet<RecordRef>,
     shared_ids: &BTreeSet<RecordId>,
 ) -> (Vec<RecordRef>, Vec<Value>) {
-    let mut package = build_package(state, shared, shared_ids, &PushRequest::default(), false);
+    let mut package = build_package(state, shared, shared_ids, &PushRequest::default());
     for item in &mut package.blocked {
         let record = item["record"].as_str().unwrap_or_default().to_string();
         if item["reason"]

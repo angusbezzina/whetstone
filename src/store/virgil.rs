@@ -55,7 +55,9 @@
 //! exit 7 (replication still arriving) or 3 to 5 (a follow-up refused).
 
 use std::collections::BTreeSet;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use serde_json::{json, Value};
 
@@ -140,8 +142,151 @@ pub fn read_wire(value: &Value) -> Result<WireRecord, StorageError> {
     })
 }
 
-/// A failed answer as a storage error.
-fn failure(op: &str, answer: &crate::memory::virgil::Answer) -> StorageError {
+/// One answer: the last JSON line, the exit code and stderr's last line.
+struct Answer {
+    line: Value,
+    exit: i32,
+    stderr: String,
+}
+
+/// Run `virgil` (on PATH) once from `root`. `via` is set on the child only,
+/// never in Whetstone's own environment, so a person's call that follows an
+/// agent's carries none.
+fn run(
+    root: &Path,
+    args: &[String],
+    stdin: Option<&str>,
+    via: Option<&str>,
+) -> Result<Answer, StorageError> {
+    let unavailable = |message: String| StorageError::Virgil {
+        code: "store_unavailable".into(),
+        message,
+    };
+    let mut command = Command::new("virgil");
+    command
+        .args(args)
+        .current_dir(root)
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    match via {
+        Some(via) => command.env("VIRGIL_VIA", via),
+        None => command.env_remove("VIRGIL_VIA"),
+    };
+    let mut child = command.spawn().map_err(|error| {
+        unavailable(format!("virgil is not available ({error}); the store switch names Virgil, so nothing was written. Install or start Virgil, or switch back with wh init --action setup --store beads."))
+    })?;
+    if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
+        let _ = pipe.write_all(text.as_bytes());
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| unavailable(format!("virgil did not answer: {error}")))?;
+    let line = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+        .unwrap_or(Value::Null);
+    Ok(Answer {
+        line,
+        exit: output.status.code().unwrap_or(1),
+        stderr: String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .last()
+            .unwrap_or_default()
+            .chars()
+            .take(300)
+            .collect(),
+    })
+}
+
+/// The agent host running this process, as Virgil's client name: a
+/// launcher's own `VIRGIL_VIA=agent:<client>` first, then the host markers
+/// (claude, codex, cursor, gemini), else `whetstone`.
+pub fn agent_host() -> String {
+    let set = |name: &str| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+    if let Some(client) = std::env::var("VIRGIL_VIA")
+        .ok()
+        .and_then(|via| via.strip_prefix("agent:").map(str::to_owned))
+    {
+        return virgil_client(&client);
+    }
+    let host = if set("CLAUDECODE") || set("CLAUDE_CODE_ENTRYPOINT") {
+        "claude"
+    } else if set("CODEX_SANDBOX") || set("CODEX_THREAD_ID") {
+        "codex"
+    } else if set("CURSOR_AGENT") {
+        "cursor"
+    } else if set("GEMINI_CLI") {
+        "gemini"
+    } else {
+        "whetstone"
+    };
+    host.to_string()
+}
+
+/// A host name as Virgil accepts a client (`WriterAttribution::new`): 1 to
+/// 64 bytes, the first an ASCII letter or digit, the rest lowercase letters,
+/// digits, `-`, `_` or `.`. Anything else becomes `whetstone`, so a write
+/// is never refused for its marker.
+pub fn virgil_client(host: &str) -> String {
+    let client = host
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|character| {
+            if character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || "-_.".contains(character)
+            {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let client = client.trim_start_matches(|character: char| !character.is_ascii_alphanumeric());
+    if client.is_empty() || client.len() > 64 {
+        "whetstone".into()
+    } else {
+        client.to_string()
+    }
+}
+
+/// The repository this checkout is attached to (`virgil repos show`), as
+/// `(group, repository)`; `None` when it is not attached.
+pub fn attachment(project_root: &Path) -> Result<Option<(String, String)>, StorageError> {
+    let answer = run(
+        project_root,
+        &["repos".to_string(), "show".to_string()],
+        None,
+        None,
+    )?;
+    if answer.exit != 0 {
+        let error = failure("repos show", &answer);
+        return match error {
+            StorageError::Virgil { code, .. } if code == "unattached" => Ok(None),
+            error => Err(error),
+        };
+    }
+    let identity = &answer.line["result"]["resolution"]["repository"]["identity"];
+    Ok(
+        match (identity["group"].as_str(), identity["repository"].as_str()) {
+            (Some(group), Some(repository)) if !group.is_empty() && !repository.is_empty() => {
+                Some((group.to_string(), repository.to_string()))
+            }
+            _ => None,
+        },
+    )
+}
+
+/// A failed answer as a storage error; `command` is what ran after
+/// `virgil`.
+fn failure(command: &str, answer: &Answer) -> StorageError {
     let error = &answer.line["error"];
     let code = error["code"].as_str().unwrap_or_default();
     let message = error["message"]
@@ -171,16 +316,16 @@ fn failure(op: &str, answer: &crate::memory::virgil::Answer) -> StorageError {
             "unattached",
             format!("This checkout is not attached to a Virgil repository ({message}), and the store switch names Virgil. Attach it (virgil repos attach <repository> --group <group> writes .virgil/repo.toml), or switch back with wh init --action setup --store beads. Nothing was written."),
         ),
-        (6, _) => virgil("not_found", format!("virgil rulebook {op}: {message}")),
-        (2, _) => virgil("invalid_request", format!("virgil rulebook {op}: {message}{hint}")),
+        (6, _) => virgil("not_found", format!("virgil {command}: {message}")),
+        (2, _) => virgil("invalid_request", format!("virgil {command}: {message}{hint}")),
         (3, _) => virgil(
             "read_again",
-            format!("virgil rulebook {op}: the record moved since it was read ({message}); read it again and repeat. Nothing was retried."),
+            format!("virgil {command}: the record moved since it was read ({message}); read it again and repeat. Nothing was retried."),
         ),
-        (4, _) => virgil("refused_content", format!("virgil rulebook {op}: {message}{hint}")),
-        (5, _) => virgil("not_permitted", format!("virgil rulebook {op}: {message}{hint}")),
-        (7, _) => virgil("store_unavailable", format!("virgil rulebook {op}: {message}{hint}")),
-        _ => virgil("store_refused", format!("virgil rulebook {op} failed: {message}{hint}")),
+        (4, _) => virgil("refused_content", format!("virgil {command}: {message}{hint}")),
+        (5, _) => virgil("not_permitted", format!("virgil {command}: {message}{hint}")),
+        (7, _) => virgil("store_unavailable", format!("virgil {command}: {message}{hint}")),
+        _ => virgil("store_refused", format!("virgil {command} failed: {message}{hint}")),
     }
 }
 
@@ -232,22 +377,13 @@ impl VirgilStore {
 
     /// `VIRGIL_VIA` for an agent's writes, none for a person's.
     fn via() -> Option<String> {
-        (crate::memory::detect_actor() == crate::domain::ActorKind::Agent).then(|| {
-            format!(
-                "agent:{}",
-                crate::memory::virgil_client(&crate::memory::agent_host())
-            )
-        })
+        (crate::service::detect_actor() == crate::domain::ActorKind::Agent)
+            .then(|| format!("agent:{}", agent_host()))
     }
 
     /// Run one verb: `Ok(answer)` whatever the exit, so writes can tell a
     /// landed write from a refused one.
-    fn invoke(
-        &self,
-        op: &str,
-        request: &Value,
-        write: bool,
-    ) -> Result<crate::memory::virgil::Answer, StorageError> {
+    fn invoke(&self, op: &str, request: &Value, write: bool) -> Result<Answer, StorageError> {
         let args = [
             "rulebook".to_string(),
             op.to_string(),
@@ -257,16 +393,12 @@ impl VirgilStore {
         let via = if write { Self::via() } else { None };
         let mut request = request.clone();
         request["scope"] = json!(self.scope.as_str());
-        let answer = crate::memory::virgil::invoke(
+        let answer = run(
             &self.root,
             &args,
             Some(&request.to_string()),
             via.as_deref(),
-        )
-        .map_err(|refusal| StorageError::Virgil {
-            code: refusal.code.to_string(),
-            message: refusal.message,
-        })?;
+        )?;
         if !answer.line.is_object() && answer.exit != 0 {
             return Err(StorageError::Virgil {
                 code: "store_contract".into(),
@@ -292,7 +424,7 @@ impl VirgilStore {
     fn read(&self, op: &str, request: &Value) -> Result<Option<Value>, StorageError> {
         let answer = self.invoke(op, request, false)?;
         if answer.exit != 0 || answer.line.get("error").is_some() {
-            let error = failure(op, &answer);
+            let error = failure(&format!("rulebook {op}"), &answer);
             return match &error {
                 StorageError::Virgil { code, .. } if code == "not_found" => Ok(None),
                 _ => Err(error),
@@ -414,7 +546,7 @@ impl VirgilStore {
                 revision: record.revision,
                 beads: Vec::new(),
             },
-            _ => failure("put", &answer),
+            _ => failure("rulebook put", &answer),
         })
     }
 
@@ -430,7 +562,7 @@ impl VirgilStore {
         if landed && matches!(answer.exit, 0 | 7) {
             return Ok(());
         }
-        Err(failure(op, &answer))
+        Err(failure(&format!("rulebook {op}"), &answer))
     }
 
     /// Whether the daemon answers the pinned rulebook contract.
@@ -462,7 +594,7 @@ impl VirgilStore {
         let request = json!({"file": file.display().to_string(), "apply": apply});
         let answer = self.invoke("import-beads", &request, apply)?;
         if answer.exit != 0 || answer.line.get("error").is_some() {
-            return Err(failure("import-beads", &answer));
+            return Err(failure("rulebook import-beads", &answer));
         }
         Ok(answer.line["result"]["entries"]
             .as_array()
@@ -662,5 +794,17 @@ impl RecordStore for VirgilStore {
             copied.push(reference);
         }
         Ok(copied)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::virgil_client;
+
+    #[test]
+    fn a_host_that_breaks_virgils_client_rule_is_normalised() {
+        assert_eq!(virgil_client("Cursor Agent!"), "cursor-agent-");
+        assert_eq!(virgil_client("--"), "whetstone");
+        assert_eq!(virgil_client(&"x".repeat(65)), "whetstone");
     }
 }

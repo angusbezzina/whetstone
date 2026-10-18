@@ -8,8 +8,8 @@ use sha2::{Digest, Sha256};
 use crate::agreement::AgreementState;
 use crate::domain::{
     AgreementRecord, EvidenceRef, Principle, PrincipleSource, Provenance, ProvenanceAuthority,
-    ProvenanceKind, RecordBody, RecordId, RecordRef, Rule, RuleSource, RuleSourceKind,
-    RULE_SCHEMA_V2, SCHEMA_VERSION_V1,
+    ProvenanceKind, RecordBody, RecordId, RecordRef, Rule, RuleSource, RULE_SCHEMA_V2,
+    SCHEMA_VERSION_V1,
 };
 use crate::storage::{ProjectLayout, RecordStore, StorageError};
 
@@ -39,16 +39,13 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
     };
     let private: &dyn RecordStore = &*private;
     if let Some(review) = request.review.clone() {
-        return review_draft(&layout, private, request_id, &review, &request);
+        return review_draft(private, request_id, &review, &request);
     }
     if let Some(target) = request.retire.clone() {
         return retire_record(&layout, private, request_id, &target, &request);
     }
     if request.migrate {
         return migrate(&layout, private, request_id, &request);
-    }
-    if request.lesson.is_some() || request.kind == Some(ChangeKind::Lesson) {
-        return super::lesson::change(&layout, request_id, &request);
     }
     propose(&layout, private, request_id, &request)
 }
@@ -58,8 +55,9 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
 /// never collide on it. The revision, token and preview flag are left out:
 /// they differ between the inspection and the confirmation.
 fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String {
-    let input = format!(
-        "{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}",
+    let input =
+        format!(
+        "{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{}\0{:?}\0{:?}\0{:?}",
         request.kind,
         request.record_id,
         request.content,
@@ -74,8 +72,6 @@ fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String
         request.migrate,
         request.examples,
         request.conflicts,
-        request.lesson,
-        request.from_lesson,
         layout.project_id(),
     );
     format!(
@@ -495,7 +491,7 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
                 crate::gates::parse_command(command)?;
             }
             let source = source.clone().unwrap_or_else(RuleSource::owner);
-            let mut rule = Rule {
+            let rule = Rule {
                 schema: RULE_SCHEMA_V2.into(),
                 statement: content,
                 rationale,
@@ -508,16 +504,6 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
                 sweep_priority: *sweep_priority,
                 sweep_unsure: sweep_unsure.clone(),
             };
-            // A rule drafted from a lesson names the admitted lesson it came
-            // from.
-            let origin = request.from_lesson.clone().or_else(|| {
-                (rule.source.kind == RuleSourceKind::Lesson)
-                    .then(|| rule.source.reference.clone())
-                    .flatten()
-            });
-            if let Some(key) = origin {
-                super::lesson::rule_from_lesson(layout, &key, &mut rule)?;
-            }
             // How far a sweep may reach over this rule's flags is a person's
             // call: an agent never widens it.
             if request.actor != crate::domain::ActorKind::Person {
@@ -593,10 +579,6 @@ fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<Record
                 mutations: mutations.clone(),
             })
         }
-        ChangeKind::Lesson => return Err(
-            "A lesson is remembered with wh change --kind lesson; it is not an agreement record."
-                .into(),
-        ),
         ChangeKind::Map => {
             let Some(ChangeDefinition::Map {
                 intro,
@@ -787,7 +769,6 @@ fn migrate(
 }
 
 pub(crate) fn review_draft(
-    layout: &ProjectLayout,
     private: &dyn RecordStore,
     request_id: String,
     review: &ReviewRequest,
@@ -868,22 +849,6 @@ pub(crate) fn review_draft(
             |value| value.chars().take(4_000).collect(),
         );
     let reviewer = target.proposal.owner.clone();
-    // Accepting a rule drafted from a lesson cites the lesson revision it
-    // rested on; a lesson no longer admitted cannot carry a rule into force.
-    let mut cites = Vec::new();
-    if review.verdict == LocalReviewVerdict::Accept {
-        for candidate in &target.candidates {
-            let Some(rule) = candidate.body.rule_view() else {
-                continue;
-            };
-            match super::lesson::citations(layout, &rule) {
-                Ok(found) => cites.extend(found),
-                Err(question) => {
-                    return needs_input("change", request_id, 0, String::new(), question)
-                }
-            }
-        }
-    }
     let suffix = &format!("{:x}", Sha256::digest(key.as_bytes()))[..24];
     let record = AgreementRecord {
         schema_version: SCHEMA_VERSION_V1,
@@ -915,7 +880,7 @@ pub(crate) fn review_draft(
             rationale: rationale.clone(),
             reviewed_at: utc_now(),
             team_activation_permitted: false,
-            cites: cites.clone(),
+            cites: Vec::new(),
         }),
     };
     let candidates = target
@@ -979,7 +944,6 @@ pub(crate) fn review_draft(
         "verdict": verb,
         "candidates": candidates,
         "rationale": rationale,
-        "cites": cites,
         "shared": false,
     });
     response

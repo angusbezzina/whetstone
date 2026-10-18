@@ -129,8 +129,6 @@ pub enum RuleSourceKind {
     Starter,
     /// Migrated from an earlier record or rule file.
     Migration,
-    /// Drafted from an admitted lesson (the reference is its key).
-    Lesson,
 }
 
 impl RuleSourceKind {
@@ -142,7 +140,6 @@ impl RuleSourceKind {
             Self::Owner => "owner",
             Self::Starter => "starter",
             Self::Migration => "migration",
-            Self::Lesson => "lesson",
         }
     }
 }
@@ -432,7 +429,7 @@ impl Rule {
 /// Fields of stored rule revisions that the current model drops on read.
 const DROPPED_RULE_FIELDS: &[&str] = &["hand_raise", "privacy", "shadow"];
 /// Source kinds of stored rule revisions that read as owner.
-const OWNER_SOURCES: &[&str] = &["hardening"];
+const OWNER_SOURCES: &[&str] = &["hardening", "lesson"];
 /// Enforcer kinds of stored rule revisions that nothing holds any more.
 const RETIRED_ENFORCERS: &[&str] = &[
     "review",

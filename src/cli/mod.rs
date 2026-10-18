@@ -97,9 +97,6 @@ enum Command {
         /// Where every record lives (setup, store): beads (standalone) or virgil.
         #[arg(long = "store", value_parser = ["beads", "virgil"])]
         store: Option<String>,
-        /// Retired: the Virgil scope is the checkout's attachment.
-        #[arg(long = "group", hide = true)]
-        group: Option<String>,
     },
 
     /// Open the inspectable local dashboard.
@@ -184,22 +181,6 @@ enum Command {
         /// Draft principles from earlier values and philosophy records.
         #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind"])]
         migrate: bool,
-        /// Admit a proposed lesson by its key (a person only; agents propose).
-        #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind", "supersede", "forget"])]
-        admit: Option<String>,
-        /// With --admit: validated (the default) or authoritative.
-        #[arg(long, value_enum, requires = "admit")]
-        trust: Option<TrustArg>,
-        /// Correct a lesson: the correction is --content (applied by a person,
-        /// proposed by an agent).
-        #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind", "forget"])]
-        supersede: Option<String>,
-        /// Forget a lesson, with --rationale (applied by a person, proposed by an agent).
-        #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind"])]
-        forget: Option<String>,
-        /// With --kind rule: the admitted lesson the rule is drafted from.
-        #[arg(long, requires = "kind")]
-        from_lesson: Option<String>,
     },
 
     /// Run the rules and return actionable findings.
@@ -349,8 +330,6 @@ enum InitActionArg {
     Import,
     Setup,
     Exemplar,
-    /// `memory` is the retired name, kept one release.
-    #[value(alias = "memory")]
     Store,
 }
 
@@ -394,13 +373,6 @@ enum ChangeKindArg {
     Rule,
     Feature,
     Map,
-    Lesson,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum TrustArg {
-    Validated,
-    Authoritative,
 }
 
 fn parse_change_definition(value: &str) -> Result<Box<ChangeDefinition>, String> {
@@ -428,7 +400,6 @@ impl From<ChangeKindArg> for ChangeKind {
             ChangeKindArg::Rule => Self::Rule,
             ChangeKindArg::Feature => Self::Feature,
             ChangeKindArg::Map => Self::Map,
-            ChangeKindArg::Lesson => Self::Lesson,
         }
     }
 }
@@ -460,7 +431,6 @@ pub fn run() -> i32 {
             ci,
             yes,
             store,
-            group,
         }) => {
             // A person inspecting a project with no agreement is walked through
             // it in the dashboard. Machine callers always get the envelope.
@@ -487,8 +457,7 @@ pub fn run() -> i32 {
                 ci,
                 yes,
                 store,
-                group,
-                actor: crate::memory::detect_actor(),
+                actor: crate::service::detect_actor(),
             }));
             if guided && needs_onboarding(&response) {
                 return run_dashboard(
@@ -567,11 +536,6 @@ pub fn run() -> i32 {
             withdraw,
             retire,
             migrate,
-            admit,
-            trust,
-            supersede,
-            forget,
-            from_lesson,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
             project_dir,
             request_id,
@@ -602,18 +566,7 @@ pub fn run() -> i32 {
                 }),
             retire,
             migrate,
-            actor: crate::memory::detect_actor(),
-            lesson: admit
-                .map(|key| crate::service::LessonOp::Admit {
-                    key,
-                    trust: trust.map(|trust| match trust {
-                        TrustArg::Validated => crate::domain::Trust::Validated,
-                        TrustArg::Authoritative => crate::domain::Trust::Authoritative,
-                    }),
-                })
-                .or_else(|| supersede.map(|key| crate::service::LessonOp::Supersede { key }))
-                .or_else(|| forget.map(|key| crate::service::LessonOp::Forget { key })),
-            from_lesson,
+            actor: crate::service::detect_actor(),
         })),
         Some(Command::Check {
             project_dir,
@@ -765,7 +718,7 @@ fn run_dashboard(
     let actor = if bootstrap_file.is_some() {
         crate::domain::ActorKind::Agent
     } else {
-        crate::memory::detect_actor()
+        crate::service::detect_actor()
     };
     let backend = Arc::new(
         dashboard_service::CommandDashboardBackend::new(project_dir, request_id)

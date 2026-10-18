@@ -113,10 +113,8 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
         Some(Err(error)) => Err(error),
         None => Ok(AgreementState::default()),
     };
-    let mut memory = None;
     let (current, journal, trail) = match agreement_state {
         Ok(state) => {
-            memory = Some(super::lesson::dash_section(&layout, &state));
             let fingerprint = crate::gates::workspace_fingerprint(layout.project_root()).ok();
             let evidence_root = crate::gates::evidence_root(&layout);
             let manifest = crate::skill::read_manifest(&layout);
@@ -156,8 +154,7 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
                         at: entry.recorded_at.clone(),
                     });
             let trail = request.trail.then(|| projection::decision_trail(&state));
-            let mut view = serde_json::to_value(&view).unwrap_or(Value::Null);
-            attach_lineage(&layout, &state, &mut view);
+            let view = serde_json::to_value(&view).unwrap_or(Value::Null);
             (Some(view), journal, trail)
         }
         Err(_error) => {
@@ -199,12 +196,11 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
         "changelog": journal,
         "changelog_truncated": changelog_truncated,
         "current": current,
-        "memory": memory,
         "store": store_section(&layout),
         "workflows": [
             {"name": "init", "state": "available", "effect": "inspect, agree the mission, principles and rules, wire the gates"},
             {"name": "dash", "state": "available", "effect": "inspect rules, checks, requests and history"},
-            {"name": "change", "state": "available", "effect": "draft a change, accept or withdraw it, label a flag, remember or admit a lesson"},
+            {"name": "change", "state": "available", "effect": "draft a change, accept or withdraw it, or retire a record"},
             {"name": "check", "state": "available", "effect": "run the rules and return repair feedback"},
             {"name": "pull", "state": if shared_exists { "available" } else { "unavailable" }, "effect": "receive shared records; nothing runs or is accepted"},
             {"name": "push", "state": if shared_exists { "available" } else { "unavailable" }, "effect": "share an exact, confirmed package of accepted records"}
@@ -226,58 +222,26 @@ fn store_section(layout: &ProjectLayout) -> Value {
     let mut section = match &switch {
         Ok(switch) => json!({
             "kind": switch.config.backend(),
-            "lessons": switch.lessons.backend(),
             "source": switch.source,
             "switch": crate::storage::STORE_CONFIG,
-            "notice": switch.notice(),
         }),
         Err(error) => {
             return json!({"kind": null, "state": "invalid", "detail": error, "switch": crate::storage::STORE_CONFIG})
         }
     };
-    let virgil = switch.as_ref().is_ok_and(|switch| {
-        switch.config == crate::storage::StoreConfig::Virgil
-            || switch.lessons == crate::storage::StoreConfig::Virgil
-    });
+    let virgil = switch
+        .as_ref()
+        .is_ok_and(|switch| switch.config == crate::storage::StoreConfig::Virgil);
     if virgil {
-        section["attachment"] = match crate::memory::virgil::attachment(layout.project_root()) {
+        section["attachment"] = match crate::store::virgil::attachment(layout.project_root()) {
             Ok(Some((group, repository))) => json!({"group": group, "repository": repository}),
             Ok(None) => json!(null),
-            Err(refusal) => json!({"state": "unavailable", "refusal": refusal}),
+            Err(error) => json!({"state": "unavailable", "detail": error.to_string()}),
         };
     }
     let left = crate::store::export::left_behind(layout);
     section["left_behind"] = json!(left);
     section
-}
-
-/// Each rule drafted from a lesson gets its lineage: the review that
-/// accepted it, the lesson that review cites, and the lesson's anchors now.
-fn attach_lineage(layout: &ProjectLayout, state: &AgreementState, view: &mut Value) {
-    let Some(rules) = view.get_mut("rules").and_then(Value::as_array_mut) else {
-        return;
-    };
-    let needs = rules.iter().any(|rule| rule["origin_lesson"].is_string());
-    let lessons = if needs {
-        crate::memory::read_config(layout.project_root())
-            .ok()
-            .and_then(|config| crate::memory::open_store(layout, &config).find().ok())
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    for rule in rules {
-        let Some(id) = rule["id"]
-            .as_str()
-            .and_then(|id| crate::domain::RecordId::new(id).ok())
-        else {
-            continue;
-        };
-        if rule["origin_lesson"].is_string() {
-            rule["lineage"] =
-                super::lesson::lineage(layout, state, &id, &lessons).unwrap_or(Value::Null);
-        }
-    }
 }
 
 /// Whether an area is the closing multi-surface journeys group.

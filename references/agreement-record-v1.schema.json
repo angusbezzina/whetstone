@@ -54,9 +54,7 @@
         "proposal",
         "local_review",
         "retirement",
-        "verification_receipt",
-        "lesson",
-        "lesson_check"
+        "verification_receipt"
       ]
     },
     "record": {
@@ -90,12 +88,6 @@
         },
         {
           "$ref": "#/$defs/verification_receipt"
-        },
-        {
-          "$ref": "#/$defs/lesson"
-        },
-        {
-          "$ref": "#/$defs/lesson_check"
         }
       ]
     }
@@ -257,38 +249,6 @@
         "properties": {
           "record": {
             "$ref": "#/$defs/verification_receipt"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "record_type": {
-            "const": "lesson"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "record": {
-            "$ref": "#/$defs/lesson"
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "record_type": {
-            "const": "lesson_check"
-          }
-        }
-      },
-      "then": {
-        "properties": {
-          "record": {
-            "$ref": "#/$defs/lesson_check"
           }
         }
       }
@@ -942,7 +902,7 @@
           "items": {
             "$ref": "#/$defs/evidence_ref"
           },
-          "description": "What the decision rested on, such as the origin lesson of a rule it accepts."
+          "description": "Evidence the decision rested on."
         }
       }
     },
@@ -1147,8 +1107,7 @@
             "exemplar",
             "owner",
             "starter",
-            "migration",
-            "lesson"
+            "migration"
           ]
         },
         "reference": {
@@ -1309,302 +1268,6 @@
           "$ref": "#/$defs/nonempty"
         }
       }
-    },
-    "lesson_key": {
-      "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9-]{1,78}[a-z0-9]$"
-    },
-    "lesson": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Lesson v1: something learned, in words, for a person or a group. Proposed by anyone, admitted only by a person; the stamp is the store's, never the writer's.",
-      "required": [
-        "schema",
-        "key",
-        "text",
-        "audience",
-        "stamp",
-        "trust",
-        "status"
-      ],
-      "properties": {
-        "schema": {
-          "const": "whetstone.lesson.v1"
-        },
-        "key": {
-          "$ref": "#/$defs/lesson_key"
-        },
-        "text": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 4000
-        },
-        "about": {
-          "type": "array",
-          "maxItems": 32,
-          "items": {
-            "oneOf": [
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "kind",
-                  "repo"
-                ],
-                "properties": {
-                  "kind": {
-                    "const": "repo"
-                  },
-                  "repo": {
-                    "$ref": "#/$defs/nonempty"
-                  }
-                }
-              },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "kind",
-                  "locator"
-                ],
-                "properties": {
-                  "kind": {
-                    "const": "record"
-                  },
-                  "locator": {
-                    "type": "string",
-                    "pattern": "^[^:\\s]+:.+$"
-                  }
-                }
-              },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "kind",
-                  "path"
-                ],
-                "properties": {
-                  "kind": {
-                    "const": "path"
-                  },
-                  "path": {
-                    "$ref": "#/$defs/nonempty"
-                  }
-                }
-              }
-            ]
-          }
-        },
-        "concepts": {
-          "type": "array",
-          "maxItems": 32,
-          "items": {
-            "$ref": "#/$defs/nonempty"
-          }
-        },
-        "audience": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "kind",
-            "name"
-          ],
-          "properties": {
-            "kind": {
-              "enum": [
-                "person",
-                "group"
-              ]
-            },
-            "name": {
-              "$ref": "#/$defs/nonempty"
-            }
-          }
-        },
-        "stamp": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "who",
-            "actor",
-            "at"
-          ],
-          "properties": {
-            "who": {
-              "$ref": "#/$defs/nonempty"
-            },
-            "actor": {
-              "enum": [
-                "person",
-                "agent"
-              ]
-            },
-            "session": {
-              "type": "string"
-            },
-            "task": {
-              "type": "string"
-            },
-            "branch": {
-              "type": "string"
-            },
-            "commit": {
-              "type": "string"
-            },
-            "at": {
-              "$ref": "#/$defs/timestamp"
-            }
-          }
-        },
-        "anchors": {
-          "type": "array",
-          "maxItems": 32,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "path"
-            ],
-            "properties": {
-              "path": {
-                "$ref": "#/$defs/nonempty"
-              },
-              "digest": {
-                "$ref": "#/$defs/digest"
-              }
-            }
-          }
-        },
-        "trust": {
-          "enum": [
-            "inferred",
-            "validated",
-            "authoritative"
-          ]
-        },
-        "status": {
-          "enum": [
-            "proposed",
-            "admitted",
-            "superseded",
-            "forgotten"
-          ]
-        },
-        "supersedes": {
-          "$ref": "#/$defs/lesson_key"
-        },
-        "superseded_by": {
-          "$ref": "#/$defs/lesson_key"
-        },
-        "forget_proposed": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "reason",
-            "by",
-            "at"
-          ],
-          "properties": {
-            "reason": {
-              "$ref": "#/$defs/nonempty"
-            },
-            "by": {
-              "$ref": "#/$defs/nonempty"
-            },
-            "at": {
-              "$ref": "#/$defs/timestamp"
-            }
-          }
-        },
-        "decision": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "verb",
-            "by",
-            "at",
-            "rationale"
-          ],
-          "properties": {
-            "verb": {
-              "enum": [
-                "admit",
-                "supersede",
-                "forget"
-              ]
-            },
-            "by": {
-              "$ref": "#/$defs/nonempty"
-            },
-            "at": {
-              "$ref": "#/$defs/timestamp"
-            },
-            "rationale": {
-              "$ref": "#/$defs/nonempty"
-            },
-            "receipt": {
-              "$ref": "#/$defs/nonempty"
-            }
-          }
-        }
-      }
-    },
-    "lesson_check": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "The cheap staleness check of one lesson revision: each anchor's recorded hash against the file now. No model is called.",
-      "required": [
-        "lesson",
-        "key",
-        "comparisons",
-        "may_be_stale",
-        "checked_at"
-      ],
-      "properties": {
-        "lesson": {
-          "$ref": "#/$defs/record_ref"
-        },
-        "key": {
-          "$ref": "#/$defs/lesson_key"
-        },
-        "comparisons": {
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 32,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "path",
-              "changed"
-            ],
-            "properties": {
-              "path": {
-                "$ref": "#/$defs/nonempty"
-              },
-              "recorded": {
-                "$ref": "#/$defs/digest"
-              },
-              "current": {
-                "$ref": "#/$defs/digest"
-              },
-              "changed": {
-                "type": "boolean"
-              }
-            }
-          }
-        },
-        "may_be_stale": {
-          "type": "boolean"
-        },
-        "commit": {
-          "type": "string"
-        },
-        "checked_at": {
-          "$ref": "#/$defs/timestamp"
-        }
-      }
     }
   },
   "x-retired-kinds": {
@@ -1629,7 +1292,9 @@
       "brief",
       "guidance",
       "judgment",
-      "flag_decision"
+      "flag_decision",
+      "lesson",
+      "lesson_check"
     ]
   }
 }

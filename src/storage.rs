@@ -237,8 +237,6 @@ pub trait RemoteSync {
 pub const STORE_CONFIG: &str = "whetstone/store.json";
 /// The Virgil repository attachment a checkout carries.
 pub const VIRGIL_ATTACHMENT: &str = ".virgil/repo.toml";
-/// The lessons-only switch `store.json` replaced; read for one release.
-pub const LEGACY_MEMORY_CONFIG: &str = "whetstone/memory.json";
 
 /// Where every record lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -271,110 +269,43 @@ impl StoreConfig {
     }
 }
 
-/// The legacy lessons switch, whose Virgil arm named a group.
-#[derive(Debug, Deserialize)]
-#[serde(tag = "store", rename_all = "snake_case", deny_unknown_fields)]
-enum LegacyMemoryConfig {
-    Beads,
-    Virgil {
-        #[allow(dead_code)]
-        group: Option<String>,
-    },
-}
-
 /// Which file named the store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SwitchSource {
-    /// Neither file exists: Beads.
+    /// No `store.json`: Beads.
     Default,
     Store,
-    /// Only the legacy `memory.json` exists.
-    LegacyMemory,
 }
 
 /// The switch as read, with where it came from.
-///
-/// `config` is the record store. `lessons` is where lessons go: the same
-/// store, except under a legacy `memory.json` naming
-/// Virgil, which only ever moved lessons. Its records stay in Beads until
-/// `wh init --action setup --store virgil` moves them, so no rule ever
-/// silently disappears from a check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StoreSwitch {
     pub config: StoreConfig,
-    pub lessons: StoreConfig,
     pub source: SwitchSource,
-    /// `memory.json` exists beside `store.json` and is ignored.
-    pub legacy_ignored: bool,
 }
 
-impl StoreSwitch {
-    /// What a person should know about the switch file, if anything.
-    pub fn notice(&self) -> Option<String> {
-        match (self.source, self.legacy_ignored) {
-            (SwitchSource::LegacyMemory, _) => Some(match self.lessons {
-                StoreConfig::Beads => format!(
-                    "{LEGACY_MEMORY_CONFIG} is now {STORE_CONFIG}; run wh init --action setup --store beads to rewrite it."
-                ),
-                StoreConfig::Virgil => format!(
-                    "{LEGACY_MEMORY_CONFIG} is now {STORE_CONFIG}, which names the store for every record: lessons live in Virgil, but rules and decisions still live in Beads until wh init --action setup --store virgil moves them (its group field is no longer read; the scope is the attachment)."
-                ),
-            }),
-            (_, true) => Some(format!(
-                "{LEGACY_MEMORY_CONFIG} is ignored because {STORE_CONFIG} names the store; delete it."
-            )),
-            _ => None,
-        }
-    }
-}
-
-/// Read the switch. Neither file means Beads; a file that does not parse
-/// fails closed rather than silently falling back to another store.
+/// Read the switch. No file means Beads; a file that does not parse fails
+/// closed rather than silently falling back to another store.
 pub fn read_switch(project_root: &Path) -> Result<StoreSwitch, String> {
-    let read = |relative: &str| match std::fs::read_to_string(project_root.join(relative)) {
-        Ok(text) => Ok(Some(text)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("{relative} could not be read: {error}")),
+    let text = match std::fs::read_to_string(project_root.join(STORE_CONFIG)) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(StoreSwitch {
+                config: StoreConfig::Beads,
+                source: SwitchSource::Default,
+            })
+        }
+        Err(error) => return Err(format!("{STORE_CONFIG} could not be read: {error}")),
     };
-    let legacy = read(LEGACY_MEMORY_CONFIG)?;
-    if let Some(text) = read(STORE_CONFIG)? {
-        let config = parse_switch(&text).map_err(|reason| {
-            format!(
-                "{STORE_CONFIG} is not a store switch ({reason}); write {{\"store\":\"beads\"}} or {{\"store\":\"virgil\"}}."
-            )
-        })?;
-        return Ok(StoreSwitch {
-            config,
-            lessons: config,
-            source: SwitchSource::Store,
-            legacy_ignored: legacy.is_some(),
-        });
-    }
-    let Some(text) = legacy else {
-        return Ok(StoreSwitch {
-            config: StoreConfig::Beads,
-            lessons: StoreConfig::Beads,
-            source: SwitchSource::Default,
-            legacy_ignored: false,
-        });
-    };
-    let lessons = serde_json::from_str::<LegacyMemoryConfig>(&text)
-        .map(|legacy| match legacy {
-            LegacyMemoryConfig::Beads => StoreConfig::Beads,
-            LegacyMemoryConfig::Virgil { .. } => StoreConfig::Virgil,
-        })
-        .or_else(|_| parse_switch(&text))
-        .map_err(|reason| {
-            format!(
-                "{LEGACY_MEMORY_CONFIG} is not a store switch ({reason}); write {STORE_CONFIG} with {{\"store\":\"beads\"}} or {{\"store\":\"virgil\"}}."
-            )
-        })?;
+    let config = parse_switch(&text).map_err(|reason| {
+        format!(
+            "{STORE_CONFIG} is not a store switch ({reason}); write {{\"store\":\"beads\"}} or {{\"store\":\"virgil\"}}."
+        )
+    })?;
     Ok(StoreSwitch {
-        config: StoreConfig::Beads,
-        lessons,
-        source: SwitchSource::LegacyMemory,
-        legacy_ignored: false,
+        config,
+        source: SwitchSource::Store,
     })
 }
 
@@ -401,14 +332,8 @@ pub fn read_config(project_root: &Path) -> Result<StoreConfig, String> {
     read_switch(project_root).map(|switch| switch.config)
 }
 
-/// Where lessons go (see [`StoreSwitch`]).
-pub fn read_lesson_config(project_root: &Path) -> Result<StoreConfig, String> {
-    read_switch(project_root).map(|switch| switch.lessons)
-}
-
-/// Write `store.json` (pretty JSON, one trailing newline) and retire the
-/// legacy `memory.json`; returns whether a legacy file was removed.
-pub fn write_config(project_root: &Path, config: StoreConfig) -> Result<bool, String> {
+/// Write `store.json` (pretty JSON, one trailing newline).
+pub fn write_config(project_root: &Path, config: StoreConfig) -> Result<(), String> {
     let path = project_root.join(STORE_CONFIG);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -417,13 +342,7 @@ pub fn write_config(project_root: &Path, config: StoreConfig) -> Result<bool, St
     text.push('\n');
     let staged = path.with_extension("json.tmp");
     std::fs::write(&staged, text).map_err(|error| error.to_string())?;
-    std::fs::rename(&staged, &path).map_err(|error| error.to_string())?;
-    let legacy = project_root.join(LEGACY_MEMORY_CONFIG);
-    if legacy.is_file() {
-        std::fs::remove_file(&legacy).map_err(|error| error.to_string())?;
-        return Ok(true);
-    }
-    Ok(false)
+    std::fs::rename(&staged, &path).map_err(|error| error.to_string())
 }
 
 // ---------- the factory ----------
@@ -523,12 +442,11 @@ pub fn record_class(body: &RecordBody) -> &'static str {
         | RecordBody::StoredRule(_)
         | RecordBody::Standard(_)
         | RecordBody::Feature(_)
-        | RecordBody::VerificationMap(_)
-        | RecordBody::Lesson(_) => "record",
+        | RecordBody::VerificationMap(_) => "record",
         RecordBody::Proposal(_) | RecordBody::LocalReview(_) | RecordBody::Retirement(_) => {
             "decision"
         }
-        RecordBody::VerificationReceipt(_) | RecordBody::LessonCheck(_) => "receipt",
+        RecordBody::VerificationReceipt(_) => "receipt",
         RecordBody::Retired(retired) => match retired.record_type.as_str() {
             "rule"
             | "guidance"
@@ -536,7 +454,8 @@ pub fn record_class(body: &RecordBody) -> &'static str {
             | "implementation_philosophy"
             | "metric_definition"
             | "source_snapshot"
-            | "policy_exception" => "record",
+            | "policy_exception"
+            | "lesson" => "record",
             "decision" | "mandate" | "activation" | "hand_answer" | "flag_decision" => "decision",
             _ => "receipt",
         },
@@ -1023,14 +942,13 @@ mod tests {
         let switch = read_switch(temp.path()).expect("read");
         assert_eq!(switch.config, StoreConfig::Beads);
         assert_eq!(switch.source, SwitchSource::Default);
-        assert_eq!(switch.notice(), None);
         for (text, config) in [
             ("{\"store\":\"beads\"}", StoreConfig::Beads),
             ("{\"store\":\"virgil\"}", StoreConfig::Virgil),
         ] {
             write(temp.path(), STORE_CONFIG, text);
             let switch = read_switch(temp.path()).expect("read");
-            assert_eq!((switch.config, switch.lessons), (config, config));
+            assert_eq!(switch.config, config);
             assert_eq!(switch.source, SwitchSource::Store);
         }
     }
@@ -1063,56 +981,12 @@ mod tests {
     }
 
     #[test]
-    fn a_legacy_memory_json_moves_lessons_only_and_says_so() {
+    fn write_config_writes_pretty_json() {
         let temp = tempfile::tempdir().expect("temp");
-        write(
-            temp.path(),
-            LEGACY_MEMORY_CONFIG,
-            "{\"store\":\"virgil\",\"group\":\"01J8Z0000000000000000000AD\"}",
-        );
-        let switch = read_switch(temp.path()).expect("read");
-        assert_eq!(switch.source, SwitchSource::LegacyMemory);
-        assert_eq!(switch.lessons, StoreConfig::Virgil);
-        assert_eq!(
-            switch.config,
-            StoreConfig::Beads,
-            "rules never silently move out of Beads"
-        );
-        let notice = switch.notice().expect("notice");
-        assert!(
-            notice.contains("memory.json is now whetstone/store.json"),
-            "{notice}"
-        );
-        assert!(
-            notice.contains("wh init --action setup --store virgil"),
-            "{notice}"
-        );
-        assert_eq!(read_lesson_config(temp.path()), Ok(StoreConfig::Virgil));
-        assert_eq!(read_config(temp.path()), Ok(StoreConfig::Beads));
-        write(temp.path(), LEGACY_MEMORY_CONFIG, "{\"store\":\"beads\"}");
-        assert_eq!(
-            read_switch(temp.path()).expect("read").lessons,
-            StoreConfig::Beads
-        );
-        write(temp.path(), LEGACY_MEMORY_CONFIG, "{\"store\":\"recall\"}");
-        assert!(read_switch(temp.path()).is_err(), "fails closed");
-    }
-
-    #[test]
-    fn store_json_wins_over_and_retires_memory_json() {
-        let temp = tempfile::tempdir().expect("temp");
-        write(temp.path(), LEGACY_MEMORY_CONFIG, "{\"store\":\"beads\"}");
-        write(temp.path(), STORE_CONFIG, "{\"store\":\"virgil\"}");
-        let switch = read_switch(temp.path()).expect("read");
-        assert_eq!(switch.config, StoreConfig::Virgil);
-        assert!(switch.legacy_ignored);
-        assert!(switch.notice().expect("notice").contains("is ignored"));
-        assert_eq!(write_config(temp.path(), StoreConfig::Beads), Ok(true));
-        assert!(!temp.path().join(LEGACY_MEMORY_CONFIG).exists());
+        assert_eq!(write_config(temp.path(), StoreConfig::Beads), Ok(()));
         assert_eq!(
             std::fs::read_to_string(temp.path().join(STORE_CONFIG)).expect("read"),
             "{\n  \"store\": \"beads\"\n}\n"
         );
-        assert_eq!(write_config(temp.path(), StoreConfig::Beads), Ok(false));
     }
 }

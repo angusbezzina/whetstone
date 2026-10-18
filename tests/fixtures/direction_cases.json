@@ -222,6 +222,21 @@
       "rule_view_source": "owner"
     },
     {
+      "id": "R-021",
+      "name": "a stored rule drafted from a lesson loads as the owner's",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Use the logger.",
+        "rationale": "Print calls get lost.",
+        "strength": "should",
+        "enforcer": { "kind": "ast", "query": "(call) @match", "language": "python" },
+        "source": { "kind": "lesson", "reference": "use-the-logger" }
+      },
+      "expect": "stored",
+      "rule_view_source": "owner"
+    },
+    {
       "id": "P-020",
       "name": "a pstack principle is pinned to its id and version",
       "record_type": "principle",
@@ -355,6 +370,31 @@
       "name": "a mandate is read, never written",
       "record_type": "mandate",
       "record": { "objective": "Clean up." },
+      "expect": "retired"
+    },
+    {
+      "id": "X-055",
+      "name": "a lesson is read, never written",
+      "record_type": "lesson",
+      "record": {
+        "schema": "whetstone.lesson.v1",
+        "key": "use-the-logger",
+        "text": "Print calls get lost; use the logger.",
+        "about": [{ "kind": "path", "path": "src/app.py" }],
+        "audience": { "kind": "group", "name": "team" },
+        "trust": "validated",
+        "status": "admitted"
+      },
+      "expect": "retired"
+    },
+    {
+      "id": "X-056",
+      "name": "a lesson check is read, never written",
+      "record_type": "lesson_check",
+      "record": {
+        "lesson": { "id": "lesson.use-the-logger", "revision": 1, "digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" },
+        "anchors": [{ "path": "src/app.py", "changed": true }]
+      },
       "expect": "retired"
     },
     {

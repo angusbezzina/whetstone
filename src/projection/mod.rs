@@ -184,8 +184,6 @@ pub struct RuleEntry {
     pub sweep_priority: u8,
     /// Where its own flags are doubtful, with the reason each says.
     pub sweep_unsure: Vec<crate::domain::SweepUnsure>,
-    /// The lesson key the rule was drafted from, when it was.
-    pub origin_lesson: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -777,7 +775,6 @@ fn rule_entries(state: &AgreementState, runs: &[GateRun]) -> Vec<RuleEntry> {
             sweep_class: rule.sweep_class().label(),
             sweep_priority: rule.sweep_priority(),
             sweep_unsure: rule.sweep_unsure.clone(),
-            origin_lesson: crate::memory::origin_lesson(&rule).map(str::to_owned),
         });
     }
     rules.sort_by(|left, right| {

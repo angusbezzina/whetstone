@@ -6,9 +6,9 @@
 //! Removed record kinds (values and philosophy, metrics, exceptions,
 //! mandates, activation, observations, repair sessions, team decisions,
 //! raised hands, review attestations, briefs, earlier guidance, Jev
-//! judgments and flag labels) stay readable as [`RetiredRecord`]s with their
-//! original bytes and digests, so history is never rewritten; they can no
-//! longer be created.
+//! judgments, flag labels and lessons) stay readable as [`RetiredRecord`]s
+//! with their original bytes and digests, so history is never rewritten;
+//! they can no longer be created.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -18,15 +18,32 @@ use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 
-mod lesson;
 mod receipt;
 mod rule;
 
-pub use lesson::*;
 pub use receipt::*;
 pub use rule::*;
 
 pub const SCHEMA_VERSION_V1: u16 = 1;
+
+/// Who is acting: a person, or anything not clearly one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorKind {
+    Person,
+    /// Anything not clearly a person.
+    #[default]
+    Agent,
+}
+
+impl ActorKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Person => "person",
+            Self::Agent => "agent",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -402,6 +419,8 @@ pub const RETIRED_KINDS: &[&str] = &[
     "guidance",
     "judgment",
     "flag_decision",
+    "lesson",
+    "lesson_check",
 ];
 
 /// A record of a removed kind, kept exactly as stored so its digest still
@@ -456,8 +475,6 @@ pub enum RecordBody {
     LocalReview(LocalReview),
     Retirement(Retirement),
     VerificationReceipt(VerificationReceipt),
-    Lesson(Lesson),
-    LessonCheck(LessonCheck),
     Retired(RetiredRecord),
 }
 
@@ -474,8 +491,6 @@ enum BodyRef<'a> {
     LocalReview(&'a LocalReview),
     Retirement(&'a Retirement),
     VerificationReceipt(&'a VerificationReceipt),
-    Lesson(&'a Lesson),
-    LessonCheck(&'a LessonCheck),
 }
 
 #[derive(Deserialize)]
@@ -491,8 +506,6 @@ enum BodyOwned {
     LocalReview(LocalReview),
     Retirement(Retirement),
     VerificationReceipt(VerificationReceipt),
-    Lesson(Lesson),
-    LessonCheck(LessonCheck),
 }
 
 impl Serialize for RecordBody {
@@ -520,8 +533,6 @@ impl Serialize for RecordBody {
             Self::LocalReview(value) => BodyRef::LocalReview(value),
             Self::Retirement(value) => BodyRef::Retirement(value),
             Self::VerificationReceipt(value) => BodyRef::VerificationReceipt(value),
-            Self::Lesson(value) => BodyRef::Lesson(value),
-            Self::LessonCheck(value) => BodyRef::LessonCheck(value),
         };
         body.serialize(serializer)
     }
@@ -574,8 +585,6 @@ impl<'de> Deserialize<'de> for RecordBody {
             BodyOwned::LocalReview(value) => Self::LocalReview(value),
             BodyOwned::Retirement(value) => Self::Retirement(value),
             BodyOwned::VerificationReceipt(value) => Self::VerificationReceipt(value),
-            BodyOwned::Lesson(value) => Self::Lesson(value),
-            BodyOwned::LessonCheck(value) => Self::LessonCheck(value),
         })
     }
 }
@@ -594,8 +603,6 @@ impl RecordBody {
             Self::LocalReview(_) => "local_review",
             Self::Retirement(_) => "retirement",
             Self::VerificationReceipt(_) => "verification_receipt",
-            Self::Lesson(_) => "lesson",
-            Self::LessonCheck(_) => "lesson_check",
             Self::Retired(retired) => &retired.record_type,
         }
     }
@@ -615,7 +622,7 @@ impl RecordBody {
 
     /// Operational evidence rather than agreement content or a decision.
     pub fn is_receipt(&self) -> bool {
-        matches!(self, Self::VerificationReceipt(_) | Self::LessonCheck(_))
+        matches!(self, Self::VerificationReceipt(_))
     }
 
     pub(crate) fn validate(&self) -> Result<(), DomainError> {
@@ -634,8 +641,6 @@ impl RecordBody {
                 require_text(&value.reason)
             }
             Self::VerificationReceipt(value) => value.validate(),
-            Self::Lesson(value) => value.validate(),
-            Self::LessonCheck(value) => value.validate(),
             // History is kept as stored; its digest is verified on read.
             Self::Retired(_) => Ok(()),
         }
@@ -1058,8 +1063,8 @@ pub struct LocalReview {
     pub rationale: String,
     pub reviewed_at: String,
     pub team_activation_permitted: bool,
-    /// What the decision rested on: the origin lesson of a rule it accepts,
-    /// or other evidence. Absent on earlier reviews, which keep their digests.
+    /// Evidence the decision rested on. Absent on earlier reviews, which keep
+    /// their digests.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cites: Vec<EvidenceRef>,
 }

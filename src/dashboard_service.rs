@@ -22,7 +22,7 @@ pub struct CommandDashboardBackend {
     inspect_request_id: Option<String>,
     service: CommandService,
     /// Who the dashboard acts for: a person when a person opened it, an agent
-    /// (the default) otherwise, so lessons are never admitted by automation.
+    /// (the default) otherwise, so automation never acts as a person.
     actor: crate::domain::ActorKind,
     /// Sees every mutation response after the service has answered it, so
     /// the foreground process can narrate what the dashboard recorded.
@@ -55,8 +55,8 @@ impl CommandDashboardBackend {
         }
     }
 
-    /// Act for a person: only a dashboard a person opened (never one started
-    /// for automation) may admit, correct or forget lessons.
+    /// Act for `actor`: only a dashboard a person opened (never one started
+    /// for automation) acts for a person.
     pub fn acting_as(mut self, actor: crate::domain::ActorKind) -> Self {
         self.actor = actor;
         self
@@ -266,9 +266,6 @@ enum DashboardCommand {
         retire: Option<String>,
         #[serde(default)]
         migrate: bool,
-        /// Admit, correct or forget a lesson.
-        #[serde(default)]
-        lesson: Option<DashboardLesson>,
     },
     Check {
         #[serde(default)]
@@ -284,23 +281,6 @@ enum DashboardCommand {
         #[serde(default)]
         mode: DashboardCheckMode,
     },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DashboardLesson {
-    verb: DashboardLessonVerb,
-    key: String,
-    #[serde(default)]
-    trust: Option<crate::domain::Trust>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum DashboardLessonVerb {
-    Admit,
-    Supersede,
-    Forget,
 }
 
 #[derive(Debug, Deserialize)]
@@ -388,7 +368,6 @@ impl DashboardCommand {
                 review,
                 retire,
                 migrate,
-                lesson,
             } => ServiceRequest::Change(ChangeRequest {
                 project_dir,
                 request_id,
@@ -417,19 +396,6 @@ impl DashboardCommand {
                 migrate,
                 // The backend sets who is asking; a request cannot claim it.
                 actor: crate::domain::ActorKind::Agent,
-                lesson: lesson.map(|lesson| match lesson.verb {
-                    DashboardLessonVerb::Admit => crate::service::LessonOp::Admit {
-                        key: lesson.key,
-                        trust: lesson.trust,
-                    },
-                    DashboardLessonVerb::Supersede => {
-                        crate::service::LessonOp::Supersede { key: lesson.key }
-                    }
-                    DashboardLessonVerb::Forget => {
-                        crate::service::LessonOp::Forget { key: lesson.key }
-                    }
-                }),
-                from_lesson: None,
             }),
             Self::Check {
                 request_id,

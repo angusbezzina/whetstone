@@ -13,7 +13,6 @@ pub mod feature_map;
 pub mod gates;
 pub mod history;
 pub mod hygiene;
-pub mod memory;
 pub mod onboarding;
 mod output;
 pub mod projection;

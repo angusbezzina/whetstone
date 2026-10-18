@@ -1,7 +1,7 @@
 //! Moving a repository's records from Beads into Virgil, against the fake
 //! `virgil` (tests/fake_virgil.py): `wh init --action setup --store virgil`
-//! exports every accepted record kind and the decisions that accepted it
-//! (with admitted lessons through the lessons import), refuses to confirm
+//! exports every accepted record kind and the decisions that accepted it,
+//! refuses to confirm
 //! without an export, refuses to flip while any revision is missing or
 //! differs (naming it), flips once everything reads back, and `wh dash`
 //! reports records left in the store the switch no longer names, on either
@@ -19,8 +19,7 @@ use tempfile::TempDir;
 use whetstone::beads::BeadsStore;
 use whetstone::domain::ActorKind;
 use whetstone::service::{
-    ChangeDefinition, ChangeKind, ChangeRequest, CommandService, InitAction, InitRequest, LessonOp,
-    ServiceRequest, ServiceResponse, ServiceState,
+    CommandService, InitAction, InitRequest, ServiceRequest, ServiceResponse, ServiceState,
 };
 use whetstone::storage::{RecordStore, StoreKind};
 use whetstone::store::virgil::VirgilStore;
@@ -251,11 +250,11 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
     std::fs::create_dir_all(root.join(".fake-virgil")).expect("fake");
     write_fake_state(
         root,
-        &json!({"knobs": {"attached": [GROUP, REPOSITORY], "fail": {}, "stale_get": false, "page": 100}}),
+        &json!({"knobs": {"attached": [GROUP, REPOSITORY], "fail": {}, "page": 100}}),
     );
 
     // ── Beads holds every kind: agreement, proposal, review, retirement,
-    // a team lesson, plus a draft and receipts that never travel. ──
+    // plus a draft and receipts that never travel. ──
     // A test command, so the prove-it-works starter is offered.
     std::fs::write(root.join("package.json"), r#"{"scripts":{"test":"true"}}"#)
         .expect("package.json");
@@ -352,33 +351,6 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
     );
     let draft = propose_and_accept(root, "c2", "rule.git-still-answers", "Git still answers.");
     assert_eq!(draft["state"], "success", "{draft}");
-    let remembered = CommandService.execute(ServiceRequest::Change(ChangeRequest {
-        project_dir: root.to_path_buf(),
-        request_id: Some("l1".into()),
-        actor: ActorKind::Agent,
-        kind: Some(ChangeKind::Lesson),
-        content: Some("Values are integers.".into()),
-        definition: Some(Box::new(
-            serde_json::from_value::<ChangeDefinition>(
-                json!({"type": "lesson", "key": "values-are-integers"}),
-            )
-            .expect("definition"),
-        )),
-        ..ChangeRequest::default()
-    }));
-    ok(&remembered);
-    ok(
-        &CommandService.execute(ServiceRequest::Change(ChangeRequest {
-            project_dir: root.to_path_buf(),
-            request_id: Some("l1-admit".into()),
-            actor: ActorKind::Person,
-            lesson: Some(LessonOp::Admit {
-                key: "values-are-integers".into(),
-                trust: None,
-            }),
-            ..ChangeRequest::default()
-        })),
-    );
     let checked = wh(root, &["check", "--json", "--rule", "rule.git-answers"]);
     assert_eq!(checked["state"], "success", "{checked}");
     assert!(
@@ -452,7 +424,7 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
     );
     assert!(!root.join("whetstone/store.json").exists());
 
-    // ── The review writes both exports, outside the repository. ──
+    // ── The review writes the export, outside the repository. ──
     let reviewed = store_init(root, "s2", "virgil", false);
     assert_eq!(
         reviewed.state,
@@ -469,12 +441,7 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
             .as_str()
             .expect("rulebook file"),
     );
-    let lessons_file = PathBuf::from(
-        reviewed.data["migration"]["lessons"]["file"]
-            .as_str()
-            .expect("lessons file"),
-    );
-    assert!(!rulebook_file.starts_with(root) && !lessons_file.starts_with(root));
+    assert!(!rulebook_file.starts_with(root));
     let export: Value =
         serde_json::from_str(&std::fs::read_to_string(&rulebook_file).expect("export"))
             .expect("json");
@@ -495,9 +462,10 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
     ] {
         assert!(types.contains(kind), "{kind} is exported: {types:?}");
     }
-    for never in ["lesson", "verification_receipt", "lesson_check"] {
-        assert!(!types.contains(never), "{never} never travels: {types:?}");
-    }
+    assert!(
+        !types.contains("verification_receipt"),
+        "a receipt never travels: {types:?}"
+    );
     // Each revision carries its resolved lifecycle view, not "accepted".
     let lifecycle_of = |id: &str| {
         exported
@@ -525,30 +493,13 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
         .permitted_actions
         .iter()
         .any(|action| action.contains("virgil rulebook import-beads --input -")));
-    assert!(reviewed
-        .permitted_actions
-        .iter()
-        .any(|action| action.contains("virgil lessons import-beads")));
     assert_eq!(
         reviewed.permitted_actions.last().map(String::as_str),
         Some("wh init --action setup --store virgil --yes")
     );
 
-    // The person applies both imports (Virgil's commands, faked).
+    // The person applies the import (Virgil's command, faked).
     import_rulebook(root, &rulebook_file);
-    let output = Command::new("virgil")
-        .args([
-            "lessons",
-            "import-beads",
-            &format!("--repo={REPOSITORY}"),
-            &format!("--file={}", lessons_file.display()),
-            "--apply",
-            "--json",
-        ])
-        .current_dir(root)
-        .output()
-        .expect("lessons import");
-    assert!(output.status.success());
 
     // ── One revision missing: refused, named. ──
     let mut state = fake_state(root);
@@ -660,7 +611,6 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
         "{}",
         flipped
     );
-    assert_eq!(flipped["migration"]["lessons"]["imported"], 1);
     assert!(
         flipped["migration"]["carried_private"]
             .as_u64()
