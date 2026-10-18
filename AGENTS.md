@@ -191,6 +191,10 @@ The scan gate additionally requires `files_scanned > 0`, `rules_applied > 0`,
 least one rule and one scanner-backed golden example. Zero work is not green.
 The tests run under `cargo-nextest` (`cargo install cargo-nextest --locked`),
 which runs every test binary in parallel; `cargo test --doc` covers doc tests.
+The hook prints each step's seconds and the total. The budget is 5 minutes for
+the hook on a warm cache and 10 minutes for CI's quality job; when a run goes
+over, find the slow step and cut it (`scripts/bd-timing.sh` shows where test
+time goes in `bd`) rather than loosening the budget or skipping a gate.
 
 At the start of a session that may push, ensure the hook is active:
 
