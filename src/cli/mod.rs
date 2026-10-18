@@ -222,6 +222,16 @@ enum Command {
         /// With --kind rule: the admitted lesson the rule is drafted from (it starts in shadow).
         #[arg(long, requires = "kind")]
         from_lesson: Option<String>,
+        /// With --kind rule: run the enforcer over this repository first and
+        /// refuse a draft that is not validatable here (no file in scope, a
+        /// query that does not parse, an unknown lint code, a command that
+        /// cannot start). Shows how many places it matched, with samples.
+        #[arg(long)]
+        probe: bool,
+        /// With --probe: record the draft even though the probe says it is
+        /// not validatable here; --rationale says why.
+        #[arg(long, requires = "probe")]
+        allow_unvalidated: bool,
     },
 
     /// Run the rules and return actionable findings, or record a review, a
@@ -705,6 +715,8 @@ pub fn run() -> i32 {
             supersede,
             forget,
             from_lesson,
+            probe,
+            allow_unvalidated,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
             project_dir,
             request_id,
@@ -761,6 +773,8 @@ pub fn run() -> i32 {
                 .or_else(|| supersede.map(|key| crate::service::LessonOp::Supersede { key }))
                 .or_else(|| forget.map(|key| crate::service::LessonOp::Forget { key })),
             from_lesson,
+            probe,
+            allow_unvalidated,
         })),
         Some(Command::Check {
             project_dir,

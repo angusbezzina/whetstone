@@ -282,6 +282,9 @@ enum DashboardCommand {
         /// Admit, correct or forget a lesson.
         #[serde(default)]
         lesson: Option<DashboardLesson>,
+        /// Probe the rule's enforcer on the repository first.
+        #[serde(default)]
+        probe: bool,
     },
     Check {
         #[serde(default)]
@@ -434,6 +437,7 @@ impl DashboardCommand {
                 migrate,
                 tune,
                 lesson,
+                probe,
             } => ServiceRequest::Change(ChangeRequest {
                 project_dir,
                 request_id,
@@ -485,6 +489,8 @@ impl DashboardCommand {
                     }
                 }),
                 from_lesson: None,
+                probe,
+                allow_unvalidated: false,
             }),
             Self::Check {
                 request_id,

@@ -21,6 +21,7 @@ pub mod learning;
 pub mod memory;
 pub mod onboarding;
 mod output;
+pub mod probe;
 pub mod projection;
 pub mod proof;
 pub(crate) mod rules;

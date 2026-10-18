@@ -468,6 +468,13 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         {
             doctor = Some(crate::gates::run_doctor(&project, &run_dir));
         }
+        let run_mode = match request.gate_mode {
+            GateMode::Staged => crate::gates::RunMode::Staged,
+            GateMode::Sweep => crate::gates::RunMode::Sweep,
+            GateMode::Changed if request.base.is_some() => crate::gates::RunMode::Base,
+            GateMode::Changed => crate::gates::RunMode::Changed,
+            GateMode::All => crate::gates::RunMode::All,
+        };
         let timeout = request.timeout_seconds.map_or(
             crate::gates::DEFAULT_GATE_TIMEOUT,
             std::time::Duration::from_secs,
@@ -509,6 +516,8 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                     changed: &selection.changed_paths,
                     surface_base: surface_base.as_deref(),
                     briefs: &briefs,
+                    mode: run_mode,
+                    base: request.base.as_deref(),
                 };
                 for (index, mutation) in mapped.mutations.iter().enumerate() {
                     let run = crate::gates::run_mutation(
@@ -559,6 +568,8 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                         changed: &content_changed,
                         surface_base: surface_base.as_deref(),
                         briefs: &briefs,
+                        mode: run_mode,
+                        base: request.base.as_deref(),
                     };
                     let mut outcome = match (&halted, is_drive) {
                         (Some(reason), true) => {

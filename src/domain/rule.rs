@@ -14,6 +14,8 @@ pub const RULE_SCHEMA_V2: &str = "whetstone.rule.v2";
 pub const DEFAULT_JEV_MODEL: &str = "jev-1.13.0";
 pub const MAX_RULE_EXAMPLES: usize = 32;
 pub const MAX_RULE_LIST_ITEMS: usize = 32;
+/// Where a repository keeps its script enforcers.
+pub const SCRIPTS_DIR: &str = "whetstone/checks/";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -243,7 +245,24 @@ impl Enforcer {
         matches!(
             self,
             Self::Ast { .. } | Self::DesignTokens { .. } | Self::PublicSurface { .. }
-        )
+        ) || self.is_script()
+    }
+
+    /// Whether this is a repository script under `whetstone/checks/`: a
+    /// validator or test command that names one. Scripts read the in-scope
+    /// file list (`WH_PATHS`), so they run at pre-commit on the staged files.
+    pub fn is_script(&self) -> bool {
+        match self {
+            Self::Validator { command } | Self::Test { command } => command
+                .split(|character: char| character.is_whitespace() || character == '&')
+                .any(|token| {
+                    token
+                        .trim_matches(|character| character == '\'' || character == '"')
+                        .trim_start_matches("./")
+                        .starts_with(SCRIPTS_DIR)
+                }),
+            _ => false,
+        }
     }
 
     fn validate(&self) -> Result<(), DomainError> {

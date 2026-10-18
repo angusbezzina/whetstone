@@ -2725,3 +2725,248 @@ fn tune_with_no_data_proposes_nothing() {
         .contains("nothing was drafted"));
     assert_eq!(repo.records().len(), before);
 }
+
+const UNWRAP_QUERY: &str = r#"((call_expression function: (field_expression field: (field_identifier) @method)) @match (#eq? @method \"unwrap\"))"#;
+
+fn probe(repo: &Repo, request_id: &str, definition: &str, extra: &[&str]) -> serde_json::Value {
+    let mut args = vec![
+        "change",
+        "--request-id",
+        request_id,
+        "--kind",
+        "rule",
+        "--record-id",
+        "rule.probed",
+        "--content",
+        "No unwrap in the source.",
+        "--rationale",
+        "A panic is not an error message.",
+        "--definition",
+        definition,
+        "--probe",
+    ];
+    args.extend_from_slice(extra);
+    repo.wh_json(&args)
+}
+
+#[test]
+fn a_probe_shows_where_a_rule_matches_and_refuses_what_cannot_be_checked_here() {
+    let repo = Repo::new();
+    repo.write(
+        "src/main.rs",
+        "fn main() {\n    let x: Option<u8> = None;\n    x.unwrap();\n}\n",
+    );
+    repo.commit("source");
+
+    // A query that matches shows where, and the change goes on as usual.
+    let matching = format!(
+        r#"{{"type":"rule","strength":"must","enforcer":{{"kind":"ast","query":"{UNWRAP_QUERY}","language":"rust"}},"paths":["src/**"]}}"#
+    );
+    let shown = probe(&repo, "probe-1", &matching, &[]);
+    assert_eq!(shown["state"], "needs_input", "{shown}");
+    let report = &shown["data"]["probe"];
+    assert_eq!(report["validatable"], true, "{report}");
+    assert_eq!(report["ran"], true);
+    assert_eq!(report["files_in_scope"], 1);
+    assert_eq!(report["matched"], 1);
+    assert_eq!(report["samples"][0]["location"], "src/main.rs:3");
+    let revision = shown["expected_revision"]
+        .as_u64()
+        .expect("revision")
+        .to_string();
+    let token = shown["resume_token"].as_str().expect("token").to_string();
+    let recorded = probe(
+        &repo,
+        "probe-1",
+        &matching,
+        &["--expected-revision", &revision, "--resume", &token],
+    );
+    assert_eq!(recorded["state"], "success", "{recorded}");
+    assert_eq!(recorded["data"]["recorded"], true);
+    assert_eq!(recorded["data"]["probe"]["matched"], 1);
+
+    // Each refusal names its reason and records nothing.
+    let before = repo.records().len();
+    for (request, definition, reason) in [
+        (
+            "probe-broken",
+            r#"{"type":"rule","strength":"must","enforcer":{"kind":"ast","query":"(call_expression @match"}}"#.to_string(),
+            "does not parse",
+        ),
+        (
+            "probe-code",
+            r#"{"type":"rule","strength":"should","enforcer":{"kind":"lint","tool":"ruff check .","code":"not_a_code"}}"#.to_string(),
+            "is not a ruff code",
+        ),
+        (
+            "probe-empty",
+            format!(
+                r#"{{"type":"rule","strength":"must","enforcer":{{"kind":"ast","query":"{UNWRAP_QUERY}"}},"paths":["lib/**"]}}"#
+            ),
+            "no file in the repository matches",
+        ),
+        (
+            "probe-outside",
+            r#"{"type":"rule","strength":"must","enforcer":{"kind":"validator","command":"/bin/../tmp/whetstone-outside.sh"}}"#.to_string(),
+            "escapes the repository",
+        ),
+    ] {
+        if request == "probe-outside" {
+            std::fs::write("/tmp/whetstone-outside.sh", "#!/bin/sh\nexit 0\n").expect("outside script");
+        }
+        let refused = probe(&repo, request, &definition, &[]);
+        assert_eq!(refused["state"], "needs_input", "{refused}");
+        assert_eq!(refused["data"]["recorded"], false, "{refused}");
+        assert_eq!(refused["data"]["probe"]["validatable"], false);
+        let why = refused["data"]["probe"]["reason"].as_str().expect("reason");
+        assert!(why.contains(reason), "{request}: {why}");
+    }
+    assert_eq!(
+        repo.records().len(),
+        before,
+        "a refused probe recorded something"
+    );
+
+    // With a reason, an unvalidated draft can still be recorded, and says so.
+    let empty = format!(
+        r#"{{"type":"rule","strength":"must","enforcer":{{"kind":"ast","query":"{UNWRAP_QUERY}"}},"paths":["lib/**"]}}"#
+    );
+    let first = probe(&repo, "probe-allow", &empty, &["--allow-unvalidated"]);
+    let revision = first["expected_revision"]
+        .as_u64()
+        .expect("revision")
+        .to_string();
+    let token = first["resume_token"].as_str().expect("token").to_string();
+    let allowed = probe(
+        &repo,
+        "probe-allow",
+        &empty,
+        &[
+            "--allow-unvalidated",
+            "--expected-revision",
+            &revision,
+            "--resume",
+            &token,
+        ],
+    );
+    assert_eq!(allowed["state"], "success", "{allowed}");
+    assert!(allowed["data"]["explanation"]["impact"]
+        .as_str()
+        .expect("impact")
+        .contains("without a validating probe"));
+}
+
+const CONTRACT_SCRIPT: &str = r#"#!/bin/sh
+echo "MODE=$WH_MODE RULE=$WH_RULE BASE=$WH_BASE"
+found=0
+while IFS= read -r path; do
+  echo "PATH=$path"
+  if grep -n FORBIDDEN "$path" | sed "s|^\([0-9]*\):.*|$path:\1 FORBIDDEN is not allowed|" | grep .; then
+    found=1
+  fi
+  case "$path" in
+    *.whole) echo "$path: the whole file is wrong"; found=1 ;;
+  esac
+done < "$WH_PATHS"
+exit $found
+"#;
+
+#[test]
+fn a_script_enforcer_reads_the_in_scope_files_and_reports_located_findings() {
+    let repo = Repo::new();
+    repo.write("whetstone/checks/no-forbidden.sh", CONTRACT_SCRIPT);
+    repo.write("a.txt", "fine\n");
+    repo.write("b.txt", "fine\n");
+    repo.commit("base");
+    repo.rule(
+        "rule.script",
+        r#"{"type":"rule","strength":"must","enforcer":{"kind":"validator","command":"sh whetstone/checks/no-forbidden.sh"},"paths":["*.txt","*.whole"]}"#,
+    );
+
+    // Staged mode: the script sees only the staged file, and its
+    // `path:line message` line becomes a located finding.
+    repo.write("a.txt", "fine\nFORBIDDEN\n");
+    repo.write("b.txt", "FORBIDDEN but not staged\n");
+    git(&repo.root, &["add", "a.txt"]);
+    let (code, staged) = repo.check(&["--staged"]);
+    assert_eq!(code, Some(1), "{staged}");
+    let script = gate(&staged, "rule.script");
+    assert_eq!(script["state"], "fail", "{script}");
+    assert_eq!(script["failures"][0]["location"], "a.txt:2", "{script}");
+    let log = gate_log(&staged, script);
+    assert!(log.contains("MODE=staged RULE=rule.script BASE="), "{log}");
+    assert!(log.contains("PATH=a.txt"), "{log}");
+    assert!(
+        !log.contains("PATH=b.txt"),
+        "unstaged files are not in WH_PATHS: {log}"
+    );
+    assert!(
+        !log.contains("PATH=whetstone/checks"),
+        "files outside the rule's paths are not in WH_PATHS: {log}"
+    );
+
+    // A `path: message` line is a finding about the whole file.
+    repo.write("a.txt", "fine\n");
+    repo.write("c.whole", "anything\n");
+    git(&repo.root, &["add", "a.txt", "c.whole"]);
+    let (_, whole) = repo.check(&["--staged"]);
+    let script = gate(&whole, "rule.script");
+    assert_eq!(script["state"], "fail", "{script}");
+    assert_eq!(script["failures"][0]["location"], "c.whole", "{script}");
+
+    // After the fix the gate passes.
+    git(&repo.root, &["rm", "--cached", "--quiet", "c.whole"]);
+    std::fs::remove_file(repo.root.join("c.whole")).expect("remove");
+    let (code, fixed) = repo.check(&["--staged"]);
+    assert_eq!(code, Some(0), "{fixed}");
+    assert_eq!(gate(&fixed, "rule.script")["state"], "pass");
+
+    // A full check tells the script it sees the whole repository.
+    let (_, all) = repo.check(&["--rule", "rule.script"]);
+    let log = gate_log(&all, gate(&all, "rule.script"));
+    assert!(log.contains("MODE=all"), "{log}");
+    assert!(log.contains("PATH=b.txt"), "{log}");
+}
+
+#[test]
+fn a_script_outside_the_repository_is_refused() {
+    let repo = Repo::new();
+    let outside = tempfile::tempdir().expect("outside");
+    let script = outside.path().join("pass.sh");
+    std::fs::write(&script, "#!/bin/sh\nexit 0\n").expect("script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    repo.write("a.txt", "fine\n");
+    repo.commit("base");
+    repo.rule(
+        "rule.outside",
+        &format!(
+            r#"{{"type":"rule","strength":"must","enforcer":{{"kind":"validator","command":"{}"}}}}"#,
+            script.display()
+        ),
+    );
+    let (code, checked) = repo.check(&["--rule", "rule.outside"]);
+    assert_ne!(code, Some(0), "{checked}");
+    let outcome = gate(&checked, "rule.outside");
+    assert_eq!(outcome["state"], "unknown", "{outcome}");
+    assert!(outcome["summary"]
+        .as_str()
+        .expect("summary")
+        .contains("escapes the repository"));
+}
+
+/// The gate's own output log, read from the evidence root.
+fn gate_log(response: &serde_json::Value, gate: &serde_json::Value) -> String {
+    let root = PathBuf::from(response["data"]["evidence_root"].as_str().expect("root"));
+    let locator = gate["evidence"]
+        .as_array()
+        .expect("evidence")
+        .iter()
+        .filter_map(|item| item["locator"].as_str())
+        .find(|locator| locator.ends_with(".log"))
+        .expect("log evidence");
+    std::fs::read_to_string(root.join(locator)).expect("gate log")
+}

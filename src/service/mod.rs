@@ -333,6 +333,12 @@ pub struct ChangeRequest {
     pub lesson: Option<LessonOp>,
     /// With a rule: the admitted lesson it is drafted from (it starts in shadow).
     pub from_lesson: Option<String>,
+    /// With a rule: run its enforcer over the repository first and refuse a
+    /// draft that is not validatable here.
+    pub probe: bool,
+    /// With `probe`: record the draft even when the probe says it is not
+    /// validatable here (the rationale says why).
+    pub allow_unvalidated: bool,
 }
 
 /// Which in-force rules a check runs besides the compiled-in scanner.

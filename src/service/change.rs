@@ -63,7 +63,101 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
     if request.lesson.is_some() || request.kind == Some(ChangeKind::Lesson) {
         return super::lesson::change(&layout, request_id, &request);
     }
-    propose(&layout, &private, request_id, &request)
+    if !request.probe {
+        return propose(&layout, &private, request_id, &request);
+    }
+    let report = match probe_rule(&layout, &request) {
+        Ok(report) => report,
+        Err(question) => {
+            let mut response = ServiceResponse::new(
+                request_id,
+                "change",
+                ServiceState::NeedsInput,
+                question.clone(),
+            );
+            response.blocking_questions = vec![question];
+            return response;
+        }
+    };
+    if !report.validatable && !request.allow_unvalidated {
+        let mut response = ServiceResponse::new(
+            request_id,
+            "change",
+            ServiceState::NeedsInput,
+            format!(
+                "{} Nothing was recorded: fix the enforcer and probe again, or pass --allow-unvalidated with a --rationale saying why it should be recorded anyway.",
+                report.summary
+            ),
+        );
+        response.blocking_questions = vec![report
+            .reason
+            .clone()
+            .unwrap_or_else(|| report.summary.clone())];
+        response.permitted_actions = vec![
+            "fix the enforcer, then repeat with --probe".into(),
+            "repeat with --allow-unvalidated and a --rationale".into(),
+        ];
+        response.data = json!({"probe": report, "recorded": false});
+        return response;
+    }
+    let mut request = request;
+    if !report.validatable {
+        let note = format!(
+            "Recorded without a validating probe: {}",
+            report.reason.as_deref().unwrap_or("not validatable here")
+        );
+        request.impact = Some(match request.impact.take() {
+            Some(impact) if !impact.trim().is_empty() => format!("{impact} {note}"),
+            _ => note,
+        });
+    }
+    let mut response = propose(&layout, &private, request_id, &request);
+    response.summary = format!("{} {}", report.summary, response.summary);
+    if let Some(data) = response.data.as_object_mut() {
+        data.insert("probe".into(), json!(report));
+    }
+    response
+}
+
+/// The rule a `--probe` change describes, probed on this repository.
+fn probe_rule(
+    layout: &ProjectLayout,
+    request: &ChangeRequest,
+) -> Result<crate::probe::ProbeReport, String> {
+    if request.kind != Some(ChangeKind::Rule) {
+        return Err("--probe checks a rule's enforcer; use it with --kind rule.".into());
+    }
+    let Some(ChangeDefinition::Rule {
+        strength,
+        enforcer,
+        paths,
+        ..
+    }) = request.definition.as_deref()
+    else {
+        return Err("Provide the rule's enforcer to probe as a rule definition: {\"type\": \"rule\", \"strength\": \"must\", \"enforcer\": {\"kind\": \"validator\", \"command\": \"sh whetstone/checks/example.sh\"}}.".into());
+    };
+    let rule = Rule {
+        schema: RULE_SCHEMA_V2.into(),
+        statement: request
+            .content
+            .clone()
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or_else(|| "The rule being probed.".into()),
+        rationale: "Probed before recording.".into(),
+        strength: *strength,
+        enforcer: enforcer.clone(),
+        examples: Vec::new(),
+        source: RuleSource::owner(),
+        paths: paths.clone(),
+        hand_raise: Vec::new(),
+        privacy: Default::default(),
+        shadow: false,
+        sweep: None,
+        sweep_priority: None,
+        sweep_unsure: Vec::new(),
+    };
+    let id = request.record_id.as_deref().unwrap_or("rule.probe");
+    Ok(crate::probe::probe(layout, id, &rule))
 }
 
 /// Without `--request-id`, the id is derived from what the change says, so the
