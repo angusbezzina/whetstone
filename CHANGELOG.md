@@ -9,6 +9,39 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+### Added
+
+- `wh change --kind rule --probe` runs a proposed enforcer over the repository
+  before anything is recorded and refuses a rule that is not validatable here;
+  the dashboard's rule editor has a Probe button.
+- Script enforcers have a contract: `WH_MODE`, `WH_RULE`, `WH_PATHS`, `WH_BASE`
+  and `WH_EVIDENCE_DIR` in, `path:line message` and `path: message` findings
+  out. `wh init --action wire` scaffolds `whetstone/checks/` with the contract
+  and a working example, and scripts there run at pre-commit.
+- `wh init --action wire` writes a short agent contract into `AGENTS.md`
+  between markers, keeping the team's own text.
+- `wh explain <fingerprint|rule id>`: the rule behind a finding, its exact
+  enforcer and the decisions that accepted it.
+- Principle packs: the catalogue is a pack format with pstack as the default
+  pack; a repository adds packs under `whetstone/principles/`.
+- `wh change --from-text`, `--from-file` and `--from-finding` compile prose and
+  recurring findings into probed rule drafts without a model.
+- Sweep findings carry the tool's own fix as a diff when the rule's tool can
+  rewrite files.
+- `wh check --format annotations` shows flags beside the code in a pull
+  request; the CI scaffold uses it.
+- A reusable GitHub Action (`action.yml`) works `findings.json` by class:
+  draft pull requests, issues to approve and issues to discuss, idempotent by
+  fingerprint. The CI scaffold gains an opt-in sweep job and an opt-in
+  GitHub Pages job.
+- Rule packs: `wh push --pack` exports accepted rules with a content digest,
+  `wh pull --pack` imports a pack as drafts, and starter packs ship for Rust,
+  TypeScript and Python.
+- The dashboard's Coverage view shows parts of the repository no rule reads
+  and rules that read nothing; `wh pull --outcomes` imports a runner's report,
+  and the Rules view shows each rule's flags per sweep and dismissal rate.
+- `wh dash --export <dir>` writes the rulebook as a static page.
+
 ### Fixed
 
 - A checker's process group is signalled until it is empty, so a descendant

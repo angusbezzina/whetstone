@@ -96,8 +96,8 @@ product's own dashboard files):
   of user content, and widths of 320, 390, 768 and 1024 px.
 - Startup HTML/CSS/JS stays dependency-free and under 24 KiB.
 - CLI and dashboard read the same typed projections; the UI invents no state.
-- The six public workflow families (`wh init`, `dash`, `change`, `check`,
-  `pull`, `push`) support the UI and may be progressively disclosed; they are
+- The seven public workflow families (`wh init`, `dash`, `change`, `check`,
+  `pull`, `push`, `explain`) support the UI and may be progressively disclosed; they are
   not the human information architecture.
 
 ## Terminology

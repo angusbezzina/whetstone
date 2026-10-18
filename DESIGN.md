@@ -372,10 +372,11 @@ components:
 > **Content note (2026-09-28).** The tokens, marks, type, spacing and component
 > rules below remain binding. The component and layout sections describe the
 > dashboard built for the delegation plan (`planning/direction.md`, Beads
-> `whetstone-ppq.1.3` and `whetstone-ppq.3.8`): five views (Home, Rules,
-> Checks, Changelog, Requests), onboarding with mission, principles, exemplars,
-> starter rules and gates, rules grouped by strength, the check board with
-> flags to label, and the requests list.
+> `whetstone-ppq.1.3` and `whetstone-ppq.3.8`): six views (Home, Rules,
+> Checks, Changelog, Requests, Coverage), onboarding with mission, principles,
+> exemplars, starter rules and gates, rules grouped by strength, the check
+> board with flags to label, the requests list, and the coverage of the
+> repository by the rules in force.
 
 ## Overview
 
@@ -395,7 +396,7 @@ States are marks, not hues. A pass is a lit disc in the foreground colour, a fai
 - States are marks: lit disc, orange cross, hollow ring, dashed ring.
 - Condensed system display face at 600 for the view title, section and day headings, item titles, counts, tallies and the tracked WHET/STONE wordmark; system sans body at 15px/1.6 with tabular numerals; mono only for text a terminal would accept.
 - No transitions: reveals and chevrons snap. The only motion is the half-second strike decay, the running pulse and the busy spinner, all removed under prefers-reduced-motion.
-- Dependency-free, no third-party requests, system fonts only, startup bundle under 24 KiB (index.html, app.css and app.js together are 24,347 bytes).
+- Dependency-free, no third-party requests, system fonts only, startup bundle under 24 KiB (index.html, app.css and app.js together are 24,559 bytes).
 
 ## Colors
 
@@ -451,7 +452,7 @@ Two hues: one neutral ramp on a white or near-black plane, and the logo orange, 
 - **Wordmark** (display, 600, 15px, 0.24em, uppercase): WHETSTONE in the header, WHET in foreground and STONE in struck.
 - **Body** (sans, 400, 15px, 1.6): descriptions, prose, form values. Descriptions cap at 58–64ch.
 - **Name** (sans, 500, 15px): entry names, gate names, changelog titles, record content, the Latest change value.
-- **Nav** (sans, 14.5px): the five view tabs; the selected one is struck at 600. 14px under 390px.
+- **Nav** (sans, 14.5px): the six view tabs; the selected one is struck at 600. 14px under 390px.
 - **Control** (sans, 14px, 1.3): every button; the primary button is 600.
 - **Summary** (sans, 14px): changelog summaries, mission outcomes, diff cell content.
 - **Meta** (sans, 13.5px, muted-foreground): the line beneath a name, a rule's enforcer, where-it-runs and flag-record lines, the check line, the advisory line, the changelog filter words, disclosure summaries in the changelog.
@@ -469,7 +470,7 @@ Two hues: one neutral ramp on a white or near-black plane, and the logo orange, 
 
 ## Layout
 
-The page is one centred column: `.app` at max-width 48rem with 1.5rem side padding (1.1rem under 768px, 1rem under 390px), 4rem of bottom room and its own solid background so the dark gauze on the html element shows only in the margins. The header is two lines: a brand row (22px stone mark, tracked wordmark, project name in muted-foreground; at right the agreement state, draft count and a three-button theme toggle) with 1.4rem above it, and 1.2rem beneath it the tab row, five text tabs 1.6rem apart, sticky at the top on the page's own background with no rule beneath. The main column begins 1.9rem beneath the tabs; the view head (title, sub, actions) has 1.75rem beneath it. The colophon sits 4rem below the last section in 12.5px ghost.
+The page is one centred column: `.app` at max-width 48rem with 1.5rem side padding (1.1rem under 768px, 1rem under 390px), 4rem of bottom room and its own solid background so the dark gauze on the html element shows only in the margins. The header is two lines: a brand row (22px stone mark, tracked wordmark, project name in muted-foreground; at right the agreement state, draft count and a three-button theme toggle) with 1.4rem above it, and 1.2rem beneath it the tab row, six text tabs 1.6rem apart, sticky at the top on the page's own background with no rule beneath. The main column begins 1.9rem beneath the tabs; the view head (title, sub, actions) has 1.75rem beneath it. The colophon sits 4rem below the last section in 12.5px ghost.
 
 Every view stacks its sections with 2.5rem between them. A section is a display heading with its count at right, 0.35rem of air beneath it, then spaced lines with no rules between them: rows at 0.6rem vertical padding, records (mission, principles, rules, features) at 0.75rem, board rows at 0.7rem, requests at 0.9rem above and 1.1rem below, changelog entries at 0.8rem, attention items at 0.9rem above and 1.1rem below. An entry is a grid whose last columns are `auto` so its mark, version and Edit sit flush right, with the meta line beneath the name. Home stacks the mission, a one-line count of principles and rules in force, Needs attention, Rules (every rule in force with strength, enforcer and where it runs), Setup while a required onboarding step is open, then a single Latest change line 1.5rem below. Before the agreement Home is the onboarding page instead. Rules runs Mission, Principles, then Must, Should and Advisory, then Suggestions and Earlier records when there are any, then Features; each section ends with a quiet add button. Checks carries a check line (last check, tally; the scope select and Run checks beneath), then a board on a four-column grid (rule / 9.5rem last run / 7.5rem result / 1.6rem chevron) whose header is a 13px ghost band on the muted plane bleeding 0.6rem past the column, then the advisory and shadow line, Flags to label, and the verification skill line. Changelog opens with a toolbar (search, as-of, three filter words, export link), then days 2.25rem apart, each entry on a 4.5rem time column. Requests lists open requests first, then answered ones.
 

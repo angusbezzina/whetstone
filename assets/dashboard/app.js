@@ -14,7 +14,7 @@ async function inspect(q){return json(await fetch("/api/inspect",q?{method:"POST
 let edited=false;
 async function cmd(body){const t=csrf();if(!t)throw Error("Editing is not available in this session.");if(!edited){await json(await fetch("/session/edit",{method:"POST",headers:{"X-Whetstone-CSRF":t}}));edited=true}return json(await fetch("/api/command",{method:"POST",headers:{"Content-Type":"application/json","X-Whetstone-CSRF":t},body:JSON.stringify(body)}))}
 const tabs=()=>[...d.querySelectorAll('[role="tab"]')];
-const GATED=["tab-checks","tab-changelog","tab-requests"];
+const GATED=["tab-checks","tab-changelog","tab-requests","tab-coverage"];
 function header(c){$("project").textContent=c?.header.project||"";$("agreement-state").textContent=c?.header.agreement||"unavailable";const n=c?.header.drafts||0;$("draft-count").textContent=n;$("draft-word").textContent=n===1?"draft":"drafts";const r=(c?.requests||[]).filter(x=>!x.answer).length,b=$("req-count");b.hidden=!r;b.textContent=r||"";b.setAttribute("aria-label",r+" open");for(const t of tabs()){const g=!c?.established&&GATED.includes(t.id);t.setAttribute("aria-disabled",String(g));t.title=g?"Available once the agreement has a mission and a rule":""}}
 function steps(c){return h("ol",{class:"steps"},c.onboarding.steps.map((x,i)=>h("li",{"data-step":x.key},h("b",{text:String(i+1)}),h("span",{},h("strong",{text:x.label}),x.hint),st(x.done?{tone:"pass",label:"done"}:x.optional?{tone:"muted",label:"optional"}:{tone:"warn",label:"to do"}))))}
 function tools(c){const t=c.onboarding.tools.filter(x=>x.state!=="ok");return t.length?h("div",{class:"rows"},t.map(x=>row(x.tool,[x.detail,x.fix?[" ",h("code",{text:x.fix})]:null],{tone:"warn",label:x.state}))):null}

@@ -139,6 +139,11 @@ enum Command {
         /// The agent host the hook serves (claude, cursor, codex, agents).
         #[arg(long, default_value = "claude")]
         host: String,
+        /// Write the accepted mission, principles and rules, and the
+        /// changelog, as one static page (<dir>/index.html) that opens from
+        /// disk or GitHub Pages, instead of serving the dashboard.
+        #[arg(long, conflicts_with_all = ["trail", "hook", "bootstrap_file"])]
+        export: Option<PathBuf>,
     },
 
     /// Draft a change for the owner to accept, or record the owner's call on
@@ -385,6 +390,10 @@ enum Command {
         /// a file, an https URL, or a built-in pack (rust, typescript, python).
         #[arg(long)]
         pack: Option<String>,
+        /// Import a runner's report of what happened to each sweep finding:
+        /// a JSON array of {fingerprint, outcome: fixed | dismissed | stalled}.
+        #[arg(long, conflicts_with = "pack")]
+        outcomes: Option<PathBuf>,
     },
 
     /// Share an exact, confirmed package of accepted records with the team:
@@ -677,7 +686,13 @@ pub fn run() -> i32 {
             trail,
             hook,
             host,
+            export,
         }) => {
+            if let Some(dir) = export {
+                let response = crate::service::export::export(&project_dir, request_id, &dir);
+                emit_response(&response, machine);
+                return response.state.exit_code();
+            }
             if matches!(hook, Some(DashHookArg::SessionStart)) {
                 let input = hook_input();
                 if host == "claude" && input.get("cursor_version").is_some() {
@@ -997,11 +1012,13 @@ pub fn run() -> i32 {
             request_id,
             dry_run,
             pack,
+            outcomes,
         }) => service.execute(ServiceRequest::Pull(crate::sync::PullRequest {
             project_dir,
             request_id,
             dry_run,
             pack,
+            outcomes,
         })),
         Some(Command::Push {
             project_dir,

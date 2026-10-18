@@ -68,8 +68,10 @@ fixtures, or packaging as shortcuts. Preserve project data under `whetstone/`,
 needs the owner's explicit yes on task `whetstone-ppq.2.6`.
 
 The public workflow families are exactly `wh init`, `wh dash`, `wh change`,
-`wh check`, `wh pull`, and `wh push`, all implemented against the Beads store.
-New behaviour goes into these families, never new top-level commands. Do not
+`wh check`, `wh pull`, `wh push` and `wh explain` (added by the owner's value
+epic, 2026-10-17, so an agent can read the why behind a finding), all
+implemented against the Beads store. New behaviour goes into these families,
+never new top-level commands. Do not
 describe the product as accepted until the milestone exits in `whetstone-ppq`
 are recorded. Bare `wh` is honest read-only orientation. The hidden developer
 gates are `validate`, `eval`, and `scan`.

@@ -892,6 +892,19 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     let sweep_findings = request.findings.then(|| {
         let mut found = findings::findings(&project, &selection.rules, &outcomes);
         fixes::attach(&project, &selection.rules, &mut found);
+        // Remembered for the dashboard's per-rule counts and outcomes.
+        if let Some(layout) = layout.as_ref() {
+            let _ = crate::coverage::record_sweep(
+                layout,
+                found
+                    .iter()
+                    .map(|finding| crate::coverage::SweepEntry {
+                        fingerprint: finding.fingerprint.clone(),
+                        rule: finding.responsibility.clone(),
+                    })
+                    .collect(),
+            );
+        }
         found
     });
     let sweep = (request.gate_mode == GateMode::Sweep && !request.findings).then(|| {

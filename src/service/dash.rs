@@ -16,7 +16,7 @@ use super::{
     utc_now, DashRequest, LoadedRecords, ServiceEvidence, ServiceResponse, ServiceState,
 };
 
-pub(super) fn dash(request: DashRequest) -> ServiceResponse {
+pub(crate) fn dash(request: DashRequest) -> ServiceResponse {
     let layout = match ProjectLayout::resolve(&request.project_dir) {
         Ok(layout) => layout,
         Err(error) => return project_error("dash", request.request_id, error),
@@ -179,6 +179,7 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
             let trail = request.trail.then(|| projection::decision_trail(&state));
             let mut view = serde_json::to_value(&view).unwrap_or(Value::Null);
             attach_lineage(&layout, &state, &mut view);
+            attach_sweep_stats(&layout, &state, &mut view);
             (Some(view), journal, trail)
         }
         Err(_error) => {
@@ -237,6 +238,26 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
             json!(trail.unwrap_or_else(|| format!("{}\n", projection::TRAIL_HEADER)));
     }
     response
+}
+
+/// Where the rulebook is thin, and each rule's sweep flags and outcomes.
+fn attach_sweep_stats(layout: &ProjectLayout, state: &AgreementState, view: &mut Value) {
+    let (runs, stats) = crate::coverage::rule_stats(layout);
+    if let Some(rules) = view.get_mut("rules").and_then(Value::as_array_mut) {
+        for rule in rules {
+            let id = rule["id"].as_str().unwrap_or_default().to_string();
+            if let Some(stats) = stats.get(&id) {
+                rule["sweep_stats"] = stats.clone();
+            }
+        }
+    }
+    if let Some(object) = view.as_object_mut() {
+        object.insert(
+            "coverage".into(),
+            crate::coverage::coverage(layout.project_root(), state),
+        );
+        object.insert("sweep_runs".into(), json!(runs));
+    }
 }
 
 /// Each rule drafted from a lesson gets its lineage: the review that

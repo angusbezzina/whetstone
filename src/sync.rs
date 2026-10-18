@@ -51,6 +51,8 @@ pub struct PullRequest {
     /// Import a rule pack as drafts, or install a principle pack: a file, an
     /// https URL or a built-in pack name.
     pub pack: Option<String>,
+    /// Import a runner's report of what happened to each finding.
+    pub outcomes: Option<PathBuf>,
 }
 
 fn response(
@@ -574,6 +576,38 @@ pub fn pull(request: PullRequest) -> ServiceResponse {
             pack,
             request.dry_run,
         );
+    }
+    if let Some(file) = request.outcomes.as_deref() {
+        let layout = match ProjectLayout::resolve(&request.project_dir) {
+            Ok(layout) => layout,
+            Err(error) => return storage_failure(request_id, "pull", error),
+        };
+        let file = if file.is_absolute() {
+            file.to_path_buf()
+        } else {
+            request.project_dir.join(file)
+        };
+        return match crate::coverage::import_outcomes(&layout, &file) {
+            Ok(data) => {
+                let mut done = response(
+                    request_id,
+                    "pull",
+                    ServiceState::Success,
+                    format!(
+                        "{} finding outcome(s) recorded; the dashboard's Rules view counts them per rule.",
+                        data["recorded"]
+                    ),
+                );
+                done.data = data;
+                done
+            }
+            Err(error) => {
+                let mut refused =
+                    response(request_id, "pull", ServiceState::NeedsInput, error.clone());
+                refused.blocking_questions = vec![error];
+                refused
+            }
+        };
     }
     let layout = match ProjectLayout::resolve(&request.project_dir) {
         Ok(layout) => layout,

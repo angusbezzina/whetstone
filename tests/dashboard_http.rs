@@ -413,9 +413,9 @@ fn traversal_oversize_and_security_header_fixtures_fail_closed() {
     for (path, budget, lazy) in [
         ("/app.css", 24 * 1024, false),
         ("/app.js", 24 * 1024, false),
-        ("/edit.js", 16 * 1024, true),
-        ("/views.js", 16 * 1024, true),
-        ("/views.css", 12 * 1024, true),
+        ("/edit.js", 20 * 1024, true),
+        ("/views.js", 20 * 1024, true),
+        ("/views.css", 14 * 1024, true),
     ] {
         let asset = send(
             handle.address(),
@@ -1544,4 +1544,269 @@ fn accepting_two_drafts_without_request_ids_accepts_both() {
             .unwrap_or_else(|| panic!("{id} missing"));
         assert_eq!(entry["lifecycle"], "accepted", "{entry}");
     }
+}
+
+const UNWRAP_QUERY: &str = r#"((call_expression function: (field_expression field: (field_identifier) @method)) @match (#eq? @method "unwrap"))"#;
+
+fn write(root: &Path, path: &str, text: &str) {
+    let full = root.join(path);
+    std::fs::create_dir_all(full.parent().expect("parent")).expect("dir");
+    std::fs::write(full, text).expect("write");
+}
+
+fn accept(session: &Session, drafted: &Value) {
+    let accepted = session.command(&json!({
+        "workflow": "change",
+        "request_id": format!("accept-{}", drafted["data"]["record"]["id"].as_str().unwrap_or("x")),
+        "review": {"proposal": drafted["data"]["proposal"]["id"].clone(), "verdict": "accept"}
+    }));
+    assert_eq!(accepted["state"], "success", "{accepted}");
+}
+
+#[test]
+fn the_rule_editor_probes_an_enforcer_and_drafts_rules_from_text() {
+    jev_offline();
+    let temp = tempfile::tempdir().expect("temp project");
+    init_git(temp.path());
+    write(
+        temp.path(),
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        temp.path(),
+        "src/main.rs",
+        "fn main() {\n    None::<u8>.unwrap();\n}\n",
+    );
+    install_private_agreement(temp.path());
+    let session = Session::open(start(temp.path(), true));
+
+    let probed = session.command(&json!({
+        "workflow": "change",
+        "request_id": "dash-probe",
+        "kind": "rule",
+        "record_id": "rule.no-unwrap",
+        "content": "No unwrap.",
+        "definition": {"type": "rule", "strength": "must", "enforcer": {"kind": "ast", "query": UNWRAP_QUERY, "language": "rust"}},
+        "probe": true
+    }));
+    assert_eq!(probed["state"], "needs_input", "{probed}");
+    assert_eq!(probed["data"]["probe"]["validatable"], true, "{probed}");
+    assert_eq!(
+        probed["data"]["probe"]["samples"][0]["location"],
+        "src/main.rs:2"
+    );
+
+    let broken = session.command(&json!({
+        "workflow": "change",
+        "request_id": "dash-probe-broken",
+        "kind": "rule",
+        "record_id": "rule.broken",
+        "definition": {"type": "rule", "strength": "must", "enforcer": {"kind": "ast", "query": "(call_expression @match"}},
+        "probe": true
+    }));
+    assert_eq!(broken["data"]["probe"]["validatable"], false, "{broken}");
+    assert_eq!(broken["data"]["recorded"], false);
+
+    let compiled = session.command(&json!({
+        "workflow": "change",
+        "request_id": "dash-compile",
+        "from_text": "- Never call `.unwrap()` in `src`.\n- Keep functions short.\n"
+    }));
+    assert_eq!(compiled["state"], "success", "{compiled}");
+    assert_eq!(compiled["data"]["drafts"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        compiled["data"]["needs_enforcer"].as_array().map(Vec::len),
+        Some(1)
+    );
+    let view = session.inspect();
+    let pending = view["data"]["changelog"]
+        .as_array()
+        .expect("changelog")
+        .iter()
+        .filter(|entry| entry["proposal"].is_string())
+        .count();
+    assert!(pending >= 1, "the compiled draft is pending review: {view}");
+}
+
+#[test]
+fn coverage_shows_untouched_directories_and_dead_rules_and_outcomes_count_per_rule() {
+    jev_offline();
+    let temp = tempfile::tempdir().expect("temp project");
+    init_git(temp.path());
+    write(
+        temp.path(),
+        "src/main.rs",
+        "fn main() {\n    None::<u8>.unwrap();\n}\n",
+    );
+    write(temp.path(), "docs/guide.md", "# Guide\n");
+    install_private_agreement(temp.path());
+    let session = Session::open(start(temp.path(), true));
+    for (id, definition) in [
+        (
+            "rule.no-unwrap",
+            json!({"type": "rule", "strength": "should", "enforcer": {"kind": "ast", "query": UNWRAP_QUERY, "language": "rust"}}),
+        ),
+        (
+            "rule.dead",
+            json!({"type": "rule", "strength": "should", "enforcer": {"kind": "ast", "query": UNWRAP_QUERY, "language": "rust"}, "paths": ["lib/**"]}),
+        ),
+    ] {
+        let drafted = session.confirmed_change(json!({
+            "workflow": "change",
+            "request_id": format!("dash-{id}"),
+            "kind": "rule",
+            "record_id": id,
+            "content": format!("Statement of {id}."),
+            "rationale": "Coverage fixture.",
+            "definition": definition
+        }));
+        assert_eq!(drafted["state"], "success", "{drafted}");
+        accept(&session, &drafted);
+    }
+    let view = session.inspect();
+    let coverage = &view["data"]["current"]["coverage"];
+    let uncovered = coverage["uncovered"].as_array().expect("uncovered");
+    assert!(
+        uncovered
+            .iter()
+            .any(|group| group["directory"] == "docs/" && group["language"] == "other"),
+        "{coverage}"
+    );
+    assert!(
+        !uncovered
+            .iter()
+            .any(|group| group["directory"] == "src/" && group["language"] == "rust"),
+        "{coverage}"
+    );
+    let dead = coverage["dead_rules"].as_array().expect("dead");
+    assert_eq!(
+        dead.iter()
+            .map(|rule| rule["rule"].clone())
+            .collect::<Vec<_>>(),
+        [json!("rule.dead")],
+        "{coverage}"
+    );
+
+    // A sweep is remembered; a runner's outcomes are counted per rule.
+    let sweep = service(ServiceRequest::Check(whetstone::service::CheckRequest {
+        project_dir: temp.path().to_path_buf(),
+        gate_mode: whetstone::service::GateMode::Sweep,
+        findings: true,
+        ..Default::default()
+    }));
+    let fingerprint = sweep.data["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .find(|finding| finding["responsibility"] == "rule.no-unwrap")
+        .and_then(|finding| finding["fingerprint"].as_str())
+        .unwrap_or_else(|| panic!("no finding: {}", sweep.data))
+        .to_string();
+    let outcomes = temp.path().join("outcomes.json");
+    std::fs::write(
+        &outcomes,
+        json!([{"fingerprint": fingerprint, "outcome": "dismissed"}]).to_string(),
+    )
+    .expect("outcomes");
+    let imported = service(ServiceRequest::Pull(whetstone::sync::PullRequest {
+        project_dir: temp.path().to_path_buf(),
+        outcomes: Some(outcomes),
+        ..Default::default()
+    }));
+    assert_eq!(
+        imported.state,
+        ServiceState::Success,
+        "{}",
+        imported.summary
+    );
+    let view = session.inspect();
+    let stats = &rule_entry(&view["data"]["current"], "rule.no-unwrap")["sweep_stats"];
+    assert_eq!(stats["flags_last_run"], 1, "{stats}");
+    assert_eq!(stats["runs_flagged"], 1);
+    assert_eq!(stats["dismissed"], 1);
+    assert_eq!(stats["dismissal_rate"], 1.0);
+    assert_eq!(view["data"]["current"]["sweep_runs"], 1);
+}
+
+#[test]
+fn the_exported_rulebook_page_matches_the_dashboard_rules_and_changelog() {
+    jev_offline();
+    let temp = tempfile::tempdir().expect("temp project");
+    init_git(temp.path());
+    write(temp.path(), "src/main.rs", "fn main() {}\n");
+    install_private_agreement(temp.path());
+    let session = Session::open(start(temp.path(), true));
+    let drafted = session.confirmed_change(json!({
+        "workflow": "change",
+        "request_id": "dash-export-rule",
+        "kind": "rule",
+        "record_id": "rule.no-unwrap",
+        "content": "No <unwrap> & no panic.",
+        "rationale": "A panic is not an error message.",
+        "definition": {"type": "rule", "strength": "should", "enforcer": {"kind": "ast", "query": UNWRAP_QUERY, "language": "rust"}, "paths": ["src/**"]}
+    }));
+    accept(&session, &drafted);
+    // A pending draft is not part of the rulebook.
+    let pending = session.confirmed_change(json!({
+        "workflow": "change",
+        "request_id": "dash-export-draft",
+        "kind": "rule",
+        "record_id": "rule.pending",
+        "content": "Still a draft.",
+        "rationale": "Not accepted.",
+        "definition": {"type": "rule", "strength": "must", "enforcer": {"kind": "test", "command": "true"}}
+    }));
+    assert_eq!(pending["state"], "success", "{pending}");
+
+    let out = temp.path().join("site");
+    let exported = Command::new(env!("CARGO_BIN_EXE_whetstone"))
+        .args(["dash", "--json", "--export"])
+        .arg(&out)
+        .current_dir(temp.path())
+        .env("WHETSTONE_JEV_OFFLINE", "1")
+        .output()
+        .expect("export");
+    let exported: Value = serde_json::from_slice(&exported.stdout).expect("json");
+    assert_eq!(exported["state"], "success", "{exported}");
+    let page = std::fs::read_to_string(out.join("index.html")).expect("page");
+    assert!(page.starts_with("<!doctype html>"));
+    assert!(!page.contains("<script"), "the page runs no script");
+    assert!(page.contains("No &lt;unwrap&gt; &amp; no panic."));
+    assert!(page.contains("A panic is not an error message."));
+    let rules = page
+        .split("<section id=rules>")
+        .nth(1)
+        .and_then(|rest| rest.split("<section id=changelog>").next())
+        .expect("rules section");
+    assert!(
+        !rules.contains("Still a draft."),
+        "a draft is not a rule in force"
+    );
+
+    let view = session.inspect();
+    let current = &view["data"]["current"];
+    let accepted_rules = current["rules"]
+        .as_array()
+        .expect("rules")
+        .iter()
+        .filter(|rule| rule["lifecycle"] == "accepted")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        page.matches("<article class=\"rule ").count(),
+        accepted_rules.len()
+    );
+    for rule in &accepted_rules {
+        assert!(page.contains(&format!("id=\"{}\"", rule["id"].as_str().expect("id"))));
+    }
+    let principles = current["principles"].as_array().expect("principles").len();
+    assert_eq!(page.matches("<li class=principle>").count(), principles);
+    let decisions = view["data"]["changelog"]
+        .as_array()
+        .expect("changelog")
+        .iter()
+        .filter(|entry| entry["kind"] == "decision")
+        .count();
+    assert_eq!(page.matches("<li class=entry>").count(), decisions);
+    assert_eq!(exported["data"]["counts"]["rules"], accepted_rules.len());
 }

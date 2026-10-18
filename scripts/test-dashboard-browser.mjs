@@ -90,6 +90,8 @@ function view(mode) {
     ] : [],
     rules: established ? rules : [],
     features: established ? [feature] : [],
+    coverage: established ? { files: 4, covered: 3, uncovered: [{ directory: "docs/", language: "other", files: 1, sample: [XSS + "docs/guide.md"] }], dead_rules: [{ rule: "rule.dead", statement: "Statement of a dead rule.", paths: ["lib/**"], enforcer: "ast", why: "its paths match no file in the repository" }] } : null,
+    sweep_runs: established ? 2 : 0,
     checks: {
       last_complete: established ? { at: "2026-09-10T10:05:00Z", tally: { pass: 1, fail: 1, unknown: 1 } } : null,
       gates: established ? [
@@ -296,10 +298,15 @@ try {
   await cdp.waitFor("document.querySelector('#announce').textContent.includes('A must rule failed')", "run checks did not report");
   check(last((c) => c.workflow === "check").mode === "staged", "run checks sends the selected mode");
 
+  // Coverage: what no rule reads, and rules that read nothing.
+  await click("#tab-coverage");
+  await cdp.waitFor("document.querySelector('#cov-uncovered')", "coverage did not render");
+  check(await cdp.evaluate("!globalThis.whetstoneXss && document.querySelector('#cov-uncovered').textContent.includes('docs/ · other') && document.querySelector('#cov-dead').textContent.includes('rule.dead')"), "coverage lists uncovered directories and dead rules as text");
+
   // Rules: grouped by strength, enforcer, runs at, stats, examples, edits.
   await click("#tab-rules");
   await cdp.waitFor("document.querySelector('#r-must')", "rules did not render");
-  check(await cdp.evaluate("[...document.querySelectorAll('#rules .panel .ph h2')].map(h => h.firstChild.textContent).join('|') === 'Mission|Principles|Must|Should|Advisory|Suggestions|Earlier records|Features'"), "rules render mission, principles, strengths, suggestions, legacy and features in order");
+  check(await cdp.evaluate("[...document.querySelectorAll('#rules .panel .ph h2')].map(h => h.firstChild.textContent).join('|') === 'Mission|Principles|Must|Should|Advisory|Suggestions|Earlier records|Features|Draft rules from text'"), "rules render mission, principles, strengths, suggestions, legacy, features and drafting from text in order");
   check(await count("#r-must .rec") === 2 && await count("#r-should .rec") === 2 && await count("#r-advisory .rec") === 1, "every rule sits under its strength");
   check(await cdp.evaluate("/pre-commit, pre-push and CI/.test(document.querySelector('[data-id=\"rule.ask-before-public-api\"]').textContent) && /raises a hand on flag/.test(document.querySelector('[data-id=\"rule.ask-before-public-api\"]').textContent)"), "a rule says where it runs and when it raises a hand");
   check(await cdp.evaluate("/false-flag rate 50.0%/.test(document.querySelector('[data-id=\"rule.no-todo\"] .stats').textContent) && !/%%/.test(document.body.innerText)"), "the false-flag rate is shown once");
@@ -352,7 +359,7 @@ try {
 
   // Keyboard and theme.
   await cdp.evaluate("document.querySelector('#tab-home').focus(); document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })); true");
-  check(await cdp.evaluate("document.activeElement.id === 'tab-requests'"), "End moves to the last tab");
+  check(await cdp.evaluate("document.activeElement.id === 'tab-coverage'"), "End moves to the last tab");
   await cdp.evaluate("document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); true");
   check(await cdp.evaluate("document.activeElement.id === 'tab-home'"), "arrow keys wrap around the tabs");
   await click('.theme button[data-theme="dark"]');

@@ -36,7 +36,7 @@ system, and agents guessing instead of asking.
    recurring Jev flags are proposed as mechanical checks. You accept every
    change; nothing learns on its own.
 
-The public surface is exactly six commands:
+The public surface is seven commands:
 
 | Command | Purpose |
 | --- | --- |
@@ -44,8 +44,9 @@ The public surface is exactly six commands:
 | `wh dash` | See rules, checks, raised hands and the full decision log, and accept or reject drafts. |
 | `wh change` | Propose a change to a rule, principle or feature map as a reviewable draft. |
 | `wh check` | Check work against the rules, return failures to the worker, and record receipts. |
-| `wh pull` | Receive the team's shared agreement without touching your drafts. |
-| `wh push` | Share an exact, confirmed selection of accepted records. |
+| `wh pull` | Receive the team's shared agreement without touching your drafts, or import a pack. |
+| `wh push` | Share an exact, confirmed selection of accepted records, or export a rule pack. |
+| `wh explain` | Explain a finding or a rule: its enforcer, what it covers and the decisions behind it. |
 
 The direction is recorded in [planning/direction.md](planning/direction.md) and
 tracked in Beads under the epic `whetstone-ppq`. That epic supersedes the
@@ -53,7 +54,7 @@ earlier `whetstone-k5r` plan.
 
 ## Where it stands today
 
-This is a pre-release. The six commands work against the Beads record store
+This is a pre-release. The commands work against the Beads record store
 and the plan in epic `whetstone-ppq` is built:
 
 - **Setup.** `wh init --action setup` detects Beads and pstack, shows the
@@ -109,9 +110,112 @@ wh check --sweep                                            # drive every mapped
 wh check --attest rule.api-review --verdict pass --reviewer interrogate --notes "..."
 wh dash                                                     # local dashboard
 wh dash --trail                                             # decision trail as TSV
+wh dash --export rulebook                                   # static rulebook page
+wh change --kind rule --from-file CONTRIBUTING.md           # compile prose into probed drafts
+wh explain rule.no-unwrap                                   # the rule and the decisions behind it
+wh pull --pack rust                                         # a starter rule pack, as drafts
 wh push                                                     # review the exact package, then --confirm <token>
 wh pull                                                     # receive; never executes or accepts
 ```
+
+## Devising a rulebook
+
+Whetstone never calls a model. You, or your agent of any make, bring the
+mission, the repository and the rules you already have in prose; Whetstone
+supplies the vocabulary, a probe that proves each rule runs and matches on this
+repository, and the record. A person accepts every rule.
+
+- **Probe before recording.** `wh change --kind rule ... --probe` runs the
+  proposed enforcer over the repository without recording anything and reports
+  whether it ran, how many files are in scope, how many places it matched and
+  up to ten samples. A rule whose paths cover no file, whose AST query does not
+  parse, whose lint code the tool does not know or whose command cannot start is
+  refused as not validatable here, unless `--allow-unvalidated` and a rationale
+  say why. The dashboard's rule editor has the same Probe button.
+- **Compile prose.** `wh change --kind rule --from-file CONTRIBUTING.md` (or
+  `--from-text`) splits prose into candidate rules: list items, and sentences
+  that say must, never, should, avoid or prefer. Where the text names its own
+  check (a formatter, a lint code, a command the repository runs, a script
+  under `whetstone/checks/`, or a construct with a known AST query such as
+  `.unwrap()`, `dbg!`, `console.log` or `print()`), the candidate is probed and
+  recorded as a draft whose rationale is the source sentence. The rest come back
+  as needing an enforcer, with the prose and the command to complete them, for
+  your agent. The dashboard's Rules view has "Draft rules from text".
+- **Harden a recurring finding.** `wh change --from-finding <fingerprint>` (or
+  `<rule id>@<path:line>`, or "Draft a rule from this" on a flag) drafts a must
+  rule from the enforcer that raised it, narrowed to where it flags, with the
+  flagged line as its example.
+- **Explain.** `wh explain <fingerprint or rule id>` gives the rule, its exact
+  enforcer, the paths it covers, how a sweep works it, the principle it serves
+  and every decision that accepted or changed it, as text or JSON. A fingerprint
+  resolves from a findings file or, without one, by recomputing over the
+  repository.
+- **Principle packs.** A principle pack
+  ([schema](references/principle-pack-v1.schema.json)) is a named, versioned
+  list of principles with an enforcer hint each. pstack ships as the default
+  pack; add your own under `whetstone/principles/*.json` or with
+  `wh pull --pack <file>`, then pick `--principle <id>` or `<pack>/<id>`.
+  Principle ids are unique across packs.
+- **Rule packs.** `wh push --pack rules.json` exports the accepted,
+  mission-independent rules and principles (never drafts, the decision log,
+  drive proofs, local-only rules, or paths unless `--include-paths`) with a
+  content digest. `wh pull --pack <file|https URL>` imports them as drafts with
+  the pack as provenance, and refuses a pack whose digest does not match. The
+  starter packs `rust`, `typescript` and `python` ship built in:
+  `wh pull --pack rust`.
+
+### Scripts as enforcers
+
+When no lint code or AST query can express a rule, a repository script can. A
+validator or test command runs without a shell, from the repository root, with
+a cleared environment plus `WH_MODE` (`staged`, `base`, `changed`, `sweep` or
+`all`), `WH_RULE`, `WH_PATHS` (a file listing the in-scope files, one per line),
+`WH_BASE` and `WH_EVIDENCE_DIR`. Exit 0 passes; a line `path:line[:col] message`
+is a finding at that line and `path: message` a finding about the whole file.
+Limits: 900 seconds, 2 MiB of output, the first 20 findings. Scripts under
+`whetstone/checks/` also run at pre-commit on the staged files. `wh init
+--action wire` writes `whetstone/checks/README.md` with the full contract and a
+working example, `no-conflict-markers.sh`, which init then offers as a starter
+rule.
+
+## Outside Virgil
+
+Any repository and any agent close the same loop:
+
+1. `wh init --action wire --hooks --ci` writes the agent contract into
+   `AGENTS.md` (between markers; your text is kept), installs the Git gates and
+   scaffolds `.github/workflows/whetstone.yml`. Every agent commits through Git,
+   so the gates check every agent the same way.
+2. The required `whetstone/policy` check runs
+   `wh check --ci --base <base> --format annotations`: each flag on a line the
+   pull request touched appears beside the code, an error for a must rule and a
+   warning for a should rule.
+3. With the repository variable `WHETSTONE_SWEEP=on`, every push to main runs
+   `wh check --sweep --format findings > findings.json`
+   ([schema](references/findings-v1.schema.json)) and the reusable action in
+   this repository works each finding by its class: a draft pull request per
+   `draft_pr` finding (carrying the tool's own fix when the finding has one), an
+   issue asking a person to approve per `confirm_first` finding, and an issue
+   for discussion per `discuss` finding. Fingerprints make it idempotent; a
+   closed item keeps its finding quiet until the flagged code changes.
+
+   ```yaml
+   - run: wh check --sweep --format findings > findings.json
+   - uses: angusbezzina/whetstone@v0.13.0
+     with:
+       findings: findings.json
+   ```
+
+4. A runner can report back what happened with
+   `wh pull --outcomes outcomes.json` (`[{fingerprint, outcome: fixed |
+   dismissed | stalled}]`); the dashboard's Rules view shows each rule's flags
+   per sweep and its dismissal rate, and its Coverage view shows the parts of
+   the repository no rule reads and the rules that read nothing.
+5. With `WHETSTONE_PAGES=on`, the scaffold publishes `wh dash --export
+   rulebook`, a static page of the accepted mission, principles, rules and
+   changelog, to GitHub Pages.
+
+Inside Virgil, Messo consumes the same `findings.json`.
 
 Machine clients read `whetstone.command-response.v1`
 ([schema](references/command-response-v1.schema.json)). Requests with
@@ -141,7 +245,7 @@ Install the latest release (it also links `wh`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/angusbezzina/whetstone/main/install.sh | sh
-wh --help   # lists init, dash, change, check, pull and push
+wh --help   # lists init, dash, change, check, pull, push and explain
 ```
 
 Releases before v0.13.0 are the previous product. Or build from source:
@@ -151,7 +255,7 @@ cargo build --release
 mkdir -p ~/.local/bin
 cp target/release/whetstone ~/.local/bin/whetstone
 ln -sf ~/.local/bin/whetstone ~/.local/bin/wh
-wh --help   # lists init, dash, change, check, pull and push
+wh --help   # lists init, dash, change, check, pull, push and explain
 ```
 
 Requirements: `bd` 1.1.2 or later, Node 22 for the verification driver, and

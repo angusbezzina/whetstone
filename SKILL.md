@@ -104,7 +104,8 @@ resume token. A retry with the same request ID must keep the same input.
   from inferences and unknowns. Proposed defaults are suggestions, not
   answers.
 - `wh init --action agree` records the owner's agreement: `--mission`,
-  optional `--principle <pstack id>` and `--custom-principle`, and
+  optional `--principle <id or pack/id>` (pstack is the default principle
+  pack; others live under `whetstone/principles/`) and `--custom-principle`, and
   `--starter <id|all>`. Pass only answers the owner gave you.
   `--action setup` detects and (with `--yes`) installs Beads and pstack;
   `--action exemplar --from <path>` turns a codebase the owner admires into
@@ -119,6 +120,14 @@ resume token. A retry with the same request ID must keep the same input.
   (`--kind lesson`; `--admit`, `--supersede` and `--forget` are a person's). `--accept-flag` and
   `--dismiss-flag` label a flag, `--answer <issue>` answers a raised hand, and
   `--tune` and `--migrate` record drafts. Accepting is the owner's call.
+  `--probe` runs a rule's enforcer over the repository before anything is
+  recorded and refuses one that is not validatable here; `--from-file`,
+  `--from-text` and `--from-finding` compile prose or a recurring finding into
+  probed drafts and return what still needs an enforcer. When no lint code or
+  AST query fits, write a script under `whetstone/checks/` (contract in its
+  README) and point a validator rule at it.
+- `wh explain <fingerprint or rule id>` returns the rule behind a finding, its
+  exact enforcer and the decisions that accepted it. Read it before repairing.
 - `wh check` runs the rules: `--staged` for pre-commit, `--changed` or
   `--base` for the change, `--feature` and `--step` to prove one feature,
   `--sweep` for every mapped feature, `--mutate` to test the proofs.
@@ -130,7 +139,9 @@ resume token. A retry with the same request ID must keep the same input.
   and only a person widens it. Its `sweep_priority` (0 most urgent to 4,
   default 2) orders the work, and `sweep_unsure` (`[{"paths": [...] or
   "matching": "<regex>", "reason": "..."}]`) parks the doubtful flags until a
-  person raises them; a doubt that covers every flag is refused.
+  person raises them; a doubt that covers every flag is refused. A finding
+  may carry `fix`, the tool's own diff, which applies with `git apply`.
+  `--format annotations` prints flags as GitHub workflow commands.
 - Before building, run pstack's `/how`, `/why` and `/blast-radius` and record
   them with `wh check --brief --area <feature|path> --skill how --skill why`.
 - When confidence is low, a repair fails twice, the spec is vague or the area
@@ -142,7 +153,10 @@ resume token. A retry with the same request ID must keep the same input.
   --notes "..."`.
 - `wh push` previews an exact package of accepted records and needs
   `--confirm <token>`. `wh pull` receives shared records and never executes
-  or accepts them.
+  or accepts them. `wh push --pack <file>` exports accepted rules as a rule
+  pack; `wh pull --pack <file|url|rust|typescript|python>` imports one as
+  drafts, and `wh pull --outcomes <file>` records what a runner did with each
+  finding.
 - Hidden `validate`, `eval` and `scan` are repository gates, not product
   workflows.
 
