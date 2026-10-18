@@ -26,6 +26,7 @@ mod dash;
 pub(crate) mod explain;
 mod init;
 pub(crate) mod lesson;
+pub(crate) mod packs;
 pub(crate) mod record;
 
 pub use explain::ExplainRequest;

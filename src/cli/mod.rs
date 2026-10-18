@@ -380,6 +380,11 @@ enum Command {
         /// Report the remote that would be pulled; receive nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Import a rule pack's rules and principles as drafts (nothing is
+        /// accepted), or install a principle pack under whetstone/principles:
+        /// a file, an https URL, or a built-in pack (rust, typescript, python).
+        #[arg(long)]
+        pack: Option<String>,
     },
 
     /// Share an exact, confirmed package of accepted records with the team:
@@ -404,6 +409,14 @@ enum Command {
         /// Show the exact package, destination and base; share nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Export the accepted, mission-independent rules and principles as a
+        /// rule pack to this file, for another repository to import as drafts.
+        /// Nothing is shared with the team's remote.
+        #[arg(long, conflicts_with_all = ["select", "include_ancestry", "confirm"])]
+        pack: Option<String>,
+        /// With --pack: keep each rule's repository paths.
+        #[arg(long, requires = "pack")]
+        include_paths: bool,
     },
 
     /// Explain a finding or a rule: the rule, its exact enforcer, what it
@@ -983,10 +996,12 @@ pub fn run() -> i32 {
             project_dir,
             request_id,
             dry_run,
+            pack,
         }) => service.execute(ServiceRequest::Pull(crate::sync::PullRequest {
             project_dir,
             request_id,
             dry_run,
+            pack,
         })),
         Some(Command::Push {
             project_dir,
@@ -996,6 +1011,8 @@ pub fn run() -> i32 {
             canaries,
             confirm,
             dry_run,
+            pack,
+            include_paths,
         }) => service.execute(ServiceRequest::Push(crate::sync::PushRequest {
             project_dir,
             request_id,
@@ -1004,6 +1021,8 @@ pub fn run() -> i32 {
             canaries,
             confirm,
             dry_run,
+            pack,
+            include_paths,
         })),
         Some(Command::Explain {
             target,

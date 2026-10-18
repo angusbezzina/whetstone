@@ -36,6 +36,11 @@ pub struct PushRequest {
     pub canaries: Vec<String>,
     pub confirm: Option<String>,
     pub dry_run: bool,
+    /// Export the accepted rules as a rule pack to this file instead of
+    /// sharing them with the team's remote.
+    pub pack: Option<String>,
+    /// With `pack`: keep each rule's repository paths.
+    pub include_paths: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -43,6 +48,9 @@ pub struct PullRequest {
     pub project_dir: PathBuf,
     pub request_id: Option<String>,
     pub dry_run: bool,
+    /// Import a rule pack as drafts, or install a principle pack: a file, an
+    /// https URL or a built-in pack name.
+    pub pack: Option<String>,
 }
 
 fn response(
@@ -310,6 +318,15 @@ fn digest(parts: &[&str]) -> String {
 
 pub fn push(request: PushRequest) -> ServiceResponse {
     let fallback = request.request_id.clone().unwrap_or_else(|| "push".into());
+    if let Some(pack) = request.pack.as_deref() {
+        return crate::service::packs::export(
+            &request.project_dir,
+            fallback,
+            pack,
+            request.include_paths,
+            request.dry_run,
+        );
+    }
     let layout = match ProjectLayout::resolve(&request.project_dir) {
         Ok(layout) => layout,
         Err(error) => return storage_failure(fallback, "push", error),
@@ -550,6 +567,14 @@ pub fn push(request: PushRequest) -> ServiceResponse {
 
 pub fn pull(request: PullRequest) -> ServiceResponse {
     let request_id = request.request_id.clone().unwrap_or_else(|| "pull".into());
+    if let Some(pack) = request.pack.as_deref() {
+        return crate::service::packs::import(
+            &request.project_dir,
+            request_id,
+            pack,
+            request.dry_run,
+        );
+    }
     let layout = match ProjectLayout::resolve(&request.project_dir) {
         Ok(layout) => layout,
         Err(error) => return storage_failure(request_id, "pull", error),
