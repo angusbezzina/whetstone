@@ -53,14 +53,13 @@ const CATALOGUE = [
 ];
 const STARTERS = [
   { id: "rule.prove-it-works", title: "Prove it works before done", detected: "cargo test was detected", strength: "must", enforcer: "Test", examples: [example("ran the tests", "pass", "proved")], accepted: false },
-  { id: "rule.ask-before-public-api", title: "Ask before changing a public API", detected: "Compares exports at pre-commit.", strength: "must", enforcer: "Public surface", examples: [], accepted: false },
 ];
 const brief = "rule      No TODO comments (v1, should)\nrecheck   wh check --rule rule.no-todo";
 
 function view(mode) {
   const established = mode !== "fresh";
   const rules = [
-    rule("rule.ask-before-public-api", "Ask before changing a public API.", "must", "Public surface", "exports, cli, json", { runs_at: "pre-commit, pre-push and CI", examples: [example("pub fn run(a: u8)", "flag", "The signature changed.")], enforcerRecord: { kind: "public_surface" } }),
+    rule("rule.no-unsafe", "No unsafe blocks.", "must", "AST query", "(unsafe_block) @match", { runs_at: "pre-commit, pre-push and CI", examples: [example("pub fn run(p: *const u8) -> u8 { unsafe { *p } }", "flag", "An unsafe block.")], enforcerRecord: { kind: "ast", query: "(unsafe_block) @match", language: "rust" } }),
     rule("rule.tests", "Rust tests pass.", "must", "Test", "cargo test", { result: label("warn", "pass · stale") }),
     rule("rule.no-todo", XSS + "No TODO comments.", "should", "Test", "false", { result: label("fail", "fail · 1"), pending: { version: 2, title: "No TODO or FIXME", proposal: "proposal.a" } }),
     rule("rule.plain-words", "Name things in plain words.", "advisory", "Validator", "scripts/plain-words", { result: label("muted", "advisory"), enforcerRecord: { kind: "validator", command: "scripts/plain-words" } }),
@@ -90,7 +89,7 @@ function view(mode) {
     checks: {
       last_complete: established ? { at: "2026-09-10T10:05:00Z", tally: { pass: 1, fail: 1, unknown: 1 } } : null,
       gates: established ? [
-        gate("rule.ask-before-public-api", "Ask before changing a public API.", "must", "Public surface", "exports, cli, json", label("pass", "pass"), { summary: "No public surface changed." }),
+        gate("rule.no-unsafe", "No unsafe blocks.", "must", "AST query", "(unsafe_block) @match", label("pass", "pass"), { summary: "No unsafe block in 3 file(s)." }),
         gate("rule.tests", "Rust tests pass.", "must", "Test", "cargo test", label("warn", "quarantined · flaky"), { summary: "Flaky: failed once, passed on retry." }),
         gate("rule.no-todo", "No TODO comments.", "should", "Test", "false", label("fail", "fail · 1"), { failures: [{ location: "exit code 1", message: XSS + "$ false" }], brief, evidence: [{ kind: "whetstone_evidence", locator: "run1/rule_no-todo.log", digest: null }] }),
         gate("rule.draft", "No raw regex as enforcement.", "should", "AST query", "(regex)", label("draft", "draft · not run"), { eligible: false, last_run: null }),
@@ -112,7 +111,7 @@ const journal = [
   { id: "c2", recorded_at: "2026-09-10T10:00:00Z", kind: "decision", title: "Rule revised: No TODO or FIXME", version: "v1 → v2", status: label("draft", "draft"), owner: "Owner", area: "rules", summary: XSS + "Sharper wording", note: null, proposal: "proposal.a", records: [] },
   { id: "check:1", recorded_at: "2026-09-10T10:05:00Z", kind: "verification", title: "Checks ran: 1 pass · 1 fail · 1 unknown", version: null, status: label("fail", "fail"), owner: null, area: "checks", summary: "Rules: rule.no-todo", note: null, proposal: null, records: [
     receipt("verification.gate_a", "verification_receipt", { subject: { stable_id: "gate:rule.no-todo" }, verification: "fail", checked_at: "2026-09-10T10:05:00Z" }),
-    receipt("verification.gate_b", "verification_receipt", { subject: { stable_id: "gate:rule.ask-before-public-api" }, verification: "pass", checked_at: "2026-09-10T10:05:00Z" }),
+    receipt("verification.gate_b", "verification_receipt", { subject: { stable_id: "gate:rule.no-unsafe" }, verification: "pass", checked_at: "2026-09-10T10:05:00Z" }),
     receipt("verification.gate_old", "verification_receipt", { subject: { stable_id: "gate:rule.no-todo" }, verification: "fail", checked_at: "2026-09-09T10:05:00Z" }),
   ] },
   { id: "c1", recorded_at: "2026-09-01T09:00:00Z", kind: "decision", title: "Agreement established", version: "revision 1", status: label("pass", "accepted"), owner: "Owner", area: "mission", summary: "Recorded as one wh init operation.", note: null, proposal: null, records: [] },
@@ -221,7 +220,7 @@ try {
   await cdp.waitFor("document.querySelector('#init-form')", "the onboarding form did not open");
   check(await count("#ob-principles input[name=principle]") === 3, "every catalogue principle is offered");
   check(await cdp.evaluate("!globalThis.whetstoneXss"), "catalogue text renders as text");
-  check(await count("#ob-starters input[name=starter]:checked") === 2, "starter rules are preselected");
+  check(await count("#ob-starters input[name=starter]:checked") === 1, "starter rules are preselected");
   await cdp.evaluate("document.querySelector('#init-form [name=exemplar]').value = '../admired'; document.querySelector('#exemplar-btn').click(); true");
   await cdp.waitFor("document.querySelector('#init-form .notice')?.textContent.includes('2 rule drafts')", "the exemplar result did not show");
   check(last((c) => c.action === "exemplar")?.exemplar === "../admired", "an exemplar posts its locator");
@@ -232,7 +231,7 @@ try {
   const agree = last((c) => c.action === "agree");
   check(agree.dry_run === true && agree.mission === "Ship a parser", "the review is a dry run of the agreement");
   check(q(agree.principles) === q(["prove-it-works"]) && q(agree.custom_principles) === q(["Prefer boring code", "Small steps"]), "principles and custom principles are sent as lists");
-  check(q(agree.starters) === q(["rule.prove-it-works", "rule.ask-before-public-api"]), "only the accepted starters are sent");
+  check(q(agree.starters) === q(["rule.prove-it-works"]), "only the accepted starters are sent");
   check(!("values" in agree) && !("owner" in agree) && !("desired_outcome" in agree), "no removed onboarding fields are sent");
   mode = "established";
   await click("#confirm-init");
@@ -271,24 +270,24 @@ try {
   await cdp.waitFor("document.querySelector('#r-must')", "rules did not render");
   check(await cdp.evaluate("[...document.querySelectorAll('#rules .panel .ph h2')].map(h => h.firstChild.textContent).join('|') === 'Mission|Principles|Must|Should|Advisory|Earlier records|Features'"), "rules render mission, principles, strengths, legacy and features in order");
   check(await count("#r-must .rec") === 2 && await count("#r-should .rec") === 1 && await count("#r-advisory .rec") === 1, "every rule sits under its strength");
-  check(await cdp.evaluate("/pre-commit, pre-push and CI/.test(document.querySelector('[data-id=\"rule.ask-before-public-api\"]').textContent)"), "a rule says where it runs");
+  check(await cdp.evaluate("/pre-commit, pre-push and CI/.test(document.querySelector('[data-id=\"rule.no-unsafe\"]').textContent)"), "a rule says where it runs");
   check(await cdp.evaluate("document.querySelector('[data-id=\"rule.no-todo\"] .ver').textContent.includes('draft v2 pending')"), "a pending draft is labelled while the accepted rule stays in force");
-  check(await cdp.evaluate("document.querySelector('[data-id=\"rule.ask-before-public-api\"] details.ex pre').textContent.includes('pub fn run')"), "labelled examples sit behind a disclosure");
+  check(await cdp.evaluate("document.querySelector('[data-id=\"rule.no-unsafe\"] details.ex pre').textContent.includes('unsafe')"), "labelled examples sit behind a disclosure");
   check(await cdp.evaluate("!document.body.innerText.includes('null') && !document.body.innerText.includes('undefined')"), "no literal null or undefined is rendered");
-  await click('[data-id="rule.ask-before-public-api"] .e button');
+  await click('[data-id="rule.no-unsafe"] .e button');
   await cdp.waitFor("document.querySelector('.editor.open form [name=enforcer]')", "the rule editor did not open inline");
   check(await count("dialog[open]") === 0, "editing opens inline, not in a modal");
-  check(await cdp.evaluate("document.querySelector('.editor.open [name=enforcer]').value === 'public_surface' && document.querySelector('.editor.open [name=strength]').value === 'must'"), "the editor starts from the rule's strength and enforcer");
+  check(await cdp.evaluate("document.querySelector('.editor.open [name=enforcer]').value === 'ast' && document.querySelector('.editor.open [name=strength]').value === 'must'"), "the editor starts from the rule's strength and enforcer");
   await fill(".editor.open form", { strength: "should", rationale: "Too strict for internal crates" });
   await cdp.waitFor("document.querySelector('#record-draft')", "the rule review did not render");
   const edit = last((c) => c.workflow === "change" && c.preview === true);
-  check(edit.kind === "rule" && edit.record_id === "rule.ask-before-public-api" && edit.definition.strength === "should", "a rule edit posts its new strength");
-  check(edit.definition.enforcer.kind === "public_surface" && edit.definition.examples.length === 1 && edit.definition.type === "rule", "the enforcer and labelled examples are kept");
+  check(edit.kind === "rule" && edit.record_id === "rule.no-unsafe" && edit.definition.strength === "should", "a rule edit posts its new strength");
+  check(edit.definition.enforcer.kind === "ast" && edit.definition.examples.length === 1 && edit.definition.type === "rule", "the enforcer and labelled examples are kept");
   await click("#record-draft");
   await cdp.waitFor("document.querySelector('#announce').textContent.includes('private draft')", "recording did not announce");
   await click("#r-advisory .addrow .btn");
   await cdp.waitFor("document.querySelector('#r-advisory .editor.open form')", "the add-rule editor did not open");
-  check(await cdp.evaluate("[...document.querySelectorAll('#r-advisory .editor.open [name=enforcer] option')].map(o => o.value).join() === 'test,lint,formatter,ast,validator,drive,design_tokens,public_surface'"), "the enforcer picker lists the enforcer kinds");
+  check(await cdp.evaluate("[...document.querySelectorAll('#r-advisory .editor.open [name=enforcer] option')].map(o => o.value).join() === 'test,lint,formatter,ast,validator,drive'"), "the enforcer picker lists the enforcer kinds");
   await fill("#r-advisory .editor.open form", { content: "Ask a person before deleting data.", enforcer: "validator", value: "scripts/check-deletes", rationale: "Data is irreplaceable" });
   await cdp.waitFor("document.querySelector('#record-draft')", "the new rule review did not render");
   const added = last((c) => c.workflow === "change" && c.preview === true);

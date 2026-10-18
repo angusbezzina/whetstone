@@ -131,34 +131,6 @@
       "expect": "invalid"
     },
     {
-      "id": "R-013",
-      "name": "public surfaces are exports, cli or json",
-      "record_type": "rule",
-      "record": {
-        "schema": "whetstone.rule.v2",
-        "statement": "Ask before changing the public API.",
-        "rationale": "Owners decide the surface.",
-        "strength": "must",
-        "enforcer": { "kind": "public_surface", "surfaces": ["http"] },
-        "source": { "kind": "starter" }
-      },
-      "expect": "invalid"
-    },
-    {
-      "id": "R-014",
-      "name": "the design token file is repository-relative",
-      "record_type": "rule",
-      "record": {
-        "schema": "whetstone.rule.v2",
-        "statement": "Use design tokens.",
-        "rationale": "One visual system.",
-        "strength": "should",
-        "enforcer": { "kind": "design_tokens", "tokens": "/etc/tokens.css" },
-        "source": { "kind": "owner" }
-      },
-      "expect": "invalid"
-    },
-    {
       "id": "R-015",
       "name": "a review-enforced rule is read as history",
       "record_type": "rule",
@@ -174,7 +146,7 @@
     },
     {
       "id": "R-016",
-      "name": "a public-surface rule raises a hand on any flag",
+      "name": "a public-surface rule is read as history",
       "record_type": "rule",
       "record": {
         "schema": "whetstone.rule.v2",
@@ -185,7 +157,7 @@
         "source": { "kind": "starter", "reference": "pstack:boundary-discipline" },
         "hand_raise": ["flag"]
       },
-      "expect": "stored"
+      "expect": "retired"
     },
     {
       "id": "R-017",

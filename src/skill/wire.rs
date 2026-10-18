@@ -451,8 +451,8 @@ pub fn pre_commit_hook() -> String {
         r#"#!/bin/sh
 {GIT_HOOK_MARKER}
 # Installed by `wh init --action wire --hooks`. Runs the rules' fast
-# mechanical checks (AST, design tokens, public surface) on the staged index
-# only, then any hook that was here before (kept as pre-commit{CHAINED_SUFFIX}).
+# mechanical checks (AST) on the staged index only, then any hook that was
+# here before (kept as pre-commit{CHAINED_SUFFIX}).
 hook_dir=$(dirname "$0")
 if [ -x "$hook_dir/pre-commit{CHAINED_SUFFIX}" ]; then
   "$hook_dir/pre-commit{CHAINED_SUFFIX}" "$@" || exit $?

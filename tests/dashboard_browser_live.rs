@@ -39,6 +39,15 @@ fn real_browser_drives_the_real_dashboard_service_and_persists_results() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/test-dashboard-live-browser.mjs");
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
+    // A test command that passes, kept out of Git, so the prove-it-works
+    // starter is offered and holds.
+    std::fs::write(
+        temp.path().join("package.json"),
+        r#"{"scripts":{"test":"true"}}"#,
+    )
+    .expect("write package.json");
+    std::fs::write(temp.path().join(".git/info/exclude"), "package.json\n")
+        .expect("exclude package.json");
     let backend = Arc::new(CommandDashboardBackend::new(
         temp.path().to_path_buf(),
         None,

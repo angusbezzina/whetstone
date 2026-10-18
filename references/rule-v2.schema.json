@@ -171,54 +171,6 @@
               "$ref": "#/$defs/record_id"
             }
           }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "kind",
-            "tokens"
-          ],
-          "properties": {
-            "kind": {
-              "const": "design_tokens"
-            },
-            "tokens": {
-              "$ref": "#/$defs/nonempty"
-            },
-            "stylesheets": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "sizes": {
-              "type": "boolean"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "kind"
-          ],
-          "properties": {
-            "kind": {
-              "const": "public_surface"
-            },
-            "surfaces": {
-              "type": "array",
-              "items": {
-                "enum": [
-                  "exports",
-                  "cli",
-                  "json"
-                ]
-              }
-            }
-          }
         }
       ]
     },

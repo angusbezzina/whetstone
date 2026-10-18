@@ -113,9 +113,18 @@ fn inspect_init(root: &Path, request_id: &str) -> ServiceResponse {
     }))
 }
 
-/// Mission, one pstack principle, one custom principle and the mechanical
-/// public-surface starter, recorded through the service directly.
+/// A test command that passes, kept out of Git, so the prove-it-works
+/// starter is one a check can hold.
+fn with_test_command(root: &Path) {
+    std::fs::write(root.join("package.json"), r#"{"scripts":{"test":"true"}}"#)
+        .expect("write package.json");
+    std::fs::write(root.join(".git/info/exclude"), "package.json\n").expect("exclude");
+}
+
+/// Mission, one pstack principle, one custom principle and the
+/// prove-it-works starter, recorded through the service directly.
 fn install_private_agreement(root: &Path) {
+    with_test_command(root);
     let inspection = inspect_init(root, "dashboard-agreement");
     let accepted = service(ServiceRequest::Init(InitRequest {
         project_dir: root.to_path_buf(),
@@ -126,7 +135,7 @@ fn install_private_agreement(root: &Path) {
         mission: Some(MISSION.into()),
         principles: vec!["prove-it-works".into()],
         custom_principles: vec![CUSTOM_PRINCIPLE.into()],
-        starters: vec!["rule.ask-before-public-api".into()],
+        starters: vec!["rule.prove-it-works".into()],
         ..Default::default()
     }));
     assert_eq!(
@@ -632,7 +641,7 @@ fn an_unestablished_project_shows_onboarding_and_no_removed_sections() {
         .iter()
         .map(|starter| starter["id"].as_str().expect("id"))
         .collect::<Vec<_>>();
-    assert_eq!(ids, ["rule.prove-it-works", "rule.ask-before-public-api"]);
+    assert_eq!(ids, ["rule.prove-it-works"]);
     let prove = &starters[0];
     assert_eq!(prove["enforcer"], "Test", "Cargo.toml means cargo test");
     assert_eq!(prove["strength"], "must");
@@ -661,6 +670,7 @@ fn an_unestablished_project_shows_onboarding_and_no_removed_sections() {
 fn dashboard_init_agree_records_mission_principles_and_starters() {
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
+    with_test_command(temp.path());
     let session = Session::open(start(temp.path(), true));
     let inspected = session.command(&json!({
         "workflow": "init",
@@ -678,7 +688,7 @@ fn dashboard_init_agree_records_mission_principles_and_starters() {
         "mission": MISSION,
         "principles": ["prove-it-works"],
         "custom_principles": [CUSTOM_PRINCIPLE],
-        "starters": ["rule.ask-before-public-api"]
+        "starters": ["rule.prove-it-works"]
     });
 
     // A dry run writes nothing and lists the exact records.
@@ -698,7 +708,7 @@ fn dashboard_init_agree_records_mission_principles_and_starters() {
         "{planned:?}"
     );
     assert!(planned.contains(&"principle.prove-it-works".to_string()));
-    assert!(planned.contains(&"rule.ask-before-public-api".to_string()));
+    assert!(planned.contains(&"rule.prove-it-works".to_string()));
     assert!(!ProjectLayout::resolve(temp.path())
         .expect("layout")
         .private_store_exists());
@@ -727,10 +737,10 @@ fn dashboard_init_agree_records_mission_principles_and_starters() {
     assert!(principles
         .iter()
         .any(|entry| entry["title"] == CUSTOM_PRINCIPLE));
-    let api = rule_entry(&view, "rule.ask-before-public-api");
-    assert_eq!(api["kind"], "rule");
-    assert_eq!(api["strength"], "must");
-    assert!(api["examples"]
+    let prove = rule_entry(&view, "rule.prove-it-works");
+    assert_eq!(prove["kind"], "rule");
+    assert_eq!(prove["strength"], "must");
+    assert!(prove["examples"]
         .as_array()
         .is_some_and(|examples| examples.len() >= 2));
     let starters = view["onboarding"]["starters"].as_array().expect("starters");
@@ -740,12 +750,7 @@ fn dashboard_init_agree_records_mission_principles_and_starters() {
             .find(|starter| starter["id"] == id)
             .map(|starter| starter["accepted"].clone())
     };
-    assert_eq!(accepted("rule.ask-before-public-api"), Some(json!(true)));
-    assert_eq!(
-        accepted("rule.prove-it-works"),
-        None,
-        "without a test command nothing mechanical proves the work"
-    );
+    assert_eq!(accepted("rule.prove-it-works"), Some(json!(true)));
 
     // A second mission through init is refused: it is a change now.
     let again = session.command(&json!({
@@ -1104,7 +1109,7 @@ fn a_rule_change_is_drafted_accepted_checked_and_flagged() {
         "{selected:?}"
     );
     assert!(
-        selected.contains(&json!("rule.ask-before-public-api")),
+        selected.contains(&json!("rule.prove-it-works")),
         "{selected:?}"
     );
     assert_eq!(
@@ -1213,7 +1218,8 @@ fn check_modes_reach_the_service_as_changed_staged_and_sweep() {
             check["data"]
         );
     }
-    // Staged runs only content checks: the public-surface starter qualifies.
+    // Staged runs only content checks: the test-command starter waits for
+    // pre-push.
     let staged = session.command(&json!({
         "workflow": "check",
         "request_id": "dash-mode-staged-2",
@@ -1222,12 +1228,7 @@ fn check_modes_reach_the_service_as_changed_staged_and_sweep() {
     let rules = staged["data"]["selection"]["rules"]
         .as_array()
         .expect("rules");
-    assert!(
-        rules
-            .iter()
-            .all(|rule| rule == "rule.ask-before-public-api"),
-        "{rules:?}"
-    );
+    assert!(rules.is_empty(), "{rules:?}");
 }
 
 #[test]

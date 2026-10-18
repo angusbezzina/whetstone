@@ -56,6 +56,8 @@ fn the_whole_local_flow_runs_without_a_dolt_binary() {
         .status()
         .expect("git");
     assert!(git.success());
+    // A test command, so the prove-it-works starter is offered.
+    fs::write(root.join("package.json"), r#"{"scripts":{"test":"true"}}"#).expect("package.json");
 
     let inspected = json(&run(
         &["init", "--json", "--request-id", "i1"],
@@ -83,7 +85,7 @@ fn the_whole_local_flow_runs_without_a_dolt_binary() {
             "--principle",
             "prove-it-works",
             "--starter",
-            "ask-before-public-api",
+            "prove-it-works",
         ],
         &root,
         &tools,

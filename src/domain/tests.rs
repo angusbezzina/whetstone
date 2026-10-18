@@ -229,17 +229,16 @@ fn imported_notes_and_missing_evidence_cannot_grant_authority_or_pass() {
 
 #[test]
 fn a_rule_has_one_strength_one_enforcer_and_valid_examples() {
-    let tokens = rule(Enforcer::DesignTokens {
-        tokens: "src/tokens.css".into(),
-        stylesheets: Vec::new(),
-        sizes: true,
+    let ast = rule(Enforcer::Ast {
+        query: "(unsafe_block) @match".into(),
+        language: Some("rust".into()),
     });
-    tokens.validate().expect("valid rule");
-    assert!(tokens.enforcer.runs_staged());
-    assert!(tokens.applies_to("src/app.css"));
-    assert!(!tokens.applies_to("docs/a.css"));
-    let json = serde_json::to_value(&tokens).expect("json");
-    assert_eq!(json["enforcer"]["kind"], "design_tokens");
+    ast.validate().expect("valid rule");
+    assert!(ast.enforcer.runs_staged());
+    assert!(ast.applies_to("src/app.rs"));
+    assert!(!ast.applies_to("docs/a.rs"));
+    let json = serde_json::to_value(&ast).expect("json");
+    assert_eq!(json["enforcer"]["kind"], "ast");
     assert!(
         serde_json::from_value::<Rule>(serde_json::json!({
             "schema": RULE_SCHEMA_V2,
@@ -254,17 +253,18 @@ fn a_rule_has_one_strength_one_enforcer_and_valid_examples() {
     );
     for broken in [
         {
-            let mut rule = tokens.clone();
+            let mut rule = ast.clone();
             rule.schema = "whetstone.rule.v1".into();
             rule
         },
         {
-            let mut rule = tokens.clone();
+            let mut rule = ast.clone();
             rule.paths = vec!["../outside".into()];
             rule
         },
-        rule(Enforcer::PublicSurface {
-            surfaces: vec!["everything".into()],
+        rule(Enforcer::Lint {
+            tool: "ruff".into(),
+            code: " ".into(),
         }),
     ] {
         assert!(broken.validate().is_err(), "{broken:?} was accepted");

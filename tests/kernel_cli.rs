@@ -99,6 +99,12 @@ impl Repo {
         let temp = tempfile::tempdir().expect("create isolated repository");
         let root = temp.path().canonicalize().expect("canonical fixture root");
         init_git(&root);
+        // A test command that passes, so the prove-it-works starter is one a
+        // check can hold; kept out of Git so the tree stays clean.
+        std::fs::write(root.join("package.json"), r#"{"scripts":{"test":"true"}}"#)
+            .expect("write package.json");
+        std::fs::write(root.join(".git/info/exclude"), "package.json\n")
+            .expect("exclude package.json");
         Self { _temp: temp, root }
     }
 
@@ -253,7 +259,7 @@ const AGREEMENT: [&str; 6] = [
     "--principle",
     "prove-it-works",
     "--starter",
-    "ask-before-public-api",
+    "prove-it-works",
 ];
 
 #[test]
@@ -539,13 +545,11 @@ fn init_is_resumable_and_duplicate_requests_never_duplicate_records() {
     assert_eq!(accepted_json["state"], "needs_input");
     let mut ids = record_ids(&accepted_json);
     ids.sort();
-    assert_eq!(ids.len(), 5, "{accepted_json}");
+    assert_eq!(ids.len(), 4, "{accepted_json}");
     assert_eq!(ids[0], "mission.project");
     assert!(ids.contains(&"principle.prove-it-works".to_string()));
     assert!(ids.iter().any(|id| id.starts_with("principle.custom-")));
-    for starter in ["rule.prove-it-works", "rule.ask-before-public-api"] {
-        assert!(ids.contains(&starter.to_string()), "{starter} missing");
-    }
+    assert!(ids.contains(&"rule.prove-it-works".to_string()));
     assert_eq!(
         accepted_json["data"]["progress"]["agreement_complete"],
         true
@@ -1360,8 +1364,6 @@ fn rule_definitions_hold_one_strength_and_one_enforcer() {
         r#"{"kind":"test","command":"cargo test"}"#,
         r#"{"kind":"validator","command":"python3 scripts/check.py"}"#,
         r#"{"kind":"drive","feature":"feature.search"}"#,
-        r#"{"kind":"design_tokens","tokens":"src/tokens.css"}"#,
-        r#"{"kind":"public_surface","surfaces":["cli","json"]}"#,
     ];
     for (index, strength) in ["must", "should", "advisory"].into_iter().enumerate() {
         for (offset, enforcer) in enforcers.iter().enumerate() {
@@ -1389,6 +1391,7 @@ fn rule_definitions_hold_one_strength_and_one_enforcer() {
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"review","reviewer":{"by":"interrogate"}}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"brief","skills":["how"]}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"question","question":"Is this a test?"}}"#,
+        r#"{"type":"rule","strength":"must","enforcer":{"kind":"public_surface"}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"true","query":"(identifier)"}}"#,
         r#"{"type":"rule","strength":"must","enforcer":{"kind":"vibes"}}"#,
         r#"{"type":"rule","strength":"may","enforcer":{"kind":"test","command":"true"}}"#,
@@ -1423,8 +1426,6 @@ fn rule_definitions_hold_one_strength_and_one_enforcer() {
     // Well-formed but invalid enforcers are asked about, never recorded.
     for (index, enforcer) in [
         r#"{"kind":"test","command":"cargo test | tee out"}"#,
-        r#"{"kind":"public_surface","surfaces":["gui"]}"#,
-        r#"{"kind":"design_tokens","tokens":"/etc/tokens.css"}"#,
         r#"{"kind":"lint","tool":"ruff","code":""}"#,
     ]
     .into_iter()

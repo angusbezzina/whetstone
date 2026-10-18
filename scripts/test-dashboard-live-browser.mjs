@@ -73,8 +73,8 @@ try {
   check(await cdp.evaluate("[...document.querySelectorAll('#rules .panel .ph h2')].map(h => h.firstChild.textContent).slice(0, 5).join('|') === 'Mission|Principles|Must|Should|Advisory'"), "rules are grouped mission, principles, then by strength");
   check(await cdp.evaluate("document.querySelectorAll('#r-principles .rec').length === 3"), "three principles are recorded");
   check(await cdp.evaluate("document.querySelectorAll('#r-must .rec').length === 1 && document.querySelectorAll('#r-should .rec').length === 0"), "one must rule and no should rule");
-  check(await cdp.evaluate("/pre-commit/.test(document.querySelector('[data-id=\"rule.ask-before-public-api\"]').textContent)"), "a rule names where it runs");
-  check(await cdp.evaluate("document.querySelector('[data-id=\"rule.ask-before-public-api\"] details.ex li') !== null"), "labelled examples sit behind a disclosure");
+  check(await cdp.evaluate("/pre-push/.test(document.querySelector('[data-id=\"rule.prove-it-works\"]').textContent)"), "a rule names where it runs");
+  check(await cdp.evaluate("document.querySelector('[data-id=\"rule.prove-it-works\"] details.ex li') !== null"), "labelled examples sit behind a disclosure");
 
   // Draft a should rule whose check fails, then accept it in the changelog.
   await click("#r-should .addrow .btn");
@@ -97,7 +97,7 @@ try {
   await cdp.waitFor("document.querySelector('#run-btn')", "checks did not render");
   await click("#run-btn");
   await cdp.waitFor("document.querySelector('#gate-rule\\\\.no-todo-comments .state')?.classList.contains('fail')", "the failing rule did not fail", 60_000);
-  check(await cdp.evaluate("document.querySelector('#gate-rule\\\\.ask-before-public-api .state').textContent === 'pass'"), "the public-surface rule passes");
+  check(await cdp.evaluate("document.querySelector('#gate-rule\\\\.prove-it-works .state').textContent === 'pass'"), "the test-command rule passes");
   check(await cdp.evaluate("document.querySelector('#det-rule\\\\.no-todo-comments pre.brief') !== null"), "the failing rule carries a repair brief");
   check(
     await cdp.evaluate(`(async () => {

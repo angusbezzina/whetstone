@@ -53,29 +53,6 @@ pub enum Enforcer {
     Validator { command: String },
     /// Prove a mapped feature by driving the running app.
     Drive { feature: RecordId },
-    /// Literal colours and sizes outside the token file are violations.
-    DesignTokens {
-        tokens: String,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        stylesheets: Vec<String>,
-        /// Also flag literal spacing and type sizes (colours are always checked).
-        #[serde(default = "default_true", skip_serializing_if = "is_true")]
-        sizes: bool,
-    },
-    /// Any change to exported items, CLI flags or JSON envelope fields,
-    /// compared with the last pushed revision, is flagged for the owner.
-    PublicSurface {
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        surfaces: Vec<String>,
-    },
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn is_true(value: &bool) -> bool {
-    *value
 }
 
 impl Enforcer {
@@ -87,18 +64,13 @@ impl Enforcer {
             Self::Test { .. } => "test",
             Self::Validator { .. } => "validator",
             Self::Drive { .. } => "drive",
-            Self::DesignTokens { .. } => "design_tokens",
-            Self::PublicSurface { .. } => "public_surface",
         }
     }
 
     /// Whether the enforcer reads only file contents, so pre-commit can run it
     /// on the staged index within its budget.
     pub fn runs_staged(&self) -> bool {
-        matches!(
-            self,
-            Self::Ast { .. } | Self::DesignTokens { .. } | Self::PublicSurface { .. }
-        )
+        matches!(self, Self::Ast { .. })
     }
 
     fn validate(&self) -> Result<(), DomainError> {
@@ -117,28 +89,6 @@ impl Enforcer {
             Self::Formatter { tool } => require_text(tool),
             Self::Test { command } | Self::Validator { command } => require_text(command),
             Self::Drive { .. } => Ok(()),
-            Self::DesignTokens {
-                tokens,
-                stylesheets,
-                ..
-            } => {
-                if !safe_relative_path(tokens) {
-                    return Err(DomainError::InvalidField(
-                        "design token file must be repository-relative",
-                    ));
-                }
-                bounded_paths(stylesheets)
-            }
-            Self::PublicSurface { surfaces } => {
-                for surface in surfaces {
-                    if !matches!(surface.as_str(), "exports" | "cli" | "json") {
-                        return Err(DomainError::InvalidField(
-                            "public surfaces are exports, cli or json",
-                        ));
-                    }
-                }
-                Ok(())
-            }
         }
     }
 }
@@ -488,7 +438,13 @@ impl Rule {
 /// Fields of stored rule revisions that the current model drops on read.
 const DROPPED_RULE_FIELDS: &[&str] = &["hand_raise", "privacy", "shadow"];
 /// Enforcer kinds of stored rule revisions that nothing holds any more.
-const RETIRED_ENFORCERS: &[&str] = &["review", "brief", "question"];
+const RETIRED_ENFORCERS: &[&str] = &[
+    "review",
+    "brief",
+    "question",
+    "design_tokens",
+    "public_surface",
+];
 
 /// How [`Rule::from_stored`] reads a stored rule revision.
 pub(super) enum StoredRead {

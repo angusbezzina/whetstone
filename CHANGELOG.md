@@ -81,6 +81,10 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   flag decisions are read as retired history, and so is a stored rule held
   by a question or recorded in shadow; a stored rule's privacy and shadow
   fields are dropped on read with its digest unchanged.
+- The `design_tokens` and `public_surface` enforcers and their built-in
+  scanners, and the ask-before-public-API starter: pre-commit runs AST rules
+  only. A stored rule held by either is read as retired history. A design
+  token rule can be expressed as a validator rule.
 
 ## [0.13.0] - 2026-10-15
 

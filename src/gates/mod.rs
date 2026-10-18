@@ -30,8 +30,6 @@ pub mod ast;
 mod drive;
 pub mod files;
 pub mod lint;
-pub mod surface;
-pub mod tokens;
 
 pub use drive::*;
 pub use files::{FileSet, Source};
@@ -433,8 +431,6 @@ pub struct GateContext<'a> {
     pub files: &'a FileSet,
     /// Paths the change touched (empty for a whole-repository check).
     pub changed: &'a [String],
-    /// Where public surfaces are compared from: the last pushed revision.
-    pub surface_base: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -490,15 +486,6 @@ pub fn mechanism_label(rule: &Rule) -> (String, String) {
         Enforcer::Lint { tool, code } => ("Lint".into(), format!("{tool} ({code})")),
         Enforcer::Ast { query, .. } => ("AST query".into(), query.clone()),
         Enforcer::Drive { feature } => ("Drive".into(), format!("prove {}", feature.as_str())),
-        Enforcer::DesignTokens { tokens, .. } => ("Design tokens".into(), tokens.clone()),
-        Enforcer::PublicSurface { surfaces } => (
-            "Public surface".into(),
-            if surfaces.is_empty() {
-                "exports, cli, json".into()
-            } else {
-                surfaces.join(", ")
-            },
-        ),
     }
 }
 
@@ -727,12 +714,6 @@ pub fn run_gate(context: &GateContext<'_>, id: &RecordId, rule: &Rule) -> GateOu
             run_ast_gate(context, outcome, rule, query, language.as_deref())
         }
         Enforcer::Drive { feature } => run_drive_gate(context, outcome, feature),
-        Enforcer::DesignTokens {
-            tokens,
-            stylesheets,
-            sizes,
-        } => run_tokens_gate(context, outcome, rule, tokens, stylesheets, *sizes),
-        Enforcer::PublicSurface { surfaces } => run_surface_gate(context, outcome, rule, surfaces),
     }
 }
 
@@ -967,151 +948,6 @@ fn run_scanner_rule_gate(
     )
 }
 
-fn run_tokens_gate(
-    context: &GateContext<'_>,
-    mut outcome: GateOutcome,
-    rule: &Rule,
-    token_file: &str,
-    stylesheets: &[String],
-    sizes: bool,
-) -> GateOutcome {
-    // The vocabulary comes from what is being committed when the token file
-    // itself is staged, otherwise from the working tree.
-    let token_text = context
-        .files
-        .text(token_file)
-        .map(str::to_owned)
-        .or_else(|| fs::read_to_string(context.project_root.join(token_file)).ok());
-    let Some(token_text) = token_text else {
-        let outcome = outcome.unknown(format!(
-            "The token file {token_file} does not exist, so there is no vocabulary to check against."
-        ));
-        return finish(context, outcome, None, json!({"tokens": token_file}));
-    };
-    let vocabulary = match tokens::Tokens::parse(token_file, &token_text) {
-        Ok(vocabulary) => vocabulary,
-        Err(error) => {
-            let outcome = outcome.unknown(format!("{token_file}: {error}."));
-            return finish(context, outcome, None, json!({"tokens": token_file}));
-        }
-    };
-    let in_scope = |path: &str| {
-        tokens::is_stylesheet(path)
-            && rule.applies_to(path)
-            && (stylesheets.is_empty()
-                || stylesheets
-                    .iter()
-                    .any(|pattern| crate::domain::entry_point_matches(pattern, path)))
-    };
-    let mut checked = 0;
-    for (path, _) in context.files.iter() {
-        if !in_scope(path) {
-            continue;
-        }
-        let Some(text) = context.files.text(path) else {
-            continue;
-        };
-        checked += 1;
-        outcome.failures.extend(tokens::check_stylesheet(
-            path,
-            text,
-            &vocabulary,
-            path == token_file,
-            sizes,
-        ));
-    }
-    outcome.failures.truncate(MAX_FAILURES * 5);
-    if checked == 0 && context.changed.is_empty() && context.files.source == Source::WorkingTree {
-        outcome = outcome
-            .unknown("No stylesheet is in scope, so nothing was checked; that is not a pass.");
-    } else if outcome.failures.is_empty() {
-        outcome.state = VerificationAxis::Pass;
-        outcome.summary = format!(
-            "{checked} stylesheet(s) use only the {} token(s) in {token_file}.",
-            vocabulary.len()
-        );
-    } else {
-        outcome.state = VerificationAxis::Fail;
-        outcome.summary = format!(
-            "{} literal colour or size value(s) outside {token_file}.",
-            outcome.failures.len()
-        );
-    }
-    finish(
-        context,
-        outcome,
-        None,
-        json!({"tokens": token_file, "stylesheets_checked": checked}),
-    )
-}
-
-fn run_surface_gate(
-    context: &GateContext<'_>,
-    mut outcome: GateOutcome,
-    rule: &Rule,
-    surfaces: &[String],
-) -> GateOutcome {
-    let Some(base) = context.surface_base else {
-        let outcome = outcome.unknown(
-            "No pushed revision to compare with (no upstream or origin/HEAD); the public surface is unknown.",
-        );
-        return finish(context, outcome, None, json!({}));
-    };
-    let mut compared = 0;
-    let mut paths = context
-        .files
-        .paths()
-        .filter(|path| surface::is_surface_file(path) && rule.applies_to(path))
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    paths.extend(
-        context
-            .files
-            .deleted
-            .iter()
-            .filter(|path| surface::is_surface_file(path) && rule.applies_to(path))
-            .cloned(),
-    );
-    for path in paths {
-        // A file the base did not have is new surface, not a change to a
-        // promise anyone relies on yet: it is compared from the next change.
-        let Some(before) = files::at_revision(context.project_root, base, &path)
-            .map(|text| surface::surface_of(&path, &text, surfaces))
-        else {
-            continue;
-        };
-        let after = context
-            .files
-            .text(&path)
-            .map(|text| surface::surface_of(&path, text, surfaces))
-            .unwrap_or_default();
-        compared += 1;
-        outcome
-            .failures
-            .extend(surface::diff(&path, &before, &after));
-    }
-    outcome.failures.truncate(MAX_FAILURES * 5);
-    if outcome.failures.is_empty() {
-        outcome.state = VerificationAxis::Pass;
-        outcome.summary = format!(
-            "No public surface changed in {compared} file(s) since {}.",
-            &base[..base.len().min(12)]
-        );
-    } else {
-        outcome.state = VerificationAxis::Fail;
-        outcome.summary = format!(
-            "The public surface changed ({} item(s)); this is the owner's call.",
-            outcome.failures.len()
-        );
-    }
-    finish(
-        context,
-        outcome,
-        None,
-        json!({"base": base, "files_compared": compared}),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1134,11 +970,6 @@ mod tests {
                 .expect("git")
                 .success());
         }
-        fs::write(
-            root.join("tokens.css"),
-            ":root { --accent: #ff8800; --space: 4px; }\n",
-        )
-        .expect("tokens");
         fs::write(root.join("lib.rs"), "pub fn run(a: u8) -> u8 { a }\n").expect("lib");
         for args in [vec!["add", "-A"], vec!["commit", "-qm", "base"]] {
             assert!(std::process::Command::new("git")
@@ -1173,7 +1004,7 @@ mod tests {
             )
         };
         let changed = vec!["lib.rs".to_string()];
-        let run = |enforcer: serde_json::Value, set: &FileSet, base: Option<&str>| {
+        let run = |enforcer: serde_json::Value, set: &FileSet| {
             let context = GateContext {
                 project_root: root,
                 run_dir: &run_dir,
@@ -1184,7 +1015,6 @@ mod tests {
                 change_steps: None,
                 files: set,
                 changed: &changed,
-                surface_base: base,
             };
             run_gate(&context, &id, &rule(enforcer)).state
         };
@@ -1201,12 +1031,10 @@ mod tests {
                 run(
                     json!({"kind": "ast", "query": "(unsafe_block) @match", "language": "rust"}),
                     &clean,
-                    None,
                 ),
                 run(
                     json!({"kind": "ast", "query": "(unsafe_block) @match", "language": "rust"}),
                     &files(&[("lib.rs", "fn f(p: *const u8) -> u8 { unsafe { *p } }\n")]),
-                    None,
                 ),
             ),
             (
@@ -1214,58 +1042,26 @@ mod tests {
                 run(
                     json!({"kind": "lint", "tool": "echo clean", "code": "F401"}),
                     &clean,
-                    None,
                 ),
                 run(
                     json!({"kind": "lint", "tool": "echo lib.rs:1:1: F401 unused", "code": "F401"}),
                     &clean,
-                    None,
                 ),
             ),
             (
                 "formatter",
-                run(json!({"kind": "formatter", "tool": "true"}), &clean, None),
-                run(json!({"kind": "formatter", "tool": "false"}), &clean, None),
+                run(json!({"kind": "formatter", "tool": "true"}), &clean),
+                run(json!({"kind": "formatter", "tool": "false"}), &clean),
             ),
             (
                 "test",
-                run(json!({"kind": "test", "command": "true"}), &clean, None),
-                run(json!({"kind": "test", "command": "false"}), &clean, None),
+                run(json!({"kind": "test", "command": "true"}), &clean),
+                run(json!({"kind": "test", "command": "false"}), &clean),
             ),
             (
                 "validator",
-                run(
-                    json!({"kind": "validator", "command": "true"}),
-                    &clean,
-                    None,
-                ),
-                run(
-                    json!({"kind": "validator", "command": "false"}),
-                    &clean,
-                    None,
-                ),
-            ),
-            (
-                "design_tokens",
-                run(
-                    json!({"kind": "design_tokens", "tokens": "tokens.css"}),
-                    &files(&[("a.css", ".a { color: var(--accent); }\n")]),
-                    None,
-                ),
-                run(
-                    json!({"kind": "design_tokens", "tokens": "tokens.css"}),
-                    &files(&[("a.css", ".a { color: #123456; }\n")]),
-                    None,
-                ),
-            ),
-            (
-                "public_surface",
-                run(json!({"kind": "public_surface"}), &clean, Some("HEAD")),
-                run(
-                    json!({"kind": "public_surface"}),
-                    &files(&[("lib.rs", "pub fn run(b: u16) -> u8 { 0 }\n")]),
-                    Some("HEAD"),
-                ),
+                run(json!({"kind": "validator", "command": "true"}), &clean),
+                run(json!({"kind": "validator", "command": "false"}), &clean),
             ),
         ];
         for (kind, passed, flagged) in &cases {
@@ -1282,7 +1078,6 @@ mod tests {
                 run(
                     json!({"kind": "ast", "query": "(not a query", "language": "rust"}),
                     &clean,
-                    None,
                 ),
             ),
             (
@@ -1290,36 +1085,19 @@ mod tests {
                 run(
                     json!({"kind": "lint", "tool": missing, "code": "F401"}),
                     &clean,
-                    None,
                 ),
             ),
             (
                 "formatter",
-                run(json!({"kind": "formatter", "tool": missing}), &clean, None),
+                run(json!({"kind": "formatter", "tool": missing}), &clean),
             ),
             (
                 "test",
-                run(json!({"kind": "test", "command": missing}), &clean, None),
+                run(json!({"kind": "test", "command": missing}), &clean),
             ),
             (
                 "validator",
-                run(
-                    json!({"kind": "validator", "command": missing}),
-                    &clean,
-                    None,
-                ),
-            ),
-            (
-                "design_tokens",
-                run(
-                    json!({"kind": "design_tokens", "tokens": "missing-tokens.css"}),
-                    &files(&[("a.css", ".a { color: red; }\n")]),
-                    None,
-                ),
-            ),
-            (
-                "public_surface",
-                run(json!({"kind": "public_surface"}), &clean, None),
+                run(json!({"kind": "validator", "command": missing}), &clean),
             ),
         ];
         for (kind, state) in unavailable {

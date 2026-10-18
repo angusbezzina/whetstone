@@ -1,8 +1,7 @@
 //! `wh eval` for rules: every rule scored against its labelled examples, per
 //! rule and per enforcer, plus the pstack round-trip contract.
 //!
-//! Mechanical enforcers that read content (AST, design tokens, public
-//! surface) run on each example directly. Command-based enforcers (tests,
+//! AST enforcers read content, so they run on each example directly. Command-based enforcers (tests,
 //! linters, drives) are not scored by examples, and the report says so
 //! rather than counting them as passes.
 
@@ -67,7 +66,6 @@ impl Score {
 /// Whether the enforcer flags one example, or `None` when examples cannot
 /// exercise it.
 fn flags_example(
-    project: &Path,
     rule: &Rule,
     example: &crate::domain::RuleExample,
 ) -> Result<Option<bool>, String> {
@@ -90,42 +88,6 @@ fn flags_example(
                 crate::gates::ast::run_query(&files, query, language.as_deref(), |_| true, 50)?;
             Ok(Some(!run.failures.is_empty()))
         }
-        Enforcer::DesignTokens { tokens, sizes, .. } => {
-            let token_text = std::fs::read_to_string(project.join(tokens)).ok();
-            let vocabulary = match token_text {
-                Some(text) => crate::gates::tokens::Tokens::parse(tokens, &text)?,
-                // Examples can still be scored against a minimal vocabulary
-                // when the token file is not in this repository.
-                None => crate::gates::tokens::Tokens::parse(
-                    "fallback.css",
-                    ":root { --accent: #ff7a00; --ink: #0a0a0a; --space: 8px; }",
-                )?,
-            };
-            let path = path.unwrap_or_else(|| "example.css".into());
-            Ok(Some(
-                !crate::gates::tokens::check_stylesheet(
-                    &path,
-                    &example.input,
-                    &vocabulary,
-                    false,
-                    *sizes,
-                )
-                .is_empty(),
-            ))
-        }
-        Enforcer::PublicSurface { surfaces } => {
-            let Some((before, after)) = example.input.split_once("=== after ===") else {
-                return Err(
-                    "a public-surface example is `<before>\n=== after ===\n<after>`".into(),
-                );
-            };
-            let path = path.unwrap_or_else(|| "src/lib.rs".into());
-            let before = crate::gates::surface::surface_of(&path, before, surfaces);
-            let after = crate::gates::surface::surface_of(&path, after, surfaces);
-            Ok(Some(
-                !crate::gates::surface::diff(&path, &before, &after).is_empty(),
-            ))
-        }
         _ => Ok(None),
     }
 }
@@ -146,14 +108,14 @@ pub struct RuleScore {
 }
 
 /// Score a set of rules: `(id, where it came from, rule)`.
-pub fn score_rules(project: &Path, rules: &[(String, &'static str, Rule)]) -> Vec<RuleScore> {
+pub fn score_rules(rules: &[(String, &'static str, Rule)]) -> Vec<RuleScore> {
     let mut result = Vec::new();
     for (id, source, rule) in rules {
         let mut score = Score::default();
         let mut mismatches = Vec::new();
         let mut errors = Vec::new();
         for example in &rule.examples {
-            match flags_example(project, rule, example) {
+            match flags_example(rule, example) {
                 Ok(flagged) => {
                     score.record(example.expected, flagged);
                     if let Some(flagged) = flagged {
@@ -232,7 +194,7 @@ pub fn evaluate(project: &Path) -> Value {
     for starter in crate::starter::starters(project) {
         rules.push((starter.id.to_string(), "starter", starter.rule));
     }
-    let scores = score_rules(project, &rules);
+    let scores = score_rules(&rules);
     let mut by_enforcer = BTreeMap::<&'static str, Score>::new();
     for score in &scores {
         by_enforcer
@@ -250,7 +212,10 @@ pub fn evaluate(project: &Path) -> Value {
         .sum::<usize>();
     let errors = scores.iter().map(|score| score.errors.len()).sum::<usize>();
     let roundtrip = pstack_roundtrip();
-    let ok = checked > 0 && mismatches == 0 && errors == 0 && roundtrip["ok"] == true;
+    // Only AST rules can be scored by their examples; a project whose rules
+    // are all command checks has nothing here to score, which is not a
+    // failure (the scanner half of `wh eval` still has to exercise work).
+    let ok = mismatches == 0 && errors == 0 && roundtrip["ok"] == true;
     json!({
         "ok": ok,
         "rules_scored": scores.len(),
@@ -276,21 +241,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn starter_and_mechanical_examples_score_cleanly() {
+    fn ast_examples_score_and_command_starters_are_unscored() {
         let temp = tempfile::tempdir().expect("temp");
         std::fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").expect("cargo");
-        let rules = crate::starter::starters(temp.path())
+        let mut rules = crate::starter::starters(temp.path())
             .into_iter()
             .map(|starter| (starter.id.to_string(), "starter", starter.rule))
             .collect::<Vec<_>>();
-        let scores = score_rules(temp.path(), &rules);
-        let surface = scores
+        let ast: Rule = serde_json::from_value(json!({
+            "schema": crate::domain::RULE_SCHEMA_V2,
+            "statement": "No unsafe blocks.",
+            "rationale": "Memory safety.",
+            "strength": "must",
+            "enforcer": {"kind": "ast", "query": "(unsafe_block) @match", "language": "rust"},
+            "examples": [
+                {"input": "fn f(p: *const u8) -> u8 { unsafe { *p } }", "expected": "flag", "reason": "An unsafe block."},
+                {"input": "fn f(a: u8) -> u8 { a }", "expected": "pass", "reason": "Safe."}
+            ],
+            "source": {"kind": "owner"}
+        }))
+        .expect("rule");
+        rules.push(("rule.no-unsafe".into(), "agreement", ast));
+        let scores = score_rules(&rules);
+        let ast = scores
             .iter()
-            .find(|score| score.enforcer == "public_surface")
-            .expect("surface");
-        assert_eq!(surface.score.checked(), 2);
-        assert_eq!(surface.precision.as_deref(), Some("1.000"));
-        assert!(surface.mismatches.is_empty());
+            .find(|score| score.enforcer == "ast")
+            .expect("ast");
+        assert_eq!(ast.score.checked(), 2);
+        assert_eq!(ast.precision.as_deref(), Some("1.000"));
+        assert!(ast.mismatches.is_empty());
+        let prove = scores
+            .iter()
+            .find(|score| score.rule == crate::starter::PROVE_IT_WORKS)
+            .expect("prove-it-works");
+        assert_eq!(
+            prove.score.unscored, 2,
+            "a test command is not scored by examples"
+        );
     }
 
     #[test]

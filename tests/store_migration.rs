@@ -253,6 +253,9 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
 
     // ── Beads holds every kind: agreement, proposal, review, retirement,
     // a team lesson, plus a draft and receipts that never travel. ──
+    // A test command, so the prove-it-works starter is offered.
+    std::fs::write(root.join("package.json"), r#"{"scripts":{"test":"true"}}"#)
+        .expect("package.json");
     let inspected = wh(root, &["init", "--json", "--request-id", "i1"]);
     let token = inspected["resume_token"]
         .as_str()
@@ -276,7 +279,7 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
             "--principle",
             "prove-it-works",
             "--starter",
-            "ask-before-public-api",
+            "prove-it-works",
         ],
     );
     assert_eq!(
@@ -321,9 +324,9 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
             "--request-id",
             "r1",
             "--retire",
-            "rule.ask-before-public-api",
+            "rule.prove-it-works",
             "--rationale",
-            "The public surface is checked elsewhere.",
+            "The tests are checked elsewhere.",
         ],
     );
     let retirement = retire["data"]["proposal"]["id"]
@@ -499,10 +502,7 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
             .rfind(|agreement| agreement["record_id"] == id)
             .map(|agreement| agreement["lifecycle"].clone())
     };
-    assert_eq!(
-        lifecycle_of("rule.ask-before-public-api"),
-        Some(json!("retired"))
-    );
+    assert_eq!(lifecycle_of("rule.prove-it-works"), Some(json!("retired")));
     assert_eq!(lifecycle_of("rule.git-answers"), Some(json!("accepted")));
     assert_eq!(lifecycle_of(&proposal), Some(json!("operational")));
     let ids = exported

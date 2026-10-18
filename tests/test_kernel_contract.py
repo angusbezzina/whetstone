@@ -89,6 +89,8 @@ def test_removed_flags_are_rejected(args: tuple[str, ...], tmp_path: Path) -> No
 
 def test_init_inspects_read_only_then_agrees(tmp_path: Path) -> None:
     repo = git_repo(tmp_path)
+    # A test command, so the prove-it-works starter is offered.
+    (repo / "package.json").write_text('{"scripts":{"test":"true"}}')
     inspect = run("init", "--json", "--request-id", "py-1", cwd=repo)
     assert inspect.returncode == 6, inspect.stderr
     handoff = json.loads(inspect.stdout)
@@ -113,7 +115,7 @@ def test_init_inspects_read_only_then_agrees(tmp_path: Path) -> None:
         "--principle",
         "prove-it-works",
         "--starter",
-        "ask-before-public-api",
+        "prove-it-works",
         cwd=repo,
     )
     assert agreed.returncode == 6, agreed.stderr
@@ -122,7 +124,7 @@ def test_init_inspects_read_only_then_agrees(tmp_path: Path) -> None:
     assert sorted(record["id"] for record in response["data"]["records"]) == [
         "mission.project",
         "principle.prove-it-works",
-        "rule.ask-before-public-api",
+        "rule.prove-it-works",
     ]
     assert response["data"]["shared"] is False
 

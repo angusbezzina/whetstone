@@ -386,18 +386,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         }
         _ => None,
     };
-    let head = crate::gates::head_commit(&project);
-    // Public surfaces compare with what this commit builds on at pre-commit,
-    // and with the last pushed revision otherwise (HEAD when never pushed).
-    let surface_base = if staged {
-        head.clone()
-    } else {
-        request
-            .base
-            .clone()
-            .or_else(|| crate::gates::files::last_pushed_revision(&project))
-            .or_else(|| head.clone())
-    };
     let mut outcomes = Vec::new();
     let mut doctor = None;
     let mut mutation_runs = Vec::new();
@@ -450,7 +438,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                     change_steps: None,
                     files: &files,
                     changed: &selection.changed_paths,
-                    surface_base: surface_base.as_deref(),
                 };
                 for (index, mutation) in mapped.mutations.iter().enumerate() {
                     let run = crate::gates::run_mutation(
@@ -492,7 +479,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                         .map(|(id, steps)| (id, steps.as_slice())),
                     files: &files,
                     changed: &content_changed,
-                    surface_base: surface_base.as_deref(),
                 };
                 let mut outcome = match (&halted, is_drive) {
                     (Some(reason), true) => {

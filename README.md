@@ -14,13 +14,12 @@ system, and agents guessing instead of asking.
 ## How it works
 
 1. **Agree the rules once.** `wh init` installs or detects Beads and pstack,
-   offers starter rules the repository can hold, and turns your mission, principles and example
-   codebases into proposed rules. You accept each one in the dashboard.
+   offers the starter rules the repository can hold, and turns your mission,
+   principles and example codebases into proposed rules. You accept each one in the dashboard.
    Accepted rules are records in Beads.
 2. **Enforce each rule mechanically.** Every rule has one strength (must,
-   should or advisory) and one mechanical enforcer (linter, formatter, AST,
-   test, validator, design tokens, public API) scored against the rule's
-   examples.
+   should or advisory) and one mechanical enforcer (AST, linter, formatter,
+   test, validator) scored against the rule's examples.
 3. **Brief before building, prove before shipping.** Agents run pstack's
    `/how`, `/why` and `/blast-radius` first. Checks run at git pre-commit
    (fast, staged files), pre-push (the full `wh check` with fresh proofs) and
@@ -51,13 +50,12 @@ and the plan in epic `whetstone-ppq` is built:
   exact install commands, installs Beads after one confirmation (the pstack
   installs are yours to run), and pins what
   it found in `whetstone/tools.lock.json`. Onboarding asks for a one-line
-  mission, offers pstack's principles and three starter rules chosen for the
-  repository, and turns exemplar codebases (`--action exemplar --from <path>`
+  mission, offers pstack's principles and the prove-it-works starter rule
+  when the repository has a test command, and turns exemplar codebases (`--action exemplar --from <path>`
   or `--url <git url>`) into rule drafts with provenance.
 - **Rules.** One strength and one enforcer per rule
   ([rule schema](references/rule-v2.schema.json)): AST, lint, formatter, test,
-  validator, drive, design tokens or public surface. Earlier standards are
-  read as rules, and
+  validator or drive. Earlier standards are read as rules, and
   `wh change --migrate` turns earlier values, philosophy and YAML rules into
   drafts.
 - **Gates.** `wh init --action wire --hooks` installs git pre-commit (staged

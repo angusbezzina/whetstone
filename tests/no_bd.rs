@@ -117,6 +117,8 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
     .expect("state");
     let wh = |args: &[&str]| run(args, &root, &tools, &home);
 
+    // A test command, so the prove-it-works starter is offered.
+    fs::write(root.join("package.json"), r#"{"scripts":{"test":"true"}}"#).expect("package.json");
     let inspected = json_of(&wh(&["init", "--json", "--request-id", "i1"]));
     assert!(
         !inspected.to_string().contains("brew install beads")
@@ -143,7 +145,7 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
         "--principle",
         "prove-it-works",
         "--starter",
-        "ask-before-public-api",
+        "prove-it-works",
     ]));
     assert_eq!(
         agreed["data"]["progress"]["agreement_complete"], true,

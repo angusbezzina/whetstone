@@ -305,66 +305,6 @@ pub fn propose(exemplar: &mut Exemplar) -> Vec<Proposal> {
             });
         }
     }
-    // A design-token file: a stylesheet that defines many custom properties.
-    for candidate in [
-        "src/tokens.css",
-        "src/styles/tokens.css",
-        "styles/tokens.css",
-        "tokens.css",
-        "src/theme.css",
-        "app/globals.css",
-        "src/index.css",
-    ] {
-        let Some(text) = read(exemplar, candidate) else {
-            continue;
-        };
-        let evidence = exemplar
-            .files_read
-            .last()
-            .cloned()
-            .into_iter()
-            .collect::<Vec<_>>();
-        if crate::gates::tokens::Tokens::parse(candidate, &text)
-            .is_ok_and(|tokens| tokens.len() >= 8)
-        {
-            proposals.push(Proposal {
-                id: "rule.exemplar-design-tokens".into(),
-                why: format!(
-                    "The exemplar defines its visual vocabulary as tokens in {candidate}."
-                ),
-                rule: rule(
-                    exemplar,
-                    &evidence,
-                    "Use design tokens, not literal colours or spacing.",
-                    "The exemplar keeps one token vocabulary so the design system never drifts.",
-                    Strength::Should,
-                    // The same relative path in this repository; the owner
-                    // edits it before accepting when the token file differs.
-                    Enforcer::DesignTokens {
-                        tokens: candidate.into(),
-                        stylesheets: Vec::new(),
-                        sizes: true,
-                    },
-                    vec![
-                        example(
-                            ".b { color: #ff0000; }",
-                            ExampleVerdict::Flag,
-                            "A literal colour.",
-                            "src/app.css",
-                        ),
-                        example(
-                            ".b { color: var(--accent); }",
-                            ExampleVerdict::Pass,
-                            "A token.",
-                            "src/app.css",
-                        ),
-                    ],
-                    Vec::new(),
-                ),
-            });
-            break;
-        }
-    }
     // A formatter the exemplar enforces.
     for (file, command) in [
         ("rustfmt.toml", "cargo fmt --check"),
