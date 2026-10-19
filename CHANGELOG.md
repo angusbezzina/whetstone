@@ -78,6 +78,10 @@ rulebook file, `findings.json` and the JSON envelope.
   and returns the rest as needing one; `--from-finding` drafts a must rule
   from a finding that keeps coming back. The dashboard's Rules view drafts
   from pasted text.
+- A sweep finding of a formatter or lint rule whose tool can rewrite files
+  carries the tool's own fix: an optional `fix` diff that applies with
+  `git apply`, made on a throwaway copy (the working tree is never written).
+  The findings shape is in [references](references/findings-v1.schema.json).
 
 ### Changed
 

@@ -186,7 +186,7 @@ enum Command {
         staged: bool,
         /// Run only the rules below must and print one finding per flag
         /// {fingerprint, subjectDigest, class, priority, title, responsibility,
-        /// unsure?}, a JSON array one per line, for a sweep's controller
+        /// unsure?, fix?}, a JSON array one per line, for a sweep's controller
         /// (findings.json).
         #[arg(long)]
         sweep: bool,

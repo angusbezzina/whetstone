@@ -2,9 +2,10 @@
 //! to work (Messo's, inside Virgil).
 //!
 //! A finding is `{fingerprint, subjectDigest, class, priority, title,
-//! responsibility, unsure?}`: `priority` (0 most urgent to 4) is the rule's,
-//! and `unsure` says why, only where the rule doubts its own flag (the
-//! consumer parks such a finding until a person raises it).
+//! responsibility, unsure?, fix?}`: `priority` (0 most urgent to 4) is the
+//! rule's, `unsure` says why, only where the rule doubts its own flag (the
+//! consumer parks such a finding until a person raises it), and `fix` is the
+//! rule's tool's own diff, only where the tool can rewrite files.
 //! The fingerprint (rule id, repository and subject) stays the same across
 //! runs for the same subject, so a dismissed finding stays quiet until its
 //! subject changes; the subject digest changes exactly when the flagged
@@ -34,6 +35,13 @@ pub(crate) struct SweepFinding {
     pub(crate) responsibility: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) unsure: Option<String>,
+    /// The tool's own fix, as a unified diff that applies at the repository
+    /// root with `git apply` (formatters and lints that can rewrite files).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) fix: Option<String>,
+    /// What the finding is about: a repository path, or `repository`.
+    #[serde(skip)]
+    pub(crate) subject: String,
 }
 
 /// Whether a rule's flags are sweep work: below must.
@@ -206,6 +214,8 @@ pub(crate) fn findings(
         }
         for (subject, flag) in numbered(flagged) {
             result.push(SweepFinding {
+                subject: subject.split('#').next().unwrap_or_default().to_string(),
+                fix: None,
                 fingerprint: fingerprint(&outcome.id, &repository, &subject),
                 subject_digest: flag.subject_digest,
                 class: rule.sweep_class().label(),
@@ -294,6 +304,8 @@ mod tests {
             title: "Print is a smell. (src/app.py)".into(),
             responsibility: "rule.print-doubtful".into(),
             unsure: unsure.map(str::to_owned),
+            fix: None,
+            subject: "src/app.py".into(),
         };
         assert_eq!(
             json_array(&[finding(None), finding(Some("borderline"))]),

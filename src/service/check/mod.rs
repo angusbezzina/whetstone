@@ -25,6 +25,7 @@ use super::{
 };
 
 pub(crate) mod findings;
+mod fixes;
 mod report;
 
 pub(crate) use report::{code_tree_digest, Finding, SnapshotBinding};
@@ -211,8 +212,11 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             outcomes.push(outcome);
         }
     }
-    let sweep_findings = (request.gate_mode == GateMode::Sweep)
-        .then(|| findings::findings(&project, &selection.rules, &outcomes));
+    let sweep_findings = (request.gate_mode == GateMode::Sweep).then(|| {
+        let mut found = findings::findings(&project, &selection.rules, &outcomes);
+        fixes::attach(&project, &selection.rules, &mut found);
+        found
+    });
     if results.is_empty() {
         let mut response = nothing_ran(request_id, &request, &rulebook, &selection, &outcomes);
         attach_findings(&mut response, sweep_findings.as_deref());

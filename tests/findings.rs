@@ -407,3 +407,122 @@ fn a_sweep_covers_a_large_repository_with_in_repository_symlinks() {
         "{findings:?}"
     );
 }
+
+fn cargo_fmt_available() -> bool {
+    Command::new("cargo")
+        .args(["fmt", "--version"])
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+#[test]
+fn a_formatter_finding_carries_a_diff_that_applies_and_a_plain_lint_finding_carries_none() {
+    if !cargo_fmt_available() {
+        eprintln!("cargo fmt is not installed; skipping");
+        return;
+    }
+    let temp = repository();
+    let root = temp.path();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .expect("manifest");
+    std::fs::write(
+        root.join("src/main.rs"),
+        "fn main(){let x=1;\nprintln!(\"{}\",x);}\n",
+    )
+    .expect("source");
+    std::fs::write(
+        root.join("lint.sh"),
+        "#!/bin/sh\necho \"src/main.rs:1: W100 something is off\"\nexit 1\n",
+    )
+    .expect("lint");
+    git(root, &["add", "."]);
+    git(root, &["commit", "-qm", "rust"]);
+    rulebook::add_rule(
+        root,
+        "rule.formatted",
+        "Rust code is formatted.",
+        &json!({"type":"rule","strength":"should","enforcer":{"kind":"formatter","tool":"cargo fmt -- --check"}}),
+    );
+    rulebook::add_rule(
+        root,
+        "rule.plain-lint",
+        "W100 never fires.",
+        &json!({"type":"rule","strength":"should","enforcer":{"kind":"lint","tool":"sh lint.sh","code":"W100"}}),
+    );
+    let status = || {
+        Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(root)
+            .output()
+            .expect("status")
+            .stdout
+    };
+    let before = status();
+    let wh = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_whetstone"))
+            .args(args)
+            .current_dir(root)
+            .env("GIT_CEILING_DIRECTORIES", root.parent().expect("parent"))
+            .output()
+            .expect("whetstone")
+    };
+
+    let sweep = envelope(&wh(&["check", "--sweep", "--format", "json"]));
+    let findings = sweep["data"]["findings"].as_array().expect("findings");
+    let formatted = findings
+        .iter()
+        .find(|finding| finding["responsibility"] == "rule.formatted")
+        .unwrap_or_else(|| panic!("no formatter finding in {sweep}"));
+    let fix = formatted["fix"]
+        .as_str()
+        .expect("the formatter finding carries a fix");
+    assert!(
+        fix.starts_with("diff --git a/src/main.rs b/src/main.rs"),
+        "{fix}"
+    );
+    let plain = findings
+        .iter()
+        .find(|finding| finding["responsibility"] == "rule.plain-lint")
+        .unwrap_or_else(|| panic!("no lint finding in {sweep}"));
+    assert!(plain.get("fix").is_none(), "{plain}");
+
+    // The check wrote nothing; the diff applies and the formatter then passes.
+    assert_eq!(status(), before);
+    let patch = root.parent().expect("parent").join("fix.patch");
+    std::fs::write(&patch, fix).expect("patch");
+    git(root, &["apply", "--check", patch.to_str().expect("path")]);
+    git(root, &["apply", patch.to_str().expect("path")]);
+    let recheck = envelope(&wh(&["check", "--json", "--rule", "rule.formatted"]));
+    let gate = recheck["data"]["gates"]
+        .as_array()
+        .expect("gates")
+        .iter()
+        .find(|gate| gate["id"] == "rule.formatted")
+        .expect("gate");
+    assert_eq!(gate["state"], "pass", "{recheck}");
+
+    // findings.json keeps its required fields, and `fix` only where present.
+    let schema: Value = serde_json::from_str(include_str!("../references/findings-v1.schema.json"))
+        .expect("schema");
+    let allowed = schema["items"]["properties"]
+        .as_object()
+        .expect("properties")
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    let parsed: Value =
+        serde_json::from_str(sweep["data"]["findings_json"].as_str().expect("json"))
+            .expect("array");
+    for finding in parsed.as_array().expect("array") {
+        for field in schema["items"]["required"].as_array().expect("required") {
+            let field = field.as_str().expect("field");
+            assert!(finding.get(field).is_some(), "{finding} lacks {field}");
+        }
+        for key in finding.as_object().expect("object").keys() {
+            assert!(allowed.contains(key), "the schema does not allow {key}");
+        }
+    }
+}
