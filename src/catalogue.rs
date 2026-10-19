@@ -1,9 +1,11 @@
 //! Principle packs. A pack is a named, versioned list of principles, each
 //! with a hint at the enforcer that usually holds it. pstack is the default
-//! pack and ships in the binary; a repository adds its own packs as JSON files
-//! under `whetstone/principles/` (or with `wh change --import-pack <file>`).
+//! pack; it and a pack distilled from Matt Pocock's skills ship in the
+//! binary. A repository adds its own packs as JSON files under
+//! `whetstone/principles/` (or with `wh change --import-pack <file>`).
 //! Owners pick principles from any loaded pack in onboarding, or write their
-//! own.
+//! own. A pack marks the principles it offers as a starting point, and
+//! `--principle starting` picks every one of them.
 //!
 //! A principle's id is unique across every loaded pack: a pack that repeats an
 //! id another pack already holds is refused, so `--principle <id>` always
@@ -20,8 +22,12 @@ pub const DEFAULT_PACK: &str = "pstack";
 pub const PACK_DIRECTORY: &str = "whetstone/principles";
 /// The enforcer kinds a principle may hint at, or `none`.
 pub const ENFORCER_HINTS: [&str; 6] = ["ast", "lint", "formatter", "test", "validator", "none"];
+/// The name `--principle` takes for every principle a pack marks as a
+/// starting point; no principle may use it as an id.
+pub const STARTING: &str = "starting";
 
 const PINNED: &str = include_str!("../assets/pstack/principles.json");
+const MATTPOCOCK: &str = include_str!("../assets/mattpocock/principles.json");
 
 /// One principle in a pack.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +41,10 @@ pub struct PackPrinciple {
     pub enforcer_hint: String,
     #[serde(default)]
     pub rationale: Option<String>,
+    /// Offered as a starting point: onboarding ticks it until the owner
+    /// holds a principle, and `--principle starting` picks it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub starting: bool,
 }
 
 /// A principle pack file.
@@ -92,6 +102,12 @@ impl Pack {
                     principle.id, self.name
                 ));
             }
+            if principle.id == STARTING {
+                return Err(format!(
+                    "{STARTING} in pack {} is reserved for the starting set; rename it",
+                    self.name
+                ));
+            }
             if !seen.insert(principle.id.as_str()) {
                 return Err(format!(
                     "the pack {} lists {} twice",
@@ -132,6 +148,7 @@ pub struct CatalogueEntry {
     pub enforcer_hint: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rationale: Option<String>,
+    pub starting: bool,
 }
 
 impl CatalogueEntry {
@@ -193,14 +210,24 @@ pub fn pinned_pack() -> Pack {
     Pack::parse(PINNED).expect("the compiled-in principle pack is valid")
 }
 
-/// The pinned default pack and every pack under `whetstone/principles/`.
+/// Every pack compiled into the binary, the default first.
+pub fn built_in_packs() -> Vec<Pack> {
+    [PINNED, MATTPOCOCK]
+        .into_iter()
+        .map(|text| Pack::parse(text).expect("a compiled-in principle pack is valid"))
+        .collect()
+}
+
+/// The built-in packs and every pack under `whetstone/principles/`.
 pub fn catalogue(project_root: &Path) -> Catalogue {
     let mut catalogue = Catalogue {
         packs: Vec::new(),
         principles: Vec::new(),
         refused: Vec::new(),
     };
-    let _ = catalogue.add(pinned_pack(), "built in".into());
+    for pack in built_in_packs() {
+        let _ = catalogue.add(pack, "built in".into());
+    }
     for path in pack_files(project_root) {
         let relative = path
             .strip_prefix(project_root)
@@ -279,6 +306,7 @@ impl Catalogue {
                 text: principle.text,
                 enforcer_hint: principle.enforcer_hint,
                 rationale: principle.rationale,
+                starting: principle.starting,
             });
         }
         Ok(())
@@ -293,6 +321,11 @@ impl Catalogue {
         self.principles
             .iter()
             .find(|entry| entry.id == id && pack.map_or(true, |pack| entry.pack == pack))
+    }
+
+    /// The principles the loaded packs offer as a starting point.
+    pub fn starting(&self) -> impl Iterator<Item = &CatalogueEntry> {
+        self.principles.iter().filter(|entry| entry.starting)
     }
 
     /// The loaded packs as `name version`, for messages.
@@ -338,11 +371,51 @@ mod tests {
     }
 
     #[test]
-    fn the_pinned_pack_matches_the_schema_in_references() {
+    fn the_starting_set_spans_both_built_in_packs() {
+        let catalogue = catalogue(tempfile::tempdir().expect("temp").path());
+        assert_eq!(
+            catalogue
+                .packs
+                .iter()
+                .map(|pack| pack.name.as_str())
+                .collect::<Vec<_>>(),
+            ["pstack", "mattpocock"]
+        );
+        assert_eq!(
+            catalogue
+                .starting()
+                .map(|entry| entry.spec.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "laziness-protocol",
+                "boundary-discipline",
+                "prove-it-works",
+                "fix-root-causes",
+                "test-behavior-not-implementation",
+                "encode-lessons-in-structure",
+                "mattpocock/deep-modules",
+                "mattpocock/vertical-slices",
+                "mattpocock/feedback-loop-first",
+                "mattpocock/shared-domain-language",
+            ]
+        );
+        assert!(Pack::parse(&pack("team", &[STARTING]))
+            .expect_err("reserved")
+            .contains("reserved"));
+    }
+
+    #[test]
+    fn the_built_in_packs_match_the_schema_in_references() {
+        for text in [PINNED, MATTPOCOCK] {
+            matches_the_schema(text);
+        }
+    }
+
+    fn matches_the_schema(text: &str) {
         let schema: serde_json::Value =
             serde_json::from_str(include_str!("../references/principle-pack-v1.schema.json"))
                 .expect("schema");
-        let pack: serde_json::Value = serde_json::from_str(PINNED).expect("pack");
+        let pack: serde_json::Value = serde_json::from_str(text).expect("pack");
         assert_eq!(schema["properties"]["schema"]["const"], PACK_SCHEMA);
         let keys = |at: &serde_json::Value, field: &str| -> Vec<String> {
             match field {
@@ -413,7 +486,7 @@ mod tests {
                 .iter()
                 .map(|pack| pack.name.as_str())
                 .collect::<Vec<_>>(),
-            ["pstack", "team"]
+            ["pstack", "mattpocock", "team"]
         );
         assert_eq!(
             catalogue.get("ship-small").map(|entry| entry.pack.as_str()),

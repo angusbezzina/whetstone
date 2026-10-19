@@ -10,8 +10,10 @@ planning any work.
 
 - **The rulebook is a file.** `whetstone/rulebook.json`
   (`whetstone.rulebook.v1`, [schema](references/rulebook.schema.json)) holds
-  the mission, the principles (from a principle pack: pstack compiled into
-  `wh`, or a pack under `whetstone/principles/`; or the owner's own) and the
+  the mission, the principles (from a principle pack: pstack and one
+  distilled from Matt Pocock's skills are compiled into `wh`, a repository
+  adds packs under `whetstone/principles/`, and `--principle starting` picks
+  the set the packs offer as a starting point; or the owner's own) and the
   rules. A revision is the commit that last touched the
   file, a rule's digest is the sha256 of its canonical JSON, the decision log
   is Git history, a draft is an uncommitted edit, and a rule change on a team

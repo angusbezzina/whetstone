@@ -7,6 +7,21 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 This log starts with the rebuilt product. Release notes for the previous
 product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.md`.
 
+## [Unreleased]
+
+### Added
+
+- A starting set of principles. A pack marks the principles it offers as a
+  starting point (`starting`), `wh init --action agree --principle starting`
+  drafts them, and onboarding ticks them until the rulebook holds a
+  principle. Each is an ordinary record, edited or retired with `wh change`;
+  a retired one is not drafted again.
+- A second built-in principle pack, `mattpocock`: the lessons of Matt
+  Pocock's skills (deep modules, vertical slices, a feedback loop before a
+  hypothesis, a shared domain language and more) in Whetstone's words, MIT,
+  pinned to skills 1.3.1. The starting set takes six principles from pstack
+  and four from this pack.
+
 ## [0.14.0] - 2026-10-19
 
 Whetstone becomes a repository's rulebook: enforced rules with a rationale

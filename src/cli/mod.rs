@@ -52,7 +52,9 @@ enum Command {
         /// What the project exists to do, in one sentence (agree).
         #[arg(long)]
         mission: Option<String>,
-        /// A principle id from the catalogue (agree; repeatable).
+        /// A principle from a loaded pack as <id> or <pack>/<id>, or
+        /// starting for the set the packs offer as a starting point (agree;
+        /// repeatable).
         #[arg(long = "principle")]
         principles: Vec<String>,
         /// A principle in your own words (agree; repeatable).

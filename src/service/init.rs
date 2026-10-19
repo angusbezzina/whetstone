@@ -160,7 +160,7 @@ fn inspection_response(request_id: String, progress: Progress) -> ServiceRespons
         ]
     } else {
         vec![
-            "wh init --action agree --mission <text> --principle <id> --starter all".into(),
+            "wh init --action agree --mission <text> --principle starting --starter all".into(),
             "wh init --action cancel".into(),
         ]
     };
@@ -182,7 +182,7 @@ fn ask(request_id: String, question: String) -> ServiceResponse {
     );
     response.blocking_questions = vec![question];
     response.permitted_actions =
-        vec!["wh init --action agree --mission <text> --principle <id> --starter all".into()];
+        vec!["wh init --action agree --mission <text> --principle starting --starter all".into()];
     response
 }
 
@@ -241,12 +241,34 @@ fn agree(
             || book.rules.iter().any(|entry| entry.id == *id)
     };
     let mut principles = Vec::new();
-    for id in &request.principles {
+    // `starting` picks every principle a pack offers as a starting point,
+    // except one the owner has retired.
+    let specs: Vec<String> = request
+        .principles
+        .iter()
+        .flat_map(|id| {
+            if id == crate::catalogue::STARTING {
+                catalogue
+                    .starting()
+                    .filter(|entry| {
+                        !after
+                            .retired
+                            .iter()
+                            .any(|retired| retired.id.as_str() == entry.record_id())
+                    })
+                    .map(|entry| entry.spec.clone())
+                    .collect()
+            } else {
+                vec![id.clone()]
+            }
+        })
+        .collect();
+    for id in &specs {
         let Some(entry) = catalogue.get(id) else {
             return ask(
                 request_id,
                 format!(
-                    "{id} is not a principle in any loaded pack ({}). Name one as <id> or <pack>/<id>, for example prove-it-works, or write your own with --custom-principle.",
+                    "{id} is not a principle in any loaded pack ({}). Name one as <id> or <pack>/<id>, for example prove-it-works, pick the starting set with --principle starting, or write your own with --custom-principle.",
                     catalogue.describe()
                 ),
             );

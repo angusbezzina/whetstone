@@ -74,18 +74,21 @@ prompts.
 wh init                     # guided onboarding in the dashboard
 wh init --json              # or inspect from the terminal: steps, starters, catalogue
 wh init --action agree --mission "What this project exists to do." \
-  --principle prove-it-works --starter all
+  --principle starting --starter all
 wh change --accept --rationale "Adopt the first rulebook."
 wh init --action setup      # install the pre-commit and pre-push hooks and the CI workflow
 ```
 
 `--action agree` drafts the mission, the principles you pick and the
 starter rules into `whetstone/rulebook.json`. Principles come from a
-principle pack: pstack is compiled into `wh`, and a repository adds its own
-packs as `whetstone/principles/<name>.json`
-([schema](references/principle-pack-v1.schema.json)); name one with
-`--principle <id>` or `--principle <pack>/<id>`, or write your own with
-`--custom-principle`. Drafts are edits in the working tree; `wh change
+principle pack. Two are compiled into `wh`: pstack, Lauren Tan's principles,
+and `mattpocock`, the lessons of Matt Pocock's skills in Whetstone's words.
+A repository adds its own packs as `whetstone/principles/<name>.json`
+([schema](references/principle-pack-v1.schema.json)). Name one with
+`--principle <id>` or `--principle <pack>/<id>`, take the ten the packs
+offer as a starting point with `--principle starting` (the dashboard ticks
+them for you), or write your own with `--custom-principle`. Every picked
+principle is a record you can edit or retire like a rule. Drafts are edits in the working tree; `wh change
 --accept` commits the file, and only it. `--action setup` is `--action wire
 --hooks --ci`; the hooks run the `wh` on your `PATH` and chain any hook that
 was there before. Wiring also writes the agent contract into `AGENTS.md`

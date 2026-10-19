@@ -11,7 +11,8 @@
       "group": "core",
       "text": "Bias toward deletion and the smallest change that solves the problem.",
       "enforcer_hint": "none",
-      "rationale": null
+      "rationale": null,
+      "starting": true
     },
     {
       "id": "foundational-thinking",
@@ -88,7 +89,8 @@
       "group": "architecture",
       "text": "Concentrate guards at system boundaries (CLI, config, network, external APIs); trust internal types and keep business logic in pure functions.",
       "enforcer_hint": "none",
-      "rationale": null
+      "rationale": null,
+      "starting": true
     },
     {
       "id": "type-system-discipline",
@@ -123,14 +125,16 @@
       "group": "verification",
       "text": "Apply after completing a task, before declaring done. Verify against the real artifact (run the feature, read the actual value, inspect the diff), not a proxy, self-report, or 'it compiles.'.",
       "enforcer_hint": "test",
-      "rationale": null
+      "rationale": null,
+      "starting": true
     },
     {
       "id": "fix-root-causes",
       "group": "verification",
       "text": "Trace each symptom to its root cause and fix it there; reproduce first, ask why until you reach it, resist nil-check guards that silence crashes.",
       "enforcer_hint": "none",
-      "rationale": null
+      "rationale": null,
+      "starting": true
     },
     {
       "id": "sequence-verifiable-units",
@@ -144,7 +148,8 @@
       "group": "verification",
       "text": "Apply when you write, change, or keep a test. Call the code the way its users do and assert the result they observe against a literal expected value. If the test would still pass when every imported function returns undefined, rewrite the assertion or delete the test.",
       "enforcer_hint": "none",
-      "rationale": null
+      "rationale": null,
+      "starting": true
     },
     {
       "id": "guard-the-context-window",
@@ -165,7 +170,8 @@
       "group": "meta",
       "text": "Encode the rule as a lint, metadata flag, runtime check, or script instead of more text.",
       "enforcer_hint": "none",
-      "rationale": null
+      "rationale": null,
+      "starting": true
     }
   ]
 }
