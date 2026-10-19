@@ -60,6 +60,10 @@ rulebook file, `findings.json` and the JSON envelope.
   written without `--allow-unvalidated`. Command enforcers get `WH_MODE`,
   `WH_RULE`, `WH_PATHS` and `WH_BASE`; scripts under `whetstone/checks/` run
   at pre-commit on the staged files.
+- `wh init --action wire` writes the agent contract into `AGENTS.md`
+  between markers (text outside them is kept) and scaffolds
+  `whetstone/checks/` once: the script contract and a working example, which
+  `wh init` then offers as a starter rule.
 
 ### Changed
 

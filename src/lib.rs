@@ -1,6 +1,7 @@
 mod ast;
 pub mod catalogue;
 mod cli;
+pub mod contract;
 pub mod dashboard;
 pub mod dashboard_service;
 pub mod domain;

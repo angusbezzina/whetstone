@@ -1,5 +1,6 @@
 //! `wh init --action wire`: with `--hooks`, install the Git gates; with
-//! `--ci`, scaffold the required check.
+//! `--ci`, scaffold the required check. Either way, write the agent contract
+//! into `AGENTS.md` and scaffold `whetstone/checks/` once.
 //!
 //! The gates are Git's: `pre-commit` runs `wh check --staged` (mechanical
 //! content checks on the index) and `pre-push` runs the full `wh check` for
@@ -106,6 +107,36 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
         }
         integration_notes.push(format!("Make whetstone/policy a required status check on the default branch, require a reviewing approval, and protect {CI_WORKFLOW} with CODEOWNERS. Branch protection is the team's review; Whetstone keeps no second trust root."));
     }
+    // The agent contract in AGENTS.md: any agent reads it, whatever its host.
+    let contract_block = crate::contract::block(&crate::contract::default_branch(root));
+    let existing_contract = fs::read_to_string(root.join(crate::contract::FILE)).ok();
+    let (contract_text, contract_outcome) =
+        crate::contract::merged(existing_contract.as_deref(), &contract_block);
+    if contract_outcome != crate::contract::Outcome::Unchanged {
+        writes.push((
+            crate::contract::FILE.to_string(),
+            contract_text,
+            "merged; text outside the Whetstone markers is kept",
+        ));
+    }
+    // Script enforcers: the contract and one working example, once.
+    let scaffold = crate::scripts::missing_scaffold(root);
+    for (path, text) in &scaffold {
+        writes.push((
+            (*path).to_string(),
+            (*text).to_string(),
+            "scaffolded once; team-owned",
+        ));
+    }
+    let agent_contract = json!({
+        "path": crate::contract::FILE,
+        "status": contract_outcome.label(),
+    });
+    let scripts = json!({
+        "directory": crate::scripts::DIRECTORY,
+        "contract": crate::scripts::README,
+        "scaffolded": scaffold.iter().map(|(path, _)| *path).collect::<Vec<_>>(),
+    });
     let plan = writes
         .iter()
         .map(|(path, contents, ownership)| {
@@ -135,6 +166,8 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
             "writes": plan,
             "integrations": integration_notes,
             "git_hooks": git_hooks,
+            "agent_contract": agent_contract,
+            "scripts": scripts,
         });
         return response;
     }
@@ -146,6 +179,17 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
                 format!("{path} could not be written: {error}"),
             );
         }
+    }
+    #[cfg(unix)]
+    if scaffold
+        .iter()
+        .any(|(path, _)| *path == crate::scripts::EXAMPLE)
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(
+            root.join(crate::scripts::EXAMPLE),
+            fs::Permissions::from_mode(0o755),
+        );
     }
     if let Err(error) = install_git_hooks(root, &git_hooks) {
         return error_response(
@@ -170,6 +214,8 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
         "writes": plan,
         "integrations": integration_notes,
         "git_hooks": git_hooks,
+        "agent_contract": agent_contract,
+        "scripts": scripts,
     });
     response
 }
