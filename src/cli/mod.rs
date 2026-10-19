@@ -277,7 +277,7 @@ pub fn run() -> i32 {
             hooks,
             ci,
         }) => {
-            // A person inspecting a project with no agreement is walked through
+            // A person inspecting a project with no rulebook is walked through
             // it in the dashboard. Machine callers always get the envelope.
             let guided =
                 !machine && !no_open && !dry_run && matches!(action, InitActionArg::Inspect);
@@ -566,7 +566,7 @@ fn elapsed_stamp(elapsed: Duration) -> String {
     }
 }
 
-/// A person ran `wh init` and there is no agreement yet.
+/// A person ran `wh init` and there is no rulebook yet.
 fn needs_onboarding(response: &ServiceResponse) -> bool {
     response.workflow == "init"
         && response.data.get("read_only") == Some(&serde_json::Value::Bool(true))
@@ -581,7 +581,7 @@ fn needs_onboarding(response: &ServiceResponse) -> bool {
 fn format_onboarding_intro(response: &ServiceResponse, url: &str) -> String {
     let missing = missing_steps(response).join(" and ");
     format!(
-        "Whetstone · init · no agreement here yet\n\n\
+        "Whetstone · init · no rulebook here yet\n\n\
          Still needed: {missing}. An agreement is a one-line mission and the rules your\n\
          agent works under; principles from the catalogue are optional.\n\
          Nothing is shared, published or committed: recording it drafts\n\
@@ -755,7 +755,7 @@ fn format_init_walkthrough(response: &ServiceResponse) -> Option<String> {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "Whetstone · init · no agreement here yet\n\nNothing is shared, published or committed: recording an agreement drafts\nwhetstone/rulebook.json in the working tree, and accepting it is one commit.\n\nStill needed:"
+        "Whetstone · init · no rulebook here yet\n\nNothing is shared, published or committed: recording the rulebook drafts\nwhetstone/rulebook.json in the working tree, and accepting it is one commit.\n\nStill needed:"
     );
     for (index, step) in missing.iter().enumerate() {
         let hint = step_hint(step);
@@ -953,7 +953,7 @@ mod tests {
             }),
         };
         let rendered = format_human_response(&response);
-        assert!(rendered.contains("no agreement here yet"), "{rendered}");
+        assert!(rendered.contains("no rulebook here yet"), "{rendered}");
         assert!(
             rendered.contains("1. mission — one line: what this project exists to do"),
             "each step is explained: {rendered}"
@@ -1055,7 +1055,7 @@ mod tests {
         let probe = envelope(
             "change",
             ServiceState::NeedsInput,
-            "More owner input is required; no agreement change was recorded.",
+            "More owner input is required; no rulebook change was recorded.",
             json!({"effects": {}}),
         );
         assert_eq!(progress_line(&probe), None, "probes print nothing");
