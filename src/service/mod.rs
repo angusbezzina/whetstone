@@ -155,9 +155,13 @@ pub enum ChangeDefinition {
         sweep_unsure: Vec<crate::domain::SweepUnsure>,
     },
     Principle {
-        /// A pstack principle id from the catalogue; absent means custom.
+        /// A principle id from the default pack, pstack.
         #[serde(default)]
         pstack: Option<String>,
+        /// A principle from any loaded pack: `<id>` or `<pack>/<id>`. With
+        /// neither this nor `pstack`, the principle is the owner's own.
+        #[serde(default)]
+        principle: Option<String>,
         #[serde(default)]
         rationale: Option<String>,
     },

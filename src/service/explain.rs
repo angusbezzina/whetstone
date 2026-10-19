@@ -323,7 +323,9 @@ fn principle_of(book: &Rulebook, rule: &Rule) -> Option<Value> {
     let tail = reference.rsplit(':').next().unwrap_or(reference);
     book.principles.iter().find_map(|entry| {
         let source_id = match &entry.principle.source {
-            PrincipleSource::Pstack { id, .. } => Some(id.as_str()),
+            PrincipleSource::Pstack { id, .. } | PrincipleSource::Pack { id, .. } => {
+                Some(id.as_str())
+            }
             PrincipleSource::Custom => None,
         };
         let id = entry.id.as_str();

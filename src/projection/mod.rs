@@ -146,7 +146,12 @@ pub struct Start {
     pub missing: Vec<String>,
     pub command: &'static str,
     pub catalogue: Vec<crate::catalogue::CatalogueEntry>,
+    /// The loaded principle packs as `name version`, comma separated.
     pub catalogue_version: String,
+    /// Every loaded principle pack, the default (pstack) first.
+    pub packs: Vec<crate::catalogue::PackSummary>,
+    /// Packs in `whetstone/principles/` that could not be loaded, and why.
+    pub refused_packs: Vec<crate::catalogue::RefusedPack>,
     pub starters: Vec<StarterView>,
 }
 
@@ -173,6 +178,8 @@ pub struct ProjectionInput<'a> {
     pub drafts: Vec<String>,
     pub hooks: crate::wire::GitHooks,
     pub starters: Vec<crate::starter::Starter>,
+    /// The principle packs the onboarding picker offers.
+    pub catalogue: crate::catalogue::Catalogue,
 }
 
 /// Where in the gate ladder a rule runs.
@@ -263,6 +270,7 @@ fn principle_details(principle: &Principle) -> Vec<Detail> {
         "source",
         match &principle.source {
             PrincipleSource::Pstack { id, version } => format!("pstack {id} ({version})"),
+            PrincipleSource::Pack { pack, id, version } => format!("{pack} {id} ({version})"),
             PrincipleSource::Custom => "the owner's own".into(),
         },
         false,
@@ -344,9 +352,10 @@ pub fn dashboard_view(book: Option<&Rulebook>, input: ProjectionInput<'_>) -> Da
                     rationale: body.rationale.clone(),
                     definition: json!({
                         "type": "principle",
-                        "pstack": match &body.source {
+                        "principle": match &body.source {
                             PrincipleSource::Pstack { id, .. } => Some(id.clone()),
-                            _ => None,
+                            PrincipleSource::Pack { pack, id, .. } => Some(format!("{pack}/{id}")),
+                            PrincipleSource::Custom => None,
                         },
                         "rationale": body.rationale,
                     }),
@@ -402,7 +411,7 @@ pub fn dashboard_view(book: Option<&Rulebook>, input: ProjectionInput<'_>) -> Da
     if rules.is_empty() {
         missing.push("rules".to_string());
     }
-    let catalogue = crate::catalogue::catalogue();
+    let catalogue = input.catalogue;
     let onboarding = Start {
         steps: vec![
             OnboardingStep {
@@ -415,7 +424,7 @@ pub fn dashboard_view(book: Option<&Rulebook>, input: ProjectionInput<'_>) -> Da
             OnboardingStep {
                 key: "principles",
                 label: "Principles",
-                hint: "the catalogue principles you hold, or your own",
+                hint: "the principles you hold from a pack, or your own",
                 done: !principles.is_empty(),
                 optional: true,
             },
@@ -436,7 +445,9 @@ pub fn dashboard_view(book: Option<&Rulebook>, input: ProjectionInput<'_>) -> Da
         ],
         missing,
         command: "wh change --kind mission --content \"…\"",
-        catalogue_version: catalogue.version.clone(),
+        catalogue_version: catalogue.describe(),
+        packs: catalogue.packs,
+        refused_packs: catalogue.refused,
         catalogue: catalogue.principles,
         starters: input
             .starters

@@ -119,11 +119,20 @@ pub struct Mission {
 }
 
 /// Where a principle comes from: a pstack principle pinned to the pstack
-/// version it was read from, or the owner's own wording.
+/// version it was read from, a principle from another pack pinned to that
+/// pack's name and version, or the owner's own wording.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PrincipleSource {
-    Pstack { id: String, version: String },
+    Pstack {
+        id: String,
+        version: String,
+    },
+    Pack {
+        pack: String,
+        id: String,
+        version: String,
+    },
     Custom,
 }
 
@@ -156,6 +165,11 @@ impl Principle {
                     ));
                 }
                 Ok(())
+            }
+            PrincipleSource::Pack { pack, id, version } => {
+                require_text(pack)?;
+                require_text(id)?;
+                require_text(version)
             }
             PrincipleSource::Custom => Ok(()),
         }

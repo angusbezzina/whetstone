@@ -50,6 +50,7 @@ fn progress(layout: &ProjectLayout, book: Option<&Rulebook>) -> Progress {
             drafts: Vec::new(),
             hooks: hooks.clone(),
             starters: crate::starter::starters(root),
+            catalogue: crate::catalogue::catalogue(root),
         },
     );
     let committed = book.is_some_and(|book| book.revision != Revision::Uncommitted);
@@ -234,7 +235,7 @@ fn agree(
         }
         None => {}
     }
-    let catalogue = crate::catalogue::catalogue();
+    let catalogue = crate::catalogue::catalogue(root);
     let has = |book: &Rulebook, id: &RecordId| {
         book.principles.iter().any(|entry| entry.id == *id)
             || book.rules.iter().any(|entry| entry.id == *id)
@@ -245,20 +246,17 @@ fn agree(
             return ask(
                 request_id,
                 format!(
-                    "{id} is not a principle in the catalogue (version {}). Known ids include prove-it-works, laziness-protocol and boundary-discipline.",
-                    catalogue.version
+                    "{id} is not a principle in any loaded pack ({}). Name one as <id> or <pack>/<id>, for example prove-it-works, or write your own with --custom-principle.",
+                    catalogue.describe()
                 ),
             );
         };
         principles.push((
-            format!("principle.{id}"),
+            entry.record_id(),
             Principle {
-                statement: entry.rule.clone(),
-                source: PrincipleSource::Pstack {
-                    id: id.clone(),
-                    version: catalogue.version.clone(),
-                },
-                rationale: None,
+                statement: entry.text.clone(),
+                source: entry.source(),
+                rationale: entry.rationale.clone(),
             },
         ));
     }

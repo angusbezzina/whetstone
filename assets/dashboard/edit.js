@@ -20,7 +20,7 @@ f.push(h("div",{class:"two"},field(a,"Sweep class","sweep",d.sweep||"discuss",{c
 if(k!=="mission")f.push(field(a,k==="rule"?"Why this rule exists":"Why (optional)","rationale",base.rationale,{area:true,required:k==="rule",hint:"a reviewer reads this"}));return f}
 function definition(base,v){const k=base.kind,d=base.definition||{};
 if(k==="rule"){const p=+v.sweep_priority;return{...d,type:"rule",strength:v.strength,enforcer:enforcer(v.enforcer,v,d.enforcer),paths:ids(v.paths),sweep:v.sweep==="discuss"&&d.sweep==null?null:v.sweep,sweep_priority:p===2&&d.sweep_priority==null?null:p,sweep_unsure:unsure(v.sweep_unsure)}}
-if(k==="principle")return{type:"principle",pstack:d.pstack??null,rationale:(v.rationale||"").trim()||null};return null}
+if(k==="principle")return{type:"principle",principle:d.principle??null,rationale:(v.rationale||"").trim()||null};return null}
 function close(host,trigger){host.classList.remove("open");host.firstElementChild.textContent="";trigger?.setAttribute("aria-expanded","false")}
 function closeAll(){for(const o of document.querySelectorAll(".editor.open"))close(o)}
 function effects(){return h("div",{class:"effects"},[["draft in "+FILE,"written",true],["committed","no"],["enforced by CI","no"]].map(([k,v,y])=>h("span",{class:y?"y":"n"},k+" ",h("b",{text:v}))))}
@@ -47,18 +47,19 @@ export function settle(a,c,verdict,host,trigger){h=a.h;const acc=verdict==="acce
 flow(a,host,trigger,[h("span",{},acc?"accepting ":"withdrawing ",h("b",{text:c.drafts.length+(c.drafts.length===1?" edit":" edits")})),h("span",{text:acc?"commits "+FILE+" and nothing else":"restores "+FILE+" to its last commit"})],acc?field(a,"Why (in the commit message, optional)","rationale","",{area:true}):h("p",{text:"Every draft edit below is discarded."}),acc?"Review commit":"Review withdrawal",
 v=>({workflow:"change",[verdict]:true,rationale:acc?(v.rationale||"").trim()||null:null}),
 pre=>[acc?h("div",{},h("p",{},h("b",{text:pre.data.message.subject})),pre.data.message.body?h("pre",{class:"brief",text:pre.data.message.body}):null):null,acc?null:h("div",{class:"rows"},pre.data.discards.map(x=>a.row(x,null,{tone:"muted",label:"discard"})))],acc?"Commit rulebook":"Withdraw edits")}
+const pid=p=>"principle."+(p.pack==="pstack"?"":p.pack+".")+p.id;
 const ck=(a,name,value,on,label,side,note,extra)=>h("label",{class:"pick"},h("input",{type:"checkbox",name,value,checked:on,disabled:extra?.disabled}),h("b",{text:label}),h("span",{class:"g",text:side}),h("span",{class:"s",text:note}),extra?.more);
 export function onboard(a,el){h=a.h;const c=a.W.value.data.current,o=c.onboarding,held=new Set(c.principles.map(p=>p.id));
 const form=h("form",{id:"init-form"},h("div",{class:"ph"},h("h2",{text:"Agree the rules"}),h("span",{class:"count",text:"drafts in "+FILE})),
 h("fieldset",{},h("legend",{},"Mission",h("small",{text:"what this project exists to do"})),field(a,"Mission, in one sentence","mission",c.mission?.title,{area:true,required:true})),
-h("fieldset",{id:"ob-principles"},h("legend",{},"Principles",h("small",{text:"catalogue "+o.catalogue_version+"; pick the ones you hold"})),o.catalogue.map(p=>ck(a,"principle",p.id,held.has("principle."+p.id),p.id.replace(/-/g," "),p.enforceable,p.rule,{disabled:held.has("principle."+p.id)})),field(a,"Your own principles, one per line","custom_principles","",{area:true})),
+h("fieldset",{id:"ob-principles"},h("legend",{},"Principles",h("small",{text:"from "+o.catalogue_version+"; pick the ones you hold"})),o.catalogue.map(p=>ck(a,"principle",p.spec,held.has(pid(p)),p.id.replace(/-/g," "),p.pack+(p.enforcer_hint!=="none"?" · "+p.enforcer_hint:""),p.text,{disabled:held.has(pid(p))})),(o.refused_packs||[]).map(r=>h("p",{class:"notice fail",text:r.path+" was not loaded: "+r.reason})),field(a,"Your own principles, one per line","custom_principles","",{area:true})),
 h("fieldset",{id:"ob-starters"},h("legend",{},"Starter rules",h("small",{text:"each is checked the cheapest reliable way"})),o.starters.map(s=>ck(a,"starter",s.id,true,s.title,s.strength+" · "+s.enforcer+(s.accepted?" · in the rulebook":""),s.detected,{disabled:s.accepted,more:s.examples.length?h("details",{},h("summary",{text:s.examples.length+" labelled examples"}),s.examples.map(x=>h("pre",{text:x.expected+": "+x.reason+"\n"+x.input}))):null}))),
 h("fieldset",{},h("legend",{},"Gates",h("small",{text:"after the rulebook"})),h("p",{class:"sub",text:"Install the pre-commit and pre-push hooks with:"}),h("code",{class:"cmd",text:"wh init --action wire --hooks"})),
 h("div",{class:"confirm"},h("span",{class:"note",text:"Review lists each edit first. They are drafts in "+FILE+" until you accept them, which commits the file."}),h("button",{class:"btn primary",type:"submit",text:"Review drafts"})));
 el.textContent="";el.append(form);form.querySelector("textarea")?.focus();
 form.addEventListener("submit",ev=>{ev.preventDefault();const fd=new FormData(form),m=fd.get("mission").trim(),edits=[];
 if(m!==(c.mission?.title||""))edits.push({kind:"mission",content:m});
-for(const id of fd.getAll("principle")){const p=o.catalogue.find(x=>x.id===id);edits.push({kind:"principle",record_id:"principle."+id,content:p.rule,definition:{type:"principle",pstack:id}})}
+for(const id of fd.getAll("principle")){const p=o.catalogue.find(x=>x.spec===id);edits.push({kind:"principle",record_id:pid(p),content:p.text,definition:{type:"principle",principle:p.spec,rationale:p.rationale??null}})}
 for(const t of lines(fd.get("custom_principles")))edits.push({kind:"principle",record_id:"principle.custom-"+slug(t),content:t});
 for(const id of fd.getAll("starter")){const s=o.starters.find(x=>x.id===id).edit;edits.push({kind:"rule",record_id:s.record_id,content:s.content,rationale:s.rationale,definition:s.definition})}
 if(!edits.length){form.prepend(h("p",{class:"notice fail",text:"Nothing new to draft: change the mission, pick a principle or a starter rule."}));return}

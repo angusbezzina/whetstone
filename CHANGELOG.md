@@ -68,6 +68,11 @@ rulebook file, `findings.json` and the JSON envelope.
   enforcer, what it covers, how a sweep works it, the principle it serves
   and the commits that added or changed it, with their reasons. A
   fingerprint resolves from `findings.json` or by recomputing it.
+- Principle packs (`whetstone.principle-pack.v1`,
+  [schema](references/principle-pack-v1.schema.json)): pstack is the default
+  pack in the binary, and a repository adds its own under
+  `whetstone/principles/`. `--principle` takes `<id>` or `<pack>/<id>`; a
+  principle from another pack is written with the pack's name and version.
 
 ### Changed
 

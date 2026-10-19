@@ -80,6 +80,7 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
                     drafts,
                     hooks: crate::wire::git_hooks(root),
                     starters: crate::starter::starters(root),
+                    catalogue: crate::catalogue::catalogue(root),
                 },
             );
             view.latest_change = changelog.first().map(|entry| projection::LatestChange {

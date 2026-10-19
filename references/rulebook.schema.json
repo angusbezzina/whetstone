@@ -108,6 +108,33 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
+                "kind",
+                "pack",
+                "id",
+                "version"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "pack"
+                },
+                "pack": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9-]{1,64}$",
+                  "description": "The principle pack's name (whetstone/principles/<name>.json when it was picked)."
+                },
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9-]{1,64}$"
+                },
+                "version": {
+                  "$ref": "#/$defs/nonempty"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
                 "kind"
               ],
               "properties": {

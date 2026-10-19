@@ -133,12 +133,21 @@ struct PrincipleFile {
     rationale: Option<String>,
 }
 
-/// A principle's source in the file: a pstack principle from the pinned
-/// catalogue, or the owner's own wording.
+/// A principle's source in the file: a pstack principle from the pack
+/// pinned in the binary, a principle from another pack (named with its
+/// version), or the owner's own wording.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum PrincipleOrigin {
-    Pstack { id: String, version: String },
+    Pstack {
+        id: String,
+        version: String,
+    },
+    Pack {
+        pack: String,
+        id: String,
+        version: String,
+    },
     Custom,
 }
 
@@ -202,6 +211,11 @@ impl PrincipleFile {
     fn from_entry(entry: &PrincipleEntry) -> Self {
         let source = match &entry.principle.source {
             PrincipleSource::Pstack { id, version } => PrincipleOrigin::Pstack {
+                id: id.clone(),
+                version: version.clone(),
+            },
+            PrincipleSource::Pack { pack, id, version } => PrincipleOrigin::Pack {
+                pack: pack.clone(),
                 id: id.clone(),
                 version: version.clone(),
             },
@@ -278,20 +292,25 @@ pub fn parse(text: &str, revision: Revision) -> Result<Rulebook, RulebookError> 
             )))
         }
     };
-    let catalogue = crate::catalogue::catalogue();
+    let pstack = crate::catalogue::pinned_pack();
     let mut principles = Vec::with_capacity(file.principles.len());
     for (index, entry) in file.principles.into_iter().enumerate() {
         let field = format!("principles[{index}]");
         unique(format!("{field}.id"), &entry.id)?;
         let source = match entry.source {
             PrincipleOrigin::Pstack { id, version } => {
-                if catalogue.get(&id).is_none() {
+                if !pstack.principles.iter().any(|principle| principle.id == id) {
                     return Err(RulebookError::Invalid(format!(
-                        "{field}.source.id: {id} is not a principle in the pinned pstack catalogue (version {})",
-                        catalogue.version
+                        "{field}.source.id: {id} is not a principle in the pinned pstack pack (version {})",
+                        pstack.version
                     )));
                 }
                 PrincipleSource::Pstack { id, version }
+            }
+            // Another pack's principle keeps the pack's name and version;
+            // the pack itself need not still be in the repository.
+            PrincipleOrigin::Pack { pack, id, version } => {
+                PrincipleSource::Pack { pack, id, version }
             }
             PrincipleOrigin::Custom => PrincipleSource::Custom,
         };

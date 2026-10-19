@@ -408,7 +408,7 @@ fn init_needs_a_mission_and_names_only_catalogue_principles_and_starters() {
                 "--principle",
                 "not-a-principle",
             ],
-            "not-a-principle is not a principle in the catalogue",
+            "not-a-principle is not a principle in any loaded pack",
         ),
         (
             [
@@ -1301,4 +1301,106 @@ fn explain_resolves_a_sweep_finding_and_a_rule_id_to_the_rule_and_the_commits_th
         .as_str()
         .expect("summary")
         .contains("No rule here produces the finding"));
+}
+
+const TEAM_PACK: &str = r#"{
+  "schema": "whetstone.principle-pack.v1",
+  "name": "team",
+  "version": "2.1.0",
+  "source": "our engineering handbook",
+  "license": "internal",
+  "principles": [
+    {"id": "ship-small", "group": "delivery", "text": "Ship in changes a reviewer reads in ten minutes.", "enforcer_hint": "validator", "rationale": "Small changes are reviewed well."}
+  ]
+}"#;
+
+#[test]
+fn a_repository_principle_pack_is_offered_beside_pstack_and_written_with_its_version() {
+    let repo = Repo::new();
+    repo.write("whetstone/principles/team.json", TEAM_PACK);
+    repo.commit("pack");
+    let inspect = repo.wh_json(&["init"]);
+    let onboarding = &inspect["data"]["onboarding"];
+    let offered = onboarding["catalogue"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no catalogue in {inspect}"));
+    assert!(offered
+        .iter()
+        .any(|entry| entry["spec"] == "team/ship-small"
+            && entry["pack_version"] == "2.1.0"
+            && entry["enforcer_hint"] == "validator"));
+    assert!(offered
+        .iter()
+        .any(|entry| entry["spec"] == "prove-it-works"));
+    assert_eq!(onboarding["catalogue_version"], "pstack 0.15.5, team 2.1.0");
+
+    let unknown = repo.agree(&[
+        "--mission",
+        "Keep work aligned.",
+        "--principle",
+        "team/nope",
+    ]);
+    assert_eq!(unknown["state"], "needs_input", "{unknown}");
+    let question = unknown.to_string();
+    assert!(
+        question.contains("not a principle in any loaded pack"),
+        "{question}"
+    );
+
+    let agreed = repo.agree(&[
+        "--mission",
+        "Keep work aligned.",
+        "--principle",
+        "team/ship-small",
+        "--principle",
+        "prove-it-works",
+    ]);
+    assert_eq!(agreed["state"], "success", "{agreed}");
+    let rulebook: serde_json::Value =
+        serde_json::from_slice(&repo.rulebook().expect("rulebook")).expect("rulebook JSON");
+    let team = rulebook["principles"]
+        .as_array()
+        .expect("principles")
+        .iter()
+        .find(|principle| principle["id"] == "principle.team.ship-small")
+        .unwrap_or_else(|| panic!("no team principle in {rulebook}"));
+    assert_eq!(
+        team["source"],
+        serde_json::json!({"kind": "pack", "pack": "team", "id": "ship-small", "version": "2.1.0"})
+    );
+    assert_eq!(team["rationale"], "Small changes are reviewed well.");
+    assert!(rulebook["principles"]
+        .as_array()
+        .expect("principles")
+        .iter()
+        .any(|principle| principle["id"] == "principle.prove-it-works"));
+
+    // The same principle through wh change, by its pack and id.
+    let changed = repo.wh_json(&[
+        "change",
+        "--kind",
+        "principle",
+        "--record-id",
+        "principle.small",
+        "--content",
+        "Ship small.",
+        "--definition",
+        r#"{"type":"principle","principle":"team/ship-small"}"#,
+    ]);
+    assert_eq!(changed["state"], "success", "{changed}");
+    assert_eq!(changed["data"]["diff"]["after"]["source"]["kind"], "pack");
+
+    // A pack that repeats an id another pack holds is refused and reported.
+    repo.write(
+        "whetstone/principles/clash.json",
+        &TEAM_PACK.replace("\"team\"", "\"clash\""),
+    );
+    let inspect = repo.wh_json(&["init"]);
+    let refused = &inspect["data"]["onboarding"]["refused_packs"];
+    assert!(
+        refused[0]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("unique across packs")),
+        "{inspect}"
+    );
 }

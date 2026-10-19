@@ -364,7 +364,7 @@ fn edit(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceResp
                     Err(error) => return invalid_change(request_id, &error),
                 }
             } else {
-                let principle = match principle_of(request, content) {
+                let principle = match principle_of(root, request, content) {
                     Ok(principle) => principle,
                     Err(question) => return ask(request_id, question),
                 };
@@ -438,32 +438,40 @@ fn edit(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceResp
     response
 }
 
-fn principle_of(request: &ChangeRequest, content: String) -> Result<Principle, String> {
-    let (pstack, rationale) = match request.definition.as_deref() {
-        Some(ChangeDefinition::Principle { pstack, rationale }) => {
-            (pstack.clone(), rationale.clone())
-        }
+fn principle_of(
+    root: &Path,
+    request: &ChangeRequest,
+    content: String,
+) -> Result<Principle, String> {
+    let (picked, rationale) = match request.definition.as_deref() {
+        Some(ChangeDefinition::Principle {
+            pstack,
+            principle,
+            rationale,
+        }) => (
+            principle
+                .clone()
+                .or_else(|| pstack.as_ref().map(|id| format!("pstack/{id}"))),
+            rationale.clone(),
+        ),
         None => (None, None),
         Some(_) => {
             return Err(
-                "A principle's definition is {\"type\": \"principle\", \"pstack\": \"<id>\"}."
+                "A principle's definition is {\"type\": \"principle\", \"principle\": \"<id or pack/id>\"}."
                     .into(),
             )
         }
     };
-    let source = match pstack {
-        Some(id) => {
-            let catalogue = crate::catalogue::catalogue();
-            if catalogue.get(&id).is_none() {
+    let source = match picked {
+        Some(spec) => {
+            let catalogue = crate::catalogue::catalogue(root);
+            let Some(entry) = catalogue.get(&spec) else {
                 return Err(format!(
-                    "{id} is not a principle in the catalogue (version {}); pick one of its ids or leave pstack out for your own.",
-                    catalogue.version
+                    "{spec} is not a principle in any loaded pack ({}); name one as <id> or <pack>/<id>, or leave it out for your own.",
+                    catalogue.describe()
                 ));
-            }
-            PrincipleSource::Pstack {
-                id,
-                version: catalogue.version,
-            }
+            };
+            entry.source()
         }
         None => PrincipleSource::Custom,
     };
