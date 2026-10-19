@@ -410,32 +410,6 @@ impl LoadedRecords {
     }
 }
 
-/// Latest shared revision of every record in the team's store, as
-/// `id@revision#digest` (what `wh push` shared and CI enforces).
-pub(crate) fn shared_refs(
-    loaded: Option<&LoadedRecords>,
-) -> std::collections::BTreeMap<String, String> {
-    let mut refs = std::collections::BTreeMap::new();
-    for record in loaded
-        .and_then(|loaded| loaded.shared.as_ref())
-        .into_iter()
-        .flatten()
-    {
-        if let Ok(reference) = record.reference() {
-            let slot = refs
-                .entry(record.id.as_str().to_string())
-                .or_insert_with(|| (0, String::new()));
-            if reference.revision >= slot.0 {
-                *slot = (
-                    reference.revision,
-                    crate::projection::reference_text(&reference),
-                );
-            }
-        }
-    }
-    refs.into_iter().map(|(id, (_, text))| (id, text)).collect()
-}
-
 /// Read both stores without creating either.
 pub fn load_records(layout: &ProjectLayout) -> Result<LoadedRecords, StorageError> {
     let private = if layout.private_store_exists() {

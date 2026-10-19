@@ -1,7 +1,9 @@
 //! The dashboard's HTTP service: loopback bootstrap, host, origin, session
 //! and CSRF gates, the static shell's security headers, and the JSON API over
-//! the same command service the CLI uses (inspection, init agree, rule
-//! changes and reviews). Asset markup is deliberately not asserted here.
+//! the same command service the CLI uses: the view of
+//! `whetstone/rulebook.json`, and edits, accepts, withdrawals and retirements
+//! through `wh change`. Every project is a throwaway Git repository and no
+//! record store is opened. Asset markup is deliberately not asserted here.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -14,9 +16,10 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use whetstone::dashboard::{BackendResponse, DashboardBackend, DashboardHandle, DashboardMode};
 use whetstone::dashboard_service::CommandDashboardBackend;
+use whetstone::domain::ActorKind;
 use whetstone::service::{
-    CommandService, DashRequest, InitAction, InitRequest, ServiceRequest, ServiceResponse,
-    ServiceState,
+    ChangeKind, ChangeRequest, CheckRequest, CommandService, DashRequest, GateMode, ServiceRequest,
+    ServiceResponse, ServiceState,
 };
 use whetstone::storage::ProjectLayout;
 
@@ -102,15 +105,6 @@ fn service(request: ServiceRequest) -> ServiceResponse {
     CommandService.execute(request)
 }
 
-fn inspect_init(root: &Path, request_id: &str) -> ServiceResponse {
-    service(ServiceRequest::Init(InitRequest {
-        project_dir: root.to_path_buf(),
-        request_id: Some(request_id.into()),
-        action: InitAction::Inspect,
-        ..Default::default()
-    }))
-}
-
 /// A test command that passes, kept out of Git, so the prove-it-works
 /// starter is one a check can hold.
 fn with_test_command(root: &Path) {
@@ -119,36 +113,97 @@ fn with_test_command(root: &Path) {
     std::fs::write(root.join(".git/info/exclude"), "package.json\n").expect("exclude");
 }
 
-/// Mission, one pstack principle, one custom principle and the
-/// prove-it-works starter, recorded through the service directly.
-fn install_private_agreement(root: &Path) {
-    with_test_command(root);
-    let inspection = inspect_init(root, "dashboard-agreement");
-    let accepted = service(ServiceRequest::Init(InitRequest {
+fn change(root: &Path, request: ChangeRequest) -> ServiceResponse {
+    let response = service(ServiceRequest::Change(ChangeRequest {
         project_dir: root.to_path_buf(),
-        request_id: Some("dashboard-agreement".into()),
-        action: InitAction::Agree,
-        expected_revision: inspection.expected_revision,
-        resume_token: inspection.resume_token,
-        mission: Some(MISSION.into()),
-        principles: vec!["prove-it-works".into()],
-        custom_principles: vec![CUSTOM_PRINCIPLE.into()],
-        starters: vec!["rule.prove-it-works".into()],
-        ..Default::default()
+        ..request
     }));
     assert_eq!(
-        accepted.state,
-        ServiceState::NeedsInput,
+        response.state,
+        ServiceState::Success,
         "{}",
-        accepted.summary
+        response.summary
     );
-    assert_eq!(accepted.data["progress"]["agreement_complete"], true);
+    response
+}
+
+/// Mission, one pstack principle, one custom principle and a passing must
+/// rule drafted into the rulebook file through the service directly.
+fn draft_rulebook(root: &Path) {
+    with_test_command(root);
+    change(
+        root,
+        ChangeRequest {
+            kind: Some(ChangeKind::Mission),
+            content: Some(MISSION.into()),
+            ..Default::default()
+        },
+    );
+    for (id, content, definition) in [
+        (
+            "principle.prove-it-works",
+            "Prove it works.",
+            Some(r#"{"type":"principle","pstack":"prove-it-works"}"#),
+        ),
+        ("principle.custom-evidence", CUSTOM_PRINCIPLE, None),
+    ] {
+        change(
+            root,
+            ChangeRequest {
+                kind: Some(ChangeKind::Principle),
+                record_id: Some(id.into()),
+                content: Some(content.into()),
+                definition: definition
+                    .map(|text| Box::new(serde_json::from_str(text).expect("definition"))),
+                ..Default::default()
+            },
+        );
+    }
+    change(
+        root,
+        ChangeRequest {
+            kind: Some(ChangeKind::Rule),
+            record_id: Some("rule.tests-pass".into()),
+            content: Some("The tests pass.".into()),
+            rationale: Some("Work is done when it runs.".into()),
+            definition: Some(Box::new(
+                serde_json::from_value(json!({
+                    "type": "rule",
+                    "strength": "must",
+                    "enforcer": {"kind": "test", "command": "true"}
+                }))
+                .expect("definition"),
+            )),
+            ..Default::default()
+        },
+    );
+}
+
+/// No record store was opened or created for this project.
+fn no_store(root: &Path) {
+    assert!(!ProjectLayout::resolve(root)
+        .expect("layout")
+        .private_store_exists());
+    assert!(!root.join(".beads").exists(), "no Beads store appears");
 }
 
 fn start(project: &Path, allow_mutations: bool) -> DashboardHandle {
     DashboardHandle::start(
         DashboardMode::Local { allow_mutations },
         Arc::new(CommandDashboardBackend::new(project.to_path_buf(), None)),
+    )
+    .expect("dashboard")
+}
+
+/// A dashboard a person opened: only a person may widen a sweep class.
+fn start_for_a_person(project: &Path) -> DashboardHandle {
+    DashboardHandle::start(
+        DashboardMode::Local {
+            allow_mutations: true,
+        },
+        Arc::new(
+            CommandDashboardBackend::new(project.to_path_buf(), None).acting_as(ActorKind::Person),
+        ),
     )
     .expect("dashboard")
 }
@@ -557,18 +612,21 @@ fn an_unestablished_project_shows_onboarding_and_no_removed_sections() {
     let session = Session::open(start(temp.path(), true));
     let body = session.inspect();
     assert_eq!(body["workflow"], "dash");
+    assert_eq!(body["data"]["rulebook"]["state"], "missing");
     let view = &body["data"]["current"];
     assert_eq!(view["established"], false, "{view}");
+    assert_eq!(view["header"]["agreement"], "not started");
     assert_eq!(view["mission"], Value::Null);
     assert_eq!(view["principles"], json!([]));
     assert_eq!(view["rules"], json!([]));
+    assert_eq!(view["drafts"], json!([]));
     let steps = view["onboarding"]["steps"]
         .as_array()
         .expect("onboarding steps")
         .iter()
         .map(|step| step["key"].as_str().expect("key"))
         .collect::<Vec<_>>();
-    assert_eq!(steps, ["tools", "mission", "principles", "rules", "gates"]);
+    assert_eq!(steps, ["mission", "principles", "rules", "gates"]);
     let starters = view["onboarding"]["starters"].as_array().expect("starters");
     let ids = starters
         .iter()
@@ -579,6 +637,11 @@ fn an_unestablished_project_shows_onboarding_and_no_removed_sections() {
     assert_eq!(prove["enforcer"], "Test", "Cargo.toml means cargo test");
     assert_eq!(prove["strength"], "must");
     assert_eq!(prove["accepted"], false);
+    assert_eq!(prove["edit"]["kind"], "rule");
+    assert_eq!(
+        prove["edit"]["definition"]["enforcer"],
+        json!({"kind": "test", "command": "cargo test"})
+    );
     assert!(
         view["onboarding"]["catalogue"]
             .as_array()
@@ -587,175 +650,147 @@ fn an_unestablished_project_shows_onboarding_and_no_removed_sections() {
             .any(|entry| entry["id"] == "prove-it-works"),
         "the pstack principle catalogue is offered"
     );
-    // The removed direction has no place in the view.
+    // The removed direction and the record store have no place in the view.
     assert!(view.get("stages").is_none(), "stages were removed");
     assert!(
         view["onboarding"].get("decisions").is_none(),
         "the eight decisions were removed"
     );
+    assert!(view["onboarding"].get("tools").is_none());
+    for gone in ["store", "sync", "progress", "history"] {
+        assert!(
+            body["data"].get(gone).is_none(),
+            "{gone} is not in the view"
+        );
+    }
+    let workflows = body["data"]["workflows"]
+        .as_array()
+        .expect("workflows")
+        .iter()
+        .map(|workflow| workflow["name"].as_str().expect("name"))
+        .collect::<Vec<_>>();
+    assert_eq!(workflows, ["init", "dash", "change", "check"]);
     // Nothing was written by looking.
-    assert!(!ProjectLayout::resolve(temp.path())
-        .expect("layout")
-        .private_store_exists());
+    assert!(!temp.path().join("whetstone").exists());
+    no_store(temp.path());
 }
 
 #[test]
-fn dashboard_init_agree_records_mission_principles_and_starters() {
+fn onboarding_drafts_the_starter_through_change_and_accepting_commits_it() {
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
     with_test_command(temp.path());
     let session = Session::open(start(temp.path(), true));
-    let inspected = session.command(&json!({
-        "workflow": "init",
-        "request_id": "dash-agree",
-        "action": "inspect"
-    }));
-    assert_eq!(inspected["state"], "needs_input");
-    assert_eq!(inspected["data"]["read_only"], true);
-    let agree = json!({
-        "workflow": "init",
-        "request_id": "dash-agree",
-        "action": "agree",
-        "expected_revision": inspected["expected_revision"],
-        "resume_token": inspected["resume_token"],
-        "mission": MISSION,
-        "principles": ["prove-it-works"],
-        "custom_principles": [CUSTOM_PRINCIPLE],
-        "starters": ["rule.prove-it-works"]
-    });
+    let starter = session.inspect()["data"]["current"]["onboarding"]["starters"][0].clone();
+    assert_eq!(starter["id"], "rule.prove-it-works");
 
-    // A dry run writes nothing and lists the exact records.
-    let mut dry = agree.clone();
-    dry["dry_run"] = json!(true);
-    let dry = session.command(&dry);
-    assert_eq!(dry["state"], "needs_decision", "{dry}");
-    assert_eq!(dry["data"]["dry_run"], true);
-    let planned = dry["data"]["records"]
-        .as_array()
-        .expect("records")
-        .iter()
-        .map(|record| record["id"].as_str().expect("id").to_string())
-        .collect::<Vec<_>>();
-    assert!(
-        planned.contains(&"mission.project".to_string()),
-        "{planned:?}"
-    );
-    assert!(planned.contains(&"principle.prove-it-works".to_string()));
-    assert!(planned.contains(&"rule.prove-it-works".to_string()));
-    assert!(!ProjectLayout::resolve(temp.path())
-        .expect("layout")
-        .private_store_exists());
-
-    let agreed = session.command(&agree);
-    assert_eq!(agreed["state"], "needs_input", "{agreed}");
-    assert_eq!(agreed["data"]["progress"]["agreement_complete"], true);
-    assert_eq!(agreed["data"]["shared"], false);
-    assert_eq!(agreed["data"]["records"].as_array().map(Vec::len), Some(4));
-    // Replaying the exact answer is idempotent.
-    let replay = session.command(&agree);
-    assert_eq!(
-        replay["data"]["records"], agreed["data"]["records"],
-        "{replay}"
-    );
-
+    // What the onboarding form sends: the mission, a catalogue principle,
+    // a principle of the owner's own and the starter, each a change.
+    for body in [
+        json!({"workflow": "change", "kind": "mission", "content": MISSION}),
+        json!({
+            "workflow": "change",
+            "kind": "principle",
+            "record_id": "principle.prove-it-works",
+            "content": "Prove it works.",
+            "definition": {"type": "principle", "pstack": "prove-it-works"}
+        }),
+        json!({
+            "workflow": "change",
+            "kind": "principle",
+            "record_id": "principle.custom-evidence-before-assertion",
+            "content": CUSTOM_PRINCIPLE
+        }),
+        json!({
+            "workflow": "change",
+            "kind": "rule",
+            "record_id": starter["edit"]["record_id"],
+            "content": starter["edit"]["content"],
+            "rationale": starter["edit"]["rationale"],
+            "definition": starter["edit"]["definition"]
+        }),
+    ] {
+        let drafted = session.command(&body);
+        assert_eq!(drafted["state"], "success", "{body}: {drafted}");
+    }
     let view = session.inspect()["data"]["current"].clone();
     assert_eq!(view["established"], true, "{view}");
-    assert_eq!(view["mission"]["title"], MISSION);
-    assert_eq!(view["mission"]["kind"], "mission");
-    let principles = view["principles"].as_array().expect("principles");
-    assert_eq!(principles.len(), 2, "{principles:?}");
-    assert!(principles
-        .iter()
-        .any(|entry| entry["id"] == "principle.prove-it-works"));
-    assert!(principles
-        .iter()
-        .any(|entry| entry["title"] == CUSTOM_PRINCIPLE));
+    assert_eq!(view["header"]["agreement"], "drafted, not accepted");
+    assert_eq!(view["header"]["revision"], "uncommitted");
+    assert_eq!(
+        view["drafts"],
+        json!([
+            "set the mission",
+            "add principle.custom-evidence-before-assertion",
+            "add principle.prove-it-works",
+            format!(
+                "add rule.prove-it-works ({})",
+                rule_entry(&view, "rule.prove-it-works")["digest"]
+                    .as_str()
+                    .expect("digest")
+            )
+        ])
+    );
+    assert_eq!(view["header"]["drafts"], 4);
+    assert_eq!(view["attention"][0]["focus"], "drafts");
     let prove = rule_entry(&view, "rule.prove-it-works");
-    assert_eq!(prove["kind"], "rule");
-    assert_eq!(prove["strength"], "must");
+    assert_eq!(prove["lifecycle"], "new");
+    assert_eq!(prove["state"]["tone"], "draft");
+    assert_eq!(view["onboarding"]["starters"][0]["accepted"], true);
+    assert_eq!(
+        rulebook(temp.path())["rules"][0]["id"],
+        "rule.prove-it-works"
+    );
+
+    let accepted = session.command(&json!({
+        "workflow": "change",
+        "accept": true,
+        "rationale": "The owner agreed the mission and the first rule."
+    }));
+    assert_eq!(accepted["state"], "success", "{accepted}");
+    let body = session.inspect();
+    let view = &body["data"]["current"];
+    assert_eq!(view["header"]["agreement"], "accepted");
+    assert_eq!(view["header"]["revision"], accepted["data"]["commit"]);
+    assert_eq!(view["drafts"], json!([]));
+    assert_eq!(view["attention"], json!([]));
+    assert_eq!(view["mission"]["title"], MISSION);
+    assert_eq!(view["mission"]["lifecycle"], "accepted");
+    assert_eq!(view["mission"]["edit"]["record_id"], Value::Null);
+    assert_eq!(view["principles"].as_array().map(Vec::len), Some(2));
+    let prove = rule_entry(view, "rule.prove-it-works");
+    assert_eq!(prove["lifecycle"], "accepted");
     assert!(prove["examples"]
         .as_array()
         .is_some_and(|examples| examples.len() >= 2));
-    let starters = view["onboarding"]["starters"].as_array().expect("starters");
-    let accepted = |id: &str| {
-        starters
-            .iter()
-            .find(|starter| starter["id"] == id)
-            .map(|starter| starter["accepted"].clone())
-    };
-    assert_eq!(accepted("rule.prove-it-works"), Some(json!(true)));
-
-    // A second mission through init is refused: it is a change now.
-    let again = session.command(&json!({
-        "workflow": "init",
-        "request_id": "dash-agree-2",
-        "action": "inspect"
-    }));
-    let second = session.command(&json!({
-        "workflow": "init",
-        "request_id": "dash-agree-2",
-        "action": "agree",
-        "expected_revision": again["expected_revision"],
-        "resume_token": again["resume_token"],
-        "mission": "Another mission."
-    }));
-    assert_eq!(second["state"], "needs_decision", "{second}");
-    let view = session.inspect()["data"]["current"].clone();
-    assert_eq!(view["mission"]["title"], MISSION);
+    let changelog = &body["data"]["changelog"];
+    assert_eq!(changelog.as_array().map(Vec::len), Some(1));
+    assert_eq!(changelog[0]["commit"], accepted["data"]["commit"]);
+    assert_eq!(changelog[0]["owner"], "Dashboard Owner");
+    assert_eq!(view["latest_change"]["title"], changelog[0]["title"]);
+    no_store(temp.path());
 }
 
 #[test]
-fn command_backend_preserves_service_stale_rejection_and_fixed_project_scope() {
+fn request_bodies_name_no_other_project_and_no_workflow_but_change() {
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
-    let inspection = inspect_init(temp.path(), "dashboard-stale");
-    let current_revision = inspection.expected_revision.expect("revision");
-    let body = json!({
-        "workflow": "init",
-        "request_id": "dashboard-stale",
-        "action": "agree",
-        "expected_revision": current_revision,
-        "resume_token": "stale-token",
-        "mission": MISSION,
-        "principles": ["prove-it-works"],
-        "starters": ["all"]
-    });
-    let direct = service(ServiceRequest::Init(InitRequest {
-        project_dir: temp.path().to_path_buf(),
-        request_id: Some("dashboard-stale".into()),
-        action: InitAction::Agree,
-        expected_revision: Some(current_revision),
-        resume_token: Some("stale-token".into()),
-        mission: Some(MISSION.into()),
-        principles: vec!["prove-it-works".into()],
-        starters: vec!["all".into()],
-        ..Default::default()
-    }));
     let session = Session::open(start(temp.path(), true));
-    let response = session.command(&body);
-    assert_eq!(
-        response,
-        serde_json::to_value(direct).expect("service JSON")
-    );
-    assert_eq!(response["state"], "stale");
-    assert!(
-        !ProjectLayout::resolve(temp.path())
-            .expect("layout")
-            .private_store_exists(),
-        "a stale answer writes nothing, not even an empty store"
-    );
-
-    // Request bodies cannot name another project, a removed workflow, a
-    // removed init field or a removed change kind.
+    // Request bodies cannot name another project, another workflow (init
+    // writes nothing from the dashboard; push and pull are gone), a removed
+    // field or a removed change kind.
     for rejected in [
         r#"{"workflow":"check","project_dir":"/","paths":["."]}"#,
+        r#"{"workflow":"init","action":"inspect"}"#,
+        r#"{"workflow":"init","action":"agree","mission":"Make intent inspectable."}"#,
         r#"{"workflow":"pull"}"#,
-        r#"{"workflow":"init","action":"agree","values":"Evidence."}"#,
-        r#"{"workflow":"init","action":"agree","desired_outcome":"Less rework."}"#,
-        r#"{"workflow":"init","action":"wire"}"#,
+        r#"{"workflow":"push"}"#,
+        r#"{"workflow":"change","project_dir":"/","kind":"mission","content":"x"}"#,
         r#"{"workflow":"change","kind":"value","record_id":"value.core"}"#,
         r#"{"workflow":"change","kind":"exception","record_id":"exception.one"}"#,
         r#"{"workflow":"change","flag":{"receipt":"x","verdict":"dismiss"}}"#,
+        r#"{"workflow":"change","expected_revision":1,"resume_token":"x"}"#,
+        r#"{"workflow":"change","review":{"proposal":"proposal.x","verdict":"accept"}}"#,
         r#"{"workflow":"check","mode":"repair"}"#,
         r#"{"workflow":"task","title":"No description"}"#,
         "not json",
@@ -764,38 +799,42 @@ fn command_backend_preserves_service_stale_rejection_and_fixed_project_scope() {
         assert!(denied.starts_with("HTTP/1.1 400"), "{rejected}: {denied}");
         assert_eq!(response_body(&denied)["state"], "unknown", "{rejected}");
     }
+    assert!(!temp.path().join("whetstone").exists());
+    no_store(temp.path());
 }
 
 #[test]
-fn dashboard_init_inspection_is_identical_to_the_cli_service_path() {
+fn dashboard_change_preview_is_identical_to_the_cli_service_path() {
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
-    std::fs::write(
-        temp.path().join("Cargo.toml"),
-        "[package]\nname = \"fixture\"\n",
-    )
-    .expect("manifest fixture");
-    let direct = inspect_init(temp.path(), "dashboard-inspect");
+    let direct = service(ServiceRequest::Change(ChangeRequest {
+        project_dir: temp.path().to_path_buf(),
+        kind: Some(ChangeKind::Mission),
+        content: Some(MISSION.into()),
+        preview: true,
+        actor: ActorKind::Agent,
+        ..Default::default()
+    }));
     let session = Session::open(start(temp.path(), true));
     let response = session.command(&json!({
-        "workflow": "init",
-        "request_id": "dashboard-inspect",
-        "action": "inspect"
+        "workflow": "change",
+        "kind": "mission",
+        "content": MISSION,
+        "preview": true
     }));
     assert_eq!(
         response,
         serde_json::to_value(direct).expect("service JSON")
     );
-    assert!(!temp.path().join(".git/whetstone").exists());
+    assert_eq!(response["data"]["preview_only"], true);
+    assert!(!temp.path().join("whetstone/rulebook.json").exists());
 }
 
 #[test]
-fn private_only_dashboard_queries_are_typed_filtered_and_do_not_create_shareable_state() {
+fn dashboard_queries_are_typed_filtered_and_match_the_cli_service() {
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
-    install_private_agreement(temp.path());
-    let layout = ProjectLayout::resolve(temp.path()).expect("project layout");
-    assert!(layout.shared_store().is_none());
+    draft_rulebook(temp.path());
 
     let direct = service(ServiceRequest::Dash(DashRequest {
         project_dir: temp.path().to_path_buf(),
@@ -849,24 +888,22 @@ fn private_only_dashboard_queries_are_typed_filtered_and_do_not_create_shareable
         Value::Null,
         "no gate has run, so no completed check may be claimed"
     );
-    assert_eq!(
-        current["header"]["visibility"], "private",
-        "{}",
-        current["header"]
-    );
-    assert!(layout.shared_store().is_none());
+    assert_eq!(current["header"]["revision"], "uncommitted");
+    assert_eq!(body["data"]["rulebook"]["revision"], "uncommitted");
+    no_store(temp.path());
 }
 
 #[test]
 fn dashboard_changelog_query_rejects_unknown_fields_and_marks_invalid_time_unknown() {
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
-    install_private_agreement(temp.path());
+    draft_rulebook(temp.path());
     let handle = start(temp.path(), false);
     let host = host(&handle);
     for (body, expected_status) in [
         (json!({"project_dir": "/"}), "HTTP/1.1 400"),
         (json!({"history_after": "cursor"}), "HTTP/1.1 400"),
+        (json!({"expected_snapshot": "sha256:x"}), "HTTP/1.1 400"),
         (json!({"as_of": "not-a-time"}), "HTTP/1.1 200"),
     ] {
         let serialized = body.to_string();
@@ -887,6 +924,26 @@ fn dashboard_changelog_query_rejects_unknown_fields_and_marks_invalid_time_unkno
             assert_eq!(response_body(&response)["state"], "unknown");
         }
     }
+}
+
+#[test]
+fn a_malformed_rulebook_is_reported_and_never_shown_as_empty() {
+    let temp = tempfile::tempdir().expect("temp project");
+    init_git(temp.path());
+    std::fs::create_dir_all(temp.path().join("whetstone")).expect("dir");
+    std::fs::write(
+        temp.path().join("whetstone/rulebook.json"),
+        r#"{"schema":"whetstone.rulebook.v1","mission":{"statement":"x"},"principles":[],"rules":[],"extra":1}"#,
+    )
+    .expect("write");
+    let session = Session::open(start(temp.path(), true));
+    let body = session.inspect();
+    assert_eq!(body["state"], "unknown", "{body}");
+    assert_eq!(body["data"]["rulebook"]["state"], "invalid");
+    assert!(body["data"]["rulebook"]["detail"]
+        .as_str()
+        .is_some_and(|detail| detail.contains("extra")));
+    assert_eq!(body["data"]["current"], Value::Null);
 }
 
 /// The rulebook file as the dashboard's change commands left it.
@@ -1069,11 +1126,12 @@ fn mutations_are_observed_but_inspections_and_rejected_bodies_are_not() {
         seen.lock().expect("observer").is_empty(),
         "rejected bodies never reach the service"
     );
-    session
-        .command(&json!({"workflow": "init", "request_id": "observed-init", "action": "inspect"}));
+    session.command(
+        &json!({"workflow": "change", "request_id": "observed-change", "kind": "mission", "content": MISSION}),
+    );
     assert_eq!(
         seen.lock().expect("observer").as_slice(),
-        ["init:observed-init"]
+        ["change:observed-change"]
     );
 }
 
@@ -1117,4 +1175,195 @@ fn one_accept_without_a_request_id_commits_every_drafted_edit() {
             json!("principle.custom-second")
         ]
     );
+}
+
+/// One `print(...)` call is a flag for the AST rule below.
+const PRINT: &str = "((call function: (identifier) @f) @match (#eq? @f \"print\"))";
+
+fn sweep_findings(root: &Path) -> Vec<Value> {
+    let swept = service(ServiceRequest::Check(CheckRequest {
+        project_dir: root.to_path_buf(),
+        gate_mode: GateMode::Sweep,
+        ..Default::default()
+    }));
+    let text = swept.data["findings_json"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no findings: {}", swept.summary));
+    serde_json::from_str(text).expect("findings.json")
+}
+
+#[test]
+fn the_rule_form_sets_the_sweep_fields_and_the_sweep_reads_them_back() {
+    let temp = tempfile::tempdir().expect("temp project");
+    init_git(temp.path());
+    std::fs::create_dir_all(temp.path().join("src")).expect("src");
+    std::fs::write(temp.path().join("src/app.py"), "print('one')\n").expect("write");
+    let session = Session::open(start_for_a_person(temp.path()));
+    session.command(&json!({"workflow": "change", "kind": "mission", "content": MISSION}));
+    // What the rule form sends: class, priority and one doubt.
+    let mut form = json!({
+        "workflow": "change",
+        "kind": "rule",
+        "record_id": "rule.no-print",
+        "content": "Library code does not print.",
+        "rationale": "Output goes through the logger.",
+        "definition": {
+            "type": "rule",
+            "strength": "should",
+            "enforcer": {"kind": "ast", "language": "python", "query": PRINT},
+            "paths": ["src/**"],
+            "sweep": "confirm_first",
+            "sweep_priority": 3,
+            "sweep_unsure": [{"paths": ["src/demo/**"], "reason": "demos print on purpose"}]
+        }
+    });
+    let mut preview = form.clone();
+    preview["preview"] = json!(true);
+    let preview = session.command(&preview);
+    assert_eq!(preview["state"], "needs_decision", "{preview}");
+    assert_eq!(preview["data"]["diff"]["after"]["sweep"], "confirm_first");
+    assert_eq!(preview["data"]["diff"]["after"]["sweep_priority"], 3);
+    let drafted = session.command(&form);
+    assert_eq!(drafted["state"], "success", "{drafted}");
+    let accepted = session.command(&json!({"workflow": "change", "accept": true}));
+    assert_eq!(accepted["state"], "success", "{accepted}");
+
+    let view = session.inspect()["data"]["current"].clone();
+    let rule = rule_entry(&view, "rule.no-print");
+    assert_eq!(rule["sweep_class"], "confirm_first");
+    assert_eq!(rule["sweep_priority"], 3);
+    assert_eq!(rule["sweep_unsure"][0]["reason"], "demos print on purpose");
+    assert_eq!(rule["edit"]["definition"]["sweep"], "confirm_first");
+    let findings = sweep_findings(temp.path());
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["class"], "confirm_first");
+    assert_eq!(findings[0]["priority"], 3);
+    assert_eq!(findings[0]["responsibility"], "rule.no-print");
+
+    // Changing the fields from the form changes what the sweep reports.
+    form["definition"]["sweep"] = json!("draft_pr");
+    form["definition"]["sweep_priority"] = json!(1);
+    let changed = session.command(&form);
+    assert_eq!(changed["data"]["diff"]["before"]["sweep"], "confirm_first");
+    assert_ne!(
+        changed["data"]["digest"]["before"],
+        changed["data"]["digest"]["after"]
+    );
+    let view = session.inspect()["data"]["current"].clone();
+    assert_eq!(rule_entry(&view, "rule.no-print")["lifecycle"], "changed");
+    session.command(&json!({"workflow": "change", "accept": true}));
+    let findings = sweep_findings(temp.path());
+    assert_eq!(findings[0]["class"], "draft_pr");
+    assert_eq!(findings[0]["priority"], 1);
+
+    // A dashboard started for automation never widens a sweep class.
+    let agent = Session::open(start(temp.path(), true));
+    form["definition"]["sweep"] = json!("discuss");
+    let narrowed = agent.command(&form);
+    assert_eq!(narrowed["state"], "success", "{narrowed}");
+    form["definition"]["sweep"] = json!("draft_pr");
+    let widened = agent.command(&form);
+    assert_eq!(widened["state"], "needs_input", "{widened}");
+    no_store(temp.path());
+}
+
+#[test]
+fn retiring_from_the_dashboard_needs_a_reason_and_the_changelog_says_who_when_and_why() {
+    let temp = tempfile::tempdir().expect("temp project");
+    init_git(temp.path());
+    draft_rulebook(temp.path());
+    let session = Session::open(start(temp.path(), true));
+    session.command(&json!({"workflow": "change", "accept": true}));
+
+    let bare = session.command(&json!({"workflow": "change", "retire": "rule.tests-pass"}));
+    assert_eq!(bare["state"], "needs_input", "{bare}");
+    let reason = "CI runs the tests on every push.";
+    for target in ["rule.tests-pass", "principle.custom-evidence"] {
+        let request = json!({"workflow": "change", "retire": target, "rationale": reason});
+        let mut preview = request.clone();
+        preview["preview"] = json!(true);
+        let preview = session.command(&preview);
+        assert_eq!(preview["state"], "needs_decision", "{preview}");
+        assert_eq!(preview["data"]["diff"]["after"], Value::Null);
+        let retired = session.command(&request);
+        assert_eq!(retired["state"], "success", "{retired}");
+    }
+    let view = session.inspect()["data"]["current"].clone();
+    assert_eq!(
+        view["drafts"],
+        json!([
+            format!("retire principle.custom-evidence: {reason}"),
+            format!("retire rule.tests-pass: {reason}"),
+        ])
+    );
+    assert!(view["rules"].as_array().is_some_and(Vec::is_empty));
+    assert_eq!(view["principles"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        rulebook(temp.path())["retired"],
+        json!([
+            {"id": "principle.custom-evidence", "reason": reason},
+            {"id": "rule.tests-pass", "reason": reason}
+        ])
+    );
+
+    let accepted = session.command(&json!({"workflow": "change", "accept": true}));
+    assert_eq!(accepted["state"], "success", "{accepted}");
+    let body = session.inspect();
+    let view = &body["data"]["current"];
+    assert_eq!(view["retired"].as_array().map(Vec::len), Some(2));
+    assert_eq!(view["retired"][1]["reason"], reason);
+    let latest = &body["data"]["changelog"][0];
+    assert_eq!(latest["commit"], accepted["data"]["commit"]);
+    assert_eq!(latest["owner"], "Dashboard Owner");
+    assert!(latest["recorded_at"]
+        .as_str()
+        .is_some_and(|at| at.ends_with('Z')));
+    assert!(
+        latest["summary"]
+            .as_str()
+            .is_some_and(|summary| summary.contains(&format!("Retire rule.tests-pass: {reason}"))),
+        "{latest}"
+    );
+    // A retired entry can be retired once.
+    let again = session.command(
+        &json!({"workflow": "change", "retire": "rule.tests-pass", "rationale": "Twice."}),
+    );
+    assert_eq!(again["state"], "needs_input", "{again}");
+    no_store(temp.path());
+}
+
+#[test]
+fn withdrawing_restores_the_rulebook_as_last_committed() {
+    let temp = tempfile::tempdir().expect("temp project");
+    init_git(temp.path());
+    draft_rulebook(temp.path());
+    let session = Session::open(start(temp.path(), true));
+    session.command(&json!({"workflow": "change", "accept": true}));
+    let committed = std::fs::read(temp.path().join("whetstone/rulebook.json")).expect("rulebook");
+
+    let edited = session.command(&json!({
+        "workflow": "change",
+        "kind": "mission",
+        "content": "A different mission."
+    }));
+    assert_eq!(edited["state"], "success", "{edited}");
+    let view = session.inspect()["data"]["current"].clone();
+    assert_eq!(view["header"]["agreement"], "accepted, with drafts");
+    assert_eq!(view["mission"]["lifecycle"], "changed");
+    assert_eq!(view["drafts"], json!(["change the mission"]));
+
+    let preview =
+        session.command(&json!({"workflow": "change", "withdraw": true, "preview": true}));
+    assert_eq!(preview["data"]["discards"], json!(["change the mission"]));
+    let withdrawn = session.command(&json!({"workflow": "change", "withdraw": true}));
+    assert_eq!(withdrawn["state"], "success", "{withdrawn}");
+    assert_eq!(
+        std::fs::read(temp.path().join("whetstone/rulebook.json")).expect("rulebook"),
+        committed
+    );
+    let view = session.inspect()["data"]["current"].clone();
+    assert_eq!(view["drafts"], json!([]));
+    assert_eq!(view["mission"]["title"], MISSION);
+    let nothing = session.command(&json!({"workflow": "change", "withdraw": true}));
+    assert_eq!(nothing["state"], "needs_input", "{nothing}");
 }

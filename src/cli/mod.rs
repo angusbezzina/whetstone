@@ -670,8 +670,8 @@ fn format_onboarding_intro(response: &ServiceResponse, url: &str) -> String {
         "Whetstone · init · no agreement here yet\n\n\
          Still needed: {missing}. An agreement is a one-line mission and the rules your\n\
          agent works under; principles from the catalogue are optional.\n\
-         Nothing is shared, published or committed: recording it writes private state\n\
-         inside this repository's Git directory, and no working-tree files.\n\n\
+         Nothing is shared, published or committed: recording it drafts\n\
+         whetstone/rulebook.json in the working tree, and accepting it is one commit.\n\n\
          The dashboard walks you through it, then stays open as your project view:\n\
          \x20 {url}\n\n\
          Prefer the terminal? Press Ctrl-C, then:\n\
@@ -696,10 +696,10 @@ fn missing_steps(response: &ServiceResponse) -> Vec<&str> {
 }
 
 /// One terminal line (plus an optional `Next:` line) for a dashboard mutation
-/// that changed something. Previews, dry runs and inspections print nothing.
+/// that changed something. Previews and inspections print nothing.
 fn progress_line(response: &ServiceResponse) -> Option<String> {
     let flag = |key: &str| response.data.get(key) == Some(&serde_json::Value::Bool(true));
-    if flag("dry_run") || flag("preview_only") || flag("read_only") {
+    if flag("preview_only") || flag("read_only") {
         return None;
     }
     let first_sentence = |text: &str| {
@@ -710,26 +710,6 @@ fn progress_line(response: &ServiceResponse) -> Option<String> {
             .to_string()
     };
     match response.workflow.as_str() {
-        "init" => {
-            let complete = response.data.pointer("/progress/agreement_complete")
-                == Some(&serde_json::Value::Bool(true));
-            let wrote = response
-                .data
-                .get("records")
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|records| !records.is_empty());
-            if complete && wrote {
-                let revision = response.expected_revision.unwrap_or(1);
-                Some(format!(
-                    "Agreement recorded · revision {revision} · private, unshared. The dashboard now shows your project.\n\
-                     Next: wh init --action wire --hooks installs the Git gates; wh check runs the first gate."
-                ))
-            } else if response.state == ServiceState::Success {
-                Some(first_sentence(&response.summary))
-            } else {
-                None
-            }
-        }
         "change" => {
             if response.state != ServiceState::Success {
                 return None;
@@ -1155,44 +1135,20 @@ mod tests {
 
     #[test]
     fn progress_lines_report_what_the_dashboard_recorded_and_nothing_else() {
-        let agreed = envelope(
-            "init",
-            ServiceState::NeedsInput,
-            "The private project agreement is approved and installed; setup remains incomplete.",
-            json!({"progress": {"agreement_complete": true}, "records": [{"id": "mission.project"}]}),
-        );
-        let line = progress_line(&agreed).expect("the agreement is reported");
-        assert!(
-            line.starts_with("Agreement recorded · revision 1"),
-            "{line}"
-        );
-        assert!(line.contains("Next: wh init --action wire"), "{line}");
-
-        let mut dry = agreed.clone();
-        dry.data["dry_run"] = json!(true);
-        assert_eq!(progress_line(&dry), None, "dry runs print nothing");
-        let inspected = envelope(
-            "init",
-            ServiceState::NeedsInput,
-            "Inspection is complete and read-only.",
-            json!({"read_only": true, "progress": {"missing_decisions": ["mission"]}}),
-        );
-        assert_eq!(progress_line(&inspected), None, "inspections print nothing");
-
         let draft = envelope(
             "change",
             ServiceState::Success,
-            "The private draft was recorded. It is not in force until you accept it; nothing was shared.",
-            json!({"recorded": true, "record": {"id": "guidance.review"}}),
+            "whetstone/rulebook.json now holds the change to rule.review. It is a draft until you accept it, which commits the file.",
+            json!({"record_id": "rule.review", "written": true}),
         );
         assert_eq!(
             progress_line(&draft).as_deref(),
-            Some("guidance.review: The private draft was recorded")
+            Some("rule.review: whetstone/rulebook.json now holds the change to rule.review")
         );
         let preview = envelope(
             "change",
             ServiceState::NeedsDecision,
-            "Review the exact local proposal.",
+            "Review the exact change to rule.review before it is written.",
             json!({"preview_only": true}),
         );
         assert_eq!(progress_line(&preview), None, "previews print nothing");

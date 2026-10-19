@@ -524,7 +524,7 @@ fn git_failed(request_id: String, error: String) -> ServiceResponse {
 
 /// The rulebook as last committed, if it was ever committed. `Err` holds the
 /// reader's complaint about a committed file it cannot read.
-fn committed(root: &Path) -> Option<Result<Rulebook, RulebookError>> {
+pub(super) fn committed(root: &Path) -> Option<Result<Rulebook, RulebookError>> {
     let text = git(root, &["show", &format!("HEAD:{RULEBOOK_PATH}")]).ok()?;
     let commit = git(root, &["log", "-1", "--format=%H", "--", RULEBOOK_PATH])
         .map(|commit| commit.trim().to_string())
@@ -535,7 +535,7 @@ fn committed(root: &Path) -> Option<Result<Rulebook, RulebookError>> {
 /// The edits from one rulebook to another (from nothing when `before` is
 /// absent), each as the edit and its detail: `add rule.x` with the digest,
 /// `retire rule.y` with the reason, and so on.
-fn changes(before: Option<&Rulebook>, after: &Rulebook) -> Vec<(String, String)> {
+pub(super) fn changes(before: Option<&Rulebook>, after: &Rulebook) -> Vec<(String, String)> {
     let mut lines = Vec::new();
     let Some(before) = before else {
         lines.push(("set the mission".into(), String::new()));

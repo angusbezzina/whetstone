@@ -12,7 +12,7 @@ use crate::agreement::AgreementState;
 use crate::domain::{
     AgreementRecord, Mission, Principle, PrincipleSource, RecordBody, RecordId, RecordRef,
 };
-use crate::projection::{LegacyItem, Onboarding, OnboardingStep, StarterView};
+use crate::projection::{LegacyItem, Onboarding, OnboardingStep};
 use crate::storage::{AppendRequest, ProjectLayout, RecordStore, StorageError};
 
 use super::record::agreement_record;
@@ -68,25 +68,12 @@ pub(crate) fn progress(layout: &ProjectLayout, records: Option<&[AgreementRecord
     let setup_complete = agreement_complete && hooks.pre_commit && hooks.pre_push;
     let catalogue = crate::catalogue::catalogue();
     let starters = crate::starter::starters(root)
-        .into_iter()
+        .iter()
         .map(|starter| {
-            let (mechanism, _) = crate::gates::mechanism_label(&starter.rule);
-            StarterView {
-                accepted: RecordId::new(starter.id)
-                    .ok()
-                    .is_some_and(|id| state.in_force(&id).is_some()),
-                id: starter.id.into(),
-                title: starter.title.into(),
-                detected: starter.detected,
-                strength: starter.rule.strength.label(),
-                enforcer: mechanism,
-                examples: starter
-                    .rule
-                    .examples
-                    .iter()
-                    .map(|example| json!({"input": example.input, "expected": example.expected, "reason": example.reason}))
-                    .collect(),
-            }
+            let accepted = RecordId::new(starter.id)
+                .ok()
+                .is_some_and(|id| state.in_force(&id).is_some());
+            crate::projection::starter_view(starter, accepted)
         })
         .collect();
     let migrated = state

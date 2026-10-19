@@ -1,17 +1,15 @@
-//! Typed, human-labelled projection of the agreement for the dashboard's
-//! views: Home, Rules and Changelog, plus onboarding.
+//! Typed, human-labelled projection of the rulebook file for the
+//! dashboard's views: Home, Rules and Changelog, plus onboarding.
 //!
 //! The browser renders these fields verbatim. Every state carries a human
 //! label and a tone so the UI never invents state or shows raw enum names,
-//! and draft states can never read as accepted.
-
-use std::collections::BTreeMap;
+//! and an edit not yet committed can never read as accepted.
 
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::agreement::{AgreementState, Lifecycle};
-use crate::domain::{AgreementRecord, PrincipleSource, RecordBody, RecordId, RecordRef, Rule};
+use crate::domain::{AgreementRecord, Principle, PrincipleSource, RecordBody, Rule};
+use crate::rulebook::{self, RetiredEntry, Rulebook, RULEBOOK_PATH};
 
 pub const MISSION_ID: &str = "mission.project";
 
@@ -28,15 +26,6 @@ impl StateLabel {
             label: label.into(),
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Header {
-    pub project: String,
-    pub agreement: String,
-    pub visibility: &'static str,
-    pub drafts: usize,
-    pub team: &'static str,
 }
 
 /// One onboarding step: tools, mission, principles, starter rules, gates.
@@ -59,6 +48,8 @@ pub struct StarterView {
     pub enforcer: String,
     pub examples: Vec<Value>,
     pub accepted: bool,
+    /// The rule as `wh change` takes it, so accepting a starter is a change.
+    pub edit: EditBase,
 }
 
 /// An earlier value or philosophy that becomes a principle draft.
@@ -89,33 +80,38 @@ pub struct Detail {
     pub code: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct Pending {
-    pub version: u64,
-    pub title: String,
-    pub proposal: Option<String>,
-}
-
+/// What an edit form starts from and sends back to `wh change`: the kind,
+/// the id (none for the mission), the text, the why and the definition.
 #[derive(Debug, Clone, Serialize)]
 pub struct EditBase {
     pub kind: &'static str,
-    pub record_id: String,
+    pub record_id: Option<String>,
     pub content: String,
+    pub rationale: Option<String>,
     pub definition: Value,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct Header {
+    pub project: String,
+    pub agreement: &'static str,
+    /// The commit that last touched the rulebook, or `uncommitted`.
+    pub revision: String,
+    pub drafts: usize,
+}
+
+/// The mission, a principle or a rule as the working tree's rulebook holds
+/// it, and how that compares with the rulebook as last committed.
 #[derive(Debug, Clone, Serialize)]
 pub struct Entry {
     pub id: String,
     pub kind: &'static str,
     pub title: String,
     pub detail: Vec<Detail>,
-    pub version: u64,
+    /// `accepted` (as committed), `changed` (committed, edited since) or
+    /// `new` (never committed).
     pub lifecycle: &'static str,
-    pub pending: Option<Pending>,
-    pub state: Option<StateLabel>,
-    pub owner: Option<String>,
-    pub changed_at: String,
+    pub state: StateLabel,
     pub edit: EditBase,
 }
 
@@ -130,6 +126,7 @@ pub struct RuleEntry {
     pub command: String,
     pub runs_at: &'static str,
     pub source: String,
+    pub rationale: String,
     pub paths: Vec<String>,
     pub examples: Vec<Value>,
     /// How a night sweep works this rule's flags: draft_pr, confirm_first or
@@ -139,6 +136,7 @@ pub struct RuleEntry {
     pub sweep_priority: u8,
     /// Where its own flags are doubtful, with the reason each says.
     pub sweep_unsure: Vec<crate::domain::SweepUnsure>,
+    pub digest: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -163,26 +161,41 @@ pub struct LatestChange {
     pub at: String,
 }
 
+/// Onboarding on the rulebook file: the steps, the catalogue and the
+/// starter rules, each accepted through `wh change`.
+#[derive(Debug, Clone, Serialize)]
+pub struct Start {
+    pub steps: Vec<OnboardingStep>,
+    pub missing: Vec<String>,
+    pub command: &'static str,
+    pub catalogue: Vec<crate::catalogue::CatalogueEntry>,
+    pub catalogue_version: String,
+    pub starters: Vec<StarterView>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DashboardView {
     pub established: bool,
     pub header: Header,
-    pub onboarding: Onboarding,
+    pub onboarding: Start,
     pub mission: Option<Entry>,
     pub principles: Vec<Entry>,
     pub rules: Vec<RuleEntry>,
+    /// The edits accepting would commit, as `wh change --accept` lists them.
+    pub drafts: Vec<String>,
+    pub retired: Vec<RetiredEntry>,
     pub attention: Vec<Attention>,
     pub latest_change: Option<LatestChange>,
 }
 
 /// Inputs the service computes before projecting.
-pub struct ProjectionInput {
+pub struct ProjectionInput<'a> {
     pub project_label: String,
-    pub agreement_complete: bool,
-    pub onboarding: Onboarding,
-    /// Shared record refs (id -> `id@revision#digest`) in the team's store:
-    /// what `wh push` already shared and CI enforces.
-    pub shared: BTreeMap<String, String>,
+    /// The rulebook as last committed, when it ever was.
+    pub head: Option<&'a Rulebook>,
+    pub drafts: Vec<String>,
+    pub hooks: crate::wire::GitHooks,
+    pub starters: Vec<crate::starter::Starter>,
 }
 
 /// Where in the gate ladder a rule runs.
@@ -191,26 +204,6 @@ pub fn runs_at(rule: &Rule) -> &'static str {
         "pre-commit, pre-push and CI"
     } else {
         "pre-push and CI"
-    }
-}
-
-pub(crate) fn kind_of(record: &AgreementRecord) -> &'static str {
-    match &record.body {
-        RecordBody::Mission(_) => "mission",
-        RecordBody::Principle(_) => "principle",
-        RecordBody::Rule(_) | RecordBody::StoredRule(_) | RecordBody::Standard(_) => "rule",
-        RecordBody::Retirement(_) => "retirement",
-        _ => "record",
-    }
-}
-
-pub fn kind_label(kind: &str) -> &'static str {
-    match kind {
-        "mission" => "Mission",
-        "principle" => "Principle",
-        "rule" => "Rule",
-        "retirement" => "Retirement",
-        _ => "Record",
     }
 }
 
@@ -239,6 +232,7 @@ fn source_label(rule: &Rule) -> String {
     }
 }
 
+/// A rule's definition in the exact shape `wh change --definition` takes.
 fn rule_definition(rule: &Rule) -> Value {
     json!({
         "type": "rule",
@@ -253,39 +247,47 @@ fn rule_definition(rule: &Rule) -> Value {
     })
 }
 
-fn edit_base(record: &AgreementRecord) -> EditBase {
-    let (kind, content, definition) = match &record.body {
-        RecordBody::Mission(body) => ("mission", body.statement.clone(), Value::Null),
-        RecordBody::Principle(body) => (
-            "principle",
-            body.statement.clone(),
-            // The exact shape `wh change --kind principle --definition` takes.
-            json!({
-                "type": "principle",
-                "pstack": match &body.source {
-                    crate::domain::PrincipleSource::Pstack { id, .. } => Some(id.clone()),
-                    _ => None,
-                },
-                "rationale": body.rationale,
-            }),
-        ),
-        body @ (RecordBody::Rule(_) | RecordBody::StoredRule(_) | RecordBody::Standard(_)) => {
-            let rule = body.rule_view().map(std::borrow::Cow::into_owned);
-            (
-                "rule",
-                rule.as_ref()
-                    .map(|rule| rule.statement.clone())
-                    .unwrap_or_default(),
-                rule.as_ref().map_or(Value::Null, rule_definition),
-            )
-        }
-        _ => ("record", String::new(), Value::Null),
-    };
+fn rule_edit(id: &str, rule: &Rule) -> EditBase {
     EditBase {
-        kind,
-        record_id: record.id.as_str().into(),
-        content,
-        definition,
+        kind: "rule",
+        record_id: Some(id.into()),
+        content: rule.statement.clone(),
+        rationale: Some(rule.rationale.clone()),
+        definition: rule_definition(rule),
+    }
+}
+
+fn examples(rule: &Rule) -> Vec<Value> {
+    rule.examples
+        .iter()
+        .map(|example| {
+            json!({
+                "input": example.input,
+                "expected": example.expected,
+                "reason": example.reason,
+                "path": example.path,
+            })
+        })
+        .collect()
+}
+
+/// A starter rule as onboarding offers it.
+pub fn starter_view(starter: &crate::starter::Starter, accepted: bool) -> StarterView {
+    let (mechanism, _) = crate::gates::mechanism_label(&starter.rule);
+    StarterView {
+        id: starter.id.into(),
+        title: starter.title.into(),
+        detected: starter.detected.clone(),
+        strength: starter.rule.strength.label(),
+        enforcer: mechanism,
+        examples: starter
+            .rule
+            .examples
+            .iter()
+            .map(|example| json!({"input": example.input, "expected": example.expected, "reason": example.reason}))
+            .collect(),
+        accepted,
+        edit: rule_edit(starter.id, &starter.rule),
     }
 }
 
@@ -297,215 +299,244 @@ fn detail(key: &'static str, value: impl Into<String>, code: bool) -> Detail {
     }
 }
 
-fn details_for(record: &AgreementRecord) -> Vec<Detail> {
-    match &record.body {
-        body @ (RecordBody::Rule(_) | RecordBody::StoredRule(_) | RecordBody::Standard(_)) => {
-            let Some(rule) = body.rule_view() else {
-                return Vec::new();
-            };
-            let (mechanism, command) = crate::gates::mechanism_label(&rule);
-            vec![
-                detail("strength", rule.strength.label(), false),
-                detail("enforcer", mechanism, false),
-                detail("command", command, true),
-                detail("runs at", runs_at(&rule), false),
-            ]
-        }
-        RecordBody::Principle(body) => {
-            let mut details = vec![detail(
-                "source",
-                match &body.source {
-                    PrincipleSource::Pstack { id, version } => format!("pstack {id} ({version})"),
-                    PrincipleSource::Custom => "the owner's own".into(),
-                    PrincipleSource::Migrated { record } => {
-                        format!("migrated from {}", record.id.as_str())
-                    }
-                },
-                false,
-            )];
-            if let Some(rationale) = &body.rationale {
-                details.push(detail("why", rationale.clone(), false));
+fn principle_details(principle: &Principle) -> Vec<Detail> {
+    let mut details = vec![detail(
+        "source",
+        match &principle.source {
+            PrincipleSource::Pstack { id, version } => format!("pstack {id} ({version})"),
+            PrincipleSource::Custom => "the owner's own".into(),
+            PrincipleSource::Migrated { record } => {
+                format!("migrated from {}", record.id.as_str())
             }
-            details
-        }
-        _ => Vec::new(),
+        },
+        false,
+    )];
+    if let Some(rationale) = &principle.rationale {
+        details.push(detail("why", rationale.clone(), false));
     }
+    details
 }
 
-pub(crate) fn entry(state: &AgreementState, id: &RecordId) -> Option<Entry> {
-    let in_force = state.in_force(id);
-    let pending = state.pending(id);
-    let shown = in_force.or(pending)?;
-    let lifecycle = if in_force.is_some() {
-        Lifecycle::Accepted
-    } else {
-        Lifecycle::Draft
-    };
-    Some(Entry {
-        id: id.as_str().into(),
-        kind: kind_of(shown),
-        title: record_title(shown),
-        detail: details_for(shown),
-        version: shown.revision,
-        lifecycle: lifecycle.label(),
-        pending: pending.filter(|_| in_force.is_some()).map(|draft| Pending {
-            version: draft.revision,
-            title: record_title(draft),
-            proposal: state
-                .proposal_for(draft)
-                .map(|proposal| proposal.id.as_str().into()),
-        }),
-        state: None,
-        owner: shown.owner.display_name.clone(),
-        changed_at: shown.provenance.recorded_at.clone(),
-        // Edits target the newest revision so a second edit revises the draft.
-        edit: edit_base(pending.unwrap_or(shown)),
-    })
+fn state_of(lifecycle: &'static str) -> StateLabel {
+    match lifecycle {
+        "accepted" => StateLabel::new("pass", "accepted"),
+        "changed" => StateLabel::new("draft", "edited · not accepted"),
+        _ => StateLabel::new("draft", "new · not accepted"),
+    }
 }
 
 fn strength_order(strength: &str) -> u8 {
     u8::from(strength != "must")
 }
 
-/// `id@revision#digest`, the stable text form of a record reference.
-pub fn reference_text(reference: &RecordRef) -> String {
-    format!(
-        "{}@{}#{}",
-        reference.id.as_str(),
-        reference.revision,
-        reference.digest.as_str()
-    )
-}
-
-fn rule_entries(state: &AgreementState) -> Vec<RuleEntry> {
-    let mut rules = Vec::new();
-    for id in state.rule_ids() {
-        let Some(base) = entry(state, &id) else {
-            continue;
-        };
-        let Some(record) = state.in_force(&id).or_else(|| state.pending(&id)) else {
-            continue;
-        };
-        let Some(rule) = record.body.rule_view() else {
-            continue;
-        };
-        let (mechanism, command) = crate::gates::mechanism_label(&rule);
-        rules.push(RuleEntry {
-            entry: base,
-            strength: rule.strength.label(),
-            enforcer: mechanism,
-            command,
-            runs_at: runs_at(&rule),
-            source: source_label(&rule),
-            paths: rule.paths.clone(),
-            examples: rule
-                .examples
-                .iter()
-                .map(|example| {
-                    json!({
-                        "input": example.input,
-                        "expected": example.expected,
-                        "reason": example.reason,
-                        "path": example.path,
-                    })
-                })
-                .collect(),
-            sweep_class: rule.sweep_class().label(),
-            sweep_priority: rule.sweep_priority(),
-            sweep_unsure: rule.sweep_unsure.clone(),
+/// Build the dashboard projection from the working tree's rulebook (absent
+/// before the mission is first written).
+pub fn dashboard_view(book: Option<&Rulebook>, input: ProjectionInput<'_>) -> DashboardView {
+    let lifecycle = |id: &str| -> &'static str {
+        let now = book.and_then(|book| rulebook::entry(book, id));
+        match input.head.and_then(|head| rulebook::entry(head, id)) {
+            None => "new",
+            Some(then) if Some(&then) == now.as_ref() => "accepted",
+            Some(_) => "changed",
+        }
+    };
+    let entry = |id: &str, kind: &'static str, title: String, detail, edit| {
+        let lifecycle = lifecycle(id);
+        Entry {
+            id: id.into(),
+            kind,
+            title,
+            detail,
+            lifecycle,
+            state: state_of(lifecycle),
+            edit,
+        }
+    };
+    let mission = book
+        .filter(|book| !book.mission.statement.trim().is_empty())
+        .map(|book| {
+            entry(
+                "mission",
+                "mission",
+                book.mission.statement.clone(),
+                Vec::new(),
+                EditBase {
+                    kind: "mission",
+                    record_id: None,
+                    content: book.mission.statement.clone(),
+                    rationale: None,
+                    definition: Value::Null,
+                },
+            )
         });
-    }
+    let principles = book
+        .map(|book| book.principles.as_slice())
+        .unwrap_or_default()
+        .iter()
+        .map(|principle| {
+            let id = principle.id.as_str();
+            let body = &principle.principle;
+            entry(
+                id,
+                "principle",
+                body.statement.clone(),
+                principle_details(body),
+                EditBase {
+                    kind: "principle",
+                    record_id: Some(id.into()),
+                    content: body.statement.clone(),
+                    rationale: body.rationale.clone(),
+                    definition: json!({
+                        "type": "principle",
+                        "pstack": match &body.source {
+                            PrincipleSource::Pstack { id, .. } => Some(id.clone()),
+                            _ => None,
+                        },
+                        "rationale": body.rationale,
+                    }),
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut rules = book
+        .map(|book| book.rules.as_slice())
+        .unwrap_or_default()
+        .iter()
+        .map(|item| {
+            let id = item.id.as_str();
+            let rule = &item.rule;
+            let (mechanism, command) = crate::gates::mechanism_label(rule);
+            RuleEntry {
+                entry: entry(
+                    id,
+                    "rule",
+                    rule.statement.clone(),
+                    vec![
+                        detail("strength", rule.strength.label(), false),
+                        detail("enforcer", mechanism.clone(), false),
+                        detail("command", command.clone(), true),
+                        detail("runs at", runs_at(rule), false),
+                    ],
+                    rule_edit(id, rule),
+                ),
+                strength: rule.strength.label(),
+                enforcer: mechanism,
+                command,
+                runs_at: runs_at(rule),
+                source: source_label(rule),
+                rationale: rule.rationale.clone(),
+                paths: rule.paths.clone(),
+                examples: examples(rule),
+                sweep_class: rule.sweep_class().label(),
+                sweep_priority: rule.sweep_priority(),
+                sweep_unsure: rule.sweep_unsure.clone(),
+                digest: item.digest.as_str().into(),
+            }
+        })
+        .collect::<Vec<_>>();
     rules.sort_by(|left, right| {
         (strength_order(left.strength), left.entry.title.as_str())
             .cmp(&(strength_order(right.strength), right.entry.title.as_str()))
     });
-    rules
-}
-
-/// Build the dashboard projection.
-pub fn dashboard_view(state: &AgreementState, input: &ProjectionInput) -> DashboardView {
-    let mission_id = RecordId::new(MISSION_ID).expect("constant id");
-    let mission = entry(state, &mission_id);
-    let owner = mission
-        .as_ref()
-        .and_then(|entry| entry.owner.clone())
-        .unwrap_or_else(|| "the project owner".into());
-    let established = input.agreement_complete;
-    let principles = state
-        .agreement_ids(|body| matches!(body, RecordBody::Principle(_)))
-        .iter()
-        .filter_map(|id| entry(state, id))
-        .collect::<Vec<_>>();
-    let rules = rule_entries(state);
-    let pending = state.pending_proposals();
-    let drafts = pending.len();
-    let attention = attention(&owner, &rules, drafts);
-    DashboardView {
-        established,
-        header: Header {
-            project: input.project_label.clone(),
-            agreement: if established {
-                "owner approved".into()
-            } else if mission.is_some() {
-                "incomplete".into()
-            } else {
-                "not initialised".into()
-            },
-            visibility: "private",
-            drafts,
-            team: if input.shared.is_empty() {
-                "not shared"
-            } else {
-                "shared through Beads"
-            },
-        },
-        onboarding: input.onboarding.clone(),
-        mission,
-        principles,
-        rules,
-        attention,
-        latest_change: None,
+    let established = mission.is_some() && !rules.is_empty();
+    let mut missing = Vec::new();
+    if mission.is_none() {
+        missing.push("mission".to_string());
     }
-}
-
-fn attention(owner: &str, rules: &[RuleEntry], drafts: usize) -> Vec<Attention> {
-    let mut items = Vec::new();
-    if rules.iter().all(|rule| rule.entry.lifecycle != "accepted") {
-        items.push(Attention {
-            priority: 1,
-            tone: "warn",
-            kind: "owner_decision",
-            kind_label: "owner decision",
-            title: "No rule is in force yet".into(),
-            text: "Nothing is checked until at least one rule is accepted. Start with the three starter rules.".into(),
-            actor: owner.into(),
-            next: "Accept starter rules in onboarding, or record one with wh change --kind rule.".into(),
-            route: "rules",
-            focus: None,
-            action_label: "Open rules",
-            agent_instruction: None,
-        });
+    if rules.is_empty() {
+        missing.push("rules".to_string());
     }
-    if drafts > 0 {
-        items.push(Attention {
-            priority: 2,
-            tone: "muted",
+    let catalogue = crate::catalogue::catalogue();
+    let onboarding = Start {
+        steps: vec![
+            OnboardingStep {
+                key: "mission",
+                label: "Mission",
+                hint: "what this project exists to do, in one sentence",
+                done: mission.is_some(),
+                optional: false,
+            },
+            OnboardingStep {
+                key: "principles",
+                label: "Principles",
+                hint: "the catalogue principles you hold, or your own",
+                done: !principles.is_empty(),
+                optional: true,
+            },
+            OnboardingStep {
+                key: "rules",
+                label: "Rules",
+                hint: "accept the starter rules and any proposed ones",
+                done: !rules.is_empty(),
+                optional: false,
+            },
+            OnboardingStep {
+                key: "gates",
+                label: "Gates",
+                hint: "pre-commit and pre-push hooks that run the rules",
+                done: input.hooks.pre_commit && input.hooks.pre_push,
+                optional: false,
+            },
+        ],
+        missing,
+        command: "wh change --kind mission --content \"…\"",
+        catalogue_version: catalogue.version.clone(),
+        catalogue: catalogue.principles,
+        starters: input
+            .starters
+            .iter()
+            .map(|starter| {
+                starter_view(
+                    starter,
+                    rules.iter().any(|rule| rule.entry.id == starter.id),
+                )
+            })
+            .collect(),
+    };
+    let drafts = input.drafts.len();
+    let accepted = rules.iter().any(|rule| rule.entry.lifecycle != "new");
+    let attention = if drafts > 0 {
+        vec![Attention {
+            priority: if accepted { 2 } else { 1 },
+            tone: if accepted { "muted" } else { "warn" },
             kind: "review",
             kind_label: "review",
             title: format!(
-                "{drafts} draft{} await{} your review",
+                "{drafts} edit{} to {RULEBOOK_PATH} wait{} for you",
                 if drafts == 1 { "" } else { "s" },
                 if drafts == 1 { "s" } else { "" }
             ),
-            text: "Drafts are private and not in force until you accept them. Nothing has been shared.".into(),
-            actor: owner.into(),
-            next: "Accept or withdraw each draft in the changelog.".into(),
-            route: "changelog",
-            focus: None,
-            action_label: "Open the changelog",
+            text: "wh check already reads them on this machine; CI enforces only what is committed. Accepting commits the file.".into(),
+            actor: "the project owner".into(),
+            next: "Accept or withdraw them in Rules.".into(),
+            route: "rules",
+            focus: Some("drafts".into()),
+            action_label: "Review drafts",
             agent_instruction: None,
-        });
+        }]
+    } else {
+        Vec::new()
+    };
+    DashboardView {
+        established,
+        header: Header {
+            project: input.project_label,
+            agreement: match (book, input.head) {
+                (None, _) => "not started",
+                (Some(_), None) => "drafted, not accepted",
+                (Some(_), Some(_)) if drafts > 0 => "accepted, with drafts",
+                (Some(_), Some(_)) => "accepted",
+            },
+            revision: book.map_or("none", |book| book.revision.label()).into(),
+            drafts,
+        },
+        onboarding,
+        mission,
+        principles,
+        rules,
+        drafts: input.drafts,
+        retired: book.map(|book| book.retired.clone()).unwrap_or_default(),
+        attention,
+        latest_change: None,
     }
-    items.sort_by_key(|item| item.priority);
-    items
 }

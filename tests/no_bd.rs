@@ -1,6 +1,6 @@
 //! The virgil store needs no `bd`: with `whetstone/store.json` naming
 //! Virgil and a PATH holding only the fake `virgil` (tests/fake_virgil.py)
-//! and the basic tools, init and dash run end to end, the accepted
+//! and the basic tools, init runs end to end, the accepted
 //! agreement reaches the rulebook's repository scope, `wh push` and `wh
 //! pull` are refused by name (their dry runs succeed), and no `.beads`
 //! appears.
@@ -162,20 +162,6 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
         Some(3),
         "{agreed}"
     );
-
-    let dash = json_of(&wh(&["dash", "--json"]));
-    assert_eq!(dash["state"], "success", "{dash}");
-    assert_eq!(dash["data"]["current"]["established"], true);
-    assert_eq!(
-        dash["data"]["store"]["kind"], "virgil",
-        "{}",
-        dash["data"]["store"]
-    );
-    assert_eq!(
-        dash["data"]["store"]["attachment"],
-        json!({"group": GROUP, "repository": REPOSITORY})
-    );
-    assert_eq!(dash["data"]["store"]["left_behind"], json!([]));
 
     // Nothing is kept as a local revision file.
     let common = root.join(".git/whetstone");

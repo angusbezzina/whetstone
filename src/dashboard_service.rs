@@ -7,8 +7,8 @@ use serde::Deserialize;
 
 use crate::dashboard::{BackendResponse, DashboardBackend};
 use crate::service::{
-    ChangeDefinition, ChangeKind, ChangeRequest, CommandService, DashRequest, InitAction,
-    InitRequest, ServiceRequest, ServiceResponse,
+    ChangeDefinition, ChangeKind, ChangeRequest, CommandService, DashRequest, ServiceRequest,
+    ServiceResponse,
 };
 
 /// Keeps the dashboard's project authority fixed at process startup.
@@ -120,13 +120,10 @@ impl DashboardBackend for CommandDashboardBackend {
     }
 
     fn mutate(&self, request_body: &[u8]) -> BackendResponse {
-        let mut request = match serde_json::from_slice::<DashboardCommand>(request_body) {
-            Ok(request) => request.into_service_request(self.project_dir.clone()),
+        let request = match serde_json::from_slice::<DashboardCommand>(request_body) {
+            Ok(request) => request.into_service_request(self.project_dir.clone(), self.actor),
             Err(error) => return invalid_request(format!("invalid dashboard command: {error}")),
         };
-        if let ServiceRequest::Change(change) = &mut request {
-            change.actor = self.actor;
-        }
         let response = self.service.execute(request);
         if let Some(observer) = &self.observer {
             observer(&response);
@@ -153,29 +150,11 @@ impl Default for DashboardInspectRequest {
     }
 }
 
+/// The one workflow the dashboard writes through: `wh change`, on the
+/// rulebook file.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "workflow", rename_all = "snake_case", deny_unknown_fields)]
-#[allow(clippy::large_enum_variant)]
 enum DashboardCommand {
-    Init {
-        #[serde(default)]
-        request_id: Option<String>,
-        action: DashboardInitAction,
-        #[serde(default)]
-        expected_revision: Option<u64>,
-        #[serde(default)]
-        resume_token: Option<String>,
-        #[serde(default)]
-        mission: Option<String>,
-        #[serde(default)]
-        principles: Vec<String>,
-        #[serde(default)]
-        custom_principles: Vec<String>,
-        #[serde(default)]
-        starters: Vec<String>,
-        #[serde(default)]
-        dry_run: bool,
-    },
     Change {
         #[serde(default)]
         request_id: Option<String>,
@@ -201,76 +180,38 @@ enum DashboardCommand {
 }
 
 impl DashboardCommand {
-    fn into_service_request(self, project_dir: PathBuf) -> ServiceRequest {
-        match self {
-            Self::Init {
-                request_id,
-                action,
-                expected_revision,
-                resume_token,
-                mission,
-                principles,
-                custom_principles,
-                starters,
-                dry_run,
-            } => ServiceRequest::Init(InitRequest {
-                project_dir,
-                request_id,
-                action: action.into(),
-                expected_revision,
-                resume_token,
-                mission,
-                principles,
-                custom_principles,
-                starters,
-                dry_run,
-                ..InitRequest::default()
-            }),
-            Self::Change {
-                request_id,
-                kind,
-                record_id,
-                content,
-                definition,
-                rationale,
-                preview,
-                accept,
-                withdraw,
-                retire,
-            } => ServiceRequest::Change(ChangeRequest {
-                project_dir,
-                request_id,
-                kind: kind.map(Into::into),
-                record_id,
-                content,
-                definition,
-                rationale,
-                preview,
-                accept,
-                withdraw,
-                retire,
-                // The backend sets who is asking; a request cannot claim it.
-                actor: crate::domain::ActorKind::Agent,
-            }),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum DashboardInitAction {
-    Inspect,
-    Agree,
-    Cancel,
-}
-
-impl From<DashboardInitAction> for InitAction {
-    fn from(value: DashboardInitAction) -> Self {
-        match value {
-            DashboardInitAction::Inspect => Self::Inspect,
-            DashboardInitAction::Agree => Self::Agree,
-            DashboardInitAction::Cancel => Self::Cancel,
-        }
+    /// The backend sets who is asking; a request body cannot claim it.
+    fn into_service_request(
+        self,
+        project_dir: PathBuf,
+        actor: crate::domain::ActorKind,
+    ) -> ServiceRequest {
+        let Self::Change {
+            request_id,
+            kind,
+            record_id,
+            content,
+            definition,
+            rationale,
+            preview,
+            accept,
+            withdraw,
+            retire,
+        } = self;
+        ServiceRequest::Change(ChangeRequest {
+            project_dir,
+            request_id,
+            kind: kind.map(Into::into),
+            record_id,
+            content,
+            definition,
+            rationale,
+            preview,
+            accept,
+            withdraw,
+            retire,
+            actor,
+        })
     }
 }
 
@@ -342,7 +283,7 @@ mod tests {
             seen.lock().expect("observer lock").is_empty(),
             "rejected bodies never reach the service"
         );
-        backend.mutate(b"{\"workflow\":\"init\",\"action\":\"inspect\"}");
-        assert_eq!(seen.lock().expect("observer lock").as_slice(), ["init"]);
+        backend.mutate(b"{\"workflow\":\"change\",\"withdraw\":true}");
+        assert_eq!(seen.lock().expect("observer lock").as_slice(), ["change"]);
     }
 }

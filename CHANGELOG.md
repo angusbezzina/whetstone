@@ -42,6 +42,15 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   `retired` entries with the reason. The decision log is Git: `wh dash
   --trail` and the dashboard's changelog are the commits that touched the
   file, with author, date and message.
+- `wh dash` shows `whetstone/rulebook.json` as the working tree holds it:
+  each entry is accepted, edited or new against the file's last commit,
+  and the dashboard lists the draft edits with Accept and Withdraw. Every
+  dashboard write is a `wh change` (onboarding included): the rule form
+  sets the sweep class, priority and doubts, accepted rules and principles
+  retire with a reason, and the changelog is the file's Git log with the
+  retired entries beneath it. `wh dash --json` names the rulebook's state
+  and revision in place of the store, sync and progress sections, and
+  lists no push or pull.
 - Whetstone needs `bd` 1.3.0 or later (CI pins 1.3.0), and
   `wh init --action setup` offers an upgrade for an older `bd`.
 - Whetstone's own gates (pre-push, CI and the release job) check
