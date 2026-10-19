@@ -1702,3 +1702,13 @@ fn the_dashboard_shows_where_the_rulebook_is_thin_and_exports_a_static_page() {
     assert!(page.contains("First rules."));
     assert!(!page.contains("<script"));
 }
+
+#[test]
+fn the_agent_contract_says_a_must_rule_outranks_the_task() {
+    let block = whetstone::contract::block("origin/main");
+    assert!(
+        block.contains("even when the task asked for the breach"),
+        "{block}"
+    );
+    assert!(block.contains("stop and tell the person which rule blocks it"));
+}
