@@ -106,6 +106,11 @@ enum Command {
         /// decision, why, evidence, result) instead of serving the dashboard.
         #[arg(long)]
         trail: bool,
+        /// Write the accepted mission, principles and rules, and the
+        /// changelog, as one static page (<dir>/index.html) that opens from
+        /// disk or GitHub Pages, instead of serving the dashboard.
+        #[arg(long, conflicts_with_all = ["trail", "bootstrap_file"])]
+        export: Option<PathBuf>,
     },
 
     /// Draft a change to whetstone/rulebook.json, retire a rule, or accept
@@ -391,7 +396,13 @@ pub fn run() -> i32 {
             no_open,
             bootstrap_file,
             trail,
+            export,
         }) => {
+            if let Some(dir) = export {
+                let response = crate::service::export::export(&project_dir, request_id, &dir);
+                emit_response(&response, machine);
+                return response.state.exit_code();
+            }
             if explicit_json || trail {
                 let response = service.execute(ServiceRequest::Dash(DashRequest {
                     project_dir,

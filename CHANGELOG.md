@@ -98,6 +98,11 @@ rulebook file, `findings.json` and the JSON envelope.
   --import-pack <file|https URL|rust|typescript|python>` verifies it, probes
   each rule here and writes them as drafts. A principle pack imported the
   same way is installed under `whetstone/principles/`.
+- The dashboard's Coverage view shows the parts of the repository no rule
+  reads (by top-level directory and language) and the rules that read
+  nothing. `wh dash --export <dir>` writes the accepted rulebook and its
+  changelog as one static page with no script; the CI scaffold publishes it
+  to GitHub Pages when `WHETSTONE_PAGES` is on.
 
 ### Changed
 

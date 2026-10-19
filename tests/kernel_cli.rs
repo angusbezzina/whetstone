@@ -1614,3 +1614,91 @@ fn the_runner_reads_a_findings_file_and_plans_work_by_class_without_changing_any
     );
     assert_eq!(report["data"]["parked"], serde_json::json!(["sha256:c"]));
 }
+
+#[test]
+fn the_dashboard_shows_where_the_rulebook_is_thin_and_exports_a_static_page() {
+    let repo = Repo::new();
+    repo.write("src/main.rs", "fn main() {}\n");
+    repo.write("docs/guide.md", "Read me.\n");
+    repo.write("web/app.ts", "export const x = 1;\n");
+    repo.commit("source");
+    repo.wh(&[
+        "change",
+        "--kind",
+        "mission",
+        "--content",
+        "Ship <safe> code.",
+    ]);
+    let rust = format!(
+        r#"{{"type":"rule","strength":"must","enforcer":{{"kind":"ast","query":"{UNWRAP_QUERY}","language":"rust"}},"paths":["src/**"]}}"#
+    );
+    repo.wh(&[
+        "change",
+        "--kind",
+        "rule",
+        "--record-id",
+        "rule.no-unwrap",
+        "--content",
+        "No unwrap & no panics.",
+        "--rationale",
+        "A panic is not an error message.",
+        "--definition",
+        &rust,
+    ]);
+    let dead = format!(
+        r#"{{"type":"rule","strength":"should","enforcer":{{"kind":"ast","query":"{UNWRAP_QUERY}","language":"rust"}},"paths":["lib/**"]}}"#
+    );
+    repo.wh(&[
+        "change",
+        "--kind",
+        "rule",
+        "--record-id",
+        "rule.lib-only",
+        "--content",
+        "No unwrap in lib.",
+        "--rationale",
+        "Libraries do not panic.",
+        "--definition",
+        &dead,
+        "--allow-unvalidated",
+    ]);
+    let view = repo.wh_json(&["dash"]);
+    let coverage = &view["data"]["current"]["coverage"];
+    assert_eq!(coverage["covered"], 1, "{coverage}");
+    let uncovered = coverage["uncovered"]
+        .as_array()
+        .expect("uncovered")
+        .iter()
+        .map(|group| {
+            format!(
+                "{} {}",
+                group["directory"].as_str().unwrap_or_default(),
+                group["language"].as_str().unwrap_or_default()
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(uncovered.contains(&"docs/ other".to_string()), "{coverage}");
+    assert!(
+        uncovered.contains(&"web/ typescript".to_string()),
+        "{coverage}"
+    );
+    assert_eq!(
+        coverage["dead_rules"][0]["rule"], "rule.lib-only",
+        "{coverage}"
+    );
+
+    // The page shows the accepted rulebook only, escaped, with no script.
+    let out = tempfile::tempdir().expect("out");
+    let before = repo.wh_json(&["dash", "--export", out.path().to_str().expect("path")]);
+    assert_eq!(before["data"]["counts"]["rules"], 0, "{before}");
+    repo.wh(&["change", "--accept", "--rationale", "First rules."]);
+    let exported = repo.wh_json(&["dash", "--export", out.path().to_str().expect("path")]);
+    assert_eq!(exported["state"], "success", "{exported}");
+    assert_eq!(exported["data"]["counts"]["rules"], 2);
+    assert_eq!(exported["data"]["counts"]["changelog"], 1);
+    let page = std::fs::read_to_string(out.path().join("index.html")).expect("page");
+    assert!(page.contains("Ship &lt;safe&gt; code."));
+    assert!(page.contains("No unwrap &amp; no panics."));
+    assert!(page.contains("First rules."));
+    assert!(!page.contains("<script"));
+}

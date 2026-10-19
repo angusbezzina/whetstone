@@ -96,7 +96,11 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
                 .iter()
                 .map(|decision| format!("What should the project's {decision} be?"))
                 .collect();
-            Some(serde_json::to_value(&view).unwrap_or(Value::Null))
+            let mut value = serde_json::to_value(&view).unwrap_or(Value::Null);
+            if let (Some(book), Some(view)) = (book, value.as_object_mut()) {
+                view.insert("coverage".into(), crate::coverage::coverage(root, book));
+            }
+            Some(value)
         }
         Err(error) => {
             response.state = ServiceState::Unknown;

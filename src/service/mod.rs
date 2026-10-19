@@ -20,6 +20,7 @@ pub(crate) mod check;
 mod compile;
 mod dash;
 mod explain;
+pub(crate) mod export;
 mod init;
 mod packs;
 mod snapshot;

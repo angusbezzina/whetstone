@@ -5,6 +5,7 @@ pub mod catalogue;
 mod cli;
 pub mod compile;
 pub mod contract;
+pub mod coverage;
 pub mod dashboard;
 pub mod dashboard_service;
 pub mod domain;
