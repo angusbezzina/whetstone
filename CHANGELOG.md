@@ -44,6 +44,10 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 - Repeated sweep findings of one rule on one file are numbered in source
   order, so a flag added later in the file never changes an earlier
   finding's fingerprint (and never un-dismisses it in Messo).
+- A check or sweep over a large repository with symlinks inside it
+  succeeds: the report's code digest is Git's tree plus the bytes of the
+  changed and untracked paths, a symlink counts as its link text, and there
+  is no file cap. Paths that escape the project are still refused.
 
 ### Removed
 

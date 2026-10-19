@@ -5,6 +5,7 @@
 use std::fs::File;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -14,7 +15,6 @@ use crate::domain::{ContentDigest, RecordRef};
 pub const REPORT_SCHEMA: &str = "whetstone.check-report.v1";
 const MAX_FINDINGS: usize = 256;
 const MAX_TEXT_BYTES: usize = 2_048;
-const MAX_CODE_FILES: usize = 4_096;
 const MAX_CODE_BYTES: u64 = 64 * 1024 * 1024;
 const SNAPSHOT_SKIP_DIRS: &[&str] = &[
     ".git",
@@ -33,7 +33,8 @@ const SNAPSHOT_SKIP_DIRS: &[&str] = &[
 /// trust, each as a content digest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct SnapshotBinding {
-    /// Content digest of relevant paths and bytes, not merely Git HEAD.
+    /// Git's tree plus the changed paths' bytes, or the walked paths' bytes
+    /// outside Git.
     pub(crate) code_tree: ContentDigest,
     pub(crate) policy: ContentDigest,
     pub(crate) checker_bundle: ContentDigest,
@@ -236,8 +237,12 @@ impl CheckReport {
     }
 }
 
-/// Hash relevant repository paths including uncommitted file bytes. Symlinks
-/// and paths outside the canonical project root are refused.
+/// Identify the code under the relevant paths. In a Git work tree this is
+/// Git's own view, the HEAD tree plus the bytes of every changed or untracked
+/// path under them, so its cost follows the change rather than the
+/// repository; elsewhere the paths are walked. A symlink is its link text, as
+/// Git stores it, and is never followed. Paths outside the canonical project
+/// root are refused.
 pub(crate) fn code_tree_digest(
     project_root: &Path,
     relevant_paths: &[PathBuf],
@@ -248,91 +253,181 @@ pub(crate) fn code_tree_digest(
     if !root.is_dir() || relevant_paths.is_empty() {
         return Err("the code snapshot needs a project directory and at least one path".into());
     }
-    let unsafe_path = |path: &Path| format!("unsafe code path: {}", path.display());
-    let mut files = Vec::new();
+    let mut paths = Vec::new();
     for relative in relevant_paths {
-        if relative.as_os_str().is_empty()
-            || relative.is_absolute()
-            || relative.components().any(|component| {
-                matches!(
-                    component,
-                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
-                )
-            })
-        {
+        if !safe_relative(relative) {
             return Err(unsafe_path(relative));
         }
-        let path = root.join(relative);
-        let metadata = std::fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
-        if metadata.file_type().is_symlink() {
-            return Err(unsafe_path(relative));
-        }
-        let canonical = path.canonicalize().map_err(|error| error.to_string())?;
+        let canonical = root
+            .join(relative)
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
         if !canonical.starts_with(&root) {
             return Err(unsafe_path(relative));
         }
-        if metadata.is_file() {
-            files.push(canonical);
-        } else if metadata.is_dir() {
-            for entry in walkdir::WalkDir::new(&canonical)
-                .follow_links(false)
-                .into_iter()
-                .filter_entry(|entry| {
-                    entry.depth() == 0
-                        || !SNAPSHOT_SKIP_DIRS
-                            .iter()
-                            .any(|name| entry.file_name() == *name)
-                })
-            {
-                let entry = entry.map_err(|error| error.to_string())?;
-                let metadata =
-                    std::fs::symlink_metadata(entry.path()).map_err(|error| error.to_string())?;
-                if metadata.file_type().is_symlink() {
-                    return Err(unsafe_path(entry.path()));
-                }
-                if metadata.is_file() {
-                    files.push(entry.path().to_path_buf());
-                }
-            }
-        } else {
-            return Err(unsafe_path(relative));
-        }
+        paths.push(canonical);
     }
-    files.sort();
-    files.dedup();
-    let mut bytes = 0_u64;
-    for file in &files {
-        let size = file.metadata().map_err(|error| error.to_string())?.len();
-        bytes = bytes
-            .checked_add(size)
-            .ok_or("the code snapshot is too large")?;
-    }
-    if files.len() > MAX_CODE_FILES || bytes > MAX_CODE_BYTES {
-        return Err("the code snapshot exceeds its file or byte bounds".into());
-    }
+    paths.sort();
+    paths.dedup();
     let mut hash = Sha256::new();
-    for file in files {
-        let relative = file.strip_prefix(&root).map_err(|_| unsafe_path(&file))?;
-        let name = relative.to_string_lossy();
-        hash.update((name.len() as u64).to_be_bytes());
-        hash.update(name.as_bytes());
-        hash.update(
-            file.metadata()
-                .map_err(|error| error.to_string())?
-                .len()
-                .to_be_bytes(),
-        );
-        let mut reader = File::open(&file).map_err(|error| error.to_string())?;
-        let mut chunk = [0_u8; 64 * 1024];
-        loop {
-            let read = reader.read(&mut chunk).map_err(|error| error.to_string())?;
-            if read == 0 {
-                break;
-            }
-            hash.update(&chunk[..read]);
-        }
+    match git_toplevel(&root) {
+        Some(top) => digest_git_view(&mut hash, &top, &paths)?,
+        None => digest_walk(&mut hash, &root, &paths)?,
     }
     Ok(digest_of(hash))
+}
+
+fn unsafe_path(path: &Path) -> String {
+    format!("unsafe code path: {}", path.display())
+}
+
+fn safe_relative(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && !path.is_absolute()
+        && !path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+}
+
+fn git(cwd: &Path, args: &[&str]) -> Option<Vec<u8>> {
+    Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(args)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| output.stdout)
+}
+
+fn git_toplevel(root: &Path) -> Option<PathBuf> {
+    let output = git(root, &["rev-parse", "--show-toplevel"])?;
+    PathBuf::from(String::from_utf8_lossy(&output).trim_end_matches('\n'))
+        .canonicalize()
+        .ok()
+        .filter(|top| root.starts_with(top))
+}
+
+/// The HEAD tree id, then each path Git reports as changed against HEAD or
+/// untracked, with its bytes.
+fn digest_git_view(hash: &mut Sha256, top: &Path, paths: &[PathBuf]) -> Result<(), String> {
+    // An unborn branch has no tree; every file is then untracked or staged.
+    let tree = git(top, &["rev-parse", "--verify", "-q", "HEAD^{tree}"]).unwrap_or_default();
+    hash.update(b"git-tree\0");
+    hash.update(&tree);
+    let mut args = vec![
+        "status".to_string(),
+        "--porcelain=v1".into(),
+        "-z".into(),
+        "--untracked-files=all".into(),
+        "--no-renames".into(),
+        "--".into(),
+    ];
+    for path in paths {
+        let relative = path.strip_prefix(top).map_err(|_| unsafe_path(path))?;
+        args.push(if relative.as_os_str().is_empty() {
+            ":(top)".into()
+        } else {
+            format!(":(top,literal){}", relative.to_string_lossy())
+        });
+    }
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let status = git(top, &args).ok_or("git could not report the working tree")?;
+    let mut changed = status
+        .split(|byte| *byte == 0)
+        .filter(|entry| entry.len() > 3)
+        .map(|entry| String::from_utf8_lossy(&entry[3..]).to_string())
+        .collect::<Vec<_>>();
+    changed.sort();
+    changed.dedup();
+    for name in changed {
+        let relative = Path::new(name.trim_end_matches('/'));
+        if !safe_relative(relative) {
+            return Err(unsafe_path(relative));
+        }
+        digest_entry(hash, &name, &top.join(relative))?;
+    }
+    Ok(())
+}
+
+/// Every file and symlink under the paths, skipping tool and build
+/// directories, within the byte bound.
+fn digest_walk(hash: &mut Sha256, root: &Path, paths: &[PathBuf]) -> Result<(), String> {
+    let mut entries = Vec::new();
+    for path in paths {
+        for entry in walkdir::WalkDir::new(path)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|entry| {
+                entry.depth() == 0
+                    || !SNAPSHOT_SKIP_DIRS
+                        .iter()
+                        .any(|name| entry.file_name() == *name)
+            })
+        {
+            let entry = entry.map_err(|error| error.to_string())?;
+            if !entry.file_type().is_dir() {
+                entries.push(entry.into_path());
+            }
+        }
+    }
+    entries.sort();
+    entries.dedup();
+    let mut bytes = 0_u64;
+    for path in entries {
+        let relative = path.strip_prefix(root).map_err(|_| unsafe_path(&path))?;
+        bytes = bytes.saturating_add(digest_entry(hash, &relative.to_string_lossy(), &path)?);
+        if bytes > MAX_CODE_BYTES {
+            return Err("the code snapshot exceeds its byte bound".into());
+        }
+    }
+    Ok(())
+}
+
+/// One named entry: a file's bytes, a symlink's link text, or a marker for
+/// a directory (a nested repository) or a deleted path. Returns the file
+/// bytes read.
+fn digest_entry(hash: &mut Sha256, name: &str, path: &Path) -> Result<u64, String> {
+    hash.update((name.len() as u64).to_be_bytes());
+    hash.update(name.as_bytes());
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            hash.update(b"\0deleted");
+            return Ok(0);
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    if metadata.file_type().is_symlink() {
+        let target = std::fs::read_link(path).map_err(|error| error.to_string())?;
+        let target = target.to_string_lossy();
+        hash.update(b"\0link");
+        hash.update((target.len() as u64).to_be_bytes());
+        hash.update(target.as_bytes());
+        return Ok(0);
+    }
+    if !metadata.is_file() {
+        hash.update(b"\0other");
+        return Ok(0);
+    }
+    hash.update(b"\0file");
+    hash.update(metadata.len().to_be_bytes());
+    let mut reader = File::open(path).map_err(|error| error.to_string())?;
+    let mut chunk = [0_u8; 64 * 1024];
+    let mut read_bytes = 0_u64;
+    loop {
+        let read = reader.read(&mut chunk).map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        read_bytes += read as u64;
+        hash.update(&chunk[..read]);
+    }
+    Ok(read_bytes)
 }
 
 fn bounded(value: &str) -> String {
@@ -466,17 +561,71 @@ mod tests {
     }
 
     #[test]
-    fn the_code_digest_follows_content_and_refuses_escapes() {
+    fn the_walked_digest_follows_content_and_link_text_and_refuses_escapes() {
         let temp = tempfile::tempdir().expect("temp");
         std::fs::write(temp.path().join("lib.rs"), "pub fn one() {}\n").expect("write");
+        std::os::unix::fs::symlink("lib.rs", temp.path().join("alias.rs")).expect("link");
         let paths = vec![PathBuf::from(".")];
         let first = code_tree_digest(temp.path(), &paths).expect("digest");
         assert_eq!(first, code_tree_digest(temp.path(), &paths).expect("again"));
         std::fs::write(temp.path().join("lib.rs"), "pub fn two() {}\n").expect("write");
+        let second = code_tree_digest(temp.path(), &paths).expect("changed");
+        assert_ne!(first, second);
+        std::fs::remove_file(temp.path().join("alias.rs")).expect("unlink");
+        std::os::unix::fs::symlink("other.rs", temp.path().join("alias.rs")).expect("relink");
         assert_ne!(
-            first,
-            code_tree_digest(temp.path(), &paths).expect("changed")
+            second,
+            code_tree_digest(temp.path(), &paths).expect("relinked"),
+            "a symlink is its link text"
         );
         assert!(code_tree_digest(temp.path(), &[PathBuf::from("../outside")]).is_err());
+    }
+
+    fn git_ok(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .expect("git");
+        assert!(output.status.success(), "git {args:?}");
+    }
+
+    #[test]
+    fn the_git_digest_follows_the_tree_and_the_changed_bytes() {
+        let temp = tempfile::tempdir().expect("temp");
+        let root = temp.path();
+        let outside = tempfile::tempdir().expect("outside");
+        git_ok(root, &["init", "-q"]);
+        std::fs::create_dir(root.join("src")).expect("src");
+        std::fs::write(root.join("src/lib.rs"), "pub fn one() {}\n").expect("write");
+        std::os::unix::fs::symlink("src", root.join("alias")).expect("link");
+        std::os::unix::fs::symlink(outside.path(), root.join("away")).expect("link out");
+        let paths = vec![PathBuf::from(".")];
+        let untracked = code_tree_digest(root, &paths).expect("unborn");
+        git_ok(root, &["add", "."]);
+        git_ok(
+            root,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-qm",
+                "start",
+            ],
+        );
+        let clean = code_tree_digest(root, &paths).expect("clean");
+        assert_ne!(untracked, clean);
+        assert_eq!(clean, code_tree_digest(root, &paths).expect("again"));
+        std::fs::write(root.join("src/lib.rs"), "pub fn two() {}\n").expect("write");
+        let dirty = code_tree_digest(root, &paths).expect("dirty");
+        assert_ne!(clean, dirty);
+        std::fs::write(root.join("src/new.rs"), "pub fn three() {}\n").expect("write");
+        assert_ne!(dirty, code_tree_digest(root, &paths).expect("untracked"));
+        assert!(code_tree_digest(root, &[PathBuf::from("alias")]).is_ok());
+        assert!(code_tree_digest(root, &[PathBuf::from("away")]).is_err());
+        assert!(code_tree_digest(root, &[PathBuf::from("../outside")]).is_err());
     }
 }

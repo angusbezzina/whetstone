@@ -435,3 +435,60 @@ fn a_rules_sweep_class_round_trips_and_sweep_findings_are_stable_and_below_must(
         "{envelope}"
     );
 }
+
+#[test]
+fn a_sweep_covers_a_large_repository_with_in_repository_symlinks() {
+    if !have_bd() {
+        return;
+    }
+    let temp = repository();
+    let root = temp.path();
+    let bulk = root.join("bulk");
+    std::fs::create_dir(&bulk).expect("bulk");
+    for index in 0..4_200 {
+        std::fs::write(bulk.join(format!("{index}.txt")), "x\n").expect("write");
+    }
+    std::fs::write(root.join("src/app.py"), "print('one')\n").expect("write");
+    std::os::unix::fs::symlink("src", root.join("alias")).expect("directory link");
+    std::os::unix::fs::symlink("README.md", root.join("NOTES.md")).expect("file link");
+    git(root, &["add", "."]);
+    git(root, &["commit", "-qm", "bulk"]);
+    let drafted = draft_rule(
+        root,
+        "print",
+        "rule.print-should",
+        "Prefer logging to print.",
+        json!({
+            "type": "rule",
+            "strength": "should",
+            "enforcer": {
+                "kind": "ast",
+                "language": "python",
+                "query": "((call function: (identifier) @f) @match (#eq? @f \"print\"))",
+            },
+        }),
+        &[],
+    );
+    accept(
+        root,
+        drafted["data"]["proposal"]["id"]
+            .as_str()
+            .expect("proposal"),
+    );
+
+    let swept = run(root, &["check", "--sweep"]);
+    assert_eq!(
+        swept.status.code(),
+        Some(0),
+        "{}\n{}",
+        String::from_utf8_lossy(&swept.stdout),
+        String::from_utf8_lossy(&swept.stderr)
+    );
+    let findings: Vec<Value> = serde_json::from_slice(&swept.stdout).expect("findings");
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding["responsibility"] == "rule.print-should"),
+        "{findings:?}"
+    );
+}
