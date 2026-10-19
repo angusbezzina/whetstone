@@ -1,110 +1,27 @@
 # Whetstone
 
-Whetstone helps people hand more work to coding agents and trust the result.
-Your mission, the [pstack](https://github.com/cursor/plugins/tree/main/pstack)
-principles you pick and the codebases you admire become a short list of agreed
-rules. Every agent and every person, whatever tool they use, is briefed on
-those rules before writing code, checked against them afterwards, and told
-when to stop and ask.
+Whetstone is a repository's rulebook. It sits between an `AGENTS.md` file
+(prose an agent may read, and nothing enforces) and a linter (enforced, with
+no reason given and nothing an agent can act on). A Whetstone rule is
+enforced and carries its rationale, and it comes with an agent protocol:
+every command answers in one JSON envelope, and a sweep writes findings any
+host can work.
 
-It targets the ways delegated work goes wrong: work that falls short, errors,
-missed existing code, code or tests nobody asked for, drift from the design
-system, and agents guessing instead of asking.
-
-## How it works
-
-1. **Agree the rules once.** `wh init` installs or detects Beads,
-   offers the starter rules the repository can hold, and turns your mission
-   and principles into proposed rules. You accept each one in the dashboard.
-   Accepted rules are records in Beads.
-2. **Enforce each rule mechanically.** Every rule has one strength (must
-   blocks the gate; should flags and becomes a sweep finding) and one
-   mechanical enforcer (AST, linter, formatter,
-   test, validator) scored against the rule's examples.
-3. **Brief before building, check before shipping.** Agents run pstack's
-   `/how`, `/why` and `/blast-radius` first. Checks run at git pre-commit
-   (fast, staged files), pre-push (the full `wh check`) and as a required CI
-   status.
-
-The public surface is exactly six commands:
-
-| Command | Purpose |
-| --- | --- |
-| `wh init` | Set up: install what's missing, agree the mission, principles and rules, wire the hooks and CI. |
-| `wh dash` | See the rules and the full decision log, and accept or reject drafts. |
-| `wh change` | Propose a change to the mission, a principle or a rule as a reviewable draft. |
-| `wh check` | Check work against the rules and return failures to the worker. |
-| `wh pull` | Receive the team's shared agreement without touching your drafts. |
-| `wh push` | Share an exact, confirmed selection of accepted records. |
-
-The direction is recorded in [planning/direction.md](planning/direction.md) and
-tracked in Beads under the epic `whetstone-ppq`. That epic supersedes the
-earlier `whetstone-k5r` plan.
-
-## Where it stands today
-
-This is a pre-release. The six commands work against the Beads record store
-and the plan in epic `whetstone-ppq` is built:
-
-- **Setup.** `wh init --action setup` detects Beads, shows the exact install
-  command, and installs `bd` 1.3.0 or later after one confirmation.
-  Onboarding asks for a one-line mission, offers the principles of the
-  catalogue compiled into `wh` (pstack's) and the prove-it-works starter
-  rule when the repository has a test command.
-- **Rules.** One strength and one enforcer per rule
-  ([rule schema](references/rulebook.schema.json)): AST, lint, formatter, test,
-  or validator. Earlier standards are read as rules.
-- **Gates.** `wh init --action wire --hooks` installs git pre-commit (staged
-  content, mechanical rules only) and pre-push (`wh check --base <remote>`)
-  hooks, chaining any existing hook. `--ci` writes the `whetstone/policy` required status workflow.
-- **Sweeps.** `wh check --sweep` runs the rules below must and prints one
-  finding per flag (`findings.json`) for a night sweep's controller.
-
-Still waiting on the owner: the milestone walkthroughs, tracked under
-`whetstone-ppq.10`.
-
-```bash
-wh init                                                     # guided onboarding in the dashboard
-wh init --json                                              # inspect: missing steps, starters, tools
-wh init --action setup --yes                                # install bd if missing
-wh init --action agree --mission "..." --principle prove-it-works --starter all \
-  --expected-revision 0 --resume <token>
-wh init --action wire --hooks --ci
-wh change --kind rule --record-id rule.no-todo --content "..." --rationale "..." \
-  --definition '{"type":"rule","strength":"should","enforcer":{"kind":"ast","query":"(comment) @match","language":"rust"}}'
-wh change --accept --rationale "..."                        # commit the drafted rulebook edits
-wh check --staged                                           # what pre-commit runs
-wh check --base origin/main                                 # what pre-push runs
-wh check --sweep                                            # findings.json for a night sweep
-wh dash                                                     # local dashboard
-wh dash --trail                                             # the rulebook's Git log as a TSV trail
-wh push                                                     # review the exact package, then --confirm <token>
-wh pull                                                     # receive; never executes or accepts
-```
-
-Machine clients read `whetstone.command-response.v1`
-([schema](references/command-response-v1.schema.json)). Requests with
-`--json` never prompt. They return explicit states such as `needs_input`,
-`needs_decision`, `stale`, `conflict`, `unknown` or `unavailable`, along with
-the permitted next actions.
-
-### Storage
-
-Records live in Beads (`bd` 1.3.0 or later, embedded Dolt; no `dolt` binary).
-Each record revision is a bead whose metadata carries the typed body, digest,
-supersedes reference and idempotency key; lifecycle is a `wh:lifecycle:*`
-label. Drafts stay in a private Beads database under
-`.git/whetstone/` that never has a remote. `wh push` copies a confirmed
-package of accepted records into the repository's shared Beads database and
-runs `bd dolt push`. `wh pull` runs `bd dolt pull`. Policy is never committed
-to the code branch: the team remote carries Beads data in `refs/dolt/data`.
-
-### Developer gates
-
-Whetstone checks itself: `scripts/self-check.sh` runs `wh check --ci` over
-this repository against the must rules in its committed
-`whetstone/rulebook.json`. It runs with the other gates in [AGENTS.md](AGENTS.md) before every
-push, in CI and in the release job.
+- **The rulebook is a file.** `whetstone/rulebook.json` in the repository
+  holds the mission, the chosen principles and the rules
+  ([schema](references/rulebook.schema.json)). A revision is a commit, the
+  decision log is Git history, and a rule change is a pull request.
+- **Every rule is enforced mechanically.** A rule has one strength and one
+  enforcer. `must` blocks the gate; `should` reports and never blocks. The
+  enforcer is one of `ast` (a tree-sitter query), `lint` (a linter code),
+  `formatter`, `test` or `validator` (a command).
+- **The gates are Git's and CI's.** Pre-commit checks the staged files,
+  pre-push checks what is being pushed, and CI runs the required status
+  `whetstone/policy`. Every tool that commits passes through them.
+- **Hosts act on findings.** `wh check --sweep` runs the rules below must and
+  prints `findings.json`. A host (Virgil's Messo, a GitHub Action, an agent
+  session) reads it and decides what to do. Whetstone keeps no store and no
+  host-specific code; hosts own memory, tasks and the agent.
 
 ## Install
 
@@ -112,26 +29,114 @@ Install the latest release (it also links `wh`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/angusbezzina/whetstone/main/install.sh | sh
-wh --help   # lists init, dash, change, check, pull and push
+wh --help   # lists init, dash, change and check
 ```
 
-Releases before v0.13.0 are the previous product. Or build from source:
+Or build from source:
 
 ```bash
 cargo build --release
 mkdir -p ~/.local/bin
 cp target/release/whetstone ~/.local/bin/whetstone
 ln -sf ~/.local/bin/whetstone ~/.local/bin/wh
-wh --help   # lists init, dash, change, check, pull and push
 ```
 
-Requirements: `bd` 1.3.0 or later.
+Whetstone needs `git` and nothing else. Releases before v0.13.0 are an
+earlier product: if `wh --help` lists commands such as `extract`, `pack` or
+`mcp`, an old copy is ahead on your `PATH` (check `which -a wh`).
 
-An earlier install of the previous product also answers to `wh` and would open
-its terminal UI instead. If `wh --help` lists commands such as `extract`,
-`pack` or `mcp`, the copy above did not replace it (check `which -a wh`).
+## Four commands
+
+| Command | Purpose |
+| --- | --- |
+| `wh init` | Inspect the repository, draft the mission, principles and starter rules, and wire the Git hooks and the CI check. |
+| `wh dash` | Open the local dashboard: the rulebook, the drafts, and the changelog from Git. |
+| `wh change` | Draft an edit to the rulebook, retire a rule, then accept (commit) or withdraw the drafts. |
+| `wh check` | Run the rules and return findings, at pre-commit, pre-push, CI or as a sweep. |
+
+Bare `wh` is read-only orientation. Every command takes `--json` and then
+answers with `whetstone.command-response.v1`
+([schema](references/command-response-v1.schema.json)): a `state`
+(`success`, `violated`, `unknown`, `unavailable`, `needs_input`,
+`needs_decision`, `stale` or `conflict`), a summary, evidence, blocking
+questions and the permitted next actions. A request with `--json` never
+prompts.
+
+## A first rulebook
+
+```bash
+wh init                     # guided onboarding in the dashboard
+wh init --json              # or inspect from the terminal: steps, starters, catalogue
+wh init --action agree --mission "What this project exists to do." \
+  --principle prove-it-works --starter all
+wh change --accept --rationale "Adopt the first rulebook."
+wh init --action setup      # install the pre-commit and pre-push hooks and the CI workflow
+```
+
+`--action agree` drafts the mission, the principles you pick (from the
+catalogue compiled into `wh`, or `--custom-principle` in your own words) and
+the starter rules into `whetstone/rulebook.json`. Drafts are edits in the
+working tree; `wh change --accept` commits the file, and only it.
+`--action setup` is `--action wire --hooks --ci`; the hooks run the `wh` on
+your `PATH` and chain any hook that was there before. Every action takes
+`--dry-run`.
+
+## Changing a rule
+
+```bash
+wh change --kind rule --record-id rule.no-dbg \
+  --content "Source has no dbg! macro." \
+  --rationale "Debug output is unfinished work." \
+  --definition '{"type":"rule","strength":"must","enforcer":{"kind":"ast","language":"rust","query":"((macro_invocation macro: (identifier) @name) @match (#eq? @name \"dbg\"))"},"paths":["src/**"]}'
+wh change --retire rule.no-dbg --rationale "Clippy's dbg_macro lint covers it."
+wh change --accept --rationale "Why these edits."   # commit whetstone/rulebook.json
+wh change --withdraw        # restore the file's last commit
+```
+
+A rule's definition also takes its sweep fields: `sweep` (`discuss`, the
+default, `confirm_first` or `draft_pr`: how far a host may go with a
+finding), `sweep_priority` (0, most urgent, to 4; default 2) and
+`sweep_unsure` (paths or a pattern, with a reason, where the rule cannot
+decide). A retired rule leaves `rules` and is listed under `retired` with its
+reason. Add `--preview` to any change to see its exact effect without
+writing anything. On a team, the accepted commit goes through a pull request like any
+other change, and the reviewers are whoever reviews that file.
+
+## Checking
+
+```bash
+wh check                    # every rule over the working tree
+wh check --staged           # what pre-commit runs: AST rules on the staged index
+wh check --base origin/main # what pre-push runs: the change since the base
+wh check --ci --base "$BASE"  # the required CI check, against the committed rulebook only
+wh check --rule rule.no-dbg # one rule
+wh check --dry-run          # which rules and exact commands would run
+wh check --sweep > findings.json
+```
+
+A must finding fails the check; a should finding is reported and never
+blocks. Unknown or unavailable evidence (a query that compiles for no
+language, a missing tool, a timeout) is never a pass. Each failure names its
+repair route and the command that rechecks it.
+
+`--sweep` runs only the rules below must and prints a JSON array with one
+finding per flag, one per line: `fingerprint` (sha256 of the rule, the
+repository's origin and the subject, stable across runs), `subjectDigest`,
+`class`, `priority`, `title`, `responsibility` (the rule) and, where
+`sweep_unsure` covers the flag, `unsure` with its reason. The CI workflow
+uploads it as the `scan-findings` artifact on every push to main.
+
+## The dashboard and the decision log
+
+`wh dash` serves a dependency-free page on localhost: Home (what needs you,
+the rules in force), Rules (mission, principles, must and should rules, each
+accepted, edited or new against the last commit, with Edit, Retire, Accept
+and Withdraw) and Changelog (every commit that touched the rulebook, with the
+retired entries). Every write is a `wh change`. `wh dash --trail` prints the
+same log as a TSV trail (ts, phase, decision, why, evidence, result);
+`wh dash --json` returns the rulebook's state and revision for agents.
 
 ## Contributing
 
-Use Beads for work tracking and read [AGENTS.md](AGENTS.md) before changing the
-project. All eight gates in that file must pass before pushing.
+Read [AGENTS.md](AGENTS.md) before changing the project. The three gates in
+that file run in the pre-push hook and in CI and must pass before every push.

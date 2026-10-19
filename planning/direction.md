@@ -1,150 +1,120 @@
-# Direction: the delegation plan
+# Direction: rules as files
 
-Adopted by the owner on 2026-09-27. The work is tracked in Beads under the epic
-`whetstone-ppq`, which supersedes `whetstone-k5r`. This file records the
-direction and the fixed decisions. It is not a backlog: tasks, order and
-acceptance live in Beads.
+Decided by the owner on 2026-10-19. This file records the direction and the
+fixed decisions. It is not a backlog: tasks, order and acceptance live in the
+project's tracker.
 
 ## Goal
 
-People should be able to hand more work to agents without the usual failures:
-work that falls short, errors, missed existing code, unneeded code or tests,
-design-system drift, and guessing instead of asking. The solution has to be,
-in priority order, simple, customisable, versatile, strong and scalable.
+A team that delegates work to coding agents needs rules that hold whatever tool
+writes the code. Prose in `AGENTS.md` is read but never enforced; a linter
+is enforced but gives no reason and nothing an agent can act on. Whetstone
+is the piece between them: enforced rules, each with a rationale, and an
+agent protocol any host can consume. The solution has to be, in priority
+order, simple, customisable, versatile, strong and scalable.
 
 ## The plan
 
-1. **Agree the rules once.** `wh init` installs or detects Beads,
-   offers three starter rules, and turns the owner's mission and chosen
-   pstack principles into proposed rules. The owner accepts
-   each one. Accepted rules are Beads records.
-2. **Enforce each rule the cheapest reliable way.** Each rule has one
-   strength (must, should or advisory) and exactly one enforcer:
-   - a mechanical check (native linter, AST, formatter, test, validator,
-     drive proof, design tokens, public surface), preferred whenever it can
-     hold the rule;
-   - a literal yes/no question for Jev (TypeSafe System One), defined by the
-     rule's labelled examples and scored by `wh eval`;
-   - a review by pstack's `/interrogate` or a named person.
-3. **Brief before building, prove before shipping.** Agents run pstack's
-   `/how`, `/why` and `/blast-radius` and record the brief. Checks run in
-   three layers:
-   - git pre-commit: mechanical checks on staged files, within about two
-     seconds;
-   - pre-push: the full `wh check`, including Jev questions, review
-     attestations and fresh proofs;
-   - CI: a required status check.
-
-   The Claude Code Stop hook stays as the fast repair loop.
-4. **Raise a hand without stalling.** Any of these triggers makes the agent
-   file `bd human` and take other ready work:
-   - low Jev confidence;
-   - a second failed repair on the same flag;
-   - a must-rule area;
-   - a vague spec.
-5. **Get stricter and cheaper over time.**
-   - Flags are accepted or dismissed, giving each rule a false-flag rate.
-   - Noisy rules are proposed for demotion.
-   - Recurring Jev flags are proposed as mechanical checks.
-   - `/reflect` and `maintain-verification-skill` edits come back as drafts.
-
-   The owner accepts every change. Nothing learns on its own.
-
-The interactive version of this plan, including the gate simulator and the
-comparison with existing approaches, is at
-https://claude.ai/artifact/J9Z4jFMRZMizJGVRDHJE2S (private to the owner).
+1. **Write the rulebook once.** `wh init` drafts the mission, the principles
+   the owner picks from the catalogue (or writes) and the starter rules the
+   repository can hold into `whetstone/rulebook.json`. The owner commits it
+   with `wh change --accept`.
+2. **Enforce every rule mechanically.** Each rule has one strength and one
+   enforcer:
+   - `must` blocks the gate; `should` reports, never blocks, and becomes a
+     sweep finding;
+   - the enforcer is `ast` (a tree-sitter query), `lint` (a linter and the
+     code it reports), `formatter`, `test` or `validator` (a command).
+3. **Gate where every tool passes.** Every tool commits and pushes through
+   Git, so the gates sit there:
+   - pre-commit: `wh check --staged`, AST rules on the staged index;
+   - pre-push: `wh check` for the commits being pushed;
+   - CI: the required status `whetstone/policy`, `wh check --ci --base`,
+     which reads only the committed rulebook.
+4. **Give findings to whatever works them.** `wh check --sweep` runs the
+   rules below must and prints `findings.json`. A host decides what to do
+   with each finding, within the reach the rule's sweep class allows.
 
 ## Fixed decisions
 
 ### Public surface
-Six commands: `wh init`, `wh dash`, `wh change`, `wh check`, `wh pull`,
-`wh push`, with no hidden commands. New behaviour goes into these families,
-never into new top-level commands.
+Four commands: `wh init`, `wh dash`, `wh change`, `wh check`, with no hidden
+commands. New behaviour goes into these four, never into new top-level
+commands. Bare `wh` is read-only orientation; `--json` is the agent
+interface.
 
-### Records
-Beads is the only record store. Rules change through `wh change` and are
-never edited by hand.
+### The rulebook is the store
+`whetstone/rulebook.json` (`whetstone.rulebook.v1`) holds the mission, the
+principles and the rules; retired entries are listed with their reasons.
+Whetstone keeps no other store.
+- A revision is the commit that last touched the file.
+- A rule's digest is the sha256 of its canonical JSON.
+- The decision log is the file's Git history (`wh dash --trail`, the
+  dashboard's Changelog).
+- A draft is an uncommitted edit; accepting is `wh change --accept`, which
+  commits the file and only it; withdrawing restores its last commit.
+- Team sync is Git, and a rule change on a team is a pull request.
 
-### Layers
-- The skill owns judgment.
-- The driver owns driving and every network call, including Jev.
-- The Rust kernel owns validation, state, check execution and receipts, and
-  stays deterministic.
+### Rules
+- One strength: `must` or `should`.
+- One mechanical enforcer: `ast`, `lint`, `formatter`, `test`, `validator`.
+- Optional `paths` scope the rule.
+- Sweep fields: `sweep` (`discuss`, `confirm_first`, `draft_pr`; absent is
+  discuss), `sweep_priority` (0 most urgent to 4; default 2) and
+  `sweep_unsure` (paths or a pattern, with a reason). Only a person widens a
+  sweep class.
+- Unknown, stale, skipped or unavailable evidence is never a pass, and a
+  check where no must rule ran is not green.
 
-### Jev
-- Jev can raise a flag but can never pass a must rule. It reports
-  `unavailable` when offline or without `TYPESAFE_API_KEY`.
-- Receipts pin the model version and carry the question and input digests.
-- New Jev rules start in shadow mode, with answers recorded but not
-  enforced, until `wh eval` shows enough precision and the owner accepts the
-  promotion.
+### Findings
+The contract does not change shape. One finding per flag:
+`fingerprint` (sha256 of rule, repository origin and subject, numbered in
+source order for repeats), `subjectDigest`, `class`, `priority`, `title`,
+`responsibility` and, where `sweep_unsure` covers the flag, `unsure` with
+its reason.
 
-### Data sent to TypeSafe
-Owner decision, 2026-09-27: rule and diff text may be sent to TypeSafe.
-- Only the unit a question needs is sent (one string, function or hunk).
-- Users can redact by path glob or pattern.
-- A rule can be marked local-only, which skips Jev and routes the rule to
-  review.
-- Receipts record when redaction happened.
-- API keys never reach records, receipts or logs.
-
-### pstack
-Whetstone uses pstack's `how`, `why`, `blast-radius`, `interrogate`,
-`reflect` and `maintain-verification-skill` and never reimplements them.
-Whetstone owns its verification-skill format. pstack's four-heading layout is
-a projection and import format, covered by a round-trip test in `wh eval`.
+### Hosts
+A host is anything that acts on the rulebook: Virgil's Messo, a GitHub
+Action, an agent session. It consumes the rulebook file, `findings.json` and
+the `whetstone.command-response.v1` envelope. Whetstone contains no
+host-specific code. Hosts own memory, tasks and the agent; a host that keeps
+notes about a rule cites it by its path and commit.
 
 ### Team review
 Team review uses the platform's own branch protection plus the required
-`wh check` status. Whetstone keeps no second trust root, activation state
-machine or authority file.
-
-### Grok Bot
-Grok Bot (pstack's `/make-bot-ui`) is optional. Without it, dashboard buttons
-queue a Beads task that any agent can pick up.
+`whetstone/policy` status. Protect `whetstone/rulebook.json` and the CI
+workflow with CODEOWNERS. Whetstone keeps no second trust root, activation
+state or authority file.
 
 ## Removed from direction
 
-The following are removed from direction, and their code was removed in
-`whetstone-ppq.2` (stored records of these kinds are read as retired and can
-never be written):
+These are out of the product and must not come back:
 
-- the eight-decision onboarding interview;
-- values, key metrics and outcome observations as record kinds;
-- policy exceptions;
-- scopes and deployment environments;
-- PR-manifest activation (`wh push --propose`, `wh change --activate`,
-  `authority.json`);
-- the repair-host socket protocol and repair-session flags;
-- mandates, and the old M3 and M4 plans.
-
-Existing values and philosophy records become proposed principles. Nothing in
-Beads or Git history is rewritten.
+- a record store of any kind, its adapters and its sync commands;
+- judgment enforcers (model questions and reviews) and their receipts;
+- the generated verification skill and its app automation;
+- memory records and requests for help raised by agents;
+- agent-host hook loops (the Git hooks are the loop every tool passes
+  through);
+- the rule-file scanner and its hidden developer commands;
+- the eight-decision onboarding, values and metrics, exceptions, scopes,
+  pull-request manifest activation and mandates.
 
 ## Evidence that it works
 
 | Measure | Target |
 | --- | --- |
-| Time to first agreed rule | Under five minutes on a clean repo |
+| Time to a first committed rulebook | Under five minutes on a clean repo |
 | Seeded violations missed | Zero on must rules |
 | False flags | Under one per ten commits per rule |
-| Consistency across tools | Same verdict on one task in Claude Code, Codex and Cursor |
-| Repair turns and raised hands | Tracked per task |
-| Jev cost | Tracked per check |
+| Consistency across tools | Same verdict on one change whatever agent wrote it |
 
-Three milestones in the epic prove the plan in order:
+## Authoritative references
 
-1. solo alpha on this repository;
-2. judgment rules;
-3. team and tools.
-
-## Still-authoritative references
-
-- [skill-cli-boundary.md](skill-cli-boundary.md): the skill, driver, kernel
-  and storage boundary, and the pstack interop contract.
-- [direction-demo/index.html](direction-demo/index.html): the dashboard
-  reference. Its visual world is current. Its onboarding and Foundations
-  content predate this plan and are replaced by task `whetstone-ppq.1.3`.
-- `PRODUCT.md` and `DESIGN.md`: product truth and design tokens.
-- Superseded history is in [archive/](archive/), including the storage and
-  trust-boundary ADRs and the R0 prune inventory.
+- [skill-cli-boundary.md](skill-cli-boundary.md): what Whetstone owns and
+  what hosts own, the gates and the contracts between them.
+- [../references/rulebook.schema.json](../references/rulebook.schema.json)
+  and
+  [../references/command-response-v1.schema.json](../references/command-response-v1.schema.json):
+  the file and the envelope.
+- `PRODUCT.md` and `DESIGN.md`: product truth and the dashboard's design.

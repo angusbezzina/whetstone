@@ -1,7 +1,7 @@
 {
   "schema": "whetstone.rulebook.v1",
   "mission": {
-    "statement": "Demonstrate Whetstone annotations."
+    "statement": "Give every repository a rulebook in a committed file: rules with a rationale, enforced mechanically at pre-commit, pre-push and CI, with findings any agent or host can act on."
   },
   "principles": [],
   "rules": [

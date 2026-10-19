@@ -23,7 +23,10 @@ fn whetstones_own_rulebook_holds_its_three_shared_must_rules() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let text = std::fs::read_to_string(root.join(RULEBOOK_PATH)).expect("rulebook");
     let book = rulebook::parse(&text, Revision::Uncommitted).expect("Whetstone's rulebook loads");
-    assert_eq!(book.mission.statement, "Demonstrate Whetstone annotations.");
+    assert_eq!(
+        book.mission.statement,
+        "Give every repository a rulebook in a committed file: rules with a rationale, enforced mechanically at pre-commit, pre-push and CI, with findings any agent or host can act on."
+    );
     assert!(book.principles.is_empty());
     let ids = book
         .rules

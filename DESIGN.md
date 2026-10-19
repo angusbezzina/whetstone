@@ -302,12 +302,6 @@ components:
     textColor: "{colors.foreground}"
     rounded: "{rounded.radius}"
     padding: "1rem 1.1rem"
-  board-header:
-    backgroundColor: "{colors.muted}"
-    textColor: "{colors.ghost}"
-    typography: "{typography.label}"
-    rounded: "{rounded.radius}"
-    padding: "0.4rem 0.6rem"
   command-chip:
     backgroundColor: "{colors.muted}"
     textColor: "{colors.foreground}"
@@ -347,9 +341,6 @@ components:
   state-draft:
     textColor: "{colors.ghost}"
     typography: "{typography.label}"
-  tally:
-    textColor: "{colors.foreground}"
-    typography: "{typography.figure}"
   filter-word:
     backgroundColor: "transparent"
     textColor: "{colors.muted-foreground}"
@@ -367,20 +358,19 @@ components:
 
 # Design System: Whetstone
 
-<!-- Recorded from assets/dashboard/app.css, views.css and index.html on 2026-09-14 after the owner chose the Struck Cathode Gauze world (surface brief: .impeccable/surfaces/planning-direction-demo-index-html.md, catalog id operate-b-struck-cathode-gauze) and the finish review shipped. It replaces the Engineering Journal (ruled paper, blue accent) recorded on 2026-09-10; nothing from that world survives. Token names are the ShadCN vocabulary declared on :root (--background, --foreground, --card, --muted, --muted-foreground, --border, --input, --ring, --primary, --primary-foreground, --primary-hover, --destructive, --radius) plus the product's extensions (--ghost, --struck, --halo, --pass, --warn, --fail, --mesh, --display, --sans, --mono). The light values are canonical; the dark-* keys are the same tokens as redefined under prefers-color-scheme: dark (guarded :root:not([data-theme="light"])) and again under :root[data-theme="dark"]. The build has no transitions, so no easing or duration token exists; --destructive is declared for vocabulary parity and the danger button reads --struck instead. -->
+<!-- Recorded from assets/dashboard/app.css, views.css and index.html on 2026-09-14 after the owner chose the Struck Cathode Gauze world (catalog id operate-b-struck-cathode-gauze) and the finish review shipped. It replaces the Engineering Journal (ruled paper, blue accent) recorded on 2026-09-10; nothing from that world survives. Token names are the ShadCN vocabulary declared on :root (--background, --foreground, --card, --muted, --muted-foreground, --border, --input, --ring, --primary, --primary-foreground, --primary-hover, --destructive, --radius) plus the product's extensions (--ghost, --struck, --halo, --pass, --warn, --fail, --mesh, --display, --sans, --mono). The light values are canonical; the dark-* keys are the same tokens as redefined under prefers-color-scheme: dark (guarded :root:not([data-theme="light"])) and again under :root[data-theme="dark"]. The build has no transitions, so no easing or duration token exists; --destructive is declared for vocabulary parity and the danger button reads --struck instead. -->
 
-> **Content note (2026-09-28).** The tokens, marks, type, spacing and component
+> **Content note (2026-10-19).** The tokens, marks, type, spacing and component
 > rules below remain binding. The component and layout sections describe the
-> dashboard built for the delegation plan (`planning/direction.md`, Beads
-> `whetstone-ppq.1.3` and `whetstone-ppq.3.8`): three views (Home, Rules,
-> Changelog), onboarding with tools, mission, principles, starter rules
-> and gates, and rules grouped by strength.
+> dashboard over `whetstone/rulebook.json` (`planning/direction.md`): three
+> views (Home, Rules, Changelog), onboarding with mission, principles,
+> starter rules and gates, and rules grouped by strength.
 
 ## Overview
 
 **Creative North Star: "The Struck Cathode Gauze"**
 
-Whetstone's dashboard is a single unframed plane on which everything the project knows is present at once, and almost all of it is quiet. Rules, principles, checks and tabs sit as ghosts in the muted tiers of one neutral ramp. The one thing that is live is struck forward in the logo's orange: the selected view, the item that needs you, a failing rule, the one primary action. In dark mode the struck thing carries a halo, a soft orange glow that decays over one beat when it lands; in light mode the halo is transparent and the orange alone carries the emphasis. Nothing else on the page is lit, so the eye finds the live thing without searching.
+Whetstone's dashboard is a single unframed plane on which everything the project knows is present at once, and almost all of it is quiet. Rules, principles, drafts and tabs sit as ghosts in the muted tiers of one neutral ramp. The one thing that is live is struck forward in the logo's orange: the selected view, the item that needs you, a failing rule, the one primary action. In dark mode the struck thing carries a halo, a soft orange glow that decays over one beat when it lands; in light mode the halo is transparent and the orange alone carries the emphasis. Nothing else on the page is lit, so the eye finds the live thing without searching.
 
 There is no box, rule, divider, border or shadow anywhere. Grouping is done by spacing and by depth: a section is a condensed display heading with generous air above it, entries are spaced lines beneath, and anything being worked on or inspected sits on a slightly deeper plane. The column is 48rem centred; in dark mode a fine bronze gauze runs in the margins outside it and never enters the column. Both lights share every selector, size, weight and radius; only the tokens change, and every text pair clears 4.5:1 in both.
 
@@ -411,7 +401,7 @@ Two hues: one neutral ramp on a white or near-black plane, and the logo orange, 
 - **Foreground** (`--foreground`, #0a0a0a light / #eae6dd dark): body, names, the view title, section headings, the WHET half of the wordmark, values in the header state cluster, and the pass mark. 19.8:1 light, 15.8:1 dark.
 - **Background** (`--background`, #fff light / #0a0b0e dark): the column, the sticky tab row, the brief block and diff cells inside a deeper plane, and the text of an active button.
 - **Card** (`--card`, #f4f3ef light / #141619 dark): the plane for anything being worked on: the editor form and its review, an opened checks detail, a notice, an exact-record block in the changelog, the skip link.
-- **Muted** (`--muted`, `--input`, #efeeea light / #15171c dark): the shallower plane: default and hover button fills, input fields, the command chip, the board header band.
+- **Muted** (`--muted`, `--input`, #efeeea light / #15171c dark): the shallower plane: default and hover button fills, input fields, the command chip.
 - **Muted Foreground** (`--muted-foreground`, #616161 light / #a19d94 dark): the second text tier: descriptions, meta lines, unselected tabs, quiet buttons, labels, summaries, times, the warn mark. 6.2:1 light, 7.3:1 dark.
 - **Ghost** (`--ghost`, #666 light / #8a867d dark): the quietest text tier: section counts, keys beside values, descriptors beside headings, gated tabs, placeholders, the colophon, unknown, draft and superseded marks, the theme buttons at rest, the link underline. About 5.7:1 on white and 4.9:1 on muted in light, 5.3:1 in dark; it never drops below the floor on any plane it sits on.
 - **Border** (`--border`, #e2e1dc light / #23262d dark): not a border. The scrollbar thumb, the button hover fill, and the 1px hover ring on an input. No element draws a border line with it.
@@ -420,7 +410,7 @@ Two hues: one neutral ramp on a white or near-black plane, and the logo orange, 
 ### State voices
 - **Pass** (`--pass`, = foreground): a lit disc. Only a fresh real pass on the current revision or an accepted record.
 - **Warn** (`--warn`, = muted-foreground): a hollow ring. Unknown, stale, not run, not attested, quarantined as flaky.
-- **Fail** (`--fail`, = struck): an orange cross. A failing rule, a flag, a fail tally.
+- **Fail** (`--fail`, = struck): an orange cross. A failing rule, a flag.
 - **Muted and Draft** (ghost): a hollow ring in ghost for anything not measured; a dashed ring for a draft.
 
 ### Named Rules
@@ -442,27 +432,27 @@ Two hues: one neutral ramp on a white or near-black plane, and the logo orange, 
 
 ### Hierarchy
 - **Title** (display, 600, 30px, 1.15): the view title (Rules, Changelog), the mission on Home, the onboarding headline. Balanced wrapping, max 30ch (26ch on onboarding). One per view. 25px under 390px.
-- **Headline** (display, 600, 24px): every section heading (Needs attention, Rules, Setup, Mission, Principles, Must, Should, Features, Agree the rules), with an optional 13px ghost descriptor beside it and its count at right.
+- **Headline** (display, 600, 24px): every section heading (Needs attention, Rules, Setup, Mission, Principles, Must, Should, Drafts, Retired, Agree the rules), with an optional 13px ghost descriptor beside it and its count at right.
 - **Item** (display, 600, 22px, 1.25): the Needs-attention titles, the mission record in Rules, and an onboarding fieldset legend. The primary item is struck; the rest are foreground.
 - **Day** (display, 600, 18px): a changelog day heading, with the day's count at right in 15px ghost.
 - **Count** (display, 600, 16px, ghost): the count at the right of a section heading.
-- **Figure** (display, 600, 15px): the pass / fail / unknown tally in the check line, the version number in a record, and the numbers in the onboarding steps.
+- **Figure** (display, 600, 15px): the version number in a record, and the numbers in the onboarding steps.
 - **Wordmark** (display, 600, 15px, 0.24em, uppercase): WHETSTONE in the header, WHET in foreground and STONE in struck.
 - **Body** (sans, 400, 15px, 1.6): descriptions, prose, form values. Descriptions cap at 58–64ch.
 - **Name** (sans, 500, 15px): entry names, gate names, changelog titles, record content, the Latest change value.
 - **Nav** (sans, 14.5px): the five view tabs; the selected one is struck at 600. 14px under 390px.
 - **Control** (sans, 14px, 1.3): every button; the primary button is 600.
-- **Summary** (sans, 14px): changelog summaries, mission outcomes, diff cell content.
-- **Meta** (sans, 13.5px, muted-foreground): the line beneath a name, a rule's enforcer and where-it-runs lines, the check line, the changelog filter words, disclosure summaries in the changelog.
-- **Label** (sans, 13px): state labels, form labels, the board header, the header state cluster, times, versions, keys, notes under a confirmation, the command chip.
-- **Note** (sans, 12.5px, ghost): the colophon, diff cell labels, the strength tag after a rule on the board.
+- **Summary** (sans, 14px): changelog summaries, diff cell content.
+- **Meta** (sans, 13.5px, muted-foreground): the line beneath a name, a rule's enforcer and where-it-runs lines, the changelog filter words, disclosure summaries in the changelog.
+- **Label** (sans, 13px): state labels, form labels, the header state cluster, times, versions, keys, notes under a confirmation, the command chip.
+- **Note** (sans, 12.5px, ghost): the colophon, diff cell labels.
 - **Command** (mono, 13px): the command chip.
 - **Code** (mono, 12.5px): inline commands, references and paths; the scope input; hashes.
 - **Brief** (mono, 12.5px, 1.55): the repair brief block, pre-wrapped.
 - **Record** (mono, 12.5px, 1.5): an exact-record block in the changelog, and a rule's labelled example input.
 
 ### Named Rules
-**The Condensed-Heading Rule.** Every heading, title, count and tally is the condensed display face at 600 and at text size (30 / 24 / 22 / 18 / 16 / 15px). Nothing sits above a heading as a kicker, eyebrow, overline or category tag; a descriptor sits beside it in 13px ghost. The display face never sets body text.
+**The Condensed-Heading Rule.** Every heading, title and count is the condensed display face at 600 and at text size (30 / 24 / 22 / 18 / 16 / 15px). Nothing sits above a heading as a kicker, eyebrow, overline or category tag; a descriptor sits beside it in 13px ghost. The display face never sets body text.
 
 **The Literal-Mono Rule.** Monospace is used only for text a terminal would accept or emit: commands, references, paths, hashes, exact records. Times, versions, counts and states are set in the sans or the display face with tabular numerals.
 
@@ -473,10 +463,10 @@ The page is one centred column: `.app` at max-width 48rem with 1.5rem side paddi
 Every view stacks its sections with 2.5rem between them. A section is a display heading with its count at right, 0.35rem of air beneath it, then spaced lines with no rules between them: rows at 0.6rem vertical padding, records (mission, principles, rules) at 0.75rem, changelog entries at 0.8rem, attention items at 0.9rem above and 1.1rem below. An entry is a grid whose last columns are `auto` so its mark, version and Edit sit flush right, with the meta line beneath the name. Home stacks the mission, a one-line count of principles and rules in force, Needs attention, Rules (every rule in force with strength, enforcer and where it runs), Setup while a required onboarding step is open, then a single Latest change line 1.5rem below. Before the agreement Home is the onboarding page instead. Rules runs Mission, Principles, then Must and Should, then Earlier records when there are any; each section ends with a quiet add button. Changelog opens with a toolbar (search, as-of, two filter words, export link), then days 2.25rem apart, each entry on a 4.5rem time column. Requests lists open requests first, then answered ones.
 
 Breakpoints, in order:
-- **768px**: side padding 1.1rem; tab gap 1.1rem; the board drops its last-run column and lets the mechanism line wrap; checks details, diffs and two-column forms go to one column; records reflow with Edit at top right and the version beneath the name; the Latest change line stacks its time; the changelog time column narrows to 3.6rem; secondary attention items put their action beneath the text.
+- **768px**: side padding 1.1rem; tab gap 1.1rem; the mechanism line wraps; diffs and two-column forms go to one column; records reflow with Edit at top right and the version beneath the name; the Latest change line stacks its time; the changelog time column narrows to 3.6rem; secondary attention items put their action beneath the text.
 - **390px**: side padding 1rem; header top 1.1rem; titles drop to 25px; tabs drop to 14px and wrap onto two lines instead of scrolling; the agreement detail leaves the header; rows put their mark under the name; changelog entries put time and status on one line above the title.
 
-The product commitment is 320, 390, 768 and 1280px; the browser proofs capture every view at those widths, and the direction reference in both lights, with no horizontal overflow at any of them.
+The product commitment is 320, 390, 768 and 1280px; every view, in both lights, has no horizontal overflow at any of them.
 
 ### Named Rules
 **The No-Line Rule.** Nothing is separated by a line. Sections are separated by 2.5rem, entries by their own padding, columns by a 1rem gap. If a group needs more separation, add space or move it onto a deeper plane; never draw a rule.
@@ -503,24 +493,23 @@ The only light in the world is the halo. In dark mode it glows behind the struck
 
 ## Shapes
 
-One 6px radius (`--radius`) on every button, input, plane, chip, diff cell, the board header band, the focus outline, the scrollbar thumb and the busy spinner's host; 4px inside the three theme buttons. Corners never go to 0 on a surface and never go pill-shaped. Circles are the 8px state disc and rings, the 0.4rem dashed ring after a gated tab, and the 14px busy spinner. The fail mark is the one cross: two 9px by 1.5px bars of currentColor rotated 45° over each other, drawn in CSS so it stays crisp at 13px. There are no borders on surfaces; the only strokes are the 1.5px ring of a warn, muted or superseded mark, the 1.5px dashed ring of a draft mark, the 1px dashed ring after a gated tab, and the 1px outcome dash before a mission outcome. Chevrons, arrows, the three theme icons and the stone mark are inline SVG at 1.4–1.5 stroke with round caps; no unicode glyph or emoji stands in for an icon, and no icon appears without its label except the theme buttons, which carry aria-labels.
+One 6px radius (`--radius`) on every button, input, plane, chip, diff cell, the focus outline, the scrollbar thumb and the busy spinner's host; 4px inside the three theme buttons. Corners never go to 0 on a surface and never go pill-shaped. Circles are the 8px state disc and rings, the 0.4rem dashed ring after a gated tab, and the 14px busy spinner. The fail mark is the one cross: two 9px by 1.5px bars of currentColor rotated 45° over each other, drawn in CSS so it stays crisp at 13px. There are no borders on surfaces; the only strokes are the 1.5px ring of a warn, muted or superseded mark, the 1.5px dashed ring of a draft mark, the 1px dashed ring after a gated tab. Chevrons, arrows, the three theme icons and the stone mark are inline SVG at 1.4–1.5 stroke with round caps; no unicode glyph or emoji stands in for an icon, and no icon appears without its label except the theme buttons, which carry aria-labels.
 
 ## Components
 
 ### Buttons
 One vocabulary, four voices, all inline-flex with a 0.4rem icon gap and 14px inline SVG. No borders.
 - **Shape:** 6px radius, 0.45rem × 0.9rem padding, 14px, line-height 1.3, nowrap.
-- **Default (`.btn`):** muted plane, foreground text; hover deepens to the border colour; active inverts to ghost with background text. Used for Copy, Copy brief, Withdraw, Cancel, Back, Right (a flag), Draft rules from it, Record these as drafts, Draft principles and rules from these.
-- **Primary (`.btn.primary`):** primary fill, primary-foreground text, weight 600, an 18px halo, and the strike on render. Exactly one per view: the first attention action on Home, Start onboarding, Review agreement and Record agreement, Run checks, Send answer, Accept, Record local draft, the confirm button in a flag label. Hover to primary-hover. A busy primary hides its text and spins a 14px ring in primary-foreground.
-- **Quiet (`.btn.quiet`):** transparent, muted-foreground text; hover to foreground on muted. Used for Edit, Add principle / must rule / should rule / feature, secondary attention items.
+- **Default (`.btn`):** muted plane, foreground text; hover deepens to the border colour; active inverts to ghost with background text. Used for Copy, Copy agent brief, Withdraw, Cancel, Back.
+- **Primary (`.btn.primary`):** primary fill, primary-foreground text, weight 600, an 18px halo, and the strike on render. Exactly one per view: the first attention action on Home, Start onboarding, Review drafts and Write drafts, Review edit and Write draft, Review commit and Commit rulebook, Accept. Hover to primary-hover. A busy primary hides its text and spins a 14px ring in primary-foreground.
+- **Quiet (`.btn.quiet`):** transparent, muted-foreground text; hover to foreground on muted. Used for Edit, Retire, Add principle / must rule / should rule, secondary attention items.
 - **Danger (`.btn.danger`):** transparent with struck text; hover on muted. Reserved for withdraw and remove.
 - **Focus:** 2px ring outline at 2px offset, 6px radius, 14px halo, on every focusable element via `:focus-visible`.
 - **Disabled:** 50% opacity, not-allowed cursor.
 
 ### State marks
 - **Style:** 13px sans label preceded by an 8px mark in `currentColor`; inline-flex with 0.5rem gap; nowrap; flush right in its entry.
-- **Marks:** `pass` a filled disc in foreground; `fail` a cross in struck; `warn` a 1.5px hollow ring in muted-foreground; `muted` a hollow ring in ghost; `draft` a 1.5px dashed ring in ghost; a superseded changelog status a hollow ring in ghost; an accepted status a lit disc. The label is the honest word: "pass", "pass · stale", "fail · 2", "not run", "not attested", "quarantined · flaky", "shadow · 1 flag(s)", "draft · not run", "waiting for the owner", "answered", "accepted"; onboarding steps read "done", "to do" or "optional". A running gate row pulses its mark once a second; a fail mark that has just landed strikes once.
-- **Tally:** the check line's pass / fail / unknown counts in the 15px display face, each in its state voice.
+- **Marks:** `pass` a filled disc in foreground; `fail` a cross in struck; `warn` a 1.5px hollow ring in muted-foreground; `muted` a hollow ring in ghost; `draft` a 1.5px dashed ring in ghost; a superseded changelog status a hollow ring in ghost; an accepted status a lit disc. The label is the honest word: "pass", "pass · stale", "fail · 2", "not run", "draft · not run", "accepted", "edited", "new"; onboarding steps read "done", "to do" or "optional". A running gate row pulses its mark once a second; a fail mark that has just landed strikes once.
 
 ### Sections
 - **Heading:** 24px display at 600 on a baseline flex row with its count at right in 16px display ghost; an optional 13px ghost descriptor 0.55rem beside the title; 0.35rem beneath; 2.5rem above the section.
@@ -529,7 +518,7 @@ One vocabulary, four voices, all inline-flex with a 0.4rem icon gap and 14px inl
 - **Latest change:** a full-width transparent button set as a line 1.5rem below the last section: key in 13.5px ghost, value at 500, time in 13px muted-foreground; hover lights the value struck.
 
 ### Inputs / Fields
-- **Style:** muted plane (`--input`), no border, 6px radius, 0.5rem × 0.65rem padding, inherits body type, full width, primary caret, ghost placeholder. Textareas start at 4.4rem and resize vertically. A label is 13px muted-foreground stacked above its field with 0.3rem gap. The scope select in the check line is auto width with a 10rem minimum; the search field in the changelog toolbar is 16rem.
+- **Style:** muted plane (`--input`), no border, 6px radius, 0.5rem × 0.65rem padding, inherits body type, full width, primary caret, ghost placeholder. Textareas start at 4.4rem and resize vertically. A label is 13px muted-foreground stacked above its field with 0.3rem gap. The search field in the changelog toolbar is 16rem.
 - **Hover:** a 1px ring in the border colour.
 - **Focus:** the outline is suppressed in favour of a 2px ring plus a 16px halo.
 - **Selection:** primary ground with primary-foreground text.
@@ -541,15 +530,15 @@ One vocabulary, four voices, all inline-flex with a 0.4rem icon gap and 14px inl
 - **Links:** foreground with a 1px ghost underline offset 0.22em; hover turns the underline struck.
 
 ### Rule Entry and Draft Editor (signature)
-Mission, principle and rule records share one grid (content / mark / version / Edit) at 0.75rem: content at 500 capped at 64ch (the mission in 22px display), the version with its number in the display face in foreground, and a quiet Edit button. A principle's meta line names its source (the pstack id and version, or the owner's own). A rule stacks, in 13.5px muted-foreground beneath its statement: the enforcer and its command in mono; where it runs, its paths and its sweep class, with ghost keys; its source; and its labelled examples behind a disclosure, each an expected mark (pass disc or flag cross), the reason and the input in 12.5px mono on the card plane. A draft record, or one with a pending draft, sets its content and version number in muted-foreground with "draft" or "draft v2 pending" in italic ghost. Edit snaps open a card plane containing a stacked form: a 13px base line (the record id in foreground, "the draft stays private until you accept it" at right), labelled fields, and a right-aligned Cancel / Review draft pair. A rule's form has its statement, strength (must, should) and enforcer selects side by side, one value field whose label follows the enforcer kind, lint code and paths. Review replaces the form with a before / after diff in two 6px background cells, the after cell ringed in struck with a halo and its label struck; a why line with ghost keys; an effects line where only "written" is struck and every "no" is muted-foreground; and a confirmation row with a ghost note at left stating what will not happen and Back / Record local draft at right.
+Mission, principle and rule records share one grid (content / mark / version / Edit) at 0.75rem: content at 500 capped at 64ch (the mission in 22px display), the version with its number in the display face in foreground, and a quiet Edit button. A principle's meta line names its source (the pstack id and version, or the owner's own). A rule stacks, in 13.5px muted-foreground beneath its statement: the enforcer and its command in mono; where it runs, its paths and its sweep class, with ghost keys; its source; and its labelled examples behind a disclosure, each an expected mark (pass disc or flag cross), the reason and the input in 12.5px mono on the card plane. A draft record, or one with a pending draft, sets its content and version number in muted-foreground with "draft" or "draft v2 pending" in italic ghost. Edit snaps open a card plane containing a stacked form: a 13px base line (the record id in foreground, a note at right that the edit stays a draft in the working tree until it is accepted), labelled fields, and a right-aligned Cancel / Review edit pair. A rule's form has its statement, strength (must, should) and enforcer selects side by side, one value field whose label follows the enforcer kind, lint code and paths, then the sweep class, sweep priority and unsure lines. Retire opens the same card plane with a reason field and Review retirement. Review replaces the form with a before / after diff in two 6px background cells, the after cell ringed in struck with a halo and its label struck; a why line with ghost keys; an effects line where only "written" is struck and every "no" is muted-foreground; and a confirmation row with a ghost note at left stating what will not happen and Back / Write draft at right.
 
 ### Changelog Entry
-Grouped under an 18px display day heading with the day's count at right in 15px ghost, 2.25rem between days. Each entry at 0.8rem: time in 13px muted-foreground on a 4.5rem column, title at 500 with the version in 13px muted-foreground, a 14px muted-foreground summary, a 13px ghost meta line, and a mark at right where accepted is a lit disc and superseded a hollow ghost ring. A pending draft carries an Accept primary and a Withdraw default button beneath its meta. Exact records sit behind a `details` disclosure whose summary carries a 12px chevron that snaps to 90°, rendered as a diff or a 12.5px mono block on the card plane. Entries after the as-of time set their text in ghost, hide their disclosure and say so in their meta line; they are never dimmed by opacity.
+Grouped under an 18px display day heading with the day's count at right in 15px ghost, 2.25rem between days. Each entry is one commit that touched the rulebook, at 0.8rem: time in 13px muted-foreground on a 4.5rem column, title at 500 with the short hash in 13px muted-foreground, the commit message in 14px muted-foreground, the author on a 13px ghost meta line, and a lit disc at right. Pending drafts are not changelog entries; they sit in the Rules view's Drafts panel with Accept and Withdraw. A Retired panel beneath the days lists each retired id with its reason. Exact records sit behind a `details` disclosure whose summary carries a 12px chevron that snaps to 90°, rendered as a diff or a 12.5px mono block on the card plane. Entries after the as-of time set their text in ghost, hide their disclosure and say so in their meta line; they are never dimmed by opacity.
 
 ### Onboarding Page
-The pre-agreement Home is one column without a section heading: a 30px display headline (This project has no agreement yet.), muted-foreground prose at 58ch, and a numbered list of the five steps at 0.4rem (Tools, Mission, Principles, Rules, Gates; numbers in 15px display ghost, names at 500 in muted-foreground that go foreground once done, hints in ghost, and a mark at right reading done, to do or optional). Any missing tool follows as a row with its exact fix in mono. Then the one primary action (Start onboarding, with its halo and strike) beside a ghost "or from the terminal" and the `wh init` command chip, and a 13px ghost line stating nothing is shared or installed.
+The pre-agreement Home is one column without a section heading: a 30px display headline (This project has no agreement yet.), muted-foreground prose at 58ch, and a numbered list of the four steps at 0.4rem (Mission, Principles, Rules, Gates; numbers in 15px display ghost, names at 500 in muted-foreground that go foreground once done, hints in ghost, and a mark at right reading done, to do or optional). Then the one primary action (Start onboarding, with its halo and strike) beside a ghost "or from the terminal" and the `wh init` command chip, and a 13px ghost line stating nothing is committed, shared or installed by this step.
 
-Start onboarding replaces the page in place with the **Agree the rules** form: fieldsets whose legends are 22px display with a 13px ghost descriptor beside them. Mission is one textarea. Principles lists the pinned pstack catalogue as checkbox rows (the id at 500, going struck when checked; how it can be held, in 12.5px ghost at right; the principle beneath in 13px muted-foreground), then a textarea for the owner's own, one per line. Starter rules are the same rows, preselected, with strength · enforcer at right, what was detected beneath, and labelled examples behind a disclosure; a starter already in force is checked and disabled. Exemplars is a path or Git URL field with a default Draft rules from it button whose result appears as a notice beneath. Gates names the hook command as a chip. The confirmation row carries a ghost note and the Review agreement primary; review lists the exact records as rows with dashed "on confirm" marks, and Back / Record agreement.
+Start onboarding replaces the page in place with the **Agree the rules** form: fieldsets whose legends are 22px display with a 13px ghost descriptor beside them. Mission is one textarea. Principles lists the pinned catalogue as checkbox rows (the id at 500, going struck when checked; how it can be held, in 12.5px ghost at right; the principle beneath in 13px muted-foreground), then a textarea for the owner's own, one per line. Starter rules are the same rows, preselected, with strength · enforcer at right, what was detected beneath, and labelled examples behind a disclosure; a starter already in force is checked and disabled. Gates names the hook command as a chip. The confirmation row carries a ghost note and the Review drafts primary; review lists the exact edits as rows with dashed "on confirm" marks, and Back / Write drafts. The drafts are then accepted from the Rules view (Review commit, Commit rulebook).
 
 ### Motion
 The build has no transitions. Reveals open by switching `grid-template-rows` from 0fr to 1fr with `transition: none`; chevrons rotate 90° with `transition: none`; hover and focus colours change instantly. There are three animations and no others:
@@ -569,7 +558,7 @@ The build has no transitions. Reveals open by switching `grid-template-rows` fro
 - **Do** strike exactly one navigational choice, one item and one action per view in `--struck`, with the halo in dark; leave every alternative as a ghost or muted-foreground.
 - **Do** carry state with an 8px mark: lit disc for pass, cross in struck for fail, hollow ring for unknown or stale, dashed ring for draft, hollow ghost ring for superseded; label it with the honest word.
 - **Do** use `--primary` (#e66c3a) in light mode only for fills, marks, the stone mark, focus rings, selection and the primary button, and `--struck` (#c2410c) for any orange text.
-- **Do** set every heading, count and tally in the condensed system display face at 600 and text size (30 / 24 / 22 / 18 / 16 / 15px), body in the system sans at 15px/1.6 with tabular numerals, and only literal commands, paths, hashes and records in mono.
+- **Do** set every heading and count in the condensed system display face at 600 and text size (30 / 24 / 22 / 18 / 16 / 15px), body in the system sans at 15px/1.6 with tabular numerals, and only literal commands, paths, hashes and records in mono.
 - **Do** open reveals and rotate chevrons with `transition: none`, fire `strike` only when a thing becomes live, and remove all animation under `prefers-reduced-motion`.
 - **Do** keep the tab row a labelled `tablist` that stays sticky with no rule beneath, tightens under 768px and wraps under 390px, and hold 320, 390, 768 and 1280px with no horizontal overflow.
 - **Do** draw every icon as inline SVG at 1.4–1.5 stroke beside its label, or with an aria-label where the control is icon-only (the theme toggle).
@@ -579,8 +568,8 @@ The build has no transitions. Reveals open by switching `grid-template-rows` fro
 - **Don't** draw a border, rule, divider, hairline, underline-as-rule, box or drop shadow anywhere; `--border` is for the scrollbar thumb, a button hover fill and an input hover ring, never a line.
 - **Don't** strike a second thing for emphasis: no orange on a secondary tab, a secondary attention item, a default button or a section heading.
 - **Don't** introduce green, amber, red, blue or any third hue; a state is a mark, and orange on a mark means fail.
-- **Don't** light anything unknown: a stale pass, a not-run rule, a quarantined proof, a draft and an inspection are rings, never a lit disc.
-- **Don't** set #e66c3a as text in light mode, and don't put a halo or text-shadow behind a 13px label, a mark or a tally.
+- **Don't** light anything unknown: a stale pass, a not-run rule, a draft and an inspection are rings, never a lit disc.
+- **Don't** set #e66c3a as text in light mode, and don't put a halo or text-shadow behind a 13px label or a mark.
 - **Don't** add a transition, an easing curve or a stagger; don't fire `strike` on a resting element or on every render of a list.
 - **Don't** place a kicker, eyebrow, overline, tracked uppercase label or category tag above a heading; the only tracked caps in the system are the wordmark.
 - **Don't** let the gauze enter the column, tint a plane, or appear in light mode.

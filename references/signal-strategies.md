@@ -1,24 +1,24 @@
 # Deterministic signal strategies
 
-This is how a rule's mechanical enforcer is chosen, the first rung of the
-enforcement ladder in `planning/direction.md`. Rules that fail every bucket
-below become a literal Jev question or a review, never a weak mechanical check.
-The full boundary is in `planning/skill-cli-boundary.md`.
+This is how a rule's mechanical enforcer is chosen. Every rule has exactly
+one, and a concern that no mechanical enforcer can hold stays in prose
+(`AGENTS.md`, review) rather than becoming a weak rule. The boundary is in
+`planning/skill-cli-boundary.md`.
 
 ## Three-bucket audit
 
 Every candidate safeguard belongs to one bucket:
 
 1. A native linter or formatter already expresses it: bind and verify that tool.
-2. It needs taste, semantics, or type resolution: use guidance or accountable review.
+2. It needs taste, semantics, or type resolution: leave it to prose and review, not a rule.
 3. It is type-independent structure no native tool catches: use a tree-sitter query.
 
 Do not turn bucket 2 into a fake deterministic rule. Do not duplicate bucket 1
-with custom scanning. Prefer a handful of trusted, actionable safeguards.
+with custom scanning. Prefer a few trusted, actionable safeguards.
 
-Each bucket-1 or bucket-3 safeguard is a rule v2 enforcer
-([schema](rulebook.schema.json)), recorded through `wh change` and run by
-`wh check`.
+Each bucket-1 or bucket-3 safeguard is a rule's enforcer in
+`whetstone/rulebook.json` ([schema](rulebook.schema.json)), drafted with
+`wh change` and run by `wh check`.
 
 ## `ast`
 

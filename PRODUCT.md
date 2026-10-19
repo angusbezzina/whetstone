@@ -10,36 +10,39 @@ web
 
 Existing: a Rust binary (`wh`) serves a dependency-free local dashboard from
 `assets/dashboard/` (plain HTML, CSS and vanilla JS; startup assets under
-24 KiB; secondary views and authenticated editing are lazy modules). No
-framework, no build step, no third-party requests. The design reference is a
-self-contained static HTML file under `planning/direction-demo/`.
+24 KiB; secondary views and editing are lazy modules). No framework, no build
+step, no third-party requests.
 
 ## What Whetstone is
 
-Whetstone lets people delegate more to coding agents and trust the result. The
-owner's mission, the pstack principles they pick and the codebases they admire
-become a short list of agreed rules. Every rule has one strength (must or
-should) and exactly one mechanical enforcer. Agents and people in any
-tool are briefed on the rules before building and checked at pre-commit,
-pre-push and CI. Every consequential change is an append-only, inspectable
-decision. The direction is in `planning/direction.md` and Beads
-epic `whetstone-ppq`.
+Whetstone is a repository's rulebook: enforced rules with a rationale and an
+agent protocol. It sits between `AGENTS.md` (prose an agent may read, which
+nothing enforces) and a linter (enforced, with no rationale and nothing an
+agent can act on).
 
-Mechanism that makes it different:
-- Judgment (interpreting intent, proposing rules, briefing) stays with the
-  skill and pstack's skills.
-- Network calls stay in the driver.
-- Deterministic, replayable work (schemas, state transitions, check
-  execution) stays in typed services.
+The rulebook is a file, `whetstone/rulebook.json`, committed in the
+repository. It holds the mission, the chosen principles and the rules. Every
+rule has one strength (must blocks the gate, should reports and never
+blocks), one mechanical enforcer (ast, lint, formatter, test, validator) and
+sweep fields (class, priority, unsure). A revision is a commit, the decision
+log is Git history, and a rule change is a pull request. The rules are
+enforced at pre-commit, pre-push and as the required CI status
+`whetstone/policy`.
+
+Hosts consume Whetstone through three things: the rulebook file,
+`findings.json` (`wh check --sweep`: fingerprint, subjectDigest, class,
+priority, title, responsibility, unsure) and the JSON envelope every command
+returns. A host may be Virgil's Messo, a GitHub Action or an agent session.
+Whetstone keeps no store and no host-specific code; hosts own memory, tasks
+and the agent.
+
+What makes it different:
 - Only a mechanical pass passes a must rule.
 - Unknown, stale, skipped or unavailable evidence is never reported as
   success.
-- Rule changes, including strength changes, are drafts a person accepts.
-- Local drafts stay private until pushed.
-
-Outputs for agents: the agreed rules (`wh dash --json`), the decision trail
-behind them, and repair findings from every check. Records live in Beads
-(`bd`), not in a Whetstone-owned database and not in Git commits.
+- Every rule carries its rationale, and every flag names the rule
+  responsible and how to recheck it.
+- A rule changes only by an edit a person commits.
 
 ## Users and job
 
@@ -47,51 +50,51 @@ Primary user: a software engineer or small engineering team lead who lives in
 the terminal and an editor, and opens `wh dash` in a browser tab beside them.
 They are also the accountable project owner. In under a minute they want to
 know:
-- whether the rules are holding;
-- which flags need them;
-- whether any rule is getting noisy.
+- what the rules are and why each exists;
+- which drafts are waiting to be accepted;
+- what changed in the rulebook, when and by whom.
 
-Coding agents use the same typed services through `--json`; the dashboard is
-the human view of the same records. The dashboard is not a task tracker, fleet
-console, or CI replacement.
+Coding agents read the same file and the same services through `--json`; the
+dashboard is the human view of the same rulebook. The dashboard is not a task
+tracker, a fleet console or a CI replacement.
 
 ## Surfaces
 
-The dashboard has three views for the delegation plan
-(`planning/direction-demo/index.html` is the reference, built from the
-product's own dashboard files):
+The dashboard has three views:
 
-1. **Home** (default): what needs the owner (flags to accept or
-   dismiss, drafts), rule health, and one primary action. Before
-   `wh init`, it shows only onboarding: mission, principles, then
-   accepting each proposed rule with its examples, strength and enforcer.
-2. **Rules** (replaces the five-stage Foundations): mission and principles,
-   then rules grouped by strength, each showing its enforcer and where it
-   runs. Editing creates a local draft with exact before/after
-   review; it never silently overwrites an accepted rule.
-3. **Changelog**: the decision log, newest first, grouped by day. It includes
-   strength changes and redactions. Exact records sit behind disclosure.
+1. **Home** (default): what needs the owner (drafts to accept), the rules in
+   force, setup still to do, and one primary action. Before there is a
+   rulebook, it shows only onboarding: mission, principles, starter rules and
+   gates.
+2. **Rules**: mission and principles, then rules grouped by strength, each
+   showing its enforcer, its paths and its sweep class, and whether it is
+   accepted, edited or new against the file's last commit. Edit, Retire,
+   Accept and Withdraw are `wh change` calls with an exact before/after
+   review; nothing overwrites the committed rulebook silently.
+3. **Changelog**: every commit that touched the rulebook, newest first,
+   grouped by day, with the retired entries and their reasons beneath, and a
+   TSV export of the decision trail.
 
 ## Durable constraints
 
-- Honest states: missing, unknown, stale, not-installed and not-observed are
-  explicit and never green. Read-only inspection is not success.
+- Honest states: missing, unknown, stale and not-run are explicit and never
+  green. Read-only inspection is not success.
 - No blended health score, no gamification, no tracker or fleet-console
   behaviour.
 - Keyboard navigation, focus management, live-region feedback, safe rendering
   of user content, and widths of 320, 390, 768 and 1024 px.
 - Startup HTML/CSS/JS stays dependency-free and under 24 KiB.
 - CLI and dashboard read the same typed projections; the UI invents no state.
-- The six public workflow families (`wh init`, `dash`, `change`, `check`,
-  `pull`, `push`) support the UI and may be progressively disclosed; they are
-  not the human information architecture.
+- The four public commands (`wh init`, `dash`, `change`, `check`) support the
+  UI and may be progressively disclosed; they are not the human information
+  architecture.
 
 ## Terminology
 
-Mission, principle (a pstack principle or the owner's own),
-rule (one strength must/should and one mechanical enforcer), flag,
-check (a run of rules), finding, local draft, accepted,
-superseded, owner.
+Mission, principle (a catalogue principle or the owner's own), rule (one
+strength must/should and one mechanical enforcer), rulebook, draft (an
+uncommitted edit to the rulebook), accepted (committed), retired, check,
+finding, sweep, owner.
 
 ## Brand commitments
 
@@ -102,10 +105,4 @@ and orange. The design system uses ShadCN's token vocabulary (background,
 foreground, card, muted, border, input, ring, primary, destructive, radius)
 implemented in the dashboard's own dependency-free CSS; ShadCN's React
 components are not adopted. The feel is a minimal personal journal. The
-visual world chosen on 2026-09-14 is recorded in the surface brief and
-DESIGN.md.
-
-## Open decisions
-
-- Whether team sharing (`wh push`/`wh pull`) appears in the UI before the
-  team-and-tools milestone (`whetstone-ppq.10.7`).
+visual world chosen on 2026-09-14 is recorded in DESIGN.md.
