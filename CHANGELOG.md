@@ -7,7 +7,36 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 This log starts with the rebuilt product. Release notes for the previous
 product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.md`.
 
-## [Unreleased]
+## [0.14.0] - 2026-10-19
+
+Whetstone becomes a repository's rulebook: enforced rules with a rationale
+and an agent protocol, kept as `whetstone/rulebook.json` in the repository.
+Four commands remain (`wh init`, `wh dash`, `wh change`, `wh check`).
+Whetstone keeps no store and no host-specific code: hosts consume the
+rulebook file, `findings.json` and the JSON envelope.
+
+### Migration notes
+
+- 0.14.0 reads only `whetstone/rulebook.json`. It does not read a Beads
+  store, and records already in one stay there untouched.
+- To move a 0.13 store to the file, install the build at commit
+  `20fb5fb06bb3e27103427af0ad62a0b7607770da` (`cargo install --git
+  https://github.com/angusbezzina/whetstone --rev
+  20fb5fb06bb3e27103427af0ad62a0b7607770da`) and run `whetstone init
+  --action export` in the repository. It reads the shared Beads database and
+  the private store and writes the latest accepted, shared revision of each
+  principle and rule, with the mission, as `whetstone/rulebook.json`;
+  records accepted only in that checkout, pending drafts and private
+  retirements go to `whetstone/rulebook.drafts.json` for the owner to read.
+  A rulebook that differs is replaced only with `--yes`. The details are in
+  that commit's message. Then install 0.14.0, commit the file, and delete
+  `whetstone/store.json` if it exists.
+- `wh push` and `wh pull` are gone: share the rulebook the way you share any
+  commit, and review rule changes in pull requests.
+- The CI workflow is scaffolded once and then team-owned: to adopt the new
+  one, delete `.github/workflows/whetstone.yml` and run `wh init --action
+  wire --ci` again. It no longer sets up Node, and it adds the sweep on
+  pushes to main.
 
 ### Added
 
@@ -18,6 +47,9 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   touched the file, and the decision log is its Git history. `wh check`, the
   sweep, `wh change` and the dashboard read and write it; there is no record
   store.
+- The CI scaffold (`wh init --action wire --ci`) runs the sweep on every
+  push to main and uploads `findings.json` as the `scan-findings` artifact,
+  next to the required `whetstone/policy` check on pull requests.
 
 ### Changed
 
@@ -45,6 +77,15 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   against `dbg!`, `todo!` and `unimplemented!`), and fails on any must
   finding or when no must rule ran. The pre-push hook and CI run three
   gates: clippy, the tests, and the self-check; no test needs `bd` or Python.
+- `wh check --ci` refuses an uncommitted edit to the rulebook, and
+  `wh check --rule <id>` with an id that is not in the rulebook is an error.
+- The CI scaffold installs only the pinned `wh`: no Node, no secrets.
+- `README.md`, `AGENTS.md`, `CLAUDE.md`, `PRODUCT.md`, `DESIGN.md`,
+  `planning/direction.md` and `planning/skill-cli-boundary.md` describe the
+  rulebook file, the four commands, the gates and the host contracts.
+  Whetstone's own rulebook states its real mission.
+- The crate ships only the manifest, the README, the changelog, `assets/`,
+  `src/` and `references/`.
 - `wh init --action agree` drafts the mission, principles and starter rules
   into `whetstone/rulebook.json` (`wh change --accept` commits them) and
   takes no `--expected-revision` or `--resume`; repeating it drafts only
@@ -70,8 +111,7 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   `wh pull` (and `--select`, `--include-ancestry`, `--canary` and
   `--confirm`), the private and shared Beads databases and the Virgil
   `rulebook` collection behind one `RecordStore` port,
-  `whetstone/store.json`, `wh init --action store` and `--action export`
-  (the one-time export of the Beads stores to the rulebook file), `wh init
+  `whetstone/store.json`, `wh init --action store`, `wh init
   --store`, `--yes`, `--expected-revision` and `--resume`, `VIRGIL_VIA`, the
   minimum `bd` version and its install and upgrade commands, the response
   envelope's `expected_revision` and `resume_token`, the record envelope and
@@ -85,8 +125,10 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   decision-history read model behind them: `wh change --accept <proposal>`
   and `--withdraw <proposal>` (both are now plain flags), `--expected-revision`,
   `--resume`, `--new-owner`, `--source`, `--expected-effect`, `--impact`,
-  `--example` and `--conflict`, `wh dash --json`'s `history` section and
-  the dashboard inspection's `expected_snapshot`.
+  `--example` and `--conflict`, request-id idempotency, `wh dash --json`'s
+  `history`, `history_state` and `history_detail`, the dashboard
+  inspection's `expected_snapshot`, and the check report's
+  `selection.skipped_drafts`.
 - The legacy YAML rule scanner: `whetstone/rules`, the hidden `validate`,
   `eval` and `scan` commands, `wh check --path` and `--lang`, the
   `whetstone.native-scan` result and `raw_scan` data, the AST enforcer's
@@ -151,6 +193,14 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   init --action setup` with `--host`, its install commands and
   `whetstone/tools.lock.json`. The principle catalogue is read only from the
   copy compiled into `wh`.
+- Project files that described or served the earlier direction: the
+  dashboard design reference and its build and smoke scripts
+  (`planning/direction-demo/`), the archived plans (`planning/archive/`),
+  `planning/record-store.md`, the example clients (`examples/`), the root
+  `SKILL.md`, `scripts/beads-repair.sh`, `.impeccable/` and
+  `skills-lock.json`, and the legacy `whetstone/evals/`,
+  `whetstone/context/`, `whetstone/whetstone.yaml` and
+  `whetstone/.metrics.jsonl`.
 
 ## [0.13.0] - 2026-10-15
 
