@@ -1,0 +1,384 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/angusbezzina/whetstone/references/rulebook.schema.json",
+  "title": "Whetstone rulebook (whetstone.rulebook.v1)",
+  "description": "whetstone/rulebook.json: the mission, the chosen principles and the rules. A revision is the commit that last touched the file. A rule's digest is sha256 over its canonical JSON: the entry with its id, fields at their default left out, object keys sorted, no insignificant whitespace.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "mission",
+    "principles",
+    "rules"
+  ],
+  "properties": {
+    "schema": {
+      "const": "whetstone.rulebook.v1"
+    },
+    "mission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "statement"
+      ],
+      "properties": {
+        "statement": {
+          "$ref": "#/$defs/nonempty"
+        }
+      }
+    },
+    "principles": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/principle"
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/rule"
+      },
+      "description": "Rule ids are unique across principles and rules."
+    }
+  },
+  "$defs": {
+    "principle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "statement",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/record_id"
+        },
+        "statement": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "id",
+                "version"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "pstack"
+                },
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z-]+$",
+                  "description": "A principle id in the pstack catalogue pinned in the binary."
+                },
+                "version": {
+                  "$ref": "#/$defs/nonempty"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "custom"
+                }
+              }
+            }
+          ]
+        },
+        "rationale": {
+          "$ref": "#/$defs/nonempty"
+        }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "statement",
+        "rationale",
+        "strength",
+        "enforcer",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/record_id"
+        },
+        "statement": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "rationale": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "strength": {
+          "$ref": "#/$defs/strength"
+        },
+        "enforcer": {
+          "$ref": "#/$defs/enforcer"
+        },
+        "examples": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/rule_example"
+          }
+        },
+        "source": {
+          "$ref": "#/$defs/rule_source"
+        },
+        "paths": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Repository paths or globs the rule applies to; absent means everywhere."
+        },
+        "sweep": {
+          "enum": [
+            "discuss",
+            "confirm_first",
+            "draft_pr"
+          ],
+          "description": "How a night sweep works the rule's flags; absent means discuss. Only a person widens it."
+        },
+        "sweep_priority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4,
+          "description": "How urgent the rule's sweep findings are, 0 (most) to 4; absent means 2."
+        },
+        "sweep_unsure": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/sweep_unsure"
+          },
+          "description": "Where the rule's own flags are doubtful; a flag covered here is reported unsure."
+        }
+      }
+    },
+    "sweep_unsure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "paths": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "matching": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A regular expression over the flagged line or the failure message."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\n]+$"
+        }
+      }
+    },
+    "strength": {
+      "enum": [
+        "must",
+        "should"
+      ]
+    },
+    "enforcer": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "query"
+          ],
+          "properties": {
+            "kind": {
+              "const": "ast"
+            },
+            "query": {
+              "$ref": "#/$defs/nonempty"
+            },
+            "language": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "tool",
+            "code"
+          ],
+          "properties": {
+            "kind": {
+              "const": "lint"
+            },
+            "tool": {
+              "$ref": "#/$defs/nonempty"
+            },
+            "code": {
+              "$ref": "#/$defs/nonempty"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "tool"
+          ],
+          "properties": {
+            "kind": {
+              "const": "formatter"
+            },
+            "tool": {
+              "$ref": "#/$defs/nonempty"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "command"
+          ],
+          "properties": {
+            "kind": {
+              "const": "test"
+            },
+            "command": {
+              "$ref": "#/$defs/nonempty"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "command"
+          ],
+          "properties": {
+            "kind": {
+              "const": "validator"
+            },
+            "command": {
+              "$ref": "#/$defs/nonempty"
+            }
+          }
+        }
+      ]
+    },
+    "rule_example": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "expected",
+        "reason"
+      ],
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "expected": {
+          "enum": [
+            "pass",
+            "flag"
+          ]
+        },
+        "reason": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "rule_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "mission",
+            "principle",
+            "owner",
+            "starter"
+          ]
+        },
+        "reference": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "provenance": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        }
+      }
+    },
+    "evidence_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "locator"
+      ],
+      "properties": {
+        "system": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "locator": {
+          "$ref": "#/$defs/nonempty"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "nonempty": {
+      "type": "string",
+      "minLength": 1
+    },
+    "record_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-fA-F]{64}$"
+    }
+  }
+}

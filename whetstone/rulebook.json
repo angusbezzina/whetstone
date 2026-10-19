@@ -1,0 +1,53 @@
+{
+  "schema": "whetstone.rulebook.v1",
+  "mission": {
+    "statement": "Demonstrate Whetstone annotations."
+  },
+  "principles": [],
+  "rules": [
+    {
+      "id": "rule.rust-formatted",
+      "statement": "Whetstone's Rust code is formatted with rustfmt.",
+      "rationale": "One formatting leaves diffs about behaviour, not layout.",
+      "strength": "must",
+      "enforcer": {
+        "kind": "formatter",
+        "tool": "cargo fmt --all --check"
+      },
+      "source": {
+        "kind": "owner"
+      },
+      "paths": ["src/**"]
+    },
+    {
+      "id": "rule.rust-no-dead-code",
+      "statement": "Whetstone's Rust code has no dead code.",
+      "rationale": "Unused code hides what the product does; delete it instead of allowing it.",
+      "strength": "must",
+      "enforcer": {
+        "kind": "lint",
+        "tool": "cargo clippy --all-targets --all-features -- -D warnings",
+        "code": "dead_code"
+      },
+      "source": {
+        "kind": "owner"
+      },
+      "paths": ["src/**"]
+    },
+    {
+      "id": "rule.rust-no-debug-macros",
+      "statement": "Whetstone's source has no dbg!, todo! or unimplemented! macro.",
+      "rationale": "Debug output and placeholder panics are unfinished work; clippy leaves them off by default.",
+      "strength": "must",
+      "enforcer": {
+        "kind": "ast",
+        "query": "((macro_invocation macro: (identifier) @name) @match (#any-of? @name \"dbg\" \"todo\" \"unimplemented\"))",
+        "language": "rust"
+      },
+      "source": {
+        "kind": "owner"
+      },
+      "paths": ["src/**"]
+    }
+  ]
+}

@@ -11,6 +11,7 @@ pub mod gates;
 pub mod history;
 mod output;
 pub mod projection;
+pub mod rulebook;
 pub mod service;
 pub mod setup;
 pub mod starter;

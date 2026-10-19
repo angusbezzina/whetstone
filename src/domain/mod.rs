@@ -651,7 +651,7 @@ pub struct Principle {
 }
 
 impl Principle {
-    fn validate(&self) -> Result<(), DomainError> {
+    pub(crate) fn validate(&self) -> Result<(), DomainError> {
         require_text(&self.statement)?;
         if let Some(rationale) = &self.rationale {
             require_text(rationale)?;
