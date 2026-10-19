@@ -228,6 +228,9 @@ impl DashboardCommand {
             from_file: None,
             from_finding,
             findings: None,
+            export_pack: None,
+            include_paths: false,
+            import_pack: None,
         })
     }
 }

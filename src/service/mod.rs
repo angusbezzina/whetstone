@@ -21,6 +21,7 @@ mod compile;
 mod dash;
 mod explain;
 mod init;
+mod packs;
 mod snapshot;
 mod trail;
 
@@ -202,6 +203,14 @@ pub struct ChangeRequest {
     pub from_finding: Option<String>,
     /// With `from_finding`: the sweep's findings file.
     pub findings: Option<PathBuf>,
+    /// Write the committed rulebook's rules and principles as a rule pack to
+    /// this file, for another repository to import as drafts.
+    pub export_pack: Option<String>,
+    /// With `export_pack`: keep each rule's repository paths.
+    pub include_paths: bool,
+    /// Import a rule pack's rules and principles as drafts, or install a
+    /// principle pack: a file, an https URL or a built-in pack name.
+    pub import_pack: Option<String>,
 }
 
 /// Which in-force rules a check runs.

@@ -1,8 +1,9 @@
 //! Principle packs. A pack is a named, versioned list of principles, each
 //! with a hint at the enforcer that usually holds it. pstack is the default
 //! pack and ships in the binary; a repository adds its own packs as JSON files
-//! under `whetstone/principles/`. Owners pick principles from any loaded pack
-//! in onboarding, or write their own.
+//! under `whetstone/principles/` (or with `wh change --import-pack <file>`).
+//! Owners pick principles from any loaded pack in onboarding, or write their
+//! own.
 //!
 //! A principle's id is unique across every loaded pack: a pack that repeats an
 //! id another pack already holds is refused, so `--principle <id>` always

@@ -92,6 +92,12 @@ rulebook file, `findings.json` and the JSON envelope.
   `confirm_first` and an issue to discuss per `discuss`, idempotent by
   fingerprint. The CI scaffold's `whetstone/work` job runs it on the
   sweep's findings when the repository variable `WHETSTONE_WORK` is on.
+- Rule packs (`whetstone.rule-pack.v1`): `wh change --export-pack <file>`
+  writes the committed rulebook's mission-independent rules and principles
+  with a content digest (paths only with `--include-paths`); `wh change
+  --import-pack <file|https URL|rust|typescript|python>` verifies it, probes
+  each rule here and writes them as drafts. A principle pack imported the
+  same way is installed under `whetstone/principles/`.
 
 ### Changed
 

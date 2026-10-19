@@ -143,6 +143,8 @@ pub enum RuleSourceKind {
     /// Drafted from a finding that keeps coming back (the reference is
     /// `rule@location`).
     Finding,
+    /// Imported from a rule pack (the reference is `pack@version`).
+    Pack,
 }
 
 impl RuleSourceKind {
@@ -154,6 +156,7 @@ impl RuleSourceKind {
             Self::Starter => "starter",
             Self::Prose => "prose",
             Self::Finding => "finding",
+            Self::Pack => "pack",
         }
     }
 }

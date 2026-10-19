@@ -44,6 +44,12 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
     if let Some(target) = request.retire.as_deref() {
         return retire(root, request_id, target, &request);
     }
+    if let Some(target) = request.export_pack.as_deref() {
+        return super::packs::export(&layout, request_id, target, &request);
+    }
+    if let Some(source) = request.import_pack.as_deref() {
+        return super::packs::import(&layout, request_id, source, &request);
+    }
     if request.from_text.is_some() || request.from_file.is_some() || request.from_finding.is_some()
     {
         return super::compile::compile(&layout, request_id, &request);
@@ -66,12 +72,15 @@ fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String
         request.retire,
         layout.project_id(),
     ) + &format!(
-        "\0{}\0{:?}\0{:?}\0{:?}\0{:?}",
+        "\0{}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{}\0{:?}",
         request.allow_unvalidated,
         request.from_text,
         request.from_file,
         request.from_finding,
-        request.findings
+        request.findings,
+        request.export_pack,
+        request.include_paths,
+        request.import_pack
     );
     format!(
         "change-{}",

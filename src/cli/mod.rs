@@ -163,6 +163,20 @@ enum Command {
         /// With --from-finding: the sweep's findings file.
         #[arg(long, requires = "from_finding")]
         findings: Option<PathBuf>,
+        /// Write the committed rulebook's mission-independent rules and its
+        /// principles as a rule pack to this file, for another repository to
+        /// import as drafts. The rulebook is not changed.
+        #[arg(long, conflicts_with_all = ["import_pack", "kind", "accept", "withdraw", "retire", "from_text", "from_file", "from_finding"])]
+        export_pack: Option<String>,
+        /// With --export-pack: keep each rule's repository paths.
+        #[arg(long, requires = "export_pack")]
+        include_paths: bool,
+        /// Import a rule pack's rules and principles as probed drafts (nothing
+        /// is accepted), or install a principle pack under
+        /// whetstone/principles: a file, an https URL, or a built-in pack
+        /// (rust, typescript, python).
+        #[arg(long, conflicts_with_all = ["export_pack", "kind", "accept", "withdraw", "retire", "from_text", "from_file", "from_finding"])]
+        import_pack: Option<String>,
     },
 
     /// Run the rules and return actionable findings.
@@ -427,6 +441,9 @@ pub fn run() -> i32 {
             from_file,
             from_finding,
             findings,
+            export_pack,
+            include_paths,
+            import_pack,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
             project_dir,
             request_id,
@@ -445,6 +462,9 @@ pub fn run() -> i32 {
             from_file,
             from_finding,
             findings,
+            export_pack,
+            include_paths,
+            import_pack,
         })),
         Some(Command::Check {
             project_dir,
