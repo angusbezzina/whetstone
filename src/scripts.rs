@@ -44,8 +44,9 @@ staged content with `git show ":$path"` when that matters.
 - Paths are relative to the repository root and must name a file that exists.
 - Anything else is kept in the evidence log only. Standard output and
   standard error are both read.
-- Limits: 900 seconds (300 in a probe), 2 MiB of output (a run that exceeds
-  it is unknown, never a pass) and the first 20 findings.
+- Limits: 900 seconds (300 in a probe) and 2 MiB of output (a run that
+  exceeds it is unknown, never a pass). A sweep keeps every finding; any
+  other check lists the first 20 of each rule and says how many it left out.
 
 ## Adding one
 

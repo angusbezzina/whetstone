@@ -128,25 +128,23 @@ pub fn probe(layout: &ProjectLayout, id: &RecordId, rule: &Rule) -> ProbeReport 
         ));
     }
     match &rule.enforcer {
-        Enforcer::Ast { query, language } => match gates::ast::run_query(
-            &files,
-            query,
-            language.as_deref(),
-            |path| rule.applies_to(path),
-            usize::MAX,
-        ) {
-            Err(error) => report.refuse(format!("the AST query does not parse: {error}")),
-            Ok(run) if run.files_checked == 0 => report.refuse(format!(
-                "no {} file is in scope, so the query would check nothing",
-                run.languages.join(" or ")
-            )),
-            Ok(run) => {
-                let total = run.failures.len();
-                let mut report = report;
-                report.files_in_scope = run.files_checked;
-                report.finish(run.failures, total)
+        Enforcer::Ast { query, language } => {
+            match gates::ast::run_query(&files, query, language.as_deref(), |path| {
+                rule.applies_to(path)
+            }) {
+                Err(error) => report.refuse(format!("the AST query does not parse: {error}")),
+                Ok(run) if run.files_checked == 0 => report.refuse(format!(
+                    "no {} file is in scope, so the query would check nothing",
+                    run.languages.join(" or ")
+                )),
+                Ok(run) => {
+                    let total = run.failures.len();
+                    let mut report = report;
+                    report.files_in_scope = run.files_checked;
+                    report.finish(run.failures, total)
+                }
             }
-        },
+        }
         Enforcer::Lint { tool, code } => {
             let argv = match gates::parse_command(tool) {
                 Ok(sequences) => sequences.last().cloned().unwrap_or_default(),
@@ -232,7 +230,7 @@ fn run_command(
     match outcome.state {
         GateState::Pass => report.finish(Vec::new(), 0),
         GateState::Fail => {
-            let total = outcome.failures.len();
+            let total = outcome.failures.len() + outcome.omitted;
             report.finish(outcome.failures, total)
         }
         GateState::Unknown => report.refuse(format!(

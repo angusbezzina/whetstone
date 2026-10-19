@@ -3,7 +3,8 @@
 //! should rule. With a base revision only
 //! flags on lines the change added or modified are annotated (a flag about a
 //! whole file lands on line 1 of a changed file); a flag with no file is
-//! annotated without one.
+//! annotated without one. A gate that listed only its first flags gets one
+//! more annotation saying how many were left out.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -71,6 +72,12 @@ pub fn render(project_root: &Path, data: &Value, base: Option<&str>) -> String {
                     id,
                 );
             }
+        }
+        let omitted = gate.get("omitted").and_then(Value::as_u64).unwrap_or(0);
+        if omitted > 0 {
+            let note =
+                format!("{omitted} more flag(s) of this rule are left out of these annotations.");
+            command(&mut out, level, None, &title, &note, id);
         }
     }
     out

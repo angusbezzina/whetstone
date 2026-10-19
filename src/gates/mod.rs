@@ -33,7 +33,8 @@ pub use files::{FileSet, Source};
 pub const EVIDENCE_SYSTEM: &str = "whetstone_evidence";
 pub const DEFAULT_GATE_TIMEOUT: Duration = Duration::from_secs(900);
 const OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
-const MAX_FAILURES: usize = 20;
+/// The flags a blocking check lists for each rule; a sweep lists every one.
+const MAX_LISTED: usize = 20;
 
 /// Host variables a gate may see. Everything else is cleared.
 pub const ENV_ALLOWLIST: &[&str] = &[
@@ -387,6 +388,9 @@ pub struct GateOutcome {
     pub state: GateState,
     pub summary: String,
     pub failures: Vec<ArtifactFailure>,
+    /// Flags found beyond the ones `failures` lists.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub omitted: usize,
     pub evidence: Vec<EvidenceRef>,
     pub exit_code: Option<i32>,
     pub elapsed_ms: u64,
@@ -406,12 +410,28 @@ impl GateOutcome {
             state: GateState::Unknown,
             summary: String::new(),
             failures: Vec::new(),
+            omitted: 0,
             evidence: Vec::new(),
             exit_code: None,
             elapsed_ms: 0,
             program: None,
             program_digest: None,
         }
+    }
+
+    /// Keep the first flags of a blocking check; the summary keeps the
+    /// true count and says how many were left out.
+    fn shortened(mut self) -> Self {
+        if self.failures.len() > MAX_LISTED {
+            let total = self.failures.len();
+            self.omitted = total - MAX_LISTED;
+            self.failures.truncate(MAX_LISTED);
+            self.summary.push_str(&format!(
+                " The first {MAX_LISTED} of {total} flags are listed; {} are left out.",
+                self.omitted
+            ));
+        }
+        self
     }
 
     pub fn unknown(mut self, summary: impl Into<String>) -> Self {
@@ -466,9 +486,6 @@ fn write_evidence(
 pub fn extract_failures(project_root: &Path, output: &str) -> Vec<ArtifactFailure> {
     let mut failures = Vec::new();
     for line in output.lines() {
-        if failures.len() >= MAX_FAILURES {
-            break;
-        }
         let before = failures.len();
         for token in line.split_whitespace() {
             let token = token.trim_matches(|character: char| {
@@ -661,9 +678,11 @@ fn finish(
 }
 
 /// Run one rule's enforcer.
+/// A sweep keeps every flag; any other check lists the first few, and the
+/// evidence log keeps them all.
 pub fn run_gate(context: &GateContext<'_>, id: &RecordId, rule: &Rule) -> GateOutcome {
     let outcome = GateOutcome::new(id, rule);
-    match &rule.enforcer {
+    let outcome = match &rule.enforcer {
         Enforcer::Test { command }
         | Enforcer::Validator { command }
         | Enforcer::Formatter { tool: command } => {
@@ -675,7 +694,16 @@ pub fn run_gate(context: &GateContext<'_>, id: &RecordId, rule: &Rule) -> GateOu
         Enforcer::Ast { query, language } => {
             run_ast_gate(context, outcome, rule, query, language.as_deref())
         }
+    };
+    if context.mode == RunMode::Sweep {
+        outcome
+    } else {
+        outcome.shortened()
     }
+}
+
+fn is_zero(count: &usize) -> bool {
+    *count == 0
 }
 
 /// The files a command enforcer is about, one repository path per line,
@@ -822,13 +850,7 @@ fn run_ast_gate(
     query: &str,
     language: Option<&str>,
 ) -> GateOutcome {
-    match ast::run_query(
-        context.files,
-        query,
-        language,
-        |path| rule.applies_to(path),
-        MAX_FAILURES,
-    ) {
+    match ast::run_query(context.files, query, language, |path| rule.applies_to(path)) {
         Err(error) => {
             outcome = outcome.unknown(format!("The AST query is not usable: {error}"));
         }

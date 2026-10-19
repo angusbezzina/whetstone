@@ -408,6 +408,117 @@ fn a_sweep_covers_a_large_repository_with_in_repository_symlinks() {
     );
 }
 
+#[test]
+fn a_sweep_emits_every_flag_and_a_blocking_check_says_what_it_left_out() {
+    let temp = repository();
+    let root = temp.path();
+    git(
+        root,
+        &["remote", "add", "origin", "git@github.com:example/app.git"],
+    );
+    // 45 flags over three files, so the first 20 by path would all be
+    // src/a.py and src/b.py.
+    for name in ["a", "b", "c"] {
+        let source = (0..15)
+            .map(|index| format!("print({index})\n"))
+            .collect::<String>();
+        std::fs::write(root.join(format!("src/{name}.py")), source).expect("write");
+    }
+    rulebook::add_rule(
+        root,
+        "rule.print-should",
+        "Prefer logging to print.",
+        &print_rule("should"),
+    );
+    rulebook::add_rule(
+        root,
+        "rule.print-must",
+        "No print at all.",
+        &print_rule("must"),
+    );
+    git(root, &["add", "."]);
+    git(root, &["commit", "-qm", "prints"]);
+
+    // The sweep emits all 45, each repeat numbered in source order.
+    let swept = run_with_system_tools(root, &["check", "--sweep", "--format", "findings"]);
+    let findings: Vec<Value> = serde_json::from_slice(&swept.stdout).expect("findings");
+    assert_eq!(findings.len(), 45);
+    let fingerprints = findings
+        .iter()
+        .map(|finding| {
+            finding["fingerprint"]
+                .as_str()
+                .expect("fingerprint")
+                .to_string()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(fingerprints.len(), 45);
+    let last = finding_line(
+        "rule.print-should",
+        "src/c.py#15",
+        "print(14)",
+        "draft_pr",
+        2,
+        "Prefer logging to print. (src/c.py)",
+        None,
+    );
+    assert!(fingerprints.contains(&last.0), "{findings:?}");
+    let enveloped = envelope(&run_with_system_tools(
+        root,
+        &["check", "--sweep", "--format", "json"],
+    ));
+    let gate = &enveloped["data"]["gates"][0];
+    assert_eq!(
+        gate["failures"].as_array().map(Vec::len),
+        Some(45),
+        "{gate}"
+    );
+    assert!(gate.get("omitted").is_none(), "{gate}");
+    assert!(
+        gate["summary"]
+            .as_str()
+            .is_some_and(|summary| summary.contains("matched 45 time(s)")),
+        "{gate}"
+    );
+
+    // A blocking check lists 20 flags of each rule, states the true count
+    // and how many it left out, in the envelope, the human output and the
+    // annotations.
+    let checked = envelope(&run_with_system_tools(root, &["check", "--json"]));
+    for gate in checked["data"]["gates"].as_array().expect("gates") {
+        assert_eq!(
+            gate["failures"].as_array().map(Vec::len),
+            Some(20),
+            "{gate}"
+        );
+        assert_eq!(gate["omitted"], json!(25), "{gate}");
+        assert!(
+            gate["summary"]
+                .as_str()
+                .is_some_and(|summary| summary.contains("matched 45 time(s)")
+                    && summary.contains("The first 20 of 45 flags are listed; 25 are left out.")),
+            "{gate}"
+        );
+    }
+    let human = run_with_system_tools(root, &["check"]);
+    assert!(
+        String::from_utf8_lossy(&human.stdout).contains("25 are left out"),
+        "{}",
+        String::from_utf8_lossy(&human.stdout)
+    );
+    let annotated = run_with_system_tools(root, &["check", "--format", "annotations"]);
+    let stdout = String::from_utf8_lossy(&annotated.stdout);
+    let commands = stdout
+        .lines()
+        .filter(|line| line.starts_with("::error"))
+        .collect::<Vec<_>>();
+    assert_eq!(commands.len(), 21, "{stdout}");
+    assert!(
+        commands.contains(&"::error title=rule.print-must%3A No print at all.::25 more flag(s) of this rule are left out of these annotations. (wh explain rule.print-must)"),
+        "{stdout}"
+    );
+}
+
 fn cargo_fmt_available() -> bool {
     Command::new("cargo")
         .args(["fmt", "--version"])

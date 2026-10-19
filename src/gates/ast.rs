@@ -31,7 +31,6 @@ pub fn run_query(
     query: &str,
     language: Option<&str>,
     applies: impl Fn(&str) -> bool,
-    limit: usize,
 ) -> Result<AstRun, String> {
     let languages = match language {
         Some(name) => vec![AstLang::from_str(name)
@@ -79,7 +78,7 @@ pub fn run_query(
         let mut cursor = QueryCursor::new();
         for found in cursor.matches(query, tree.root_node(), source.as_bytes()) {
             for capture in found.captures {
-                if capture.index != match_index || run.failures.len() >= limit {
+                if capture.index != match_index {
                     continue;
                 }
                 let line = capture.node.start_position().row + 1;
@@ -127,7 +126,6 @@ mod tests {
             r#"(call_expression function: (field_expression field: (field_identifier) @m (#eq? @m "unwrap"))) @match"#,
             Some("rust"),
             |_| true,
-            20,
         )
         .expect("run");
         assert_eq!(run.files_checked, 1);
@@ -138,7 +136,7 @@ mod tests {
     #[test]
     fn a_query_that_compiles_for_no_language_is_an_error() {
         let files = FileSet::default();
-        assert!(run_query(&files, "(not_a_node) @match", None, |_| true, 20).is_err());
-        assert!(run_query(&files, "(identifier) @nomatch", Some("rust"), |_| true, 20).is_err());
+        assert!(run_query(&files, "(not_a_node) @match", None, |_| true).is_err());
+        assert!(run_query(&files, "(identifier) @nomatch", Some("rust"), |_| true).is_err());
     }
 }

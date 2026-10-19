@@ -219,7 +219,7 @@ pub fn findings(
             }
         }
         Reporter::Text => {
-            for line in output.lines().filter(|line| line.contains(code)).take(20) {
+            for line in output.lines().filter(|line| line.contains(code)) {
                 failures.push(ArtifactFailure {
                     location: "linter output".into(),
                     message: line.trim().chars().take(240).collect(),
@@ -227,7 +227,6 @@ pub fn findings(
             }
         }
     }
-    failures.truncate(20);
     Ok(failures)
 }
 
