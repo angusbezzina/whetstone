@@ -100,9 +100,7 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
         if !root.join(CI_WORKFLOW).exists() {
             writes.push((
                 CI_WORKFLOW.to_string(),
-                CI_TEMPLATE
-                    .replace("__WHETSTONE_VERSION__", env!("CARGO_PKG_VERSION"))
-                    .replace("__BD_VERSION__", crate::setup::MIN_BD_VERSION),
+                CI_TEMPLATE.replace("__WHETSTONE_VERSION__", env!("CARGO_PKG_VERSION")),
                 "scaffolded once; team-owned; protect with CODEOWNERS",
             ));
         }

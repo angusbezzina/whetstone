@@ -1,8 +1,7 @@
 //! Two machines, one team remote (Beads data in the Git remote's
 //! `refs/dolt/data`, no policy commit on the code branch): selected accepted
 //! records push with an exact confirmed package, a fresh clone reaches them
-//! with `bd bootstrap` and `wh dash`, the CI check runs only shared rules,
-//! private drafts, a canary and private ancestry never leave, a changed
+//! with `bd bootstrap` and `wh dash`, private drafts, a canary and private ancestry never leave, a changed
 //! package invalidates confirmation, and pull executes and activates nothing
 //! while local drafts survive.
 
@@ -398,44 +397,6 @@ fn accepted_records_travel_privately_and_pull_changes_nothing_it_should_not() {
         "the canary never reached the team"
     );
     assert!(!everything.contains("principle.secret"));
-
-    // The required CI check reads only the shared database: on the fresh
-    // clone and on A it runs the shared must rules, never one A accepted
-    // without sharing.
-    let unshared = change(
-        &a,
-        "unshared",
-        &[
-            "--kind",
-            "rule",
-            "--record-id",
-            "rule.unshared",
-            "--content",
-            "Accepted here, not shared",
-            "--rationale",
-            "stays on A",
-            "--definition",
-            r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"git --version"}}"#,
-        ],
-    );
-    accept(
-        &a,
-        unshared["data"]["proposal"]["id"]
-            .as_str()
-            .expect("proposal"),
-    );
-    for machine in [&a, &b] {
-        let ci = json(&run(&["check", "--ci", "--json"], machine));
-        assert_eq!(ci["state"], "success", "{ci}");
-        let mut ran = ci["data"]["gates"]
-            .as_array()
-            .expect("gates")
-            .iter()
-            .map(|gate| gate["id"].as_str().expect("id").to_string())
-            .collect::<Vec<_>>();
-        ran.sort();
-        assert_eq!(ran, ["rule.journey", "rule.toolchain"], "{ci}");
-    }
 
     // B drafts locally, then A shares a gate whose command would leave a
     // file if anything ran it; B pulls.

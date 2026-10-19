@@ -351,8 +351,6 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
     );
     let draft = propose_and_accept(root, "c2", "rule.git-still-answers", "Git still answers.");
     assert_eq!(draft["state"], "success", "{draft}");
-    let checked = wh(root, &["check", "--json", "--rule", "rule.git-answers"]);
-    assert_eq!(checked["state"], "success", "{checked}");
     assert!(
         fake_state(root)["rulebook"]["repository"]
             .as_array()
@@ -630,8 +628,8 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
         );
     }
 
-    // After the flip: the draft moved to the private scope, the rules still
-    // check, and nothing is left behind.
+    // After the flip: the draft moved to the private scope and nothing is
+    // left behind.
     assert!(
         fake_state(root)["rulebook"]["private"]
             .as_array()
@@ -650,8 +648,6 @@ fn records_move_from_beads_into_virgil_and_flip_only_once_they_read_back() {
         dash["data"]["current"]["header"]["drafts"], 1,
         "the draft survived"
     );
-    let checked = wh(root, &["check", "--json", "--rule", "rule.git-answers"]);
-    assert_eq!(checked["state"], "success", "{checked}");
     let inspected = wh(root, &["init", "--json"]).to_string();
     assert!(
         !inspected.contains("brew install beads") && !inspected.contains("releases/download"),

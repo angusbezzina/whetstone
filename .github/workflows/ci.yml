@@ -69,7 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --quiet
-          scripts/self-check.sh --bootstrap target/debug/whetstone
+          scripts/self-check.sh target/debug/whetstone
 
       - name: 6 - Python black-box tests
         run: python3 -m pytest -q

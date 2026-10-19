@@ -5,8 +5,7 @@
 # and a required check that never reports blocks the merge.
 #
 # The check runs the full `wh check` for the pull request's commits against
-# the rules the team accepted and shared (`wh push`), never against a
-# contributor's private drafts.
+# the committed rulebook, whetstone/rulebook.json.
 name: whetstone
 
 on:
@@ -28,21 +27,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Install pinned bd and wh
+      - name: Install pinned wh
         shell: bash
         env:
-          BD_VERSION: "__BD_VERSION__"
           WHETSTONE_VERSION: "__WHETSTONE_VERSION__"
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/bd.tar.gz"
-          curl -fsSL -o "$archive" "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION}/beads_${BD_VERSION}_linux_amd64.tar.gz"
-          mkdir -p "$RUNNER_TEMP/bin" && tar -xzf "$archive" -C "$RUNNER_TEMP/bin" bd
           curl -fsSL "https://raw.githubusercontent.com/angusbezzina/whetstone/v${WHETSTONE_VERSION}/install.sh" \
             | INSTALL_DIR="$RUNNER_TEMP/bin" sh -s -- --version "v${WHETSTONE_VERSION}"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Receive the team's shared rules (read-only)
-        run: bd bootstrap --yes
       - name: whetstone/policy
         env:
           BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}

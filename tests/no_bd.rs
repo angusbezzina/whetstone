@@ -1,7 +1,6 @@
 //! The virgil store needs no `bd`: with `whetstone/store.json` naming
 //! Virgil and a PATH holding only the fake `virgil` (tests/fake_virgil.py)
-//! and the basic tools, init, change, check (with the sweep) and dash run end
-//! to end, drafts land in the rulebook's private scope,
+//! and the basic tools, init, change and dash run end to end, drafts land in the rulebook's private scope,
 //! accepted records reach its repository scope when they are accepted, `wh
 //! push` and `wh pull` are refused by name (their dry runs succeed), and no
 //! `.beads` appears.
@@ -242,15 +241,6 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
     let pending = change("c2", "rule.git-still-answers", "Git still answers.");
     assert_eq!(pending["state"], "success", "{pending}");
 
-    let checked = json_of(&wh(&["check", "--json", "--rule", "rule.git-answers"]));
-    assert_eq!(checked["state"], "success", "{checked}");
-    let swept = wh(&["check", "--sweep", "--format", "findings"]);
-    assert_eq!(
-        swept.status.code(),
-        Some(0),
-        "{}",
-        String::from_utf8_lossy(&swept.stderr)
-    );
     let dash = json_of(&wh(&["dash", "--json"]));
     assert_eq!(dash["state"], "success", "{dash}");
     assert_eq!(dash["data"]["current"]["established"], true);
@@ -266,8 +256,8 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
     );
     assert_eq!(dash["data"]["store"]["left_behind"], json!([]));
 
-    // Drafts live in the private scope, a check adds no record anywhere, and
-    // nothing is kept as a local revision file.
+    // Drafts live in the private scope, and nothing is kept as a local
+    // revision file.
     let private = state(&root)["rulebook"]["private"]
         .as_array()
         .cloned()
@@ -278,15 +268,6 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
             .any(|record| record["record_id"] == "rule.git-still-answers"),
         "the draft is in the private scope"
     );
-    assert!(
-        private.iter().all(|record| record["kind"] != "receipt"),
-        "a check writes no receipt"
-    );
-    assert!(state(&root)["rulebook"]["repository"]
-        .as_array()
-        .expect("repository scope")
-        .iter()
-        .all(|record| record["kind"] != "receipt"));
     let common = root.join(".git/whetstone");
     assert!(
         !files_under(&common)

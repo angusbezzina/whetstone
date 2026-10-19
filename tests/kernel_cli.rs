@@ -5,6 +5,8 @@ use whetstone::beads::BeadsStore;
 use whetstone::domain::{AgreementRecord, RecordBody};
 use whetstone::storage::{ProjectLayout, StoreKind};
 
+#[path = "support/rulebook.rs"]
+mod rulebook;
 mod support;
 
 fn bin() -> PathBuf {
@@ -169,22 +171,14 @@ impl Repo {
         self.wh_json(&["change", "--request-id", request_id, "--accept", proposal])
     }
 
-    /// Record a rule draft and accept it, so it is in force.
+    /// Write a rule into the rulebook, where a check reads it.
     fn rule(&self, record_id: &str, definition: &str) {
-        let drafted = self.propose(
-            &format!("draft-{record_id}"),
-            "rule",
+        rulebook::add_rule(
+            &self.root,
             record_id,
             &format!("Statement of {record_id}."),
-            Some(definition),
+            &serde_json::from_str(definition).expect("definition JSON"),
         );
-        assert_eq!(drafted["state"], "success", "{drafted}");
-        let proposal = drafted["data"]["proposal"]["id"]
-            .as_str()
-            .expect("proposal id")
-            .to_string();
-        let accepted = self.accept(&format!("accept-{record_id}"), &proposal);
-        assert_eq!(accepted["state"], "success", "{accepted}");
     }
 
     fn check(&self, args: &[&str]) -> (Option<i32>, serde_json::Value) {
@@ -192,6 +186,21 @@ impl Repo {
         all.extend_from_slice(args);
         let output = self.wh(&all);
         (output.status.code(), json(&output))
+    }
+
+    /// The rules `wh dash` shows as in force or pending.
+    fn rule_entries(&self) -> Vec<serde_json::Value> {
+        self.wh_json(&["dash"])["data"]["current"]["rules"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn rule_entry(&self, id: &str) -> serde_json::Value {
+        self.rule_entries()
+            .into_iter()
+            .find(|rule| rule["id"] == id)
+            .unwrap_or_else(|| panic!("no rule {id} in wh dash"))
     }
 
     fn records(&self) -> Vec<AgreementRecord> {
@@ -1169,16 +1178,8 @@ fn a_rule_draft_is_only_in_force_once_accepted_and_withdraw_and_retire_keep_hist
         .expect("proposal id")
         .to_string();
 
-    // A draft is private and not in force: a check never runs it.
-    let (_, draft_check) = repo.check(&["--dry-run"]);
-    assert_eq!(
-        draft_check["data"]["selection"]["rules"],
-        serde_json::json!([])
-    );
-    assert_eq!(
-        draft_check["data"]["selection"]["skipped_drafts"],
-        serde_json::json!(["rule.boundary"])
-    );
+    // A draft is not in force until accepted.
+    assert_eq!(repo.rule_entry("rule.boundary")["lifecycle"], "draft");
 
     let accepted = repo.accept("accept-1", &proposal);
     assert_eq!(accepted["state"], "success", "{accepted}");
@@ -1193,9 +1194,7 @@ fn a_rule_draft_is_only_in_force_once_accepted_and_withdraw_and_retire_keep_hist
         "needs_input",
         "a reviewed draft is no longer pending"
     );
-    let (code, in_force) = repo.check(&["--rule", "rule.boundary"]);
-    assert_eq!(code, Some(0), "{in_force}");
-    assert_eq!(gate(&in_force, "rule.boundary")["state"], "pass");
+    assert_eq!(repo.rule_entry("rule.boundary")["lifecycle"], "accepted");
 
     // A withdrawn revision leaves the accepted one in force.
     let revised = repo.propose(
@@ -1220,8 +1219,11 @@ fn a_rule_draft_is_only_in_force_once_accepted_and_withdraw_and_retire_keep_hist
     ]);
     assert_eq!(withdrawn["state"], "success");
     assert_eq!(withdrawn["data"]["verdict"], "withdraw");
-    let (code, still) = repo.check(&["--rule", "rule.boundary"]);
-    assert_eq!(code, Some(0), "the withdrawn revision took force: {still}");
+    let still = repo.rule_entry("rule.boundary");
+    assert_eq!(
+        still["command"], "true",
+        "the withdrawn revision took force: {still}"
+    );
 
     // Retiring needs a reason, is a draft, and takes force only once accepted.
     let no_reason = repo.wh(&[
@@ -1246,19 +1248,16 @@ fn a_rule_draft_is_only_in_force_once_accepted_and_withdraw_and_retire_keep_hist
         .as_str()
         .expect("retirement proposal")
         .to_string();
-    let (_, before_accept) = repo.check(&["--dry-run"]);
-    assert_eq!(
-        before_accept["data"]["selection"]["rules"],
-        serde_json::json!(["rule.boundary"])
-    );
+    assert_eq!(repo.rule_entry("rule.boundary")["lifecycle"], "accepted");
     assert_eq!(
         repo.accept("accept-retire", &retirement)["state"],
         "success"
     );
-    let (_, after_accept) = repo.check(&["--dry-run"]);
-    assert_eq!(
-        after_accept["data"]["selection"]["rules"],
-        serde_json::json!([])
+    assert!(
+        repo.rule_entries()
+            .iter()
+            .all(|rule| rule["id"] != "rule.boundary"),
+        "a retired rule is no longer in force"
     );
     let history = repo
         .records()
@@ -1446,7 +1445,6 @@ fn a_check_writes_no_record() {
     repo.write("src/app.py", "def read_config():\n    pass\n");
     repo.commit("base");
     repo.rule("rule.lowercase-functions", UPPERCASE_FUNCTIONS);
-    let before = repo.records().len();
 
     let args = ["--request-id", "check-idempotent"];
     let (_, first) = repo.check(&args);
@@ -1457,9 +1455,9 @@ fn a_check_writes_no_record() {
         first["data"]["report"]["state"],
         second["data"]["report"]["state"]
     );
-    assert_eq!(
-        repo.records().len(),
-        before,
+    let layout = ProjectLayout::resolve(&repo.root).expect("layout");
+    assert!(
+        !layout.private_store().exists(),
         "a check is its report, never a record"
     );
 }

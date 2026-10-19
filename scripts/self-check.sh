@@ -1,37 +1,14 @@
 #!/usr/bin/env bash
 # Whetstone checks itself: the required CI check (`wh check --ci`) over the
-# whole tree, against the must rules accepted and shared in Whetstone's own
-# Beads store. Fails on any must finding, on evidence that is not a pass, and
-# when no must rule ran.
+# whole tree, against the must rules in Whetstone's own committed rulebook
+# (whetstone/rulebook.json). Fails on any must finding, on evidence that is
+# not a pass, and when no must rule ran.
 #
-# Usage: scripts/self-check.sh [--bootstrap] <whetstone binary>
-#   --bootstrap  for a fresh CI checkout: fetch the Beads data
-#                (refs/dolt/data) from origin with the checkout's own
-#                credentials, then clone the shared database from that local
-#                copy. The tracked sync remote is SSH, which CI cannot reach.
+# Usage: scripts/self-check.sh <whetstone binary>
 set -euo pipefail
 
-bootstrap=false
-if [ "${1:-}" = --bootstrap ]; then
-  bootstrap=true
-  shift
-fi
-bin=$(cd "$(dirname "${1:?usage: scripts/self-check.sh [--bootstrap] <whetstone binary>}")" && pwd)/$(basename "$1")
+bin=$(cd "$(dirname "${1:?usage: scripts/self-check.sh <whetstone binary>}")" && pwd)/$(basename "$1")
 cd "$(git rev-parse --show-toplevel)"
-
-if $bootstrap; then
-  git fetch --quiet --no-tags origin +refs/dolt/data:refs/dolt/data
-  # Dolt clones only from a Git remote that has a branch, and a CI checkout
-  # is a detached, shallow merge ref: serve the data from a throwaway bare
-  # repository whose one branch is a parentless empty commit.
-  remote=$(mktemp -d)/beads-data.git
-  git init --quiet --bare "$remote"
-  empty=$(git commit-tree "$(git hash-object -t tree /dev/null)" -m "Beads data")
-  git push --quiet "$remote" refs/dolt/data:refs/dolt/data "$empty:refs/heads/main"
-  BD_NON_INTERACTIVE=1 BD_SYNC_REMOTE="git+file://$remote" bd bootstrap --yes >/dev/null
-  # Bootstrap writes the local remote into the tracked config; the check only reads.
-  git checkout --quiet -- .beads
-fi
 
 result=$("$bin" check --ci --json) || true
 echo "$result" | jq -r '.data.gates[]? | "  \(.state) \(.strength) \(.id): \(.summary)"'

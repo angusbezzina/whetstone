@@ -180,13 +180,10 @@ python3 -m pytest -q
 ```
 
 The self-check is Whetstone checking itself: `wh check --ci` over the whole
-tree against the must rules accepted (`wh change`) and shared (`wh push`) in
-Whetstone's own Beads store. It fails on any must finding or unknown
-evidence, and when no must rule ran; zero work is not green. It needs `jq`.
-CI and the release job pass `--bootstrap`, which fetches `refs/dolt/data`
-with the checkout's token and clones the shared database from it, so they
-need no SSH key. A must rule for Whetstone itself is changed only through
-`wh change` and reaches the gate with `wh push`.
+tree against the must rules in Whetstone's own committed rulebook,
+`whetstone/rulebook.json`. It fails on any must finding or unknown evidence,
+and when no must rule ran; zero work is not green. It needs `jq`. A must rule
+for Whetstone itself changes by a commit to that file.
 The tests run under `cargo-nextest` (`cargo install cargo-nextest --locked`),
 which runs every test binary in parallel; `cargo test --doc` covers doc tests.
 The hook prints each step's seconds and the total. The budget is 5 minutes for

@@ -239,8 +239,8 @@ pub struct CheckRequest {
     pub timeout_seconds: Option<u64>,
     /// Report the selection and exact commands without executing anything.
     pub dry_run: bool,
-    /// The required CI check: enforce the team's shared, accepted records
-    /// only, ignoring any private store and unshared drafts.
+    /// The required CI check: enforce the committed rulebook only, refusing
+    /// one with uncommitted changes.
     pub ci: bool,
     /// Include paths changed since this revision (a committed change), not
     /// only the working tree.

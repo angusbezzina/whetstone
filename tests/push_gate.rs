@@ -10,7 +10,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-mod support;
+#[path = "support/rulebook.rs"]
+mod rulebook;
 
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_whetstone"))
@@ -20,7 +21,6 @@ fn run(args: &[&str], cwd: &Path) -> Output {
     Command::new(bin())
         .args(args)
         .current_dir(cwd)
-        .env("PATH", support::path_with_bd_template())
         .env_remove("BEADS_DIR")
         .output()
         .expect("run whetstone")
@@ -55,7 +55,9 @@ impl Repo {
         #[cfg(unix)]
         std::os::unix::fs::symlink(bin(), bin_dir.join("wh")).expect("symlink wh");
         let mut paths = vec![bin_dir];
-        paths.extend(std::env::split_paths(&support::path_with_bd_template()));
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
         let path = std::env::join_paths(paths).expect("PATH");
         let repo = Self {
             temp,
@@ -157,91 +159,9 @@ impl Repo {
         fs::write(target, text).expect("write");
     }
 
-    fn change(&self, request: &str, args: &[&str]) -> serde_json::Value {
-        let mut probe = vec!["change", "--json", "--request-id", request];
-        probe.extend_from_slice(args);
-        let inspected = json(&run(&probe, &self.root));
-        let revision = inspected["expected_revision"]
-            .as_u64()
-            .expect("revision")
-            .to_string();
-        let token = inspected["resume_token"]
-            .as_str()
-            .expect("token")
-            .to_string();
-        let mut record = probe.clone();
-        record.extend_from_slice(&["--expected-revision", &revision, "--resume", &token]);
-        json(&run(&record, &self.root))
-    }
-
-    fn accept(&self, drafted: &serde_json::Value) {
-        assert_eq!(drafted["state"], "success", "{drafted}");
-        let proposal = drafted["data"]["proposal"]["id"]
-            .as_str()
-            .expect("proposal");
-        let accepted = json(&run(
-            &[
-                "change",
-                "--json",
-                "--request-id",
-                &format!("accept-{proposal}"),
-                "--accept",
-                proposal,
-            ],
-            &self.root,
-        ));
-        assert_eq!(accepted["state"], "success", "{accepted}");
-    }
-
+    /// Write a rule into the rulebook; the next commit carries it.
     fn rule(&self, id: &str, statement: &str, definition: serde_json::Value) {
-        self.accept(&self.change(
-            &format!("{id}-draft"),
-            &[
-                "--kind",
-                "rule",
-                "--record-id",
-                id,
-                "--content",
-                statement,
-                "--rationale",
-                "The team relies on it.",
-                "--definition",
-                &definition.to_string(),
-            ],
-        ));
-    }
-
-    fn agree(&self) {
-        let inspected = json(&run(&["init", "--json", "--request-id", "i1"], &self.root));
-        let revision = inspected["expected_revision"]
-            .as_u64()
-            .expect("revision")
-            .to_string();
-        let token = inspected["resume_token"]
-            .as_str()
-            .expect("token")
-            .to_string();
-        let agreed = json(&run(
-            &[
-                "init",
-                "--json",
-                "--action",
-                "agree",
-                "--request-id",
-                "i1",
-                "--expected-revision",
-                &revision,
-                "--resume",
-                &token,
-                "--mission",
-                "Nothing broken reaches the team.",
-            ],
-            &self.root,
-        ));
-        assert_eq!(
-            agreed["data"]["records"][0]["id"], "mission.project",
-            "{agreed}"
-        );
+        rulebook::add_rule(&self.root, id, statement, &definition);
     }
 
     fn wire_hooks(&self) {
@@ -272,7 +192,6 @@ fn no_print() -> serde_json::Value {
 #[test]
 fn a_push_is_refused_unless_the_pushed_commit_itself_holds_the_must_rules() {
     let repo = Repo::new();
-    repo.agree();
     repo.rule("rule.no-print", "No print calls.", no_print());
     repo.wire_hooks();
     repo.write("app.py", "import logging\n");
@@ -324,7 +243,6 @@ fn a_push_is_refused_unless_the_pushed_commit_itself_holds_the_must_rules() {
 #[test]
 fn a_new_branch_is_checked_against_the_remotes_default_branch() {
     let repo = Repo::new();
-    repo.agree();
     repo.rule("rule.no-print", "No print calls.", no_print());
     repo.wire_hooks();
     // The default branch is `trunk`, and it already carries a violation that

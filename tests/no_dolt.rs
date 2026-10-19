@@ -1,5 +1,5 @@
-//! The kernel needs `bd`, not `dolt`: init, change, check and dash run with a
-//! PATH that holds only `bd` and the basic tools, and no `dolt` anywhere.
+//! The kernel needs `bd`, not `dolt`: init, change and dash run with a PATH
+//! that holds only `bd` and the basic tools, and no `dolt` anywhere.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -153,12 +153,6 @@ fn the_whole_local_flow_runs_without_a_dolt_binary() {
     );
     assert_eq!(pending["state"], "success", "{pending}");
 
-    let checked = json(&run(
-        &["check", "--json", "--rule", "rule.git-answers"],
-        &root,
-        &tools,
-    ));
-    assert_eq!(checked["state"], "success", "{checked}");
     let dash = json(&run(&["dash", "--json"], &root, &tools));
     assert_eq!(dash["state"], "success", "{dash}");
     assert_eq!(dash["data"]["current"]["established"], true);

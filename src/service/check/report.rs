@@ -10,7 +10,8 @@ use std::process::Command;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::domain::{ContentDigest, RecordRef};
+use crate::domain::ContentDigest;
+use crate::rulebook::Revision;
 
 pub const REPORT_SCHEMA: &str = "whetstone.check-report.v1";
 const MAX_FINDINGS: usize = 256;
@@ -98,6 +99,15 @@ impl CheckState {
     }
 }
 
+/// The rule a result enforces: its id, the digest of its canonical JSON and
+/// the revision of the rulebook it was read from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct RuleReference {
+    pub(crate) id: String,
+    pub(crate) digest: ContentDigest,
+    pub(crate) revision: Revision,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct CheckResult {
     pub(crate) requirement_id: String,
@@ -106,7 +116,7 @@ pub(crate) struct CheckResult {
     pub(crate) summary: String,
     pub(crate) evidence: EvidencePointer,
     pub(crate) findings: Vec<Finding>,
-    pub(crate) governing_records: Vec<RecordRef>,
+    pub(crate) governing_rule: RuleReference,
     pub(crate) repair_direction: String,
     pub(crate) permitted_next_action: String,
     pub(crate) recheck_command: String,
@@ -156,8 +166,6 @@ impl CheckReport {
                     &right.rule_id,
                 ))
             });
-            result.governing_records.sort();
-            result.governing_records.dedup();
         }
         let required = results
             .iter()
@@ -488,7 +496,11 @@ mod tests {
                 digest: zero_digest(),
             },
             findings: Vec::new(),
-            governing_records: Vec::new(),
+            governing_rule: RuleReference {
+                id: id.into(),
+                digest: zero_digest(),
+                revision: Revision::Uncommitted,
+            },
             repair_direction: "repair".into(),
             permitted_next_action: format!("repair {id}"),
             recheck_command: "wh check".into(),

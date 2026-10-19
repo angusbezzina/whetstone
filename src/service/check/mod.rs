@@ -13,27 +13,27 @@ use std::path::Path;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::agreement::AgreementState;
-use crate::domain::{Enforcer, RecordId, RecordRef, Rule, Strength};
+use crate::domain::{ContentDigest, Enforcer, RecordId, Rule, Strength};
 use crate::gates::{ArtifactFailure, FileSet, GateOutcome, GateState};
+use crate::rulebook::{Revision, Rulebook, RulebookError, RULEBOOK_PATH};
 use crate::storage::ProjectLayout;
 
 use super::record::{compute_check_snapshot, digest_bytes};
 use super::{
-    bounded_request_id, load_records, storage_error, unix_now, unknown_response, utc_now,
-    CheckRequest, GateMode, RequiredSnapshot, ServiceEvidence, ServiceResponse, ServiceState,
+    bounded_request_id, unix_now, unknown_response, utc_now, CheckRequest, GateMode,
+    RequiredSnapshot, ServiceEvidence, ServiceResponse, ServiceState,
 };
 
 mod findings;
 mod report;
 
 pub(crate) use report::{code_tree_digest, Finding, SnapshotBinding};
-use report::{CheckReport, CheckResult, CheckState, EvidencePointer};
+use report::{CheckReport, CheckResult, CheckState, EvidencePointer, RuleReference};
 
-/// An in-force rule chosen for this check.
+/// A rulebook rule chosen for this check.
 pub(crate) struct SelectedRule {
     pub(crate) id: RecordId,
-    pub(crate) reference: RecordRef,
+    pub(crate) digest: ContentDigest,
     pub(crate) rule: Rule,
 }
 
@@ -41,7 +41,6 @@ pub(crate) struct SelectedRule {
 pub(crate) struct Selection {
     pub(crate) rules: Vec<SelectedRule>,
     pub(crate) rule_ids: BTreeSet<String>,
-    pub(crate) skipped_drafts: Vec<String>,
     pub(crate) changed_paths: Vec<String>,
 }
 
@@ -96,23 +95,21 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         Err(summary) => return unknown_response("check", "invalid-request-id".into(), summary),
     };
     let layout = ProjectLayout::resolve(&project).ok();
-    // CI enforces what the team accepted and shared, never a contributor's
-    // private drafts; a local check sees both stores.
-    let agreement = match layout.as_ref().map(load_records) {
-        Some(Ok(loaded)) if request.ci => loaded
-            .shared
-            .clone()
-            .filter(|shared| !shared.is_empty())
-            .map(AgreementState::from_records),
-        Some(Ok(loaded)) if loaded.exists() => Some(AgreementState::from_records(loaded.union().0)),
-        Some(Err(error)) => return storage_error("check", request_id, error),
-        _ => None,
+    let rulebook = match crate::rulebook::load(
+        layout
+            .as_ref()
+            .map_or(project.as_path(), ProjectLayout::project_root),
+    ) {
+        Ok(rulebook) => rulebook,
+        Err(error) => return rulebook_error(request_id, &error),
     };
-    if request.ci && agreement.is_none() {
+    // CI enforces the rules the team merged, never an edit still in a
+    // working tree; a local check reads the file as it is.
+    if request.ci && rulebook.revision == Revision::Uncommitted {
         return unknown_response(
             "check",
             request_id,
-            "The CI check enforces the team's shared rules, and this checkout has none; run bd bootstrap, or share accepted rules with wh push.".into(),
+            format!("The CI check enforces the committed rulebook, and {RULEBOOK_PATH} has uncommitted changes; commit them, then wh check --ci."),
         );
     }
     if let Some(pushed) = request.pushed.as_deref() {
@@ -133,7 +130,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         },
         _ => FileSet::default(),
     };
-    let selection = match select_rules(agreement.as_ref(), &project, &request, &files) {
+    let selection = match select_rules(&rulebook, &project, &request, &files) {
         Ok(selection) => selection,
         Err(summary) => return unknown_response("check", request_id, summary),
     };
@@ -144,7 +141,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     }
     .retain(|path| !crate::wire::is_generated(path));
     if request.dry_run {
-        return dry_run_response(request_id, &request, &selection);
+        return dry_run_response(request_id, &request, &rulebook, &selection);
     }
     let snapshot = match compute_check_snapshot(&project, &request.rules) {
         Ok(snapshot) => snapshot,
@@ -160,7 +157,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                 selection
                     .rules
                     .iter()
-                    .map(|rule| rule.reference.digest.as_str())
+                    .map(|rule| rule.digest.as_str())
                     .collect::<Vec<_>>()
                     .join(","),
                 request.gate_mode
@@ -201,14 +198,14 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                 changed: &content_changed,
             };
             let outcome = crate::gates::run_gate(&context, &selected.id, &selected.rule);
-            results.push(gate_result(selected, &outcome, &run_id));
+            results.push(gate_result(selected, &rulebook.revision, &outcome, &run_id));
             outcomes.push(outcome);
         }
     }
     let sweep_findings = (request.gate_mode == GateMode::Sweep)
         .then(|| findings::findings(&project, &selection.rules, &outcomes));
     if results.is_empty() {
-        let mut response = nothing_ran(request_id, &request, &selection, &outcomes);
+        let mut response = nothing_ran(request_id, &request, &rulebook, &selection, &outcomes);
         attach_findings(&mut response, sweep_findings.as_deref());
         return response;
     }
@@ -282,15 +279,44 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         "run_id": if selection.rules.is_empty() { None } else { Some(run_id) },
         "evidence_root": layout.as_ref().map(|layout| crate::gates::evidence_root(layout).display().to_string()),
         "ci": request.ci,
+        "rulebook": rulebook_json(&rulebook),
         "selection": selection_json(&request, &selection),
     });
     attach_findings(&mut response, sweep_findings.as_deref());
     response
 }
 
+/// Why there is nothing to check: the rulebook is missing or not a rulebook.
+fn rulebook_error(request_id: String, error: &RulebookError) -> ServiceResponse {
+    let (summary, action) = match error {
+        RulebookError::Missing => (
+            format!("{RULEBOOK_PATH} does not exist, so no rule was checked, which is not a pass."),
+            format!("create {RULEBOOK_PATH} with wh change --kind rule, or export the record store with wh init --action export, then wh check"),
+        ),
+        other => (
+            format!("{other}; no rule was checked, which is not a pass."),
+            format!("repair {RULEBOOK_PATH}, then wh check"),
+        ),
+    };
+    let mut response = unknown_response("check", request_id, summary);
+    response.permitted_actions = vec![action];
+    response.data = json!({ "rulebook": { "path": RULEBOOK_PATH } });
+    response
+}
+
+/// The rulebook a check read: where it is and the commit that last touched it.
+fn rulebook_json(rulebook: &Rulebook) -> Value {
+    json!({ "path": RULEBOOK_PATH, "revision": rulebook.revision })
+}
+
 /// One gate run as a report result: a must rule is required, a should rule
 /// is not.
-fn gate_result(selected: &SelectedRule, outcome: &GateOutcome, run_id: &str) -> CheckResult {
+fn gate_result(
+    selected: &SelectedRule,
+    revision: &Revision,
+    outcome: &GateOutcome,
+    run_id: &str,
+) -> CheckResult {
     let id = selected.id.as_str();
     CheckResult {
         requirement_id: format!("gate:{id}"),
@@ -318,7 +344,11 @@ fn gate_result(selected: &SelectedRule, outcome: &GateOutcome, run_id: &str) -> 
             .iter()
             .map(|failure| gate_finding(selected, failure))
             .collect(),
-        governing_records: vec![selected.reference.clone()],
+        governing_rule: RuleReference {
+            id: id.into(),
+            digest: selected.digest.clone(),
+            revision: revision.clone(),
+        },
         repair_direction:
             "Repair within the current task scope; never change or weaken the rule to pass it."
                 .into(),
@@ -375,7 +405,6 @@ fn selection_json(request: &CheckRequest, selection: &Selection) -> Value {
     json!({
         "mode": format!("{:?}", request.gate_mode).to_ascii_lowercase(),
         "rules": selection.rules.iter().map(|rule| rule.id.as_str()).collect::<Vec<_>>(),
-        "skipped_drafts": selection.skipped_drafts,
         "changed_paths": selection.changed_paths,
         "base": request.base,
     })
@@ -403,40 +432,34 @@ fn next_actions(state: ServiceState, outcomes: &[GateOutcome]) -> Vec<String> {
 fn nothing_ran(
     request_id: String,
     request: &CheckRequest,
+    rulebook: &Rulebook,
     selection: &Selection,
     outcomes: &[GateOutcome],
 ) -> ServiceResponse {
-    // Rules are in force, but none runs at pre-commit (command rules run at
-    // pre-push): the commit is not blocked on them.
+    // The rulebook has rules, but none runs at pre-commit (command rules run
+    // at pre-push): the commit is not blocked on them.
     let deferred = request.gate_mode == GateMode::Staged
         && selection.rules.is_empty()
-        && !selection.rule_ids.is_empty()
-        && selection.skipped_drafts.is_empty();
-    let summary = if deferred {
-        "No fast mechanical rule applies at pre-commit; the other rules in force run at pre-push and in CI."
-            .to_string()
-    } else if selection.skipped_drafts.is_empty() {
-        "Nothing ran: no in-force rule applies, which is unknown, not a pass.".to_string()
+        && !selection.rule_ids.is_empty();
+    let (state, summary) = if deferred {
+        (
+            ServiceState::Success,
+            "No fast mechanical rule applies at pre-commit; the other rules run at pre-push and in CI.",
+        )
     } else {
-        format!(
-            "Nothing ran: {} is a draft and cannot run until accepted; that is unknown, not a pass.",
-            selection.skipped_drafts.join(", ")
+        (
+            ServiceState::Unknown,
+            "Nothing ran: no rule in the rulebook applies, which is unknown, not a pass.",
         )
     };
-    let state = if deferred {
-        ServiceState::Success
-    } else {
-        ServiceState::Unknown
-    };
     let mut response = ServiceResponse::new(request_id, "check", state, summary);
-    response.permitted_actions = if selection.skipped_drafts.is_empty() {
-        vec!["record a rule with wh change --kind rule, then accept it".into()]
-    } else {
-        vec!["accept the draft with wh change --accept <proposal>, then wh check".into()]
-    };
+    response.permitted_actions = vec![format!(
+        "add a rule to {RULEBOOK_PATH} with wh change --kind rule, then wh check"
+    )];
     response.data = json!({
         "gates": outcomes,
         "ci": request.ci,
+        "rulebook": rulebook_json(rulebook),
         "selection": selection_json(request, selection),
     });
     response
@@ -445,6 +468,7 @@ fn nothing_ran(
 fn dry_run_response(
     request_id: String,
     request: &CheckRequest,
+    rulebook: &Rulebook,
     selection: &Selection,
 ) -> ServiceResponse {
     let mut response = ServiceResponse::new(
@@ -476,49 +500,49 @@ fn dry_run_response(
             })
         }).collect::<Vec<_>>(),
         "environment_allowlist": crate::gates::ENV_ALLOWLIST,
+        "rulebook": rulebook_json(rulebook),
         "selection": selection_json(request, selection),
     });
     response
 }
 
-/// Choose the in-force rules this check runs.
+/// Choose the rulebook rules this check runs.
 pub(crate) fn select_rules(
-    agreement: Option<&AgreementState>,
+    rulebook: &Rulebook,
     project: &Path,
     request: &CheckRequest,
     staged: &FileSet,
 ) -> Result<Selection, String> {
-    let mut selection = Selection::default();
-    let Some(state) = agreement else {
-        return Ok(selection);
+    let mut entries = rulebook.rules.iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut selection = Selection {
+        rule_ids: entries
+            .iter()
+            .map(|entry| entry.id.as_str().to_string())
+            .collect(),
+        ..Selection::default()
     };
-    let rule_ids = state.rule_ids();
-    for id in &rule_ids {
-        selection.rule_ids.insert(id.as_str().to_string());
+    if request.gate_mode != GateMode::Staged {
+        if let Some(name) = request
+            .rules
+            .iter()
+            .find(|name| !selection.rule_ids.contains(name.as_str()))
+        {
+            return Err(format!("{name} is not a rule in {RULEBOOK_PATH}."));
+        }
     }
-    let named = request
-        .rules
-        .iter()
-        .filter(|rule| selection.rule_ids.contains(rule.as_str()))
-        .cloned()
-        .collect::<BTreeSet<_>>();
+    let named = request.rules.iter().cloned().collect::<BTreeSet<_>>();
     let mut wanted: Option<BTreeSet<String>> = (!named.is_empty()).then_some(named);
-    let rule_of = |id: &RecordId| -> Option<Rule> {
-        state
-            .in_force(id)
-            .and_then(|record| record.body.rule_view())
-            .map(std::borrow::Cow::into_owned)
-    };
     match request.gate_mode {
         GateMode::Staged => {
             selection.changed_paths = staged.paths().map(str::to_owned).collect();
             selection
                 .changed_paths
                 .extend(staged.deleted.iter().cloned());
-            let content = rule_ids
+            let content = entries
                 .iter()
-                .filter(|id| rule_of(id).is_some_and(|rule| rule.enforcer.runs_staged()))
-                .map(|id| id.as_str().to_string())
+                .filter(|entry| entry.rule.enforcer.runs_staged())
+                .map(|entry| entry.id.as_str().to_string())
                 .collect::<BTreeSet<_>>();
             wanted = Some(match wanted {
                 Some(named) => named.intersection(&content).cloned().collect(),
@@ -526,60 +550,29 @@ pub(crate) fn select_rules(
             });
         }
         GateMode::Changed => {
-            let changed = crate::gates::changed_paths_between(
+            selection.changed_paths = crate::gates::changed_paths_between(
                 project,
                 request.base.as_deref(),
                 request.pushed.is_none(),
             )?;
-            selection.changed_paths = changed;
-            // Every rule applies to a change.
-            let always = rule_ids
-                .iter()
-                .filter(|id| rule_of(id).is_some())
-                .map(|id| id.as_str().to_string())
-                .collect::<BTreeSet<_>>();
-            if always.is_empty() {
-                return Ok(selection);
-            }
-            wanted = Some(match wanted {
-                Some(named) => named,
-                None => always,
-            });
         }
         GateMode::All | GateMode::Sweep => {}
     }
-    for id in &rule_ids {
+    for entry in entries {
         if wanted
             .as_ref()
-            .is_some_and(|wanted| !wanted.contains(id.as_str()))
+            .is_some_and(|wanted| !wanted.contains(entry.id.as_str()))
         {
             continue;
         }
-        let Some(record) = state.in_force(id) else {
-            selection.skipped_drafts.push(id.as_str().to_string());
-            continue;
-        };
-        let Some(rule) = record.body.rule_view() else {
-            continue;
-        };
-        if request.gate_mode == GateMode::Sweep && !findings::sweepable(&rule) {
+        if request.gate_mode == GateMode::Sweep && !findings::sweepable(&entry.rule) {
             continue;
         }
-        let reference = record.reference().map_err(|error| error.to_string())?;
         selection.rules.push(SelectedRule {
-            id: id.clone(),
-            reference,
-            rule: rule.into_owned(),
+            id: entry.id.clone(),
+            digest: entry.digest.clone(),
+            rule: entry.rule.clone(),
         });
-    }
-    if request.gate_mode != GateMode::Staged {
-        if let Some(wanted) = wanted {
-            for name in wanted {
-                if !selection.rule_ids.contains(name.as_str()) {
-                    return Err(format!("{name} is not a rule in this agreement."));
-                }
-            }
-        }
     }
     Ok(selection)
 }

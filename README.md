@@ -101,8 +101,8 @@ to the code branch: the team remote carries Beads data in `refs/dolt/data`.
 ### Developer gates
 
 Whetstone checks itself: `scripts/self-check.sh` runs `wh check --ci` over
-this repository against the must rules accepted and shared in its own Beads
-store. It runs with the other gates in [AGENTS.md](AGENTS.md) before every
+this repository against the must rules in its committed
+`whetstone/rulebook.json`. It runs with the other gates in [AGENTS.md](AGENTS.md) before every
 push, in CI and in the release job.
 
 ## Install

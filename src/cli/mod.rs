@@ -203,8 +203,8 @@ enum Command {
         /// Show which rules and exact commands would run; execute nothing.
         #[arg(long)]
         dry_run: bool,
-        /// The required CI check (whetstone/policy): the team's shared, accepted
-        /// rules only, never a contributor's private drafts. Use with --base.
+        /// The required CI check (whetstone/policy): the committed rulebook
+        /// only, never an uncommitted edit to it. Use with --base.
         #[arg(long, conflicts_with_all = ["sweep", "staged"])]
         ci: bool,
         /// Run as a Git gate: `pre-commit` or `pre-push`.
