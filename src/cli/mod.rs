@@ -79,7 +79,8 @@ enum Command {
         /// Scaffold the GitHub workflow that runs the required whetstone/policy check (wire).
         #[arg(long)]
         ci: bool,
-        /// Run the Beads install setup found (setup): the one confirmation.
+        /// Run the Beads install setup found (setup), or replace a rulebook
+        /// file that differs from the Beads export (export).
         #[arg(long)]
         yes: bool,
         /// Where every record lives (setup, store): beads (standalone) or virgil.
@@ -259,6 +260,7 @@ enum InitActionArg {
     Wire,
     Setup,
     Store,
+    Export,
 }
 
 impl From<InitActionArg> for InitAction {
@@ -270,6 +272,7 @@ impl From<InitActionArg> for InitAction {
             InitActionArg::Wire => Self::Wire,
             InitActionArg::Setup => Self::Setup,
             InitActionArg::Store => Self::Store,
+            InitActionArg::Export => Self::Export,
         }
     }
 }

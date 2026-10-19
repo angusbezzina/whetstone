@@ -162,6 +162,96 @@ impl RuleFile {
             sweep_unsure: self.sweep_unsure,
         }
     }
+
+    fn from_rule(id: &RecordId, rule: &Rule) -> Self {
+        Self {
+            id: id.clone(),
+            statement: rule.statement.clone(),
+            rationale: rule.rationale.clone(),
+            strength: rule.strength,
+            enforcer: rule.enforcer.clone(),
+            examples: rule.examples.clone(),
+            source: rule.source.clone(),
+            paths: rule.paths.clone(),
+            sweep: rule.sweep,
+            sweep_priority: rule.sweep_priority,
+            sweep_unsure: rule.sweep_unsure.clone(),
+        }
+    }
+}
+
+impl PrincipleFile {
+    fn from_entry(entry: &PrincipleEntry) -> Result<Self, RulebookError> {
+        let source = match &entry.principle.source {
+            PrincipleSource::Pstack { id, version } => PrincipleOrigin::Pstack {
+                id: id.clone(),
+                version: version.clone(),
+            },
+            PrincipleSource::Custom => PrincipleOrigin::Custom,
+            PrincipleSource::Migrated { .. } => {
+                return Err(RulebookError::Invalid(format!(
+                    "principles ({}).source: a migrated principle is neither pstack nor custom",
+                    entry.id.as_str()
+                )))
+            }
+        };
+        Ok(Self {
+            id: entry.id.clone(),
+            statement: entry.principle.statement.clone(),
+            source,
+            rationale: entry.principle.rationale.clone(),
+        })
+    }
+}
+
+impl RuleEntry {
+    /// A rule under its id, with its digest.
+    pub fn new(id: RecordId, rule: Rule) -> Result<Self, RulebookError> {
+        let digest = digest(&RuleFile::from_rule(&id, &rule))?;
+        Ok(Self { id, rule, digest })
+    }
+}
+
+/// A rule as the file holds it.
+pub fn rule_value(entry: &RuleEntry) -> Value {
+    serde_json::to_value(RuleFile::from_rule(&entry.id, &entry.rule))
+        .expect("a rule always encodes")
+}
+
+/// A principle as the file holds it; a migrated principle has no place.
+pub fn principle_value(entry: &PrincipleEntry) -> Result<Value, RulebookError> {
+    Ok(
+        serde_json::to_value(PrincipleFile::from_entry(entry)?)
+            .expect("a principle always encodes"),
+    )
+}
+
+/// The file's text for a rulebook, principles and rules sorted by id, with a
+/// final newline; [`parse`] reads it back.
+pub fn render(book: &Rulebook) -> Result<String, RulebookError> {
+    let mut principles = book
+        .principles
+        .iter()
+        .map(PrincipleFile::from_entry)
+        .collect::<Result<Vec<_>, _>>()?;
+    principles.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut rules = book
+        .rules
+        .iter()
+        .map(|entry| RuleFile::from_rule(&entry.id, &entry.rule))
+        .collect::<Vec<_>>();
+    rules.sort_by(|left, right| left.id.cmp(&right.id));
+    let file = RulebookFile {
+        schema: RULEBOOK_SCHEMA.into(),
+        mission: MissionFile {
+            statement: book.mission.statement.clone(),
+        },
+        principles,
+        rules,
+    };
+    let mut text = serde_json::to_string_pretty(&file).expect("a rulebook always encodes");
+    text.push('\n');
+    Ok(text)
 }
 
 /// Read the project's rulebook and the commit that last touched it.

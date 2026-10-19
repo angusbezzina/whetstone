@@ -22,6 +22,7 @@ use crate::storage::{ProjectLayout, StorageError};
 mod change;
 mod check;
 mod dash;
+mod export;
 mod init;
 pub(crate) mod record;
 
@@ -107,6 +108,8 @@ pub enum InitAction {
     Setup,
     /// Choose the record store for every record kind: Beads or Virgil.
     Store,
+    /// Write the Beads stores' accepted records as the rulebook file.
+    Export,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -129,7 +132,8 @@ pub struct InitRequest {
     pub hooks: bool,
     /// Scaffold the workflow that runs the required whetstone/policy check (wire).
     pub ci: bool,
-    /// Run the install commands setup found (setup).
+    /// Run the install commands setup found (setup); replace a rulebook
+    /// file that differs (export).
     pub yes: bool,
     /// The record store (store): `beads` or `virgil`.
     pub store: Option<String>,

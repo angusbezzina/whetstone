@@ -2,7 +2,8 @@
 //!
 //! Inspect is read-only. Agree records the owner's mission, the principles
 //! they picked from the catalogue and the starter rules they accepted. Setup
-//! detects and installs the record store's tool. Wire lives in `crate::wire`.
+//! detects and installs the record store's tool. Wire lives in `crate::wire`,
+//! and the export to the rulebook file in `super::export`.
 
 use serde::Serialize;
 use serde_json::json;
@@ -198,6 +199,7 @@ pub(super) fn init(request: InitRequest) -> ServiceResponse {
         InitAction::Wire => return crate::wire::wire(&layout, request_id, &request),
         InitAction::Setup => return setup(&layout, request_id, &request),
         InitAction::Store => return store_switch(&layout, request_id, &request),
+        InitAction::Export => return super::export::export(&layout, request_id, &request),
         _ => {}
     }
     let progress = match progress_for(&layout) {
