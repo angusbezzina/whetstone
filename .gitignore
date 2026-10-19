@@ -1,19 +1,5 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-dist/
-build/
-.eggs/
-
 # Secrets
 .env
-
-# Virtual environments
-.venv/
-venv/
-env/
 
 # IDE
 .idea/
@@ -29,34 +15,5 @@ Thumbs.db
 # Agent tooling worktrees and coordination artifacts
 .claude/
 
-# Test artifacts
-.pytest_cache/
-.coverage
-htmlcov/
-.mypy_cache/
-.ruff_cache/
-
 # Rust build artifacts
 target/
-
-# Whetstone pipeline state cache (machine-local, not checked in)
-whetstone/.state/
-
-# Whetstone personal layer (do not commit)
-whetstone/.personal/
-whetstone/.cache/
-whetstone/.metrics.jsonl
-whetstone/.last-run
-
-# Impeccable design-skill transient state (briefs and config stay tracked)
-.impeccable/questions/
-.impeccable/review/
-.impeccable/build/
-.impeccable/critique/
-.impeccable/mocks/
-
-# Third-party agent skills installed by `npx skills add` (tracked by skills-lock.json; reinstall with `npx skills add pbakaus/impeccable -y`)
-.agents/skills/
-
-# Beads gate lock (machine-local)
-.beads.gate.lock

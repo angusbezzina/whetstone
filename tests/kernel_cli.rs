@@ -746,7 +746,7 @@ fn a_check_writes_no_record() {
 }
 
 #[test]
-fn command_response_schema_and_clients_cover_all_states() {
+fn command_response_schema_covers_all_states() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let schema: serde_json::Value = serde_json::from_slice(
         &std::fs::read(root.join("references/command-response-v1.schema.json"))
@@ -777,21 +777,6 @@ fn command_response_schema_and_clients_cover_all_states() {
     .into_iter()
     .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(states, expected);
-    for client in [
-        "examples/whetstone-client.sh",
-        "examples/whetstone_client.py",
-    ] {
-        let text = std::fs::read_to_string(root.join(client)).expect("read example client");
-        for state in &expected {
-            assert!(text.contains(state), "{client} does not handle {state}");
-        }
-    }
-    assert!(Command::new("sh")
-        .args(["-n", "examples/whetstone-client.sh"])
-        .current_dir(root)
-        .status()
-        .expect("syntax-check shell client")
-        .success());
 }
 
 const UPPERCASE_FUNCTIONS: &str = r#"{"type":"rule","strength":"must","enforcer":{"kind":"ast","language":"python","query":"((function_definition name: (identifier) @match) (#match? @match \"^[A-Z]\"))"}}"#;

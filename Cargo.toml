@@ -2,7 +2,7 @@
 name = "whetstone"
 version = "0.13.0"
 edition = "2021"
-description = "Whetstone sharpens the tools that write your code"
+description = "A repository's rulebook: enforced rules with a rationale and an agent protocol"
 license = "MIT"
 rust-version = "1.75"
 default-run = "whetstone"
@@ -11,15 +11,9 @@ include = [
     "/Cargo.lock",
     "/README.md",
     "/CHANGELOG.md",
-    "/SKILL.md",
     "/assets/**",
     "/src/**",
     "/references/**",
-    "/planning/skill-cli-boundary.md",
-    "/tests/fixtures/pstack-feature-map-example/**",
-    "/tests/kernel_cli.rs",
-    "/examples/whetstone-client.sh",
-    "/examples/whetstone_client.py",
 ]
 
 [dependencies]
