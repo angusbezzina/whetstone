@@ -73,6 +73,11 @@ rulebook file, `findings.json` and the JSON envelope.
   pack in the binary, and a repository adds its own under
   `whetstone/principles/`. `--principle` takes `<id>` or `<pack>/<id>`; a
   principle from another pack is written with the pack's name and version.
+- `wh change --from-text | --from-file` compiles prose (CONTRIBUTING, a
+  style guide) into probed rule drafts where the text names its enforcer,
+  and returns the rest as needing one; `--from-finding` drafts a must rule
+  from a finding that keeps coming back. The dashboard's Rules view drafts
+  from pasted text.
 
 ### Changed
 

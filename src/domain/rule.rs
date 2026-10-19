@@ -138,6 +138,11 @@ pub enum RuleSourceKind {
     Owner,
     /// One of Whetstone's starter rules.
     Starter,
+    /// Compiled from prose guidance (the reference is `file:line`).
+    Prose,
+    /// Drafted from a finding that keeps coming back (the reference is
+    /// `rule@location`).
+    Finding,
 }
 
 impl RuleSourceKind {
@@ -147,6 +152,8 @@ impl RuleSourceKind {
             Self::Principle => "principle",
             Self::Owner => "owner",
             Self::Starter => "starter",
+            Self::Prose => "prose",
+            Self::Finding => "finding",
         }
     }
 }

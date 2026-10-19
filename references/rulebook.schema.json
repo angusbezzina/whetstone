@@ -383,7 +383,9 @@
             "mission",
             "principle",
             "owner",
-            "starter"
+            "starter",
+            "prose",
+            "finding"
           ]
         },
         "reference": {

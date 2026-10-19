@@ -179,6 +179,12 @@ enum DashboardCommand {
         /// Write a rule even when its probe says it cannot be checked here.
         #[serde(default)]
         allow_unvalidated: bool,
+        /// Compile rule drafts from prose pasted into the dashboard.
+        #[serde(default)]
+        from_text: Option<String>,
+        /// Draft a rule from a flag: `<rule id>@<location>` or a fingerprint.
+        #[serde(default)]
+        from_finding: Option<String>,
     },
 }
 
@@ -201,6 +207,8 @@ impl DashboardCommand {
             withdraw,
             retire,
             allow_unvalidated,
+            from_text,
+            from_finding,
         } = self;
         ServiceRequest::Change(ChangeRequest {
             project_dir,
@@ -216,6 +224,10 @@ impl DashboardCommand {
             retire,
             actor,
             allow_unvalidated,
+            from_text,
+            from_file: None,
+            from_finding,
+            findings: None,
         })
     }
 }

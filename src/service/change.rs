@@ -44,6 +44,10 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
     if let Some(target) = request.retire.as_deref() {
         return retire(root, request_id, target, &request);
     }
+    if request.from_text.is_some() || request.from_file.is_some() || request.from_finding.is_some()
+    {
+        return super::compile::compile(&layout, request_id, &request);
+    }
     edit(root, request_id, &request)
 }
 
@@ -61,7 +65,14 @@ fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String
         request.withdraw,
         request.retire,
         layout.project_id(),
-    ) + &format!("\0{}", request.allow_unvalidated);
+    ) + &format!(
+        "\0{}\0{:?}\0{:?}\0{:?}\0{:?}",
+        request.allow_unvalidated,
+        request.from_text,
+        request.from_file,
+        request.from_finding,
+        request.findings
+    );
     format!(
         "change-{}",
         &format!("{:x}", Sha256::digest(input.as_bytes()))[..16]

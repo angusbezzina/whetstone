@@ -43,6 +43,7 @@ This repository's rules live in `whetstone/rulebook.json` and are kept by Whetst
 - A failed must rule blocks: repair the code, never the rule, and check again. A should rule's flag is repaired or left for a person.
 - To understand a finding or a rule: `wh explain <fingerprint or rule id> --json` gives the rule, its enforcer and the commits that accepted it.
 - To change a rule: `wh change --kind rule ... --rationale <why> --json`. Every rule is probed on this repository before it is written (`--preview` shows the probe and writes nothing). Then stop: a person accepts the draft with `wh change --accept` or in `wh dash`.
+- To devise rules from prose (CONTRIBUTING, a style guide, review comments): `wh change --from-file <path> --json` writes probed drafts and returns the candidates that still need an enforcer. Give each an enforcer, preview it until its probe matches what it should, write the draft, and stop for a person to accept.
 - When no lint code or AST query can express a rule, write a script under `whetstone/checks/` that reads the files listed in `$WH_PATHS` and prints `path:line message` findings, and point a validator rule at it. The contract is `whetstone/checks/README.md`.
 - Never edit `.git/whetstone` or bypass the hooks with `--no-verify`.
 {END}

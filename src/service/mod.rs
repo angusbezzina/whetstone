@@ -17,6 +17,7 @@ use crate::layout::LayoutError;
 
 mod change;
 pub(crate) mod check;
+mod compile;
 mod dash;
 mod explain;
 mod init;
@@ -192,6 +193,15 @@ pub struct ChangeRequest {
     /// Write a rule even when its probe says the enforcer cannot be checked
     /// on this repository.
     pub allow_unvalidated: bool,
+    /// Compile rules from this prose: probed drafts for what names an
+    /// enforcer, and the rest returned as needing one.
+    pub from_text: Option<String>,
+    /// Compile rules from this file (CONTRIBUTING, a style guide, notes).
+    pub from_file: Option<PathBuf>,
+    /// Draft a rule from a finding: its fingerprint, or `<rule id>@<path[:line]>`.
+    pub from_finding: Option<String>,
+    /// With `from_finding`: the sweep's findings file.
+    pub findings: Option<PathBuf>,
 }
 
 /// Which in-force rules a check runs.

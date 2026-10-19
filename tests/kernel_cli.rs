@@ -1404,3 +1404,169 @@ fn a_repository_principle_pack_is_offered_beside_pstack_and_written_with_its_ver
         "{inspect}"
     );
 }
+
+const CONTRIBUTING: &str = "# Contributing\n\nThanks for helping out.\n\n## Rules\n\n- Never call `.unwrap()` in `src`.\n- Never leave a `dbg!` in the code.\n- Every TODO must name its issue; `whetstone/checks/todo-issue.sh` checks it.\n- `whetstone/checks/missing.sh` must pass before a release.\n- Keep functions short enough to read on one screen.\n- Prefer early returns over nested conditionals.\n";
+
+const TODO_SCRIPT: &str = r#"#!/bin/sh
+found=0
+while IFS= read -r path; do
+  grep -n "TODO" "$path" | grep -v "TODO(#" | cut -d: -f1 | while read -r line; do echo "$path:$line TODO without an issue"; done | grep . && found=1
+done < "$WH_PATHS"
+exit $found
+"#;
+
+#[test]
+fn prose_compiles_into_probed_drafts_and_candidates_that_need_an_enforcer() {
+    let repo = Repo::new();
+    repo.write(
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+    );
+    repo.write(
+        "src/main.rs",
+        "fn main() {\n    // TODO tidy\n    let x: Option<u8> = None;\n    x.unwrap();\n}\n",
+    );
+    repo.write("whetstone/checks/todo-issue.sh", TODO_SCRIPT);
+    repo.write("CONTRIBUTING.md", CONTRIBUTING);
+    repo.commit("base");
+    repo.wh(&["change", "--kind", "mission", "--content", "Ship."]);
+    let before = repo.rulebook().expect("rulebook");
+
+    // A preview shows everything and writes nothing.
+    let preview = repo.wh_json(&["change", "--from-file", "CONTRIBUTING.md", "--preview"]);
+    assert_eq!(preview["state"], "needs_decision", "{preview}");
+    assert_eq!(preview["data"]["candidates"], 6, "{preview}");
+    assert_eq!(preview["data"]["written"], false);
+    assert_eq!(preview["data"]["drafts"].as_array().map(Vec::len), Some(3));
+    assert_eq!(repo.rulebook().expect("rulebook"), before);
+
+    let compiled = repo.wh_json(&["change", "--kind", "rule", "--from-file", "CONTRIBUTING.md"]);
+    assert_eq!(compiled["state"], "success", "{compiled}");
+    let data = &compiled["data"];
+    let drafts = data["drafts"].as_array().expect("drafts");
+    let lines = |entries: &serde_json::Value| {
+        entries
+            .as_array()
+            .expect("entries")
+            .iter()
+            .map(|entry| entry["line"].as_u64().expect("line"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(lines(&data["drafts"]), [7, 8, 9], "{compiled}");
+    assert_eq!(lines(&data["not_validatable"]), [10], "{compiled}");
+    assert_eq!(lines(&data["needs_enforcer"]), [11, 12], "{compiled}");
+    let unwrap = &drafts[0];
+    assert_eq!(unwrap["enforcer"]["kind"], "ast");
+    assert_eq!(unwrap["strength"], "must");
+    assert_eq!(unwrap["paths"], serde_json::json!(["src/**"]));
+    assert_eq!(unwrap["probe"]["matched"], 1);
+    assert_eq!(drafts[1]["probe"]["matched"], 0);
+    assert_eq!(
+        drafts[2]["enforcer"]["command"],
+        "sh whetstone/checks/todo-issue.sh"
+    );
+    assert!(
+        drafts[2]["probe"]["samples"]
+            .as_array()
+            .expect("samples")
+            .iter()
+            .any(|sample| sample["location"] == "src/main.rs:2"),
+        "{compiled}"
+    );
+    assert!(data["not_validatable"][0]["probe"]["reason"]
+        .as_str()
+        .expect("reason")
+        .contains("does not exist"));
+    assert!(data["needs_enforcer"][0]["next"]
+        .as_str()
+        .expect("next")
+        .contains("--preview"));
+
+    // The drafts are in the rulebook file, with the prose as their source.
+    let rulebook: serde_json::Value =
+        serde_json::from_slice(&repo.rulebook().expect("rulebook")).expect("rulebook JSON");
+    let id = unwrap["record_id"].as_str().expect("id");
+    let rule = rulebook["rules"]
+        .as_array()
+        .expect("rules")
+        .iter()
+        .find(|rule| rule["id"] == id)
+        .unwrap_or_else(|| panic!("{id} is not in {rulebook}"));
+    assert_eq!(rule["source"]["kind"], "prose");
+    assert_eq!(rule["source"]["reference"], "CONTRIBUTING.md:7");
+    assert!(rule["rationale"]
+        .as_str()
+        .expect("rationale")
+        .contains("Never call `.unwrap()`"));
+    let (code, checked) = repo.check(&["--rule", id]);
+    assert_eq!(code, Some(1), "{checked}");
+    assert_eq!(
+        gate(&checked, id)["failures"][0]["location"],
+        "src/main.rs:4"
+    );
+
+    // The same prose again writes nothing new.
+    let written = repo.rulebook();
+    let again = repo.wh_json(&["change", "--from-file", "CONTRIBUTING.md"]);
+    assert_eq!(again["state"], "needs_input", "{again}");
+    assert_eq!(
+        again["data"]["already"].as_array().map(Vec::len),
+        Some(3),
+        "{again}"
+    );
+    assert_eq!(repo.rulebook(), written, "a replay wrote new drafts");
+}
+
+#[test]
+fn a_recurring_finding_becomes_a_must_draft_with_the_flagged_line_as_its_example() {
+    let repo = Repo::new();
+    repo.write(
+        "Cargo.toml",
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+    );
+    repo.write(
+        "src/core/main.rs",
+        "fn main() {\n    let x: Option<u8> = None;\n    x.unwrap();\n}\n",
+    );
+    repo.commit("base");
+    repo.rule(
+        "rule.unwrap-advice",
+        &format!(
+            r#"{{"type":"rule","strength":"should","enforcer":{{"kind":"ast","query":"{UNWRAP_QUERY}","language":"rust"}}}}"#
+        ),
+    );
+    let (_, sweep) = repo.check(&["--sweep", "--format", "json"]);
+    let fingerprint = sweep["data"]["findings"][0]["fingerprint"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no finding in {sweep}"))
+        .to_string();
+
+    // The dashboard's form of the request names the rule and location.
+    let located = repo.wh_json(&[
+        "change",
+        "--from-finding",
+        "rule.unwrap-advice@src/core/main.rs:3",
+        "--preview",
+    ]);
+    assert_eq!(located["state"], "needs_decision", "{located}");
+    assert_eq!(located["data"]["drafts"][0]["probe"]["validatable"], true);
+
+    let drafted = repo.wh_json(&["change", "--from-finding", &fingerprint]);
+    assert_eq!(drafted["state"], "success", "{drafted}");
+    let draft = &drafted["data"]["drafts"][0];
+    assert_eq!(draft["strength"], "must");
+    assert_eq!(draft["paths"], serde_json::json!(["src/core/**"]));
+    assert_eq!(draft["probe"]["matched"], 1);
+    let id = draft["record_id"].as_str().expect("id");
+    let rulebook: serde_json::Value =
+        serde_json::from_slice(&repo.rulebook().expect("rulebook")).expect("rulebook JSON");
+    let rule = rulebook["rules"]
+        .as_array()
+        .expect("rules")
+        .iter()
+        .find(|rule| rule["id"] == id)
+        .unwrap_or_else(|| panic!("{id} is not in {rulebook}"));
+    assert_eq!(rule["source"]["kind"], "finding");
+    assert_eq!(rule["examples"][0]["input"], "x.unwrap();");
+    assert_eq!(rule["examples"][0]["path"], "src/core/main.rs");
+}
