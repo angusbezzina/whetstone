@@ -127,7 +127,8 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
             {"name": "init", "state": "available", "effect": "inspect the project and wire the Git gates"},
             {"name": "dash", "state": "available", "effect": "inspect the rules and their history"},
             {"name": "change", "state": "available", "effect": "draft an edit to the rulebook, accept or withdraw it, or retire a rule"},
-            {"name": "check", "state": "available", "effect": "run the rules and return repair feedback"}
+            {"name": "check", "state": "available", "effect": "run the rules and return repair feedback"},
+            {"name": "explain", "state": "available", "effect": "say why a rule or a finding exists and who accepted it"}
         ],
         "read_only": true
     });

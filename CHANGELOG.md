@@ -64,6 +64,10 @@ rulebook file, `findings.json` and the JSON envelope.
   between markers (text outside them is kept) and scaffolds
   `whetstone/checks/` once: the script contract and a working example, which
   `wh init` then offers as a starter rule.
+- `wh explain <fingerprint | rule id>`: the rule behind a finding, its
+  enforcer, what it covers, how a sweep works it, the principle it serves
+  and the commits that added or changed it, with their reasons. A
+  fingerprint resolves from `findings.json` or by recomputing it.
 
 ### Changed
 

@@ -1,8 +1,8 @@
 //! Shared command services used by the CLI and the dashboard: one typed
 //! request and one versioned response envelope per workflow.
 //!
-//! Each workflow lives in its own module: `init`, `dash`, `change` and
-//! `check`; `snapshot` binds a check's report to what it read, and `trail`
+//! Each workflow lives in its own module: `init`, `dash`, `change`, `check`
+//! and `explain`; `snapshot` binds a check's report to what it read, and `trail`
 //! reads the rulebook's Git log.
 
 use std::path::{Path, PathBuf};
@@ -16,12 +16,14 @@ use crate::domain::{ActorKind, Enforcer, RuleExample, RuleSource, Strength, Swee
 use crate::layout::LayoutError;
 
 mod change;
-mod check;
+pub(crate) mod check;
 mod dash;
+mod explain;
 mod init;
 mod snapshot;
 mod trail;
 
+pub use explain::ExplainRequest;
 pub use trail::{decision_trail, rulebook_log, RulebookCommit, TRAIL_HEADER};
 
 /// Environment variables agent hosts set in the shells they run. Any of them
@@ -60,6 +62,7 @@ pub enum ServiceRequest {
     Dash(DashRequest),
     Change(ChangeRequest),
     Check(CheckRequest),
+    Explain(ExplainRequest),
 }
 
 #[derive(Debug, Clone)]
@@ -340,6 +343,7 @@ impl CommandService {
             ServiceRequest::Dash(request) => dash::dash(request),
             ServiceRequest::Change(request) => change::change(request),
             ServiceRequest::Check(request) => check::check(request),
+            ServiceRequest::Explain(request) => explain::explain(request),
         }
     }
 }
@@ -357,10 +361,11 @@ fn orientation() -> ServiceResponse {
         "wh dash".into(),
         "wh change".into(),
         "wh check".into(),
+        "wh explain".into(),
     ];
     response.data = json!({
-        "workflows": ["init", "dash", "change", "check"],
-        "available_now": ["init", "dash", "change", "check"],
+        "workflows": ["init", "dash", "change", "check", "explain"],
+        "available_now": ["init", "dash", "change", "check", "explain"],
         "rulebook": crate::rulebook::RULEBOOK_PATH,
         "read_only": true,
     });

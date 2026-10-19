@@ -24,7 +24,7 @@ use super::{
     RequiredSnapshot, ServiceEvidence, ServiceResponse, ServiceState,
 };
 
-mod findings;
+pub(crate) mod findings;
 mod report;
 
 pub(crate) use report::{code_tree_digest, Finding, SnapshotBinding};

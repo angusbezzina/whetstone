@@ -660,7 +660,7 @@ fn an_unestablished_project_shows_onboarding_and_no_removed_sections() {
         .iter()
         .map(|workflow| workflow["name"].as_str().expect("name"))
         .collect::<Vec<_>>();
-    assert_eq!(workflows, ["init", "dash", "change", "check"]);
+    assert_eq!(workflows, ["init", "dash", "change", "check", "explain"]);
     // Nothing was written by looking.
     assert!(!temp.path().join("whetstone").exists());
 }

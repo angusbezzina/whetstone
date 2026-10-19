@@ -124,7 +124,9 @@ fn numbered(mut flagged: Vec<Flag>) -> Vec<(String, Flag)> {
         .collect()
 }
 
-fn fingerprint(rule: &str, repository: &str, subject: &str) -> String {
+/// A finding's fingerprint: the rule, the repository and the subject (a
+/// path, or `repository`, with `#n` for the same rule's nth flag on it).
+pub(crate) fn fingerprint(rule: &str, repository: &str, subject: &str) -> String {
     digest(format!("{rule}\0{repository}\0{subject}").as_bytes())
 }
 

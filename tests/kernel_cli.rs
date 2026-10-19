@@ -164,7 +164,7 @@ fn bare_json_is_truthful_read_only_orientation() {
     assert_eq!(value["workflow"], "orientation");
     assert_eq!(
         value["data"]["workflows"],
-        serde_json::json!(["init", "dash", "change", "check"])
+        serde_json::json!(["init", "dash", "change", "check", "explain"])
     );
     assert_eq!(value["data"]["read_only"], true);
     assert_eq!(value["data"]["rulebook"], "whetstone/rulebook.json");
@@ -174,11 +174,14 @@ fn bare_json_is_truthful_read_only_orientation() {
         .iter()
         .filter_map(serde_json::Value::as_str)
         .collect::<Vec<_>>();
-    assert_eq!(actions, ["wh init", "wh dash", "wh change", "wh check"]);
+    assert_eq!(
+        actions,
+        ["wh init", "wh dash", "wh change", "wh check", "wh explain"]
+    );
 }
 
 #[test]
-fn public_help_exposes_exactly_four_workflow_families() {
+fn public_help_exposes_exactly_five_workflow_families() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let output = run(&["--help"], root);
     assert!(output.status.success());
@@ -190,7 +193,7 @@ fn public_help_exposes_exactly_four_workflow_families() {
         .take_while(|line| !line.trim().is_empty())
         .filter_map(|line| line.split_whitespace().next())
         .collect::<Vec<_>>();
-    assert_eq!(commands, ["init", "dash", "change", "check"]);
+    assert_eq!(commands, ["init", "dash", "change", "check", "explain"]);
 }
 
 #[test]
@@ -1176,4 +1179,126 @@ fn wire_writes_the_agent_contract_and_the_script_scaffold_once() {
     ]);
     assert_eq!(agreed["state"], "success", "{agreed}");
     assert_eq!(agreed["data"]["probes"][0]["probe"]["validatable"], true);
+}
+
+#[test]
+fn explain_resolves_a_sweep_finding_and_a_rule_id_to_the_rule_and_the_commits_that_changed_it() {
+    let repo = Repo::new();
+    repo.write(
+        "src/main.rs",
+        "fn main() {\n    let x: Option<u8> = None;\n    x.unwrap();\n}\n",
+    );
+    repo.commit("source");
+    repo.wh(&["change", "--kind", "mission", "--content", "Ship."]);
+    let definition = |priority: u8| {
+        format!(
+            r#"{{"type":"rule","strength":"should","enforcer":{{"kind":"ast","query":"{UNWRAP_QUERY}","language":"rust"}},"paths":["src/**"],"sweep_priority":{priority}}}"#
+        )
+    };
+    let draft = |priority: u8| {
+        repo.wh_json(&[
+            "change",
+            "--kind",
+            "rule",
+            "--record-id",
+            "rule.no-unwrap",
+            "--content",
+            "Prefer handling an error to unwrap.",
+            "--rationale",
+            "A panic is not an error message.",
+            "--definition",
+            &definition(priority),
+        ])
+    };
+    assert_eq!(draft(2)["state"], "success");
+    // A draft has no decision yet.
+    let drafted = repo.wh_json(&["explain", "rule.no-unwrap"]);
+    assert_eq!(drafted["data"]["rule"]["lifecycle"], "draft", "{drafted}");
+    assert_eq!(drafted["data"]["decisions"], serde_json::json!([]));
+    let accepted = repo.wh_json(&[
+        "change",
+        "--accept",
+        "--rationale",
+        "We keep panics out of the parser.",
+    ]);
+    assert_eq!(accepted["state"], "success", "{accepted}");
+    // An unrelated rulebook commit is not a decision on this rule.
+    repo.wh(&["change", "--kind", "mission", "--content", "Ship it."]);
+    repo.wh(&["change", "--accept"]);
+    assert_eq!(draft(1)["state"], "success");
+    repo.wh(&["change", "--accept", "--rationale", "It matters more now."]);
+
+    let (_, sweep) = repo.check(&["--sweep", "--format", "json"]);
+    let finding = sweep["data"]["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .find(|finding| finding["responsibility"] == "rule.no-unwrap")
+        .unwrap_or_else(|| panic!("no finding in {sweep}"))
+        .clone();
+    let fingerprint = finding["fingerprint"].as_str().expect("fingerprint");
+
+    // Recomputed from the repository: no findings file is needed.
+    let explained = repo.wh_json(&["explain", fingerprint]);
+    assert_eq!(explained["state"], "success", "{explained}");
+    assert_eq!(explained["data"]["resolved"]["kind"], "fingerprint");
+    assert_eq!(explained["data"]["resolved"]["subject"], "src/main.rs");
+    assert_eq!(explained["data"]["resolved"]["resolved_from"], "recomputed");
+    let rule = &explained["data"]["rule"];
+    assert_eq!(rule["id"], "rule.no-unwrap");
+    assert_eq!(rule["lifecycle"], "accepted");
+    assert_eq!(rule["strength"], "should");
+    assert_eq!(rule["enforcer"]["kind"], "ast");
+    assert_eq!(rule["paths"], serde_json::json!(["src/**"]));
+    assert_eq!(rule["sweep"]["class"], "discuss");
+    assert_eq!(rule["sweep"]["priority"], 1);
+    let decisions = explained["data"]["decisions"]
+        .as_array()
+        .expect("decisions");
+    assert_eq!(decisions.len(), 2, "{explained}");
+    assert_eq!(decisions[0]["change"], "added");
+    assert_eq!(decisions[0]["by"], "Test Owner");
+    assert_eq!(
+        decisions[0]["rationale"],
+        "We keep panics out of the parser."
+    );
+    assert_eq!(decisions[1]["change"], "changed");
+    assert_eq!(decisions[1]["rationale"], "It matters more now.");
+    assert_eq!(explained["data"]["created"], decisions[0]);
+    assert_eq!(explained["data"]["last_changed"], decisions[1]);
+
+    // From the sweep's findings file, and by a short prefix.
+    let file = repo.root.join("sweep-findings.json");
+    std::fs::write(
+        &file,
+        sweep["data"]["findings_json"].as_str().expect("json"),
+    )
+    .expect("write");
+    let short = &fingerprint[..19];
+    let from_file = repo.wh_json(&["explain", short, "--findings", file.to_str().expect("path")]);
+    assert_eq!(from_file["state"], "success", "{from_file}");
+    assert_eq!(from_file["data"]["rule"]["id"], "rule.no-unwrap");
+    assert!(from_file["data"]["resolved"]["resolved_from"]
+        .as_str()
+        .expect("source")
+        .ends_with("sweep-findings.json"));
+
+    // The text a person reads at a terminal.
+    let human = explained["data"]["text"].as_str().expect("text");
+    assert!(
+        human.contains("Rule rule.no-unwrap · should · accepted"),
+        "{human}"
+    );
+    assert!(
+        human.contains("added by Test Owner at ") && human.contains(": It matters more now."),
+        "{human}"
+    );
+
+    // Something that is neither is asked about.
+    let unknown = repo.wh_json(&["explain", "sha256:0000000000000000"]);
+    assert_eq!(unknown["state"], "needs_input");
+    assert!(unknown["summary"]
+        .as_str()
+        .expect("summary")
+        .contains("No rule here produces the finding"));
 }
