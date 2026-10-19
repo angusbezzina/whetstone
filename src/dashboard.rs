@@ -30,7 +30,6 @@ const VIEWS_CSS: &str = include_str!("../assets/dashboard/views.css");
 /// Adapter implemented by a thin wrapper over `CommandService`.
 ///
 /// Transport code never edits files, evaluates authority, or executes tools.
-/// Mutations must preserve the service's expected-revision/resume-token checks.
 pub trait DashboardBackend: Send + Sync + 'static {
     /// Read-only query body. An empty body requests the default project view.
     fn inspect(&self, request_body: &[u8]) -> BackendResponse;

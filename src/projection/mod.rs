@@ -8,10 +8,8 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::domain::{AgreementRecord, Principle, PrincipleSource, RecordBody, Rule};
+use crate::domain::{Principle, PrincipleSource, Rule};
 use crate::rulebook::{self, RetiredEntry, Rulebook, RULEBOOK_PATH};
-
-pub const MISSION_ID: &str = "mission.project";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct StateLabel {
@@ -28,7 +26,7 @@ impl StateLabel {
     }
 }
 
-/// One onboarding step: tools, mission, principles, starter rules, gates.
+/// One onboarding step: mission, principles, starter rules, gates.
 #[derive(Debug, Clone, Serialize)]
 pub struct OnboardingStep {
     pub key: &'static str,
@@ -50,27 +48,6 @@ pub struct StarterView {
     pub accepted: bool,
     /// The rule as `wh change` takes it, so accepting a starter is a change.
     pub edit: EditBase,
-}
-
-/// An earlier value or philosophy that becomes a principle draft.
-#[derive(Debug, Clone, Serialize)]
-pub struct LegacyItem {
-    pub id: String,
-    pub kind: String,
-    pub text: String,
-    pub migrated: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Default)]
-pub struct Onboarding {
-    pub steps: Vec<OnboardingStep>,
-    pub missing: Vec<String>,
-    pub command: &'static str,
-    pub catalogue: Vec<crate::catalogue::CatalogueEntry>,
-    pub catalogue_version: String,
-    pub starters: Vec<StarterView>,
-    pub legacy: Vec<LegacyItem>,
-    pub tools: Vec<crate::setup::ToolState>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -207,24 +184,6 @@ pub fn runs_at(rule: &Rule) -> &'static str {
     }
 }
 
-/// The human title of a record body.
-pub fn record_title(record: &AgreementRecord) -> String {
-    match &record.body {
-        RecordBody::Mission(body) => body.statement.clone(),
-        RecordBody::Principle(body) => body.statement.clone(),
-        RecordBody::Rule(body) => body.statement.clone(),
-        RecordBody::StoredRule(body) => body.rule.statement.clone(),
-        RecordBody::Standard(body) => body.statement.clone(),
-        RecordBody::Retirement(body) => format!("Retire {}", body.target.id.as_str()),
-        RecordBody::Proposal(body) => body.title.clone(),
-        RecordBody::Retired(retired) => match retired.principle_text() {
-            Some((text, _)) => text,
-            None => format!("{} (retired kind)", retired.record_type.replace('_', " ")),
-        },
-        other => other.type_name().replace('_', " "),
-    }
-}
-
 fn source_label(rule: &Rule) -> String {
     match &rule.source.reference {
         Some(reference) => format!("{}: {reference}", rule.source.kind.label()),
@@ -305,9 +264,6 @@ fn principle_details(principle: &Principle) -> Vec<Detail> {
         match &principle.source {
             PrincipleSource::Pstack { id, version } => format!("pstack {id} ({version})"),
             PrincipleSource::Custom => "the owner's own".into(),
-            PrincipleSource::Migrated { record } => {
-                format!("migrated from {}", record.id.as_str())
-            }
         },
         false,
     )];

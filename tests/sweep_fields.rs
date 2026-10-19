@@ -1,7 +1,7 @@
 //! The sweep fields of a rule set through `wh change`: an agent cannot widen
 //! a rule's sweep class and a person can, out-of-range priorities and doubts
 //! that cover every flag are refused, and what was set lands in
-//! `whetstone/rulebook.json`. Every repository is a throwaway; no `bd` runs.
+//! `whetstone/rulebook.json`. Every repository is a throwaway.
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -10,8 +10,6 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 use whetstone::domain::ActorKind;
 use whetstone::service::{ChangeKind, ChangeRequest, CommandService, ServiceRequest, ServiceState};
-
-mod support;
 
 fn git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -31,11 +29,7 @@ fn run(root: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_whetstone"))
         .args(args)
         .current_dir(root)
-        .env("PATH", support::path_with_bd_template())
         .env("GIT_CEILING_DIRECTORIES", root.parent().expect("parent"))
-        .env("BD_NON_INTERACTIVE", "1")
-        .env_remove("BEADS_DIR")
-        .env_remove("BEADS_DB")
         .output()
         .expect("whetstone")
 }

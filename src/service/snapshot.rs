@@ -1,5 +1,4 @@
-//! The records the workflows write, and the snapshot and digest helpers a
-//! check binds its report to.
+//! The snapshot and digest helpers a check binds its report to.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,74 +7,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
-use crate::domain::{
-    AgreementRecord, ContentDigest, EvidenceRef, PrincipalKind, PrincipalRef, Provenance,
-    ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, Scope, SCHEMA_VERSION_V1,
-};
-use crate::storage::ProjectLayout;
+use crate::domain::ContentDigest;
 
 use super::check::SnapshotBinding;
-use super::utc_now;
-
-/// Current UTC time in RFC 3339 form, second precision.
-pub fn utc_timestamp() -> String {
-    utc_now()
-}
-
-/// The scope every new record carries: this project only.
-pub(crate) fn project_scope(layout: &ProjectLayout) -> Scope {
-    Scope::project(format!("project-{}", &layout.project_id()[..12]))
-}
-
-/// A short, stable id suffix for a key.
-pub(crate) fn key_suffix(key: &str, length: usize) -> String {
-    let digest = digest_bytes(key.as_bytes());
-    digest.as_str()["sha256:".len()..]
-        .chars()
-        .take(length)
-        .collect()
-}
-
-pub fn agreement_record(
-    layout: &ProjectLayout,
-    id: &str,
-    idempotency_key: String,
-    body: RecordBody,
-    owner_display: Option<&str>,
-) -> Result<AgreementRecord, crate::domain::DomainError> {
-    let stable_id = format!(
-        "local:{}",
-        &format!("{:x}", Sha256::digest(layout.project_id().as_bytes()))[..20]
-    );
-    let principal = PrincipalRef {
-        kind: PrincipalKind::LocalUser,
-        stable_id,
-        display_name: owner_display.map(str::to_owned),
-    };
-    let record = AgreementRecord {
-        schema_version: SCHEMA_VERSION_V1,
-        id: RecordId::new(id)?,
-        revision: 1,
-        scope: project_scope(layout),
-        owner: principal.clone(),
-        provenance: Provenance {
-            kind: ProvenanceKind::HumanAuthored,
-            recorded_by: principal,
-            recorded_at: utc_now(),
-            sources: vec![EvidenceRef {
-                system: "whetstone_cli".into(),
-                locator: "owner_input".into(),
-                digest: None,
-            }],
-            authority: ProvenanceAuthority::OwnerAuthored,
-        },
-        supersedes: None,
-        idempotency_key,
-        body,
-    };
-    record.validate()?;
-    Ok(record)
-}
 
 /// What a check's report is bound to: Git's view of the code, the policy
 /// inputs, this binary, the rules asked for and the platform.

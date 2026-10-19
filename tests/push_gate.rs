@@ -21,7 +21,6 @@ fn run(args: &[&str], cwd: &Path) -> Output {
     Command::new(bin())
         .args(args)
         .current_dir(cwd)
-        .env_remove("BEADS_DIR")
         .output()
         .expect("run whetstone")
 }
@@ -100,7 +99,6 @@ impl Repo {
             .args(args)
             .current_dir(cwd)
             .env("PATH", &self.path)
-            .env_remove("BEADS_DIR")
             .output()
             .expect("git")
     }

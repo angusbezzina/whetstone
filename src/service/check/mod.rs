@@ -15,10 +15,10 @@ use sha2::{Digest, Sha256};
 
 use crate::domain::{ContentDigest, Enforcer, RecordId, Rule, Strength};
 use crate::gates::{ArtifactFailure, FileSet, GateOutcome, GateState};
+use crate::layout::ProjectLayout;
 use crate::rulebook::{Revision, Rulebook, RulebookError, RULEBOOK_PATH};
-use crate::storage::ProjectLayout;
 
-use super::record::{compute_check_snapshot, digest_bytes};
+use super::snapshot::{compute_check_snapshot, digest_bytes};
 use super::{
     bounded_request_id, unix_now, unknown_response, utc_now, CheckRequest, GateMode,
     RequiredSnapshot, ServiceEvidence, ServiceResponse, ServiceState,

@@ -1,7 +1,7 @@
 //! `wh change` edits `whetstone/rulebook.json` and nothing else: a draft is
 //! the edit in the working tree, accepting commits the file, withdrawing
 //! restores it, retiring moves a rule to the file's retired list, and
-//! `wh dash --trail` is the file's Git log. No `bd` is on the PATH.
+//! `wh dash --trail` is the file's Git log.
 
 use std::fs;
 use std::path::PathBuf;
@@ -77,7 +77,6 @@ impl Repo {
             .env("PATH", &self.path)
             .env("HOME", &self.home)
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env_remove("BEADS_DIR")
             .output()
             .expect("run whetstone")
     }
@@ -320,10 +319,6 @@ fn change_accept_and_retire_round_trip_through_the_file() {
     assert_eq!(changelog[2]["commit"], first_commit.as_str());
     assert_eq!(changelog[2]["owner"], "Test Owner");
     assert!(repo.written().is_empty(), "{:?}", repo.written());
-    assert!(
-        !repo.root.join(".beads").exists(),
-        "no record store appears"
-    );
 }
 
 #[cfg(unix)]

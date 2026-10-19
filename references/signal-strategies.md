@@ -17,7 +17,7 @@ Do not turn bucket 2 into a fake deterministic rule. Do not duplicate bucket 1
 with custom scanning. Prefer a handful of trusted, actionable safeguards.
 
 Each bucket-1 or bucket-3 safeguard is a rule v2 enforcer
-([schema](rule-v2.schema.json)), recorded through `wh change` and run by
+([schema](rulebook.schema.json)), recorded through `wh change` and run by
 `wh check`.
 
 ## `ast`

@@ -1,13 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use whetstone::beads::BeadsStore;
-use whetstone::domain::{AgreementRecord, RecordBody};
-use whetstone::storage::{ProjectLayout, StoreKind};
-
 #[path = "support/rulebook.rs"]
 mod rulebook;
-mod support;
 
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_whetstone"))
@@ -17,8 +12,6 @@ fn run(args: &[&str], cwd: &Path) -> Output {
     Command::new(bin())
         .args(args)
         .current_dir(cwd)
-        .env("PATH", support::path_with_bd_template())
-        .env_remove("BEADS_DIR")
         .output()
         .expect("run lean Whetstone binary")
 }
@@ -58,7 +51,7 @@ fn git_status(root: &Path) -> String {
     git(root, &["status", "--porcelain=v1"])
 }
 
-/// A throwaway Git repository: never this repository's `.beads` or store.
+/// A throwaway Git repository, never this one.
 struct Repo {
     _temp: tempfile::TempDir,
     root: PathBuf,
@@ -104,30 +97,15 @@ impl Repo {
         );
     }
 
-    /// Inspect, then agree with the returned revision and token.
-    fn agree(&self, request_id: &str, answers: &[&str]) -> serde_json::Value {
-        let inspect = self.wh_json(&["init", "--request-id", request_id]);
-        let revision = inspect["expected_revision"]
-            .as_u64()
-            .expect("revision")
-            .to_string();
-        let token = inspect["resume_token"]
-            .as_str()
-            .expect("resume token")
-            .to_string();
-        let mut args = vec![
-            "init",
-            "--action",
-            "agree",
-            "--request-id",
-            request_id,
-            "--expected-revision",
-            &revision,
-            "--resume",
-            &token,
-        ];
+    /// Draft the agreement through `wh init --action agree`.
+    fn agree(&self, answers: &[&str]) -> serde_json::Value {
+        let mut args = vec!["init", "--action", "agree"];
         args.extend_from_slice(answers);
         self.wh_json(&args)
+    }
+
+    fn rulebook(&self) -> Option<Vec<u8>> {
+        std::fs::read(self.root.join("whetstone/rulebook.json")).ok()
     }
 
     /// Write a rule into the rulebook, where a check reads it.
@@ -146,14 +124,6 @@ impl Repo {
         let output = self.wh(&all);
         (output.status.code(), json(&output))
     }
-
-    fn records(&self) -> Vec<AgreementRecord> {
-        let layout = ProjectLayout::resolve(&self.root).expect("layout");
-        BeadsStore::open_existing(&layout.private_store(), StoreKind::Private)
-            .expect("private store")
-            .all_records()
-            .expect("records")
-    }
 }
 
 fn gate<'a>(response: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
@@ -165,12 +135,12 @@ fn gate<'a>(response: &'a serde_json::Value, id: &str) -> &'a serde_json::Value 
         .unwrap_or_else(|| panic!("no gate {id} in {response}"))
 }
 
-fn record_ids(response: &serde_json::Value) -> Vec<String> {
-    response["data"]["records"]
+fn drafted(response: &serde_json::Value) -> Vec<String> {
+    response["data"]["drafted"]
         .as_array()
-        .expect("records")
+        .unwrap_or_else(|| panic!("nothing drafted: {response}"))
         .iter()
-        .map(|record| record["id"].as_str().expect("record id").to_string())
+        .map(|id| id.as_str().expect("drafted id").to_string())
         .collect()
 }
 
@@ -194,37 +164,21 @@ fn bare_json_is_truthful_read_only_orientation() {
     assert_eq!(value["workflow"], "orientation");
     assert_eq!(
         value["data"]["workflows"],
-        serde_json::json!(["init", "dash", "change", "check", "pull", "push"])
+        serde_json::json!(["init", "dash", "change", "check"])
     );
     assert_eq!(value["data"]["read_only"], true);
+    assert_eq!(value["data"]["rulebook"], "whetstone/rulebook.json");
     let actions = value["permitted_actions"]
         .as_array()
         .expect("permitted actions")
         .iter()
-        .take(6)
         .filter_map(serde_json::Value::as_str)
         .collect::<Vec<_>>();
-    assert_eq!(
-        actions,
-        [
-            "wh init",
-            "wh dash",
-            "wh change",
-            "wh check",
-            "wh pull",
-            "wh push"
-        ]
-    );
-    // Orientation reports tools honestly: every listed tool has a state.
-    for tool in value["data"]["tools"].as_array().expect("tools") {
-        assert!(tool["state"]
-            .as_str()
-            .is_some_and(|state| !state.is_empty()));
-    }
+    assert_eq!(actions, ["wh init", "wh dash", "wh change", "wh check"]);
 }
 
 #[test]
-fn public_help_exposes_exactly_six_workflow_families() {
+fn public_help_exposes_exactly_four_workflow_families() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let output = run(&["--help"], root);
     assert!(output.status.success());
@@ -236,10 +190,7 @@ fn public_help_exposes_exactly_six_workflow_families() {
         .take_while(|line| !line.trim().is_empty())
         .filter_map(|line| line.split_whitespace().next())
         .collect::<Vec<_>>();
-    assert_eq!(
-        commands,
-        ["init", "dash", "change", "check", "pull", "push"]
-    );
+    assert_eq!(commands, ["init", "dash", "change", "check"]);
 }
 
 #[test]
@@ -247,6 +198,7 @@ fn retired_commands_cannot_execute() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     for command in [
         "publish", "status", "debt", "report", "mcp", "actions", "validate", "eval", "scan",
+        "pull", "push",
     ] {
         let output = run(&[command], root);
         assert_eq!(output.status.code(), Some(2), "{command} unexpectedly ran");
@@ -262,39 +214,17 @@ fn retired_commands_cannot_execute() {
 }
 
 #[test]
-fn sync_is_honestly_unavailable_and_dashboard_inspects() {
-    // A throwaway repository: never this repository's real .beads.
+fn dashboard_inspects_a_repository_without_a_rulebook() {
     let temp = tempfile::tempdir().expect("temp");
     let root = temp.path();
-    assert!(std::process::Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(root)
-        .status()
-        .expect("git")
-        .success());
-    let pull = run(&["pull", "--json", "--request-id", "probe-1"], root);
-    assert_eq!(pull.status.code(), Some(4));
-    let value = json(&pull);
-    assert_eq!(value["schema"], "whetstone.command-response.v1");
-    assert_eq!(value["state"], "unavailable");
-    assert_eq!(value["request_id"], "probe-1");
-    assert!(value["summary"]
-        .as_str()
-        .expect("summary")
-        .contains("no shared Beads database"));
-    let push = run(&["push", "--json", "--request-id", "probe-1"], root);
-    assert_eq!(push.status.code(), Some(6));
-    let value = json(&push);
-    assert_eq!(value["state"], "needs_input");
-    assert!(value["summary"]
-        .as_str()
-        .expect("summary")
-        .contains("nothing was published"));
+    init_git(root);
     let output = run(&["dash", "--json", "--request-id", "probe-1"], root);
     assert_eq!(output.status.code(), Some(0));
     let value = json(&output);
     assert_eq!(value["state"], "success");
+    assert_eq!(value["request_id"], "probe-1");
     assert_eq!(value["data"]["read_only"], true);
+    assert_eq!(value["data"]["rulebook"]["state"], "missing");
 }
 
 #[test]
@@ -307,6 +237,12 @@ fn removed_flags_and_change_kinds_are_rejected_before_anything_runs() {
         vec!["init", "--action", "agree", "--owner", "x"],
         vec!["init", "--action", "agree", "--initial-safeguard", "x"],
         vec!["init", "--action", "agree", "--gate-command", "true"],
+        vec!["init", "--action", "agree", "--expected-revision", "0"],
+        vec!["init", "--action", "agree", "--resume", "x"],
+        vec!["init", "--action", "setup", "--yes"],
+        vec!["init", "--action", "setup", "--store", "beads"],
+        vec!["init", "--action", "store"],
+        vec!["init", "--action", "export"],
         vec!["change", "--kind", "value"],
         vec!["change", "--kind", "philosophy"],
         vec!["change", "--kind", "metric"],
@@ -331,7 +267,6 @@ fn removed_flags_and_change_kinds_are_rejected_before_anything_runs() {
         vec!["change", "--conflict", "x"],
         vec!["change", "--accept", "proposal.x"],
         vec!["dash", "--expected-snapshot", "x"],
-        vec!["push", "--propose"],
         vec!["dash", "--history-after", "x"],
     ] {
         let output = run(&args, &repo.root);
@@ -347,29 +282,11 @@ fn removed_flags_and_change_kinds_are_rejected_before_anything_runs() {
 }
 
 #[test]
-fn init_is_resumable_and_duplicate_requests_never_duplicate_records() {
-    let temp = tempfile::tempdir().expect("create init fixture");
-    init_git(temp.path());
-    // A test command makes the prove-it-works starter one a check can hold.
-    std::fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"x\"\n")
-        .expect("write Cargo.toml");
-    git(temp.path(), &["add", "-A"]);
-    git(
-        temp.path(),
-        &["commit", "--quiet", "--no-verify", "-m", "base"],
-    );
-    let project = temp.path().to_string_lossy();
-    let inspect = run(
-        &[
-            "init",
-            "--json",
-            "--project-dir",
-            &project,
-            "--request-id",
-            "onboard-1",
-        ],
-        temp.path(),
-    );
+fn init_inspects_read_only_then_drafts_the_agreement_once() {
+    let repo = Repo::new();
+    repo.write("Cargo.toml", "[package]\nname = \"x\"\n");
+    repo.commit("base");
+    let inspect = repo.wh(&["init", "--request-id", "onboard-1"]);
     assert_eq!(inspect.status.code(), Some(6));
     let handoff = json(&inspect);
     assert_eq!(handoff["state"], "needs_input");
@@ -386,71 +303,16 @@ fn init_is_resumable_and_duplicate_requests_never_duplicate_records() {
         .iter()
         .map(|step| step["key"].as_str().expect("step key"))
         .collect::<Vec<_>>();
-    assert_eq!(steps, ["tools", "mission", "principles", "rules", "gates"]);
+    assert_eq!(steps, ["mission", "principles", "rules", "gates"]);
     assert!(handoff["data"]["onboarding"]["starters"]
         .as_array()
         .expect("starters")
         .iter()
         .all(|starter| starter["accepted"] == false));
-    assert!(!temp.path().join(".git/whetstone").exists());
-    assert!(git_status(temp.path()).is_empty());
-    let token = handoff["resume_token"].as_str().expect("resume token");
-    let revision = handoff["expected_revision"].as_u64().expect("revision");
-    assert_eq!(revision, 0);
+    assert!(!repo.root.join(".git/whetstone").exists());
+    assert!(git_status(&repo.root).is_empty());
 
-    let restarted = run(
-        &[
-            "init",
-            "--json",
-            "--project-dir",
-            &project,
-            "--request-id",
-            "onboard-1",
-        ],
-        temp.path(),
-    );
-    assert_eq!(json(&restarted)["resume_token"], token);
-
-    let revision_text = revision.to_string();
-    let stale = run(
-        &[
-            "init",
-            "--json",
-            "--project-dir",
-            &project,
-            "--action",
-            "agree",
-            "--request-id",
-            "onboard-1",
-            "--expected-revision",
-            "7",
-            "--resume",
-            token,
-            "--mission",
-            "Keep project work aligned.",
-            "--starter",
-            "all",
-        ],
-        temp.path(),
-    );
-    assert_eq!(stale.status.code(), Some(7));
-    assert_eq!(json(&stale)["state"], "stale");
-
-    let mut agreement_args = vec![
-        "init",
-        "--json",
-        "--project-dir",
-        &project,
-        "--action",
-        "agree",
-        "--request-id",
-        "onboard-1",
-        "--expected-revision",
-        &revision_text,
-        "--resume",
-        token,
-    ];
-    agreement_args.extend([
+    let answers = [
         "--mission",
         "Keep project work aligned.",
         "--principle",
@@ -459,121 +321,51 @@ fn init_is_resumable_and_duplicate_requests_never_duplicate_records() {
         "Leave the campsite cleaner.",
         "--starter",
         "all",
-    ]);
-    let accepted = run(&agreement_args, temp.path());
-    assert_eq!(
-        accepted.status.code(),
-        Some(6),
-        "stdout={} stderr={}",
-        String::from_utf8_lossy(&accepted.stdout),
-        String::from_utf8_lossy(&accepted.stderr)
-    );
-    let accepted_json = json(&accepted);
-    assert_eq!(accepted_json["state"], "needs_input");
-    let mut ids = record_ids(&accepted_json);
+    ];
+    let agreed = repo.agree(&answers);
+    assert_eq!(agreed["state"], "success", "{agreed}");
+    let mut ids = drafted(&agreed);
     ids.sort();
-    assert_eq!(ids.len(), 4, "{accepted_json}");
-    assert_eq!(ids[0], "mission.project");
+    assert_eq!(ids.len(), 4, "{agreed}");
+    assert_eq!(ids[0], "mission");
     assert!(ids.contains(&"principle.prove-it-works".to_string()));
     assert!(ids.iter().any(|id| id.starts_with("principle.custom-")));
     assert!(ids.contains(&"rule.prove-it-works".to_string()));
+    assert_eq!(agreed["data"]["progress"]["agreement_complete"], true);
+    assert_eq!(agreed["data"]["progress"]["revision"], "uncommitted");
     assert_eq!(
-        accepted_json["data"]["progress"]["agreement_complete"],
-        true
-    );
-    assert_eq!(
-        accepted_json["data"]["progress"]["missing_decisions"],
+        agreed["data"]["progress"]["missing_decisions"],
         serde_json::json!([])
     );
-    assert_eq!(accepted_json["data"]["shared"], false);
-    let layout = ProjectLayout::resolve(temp.path()).expect("project layout");
-    assert!(layout.shared_store().is_none());
-    assert!(git_status(temp.path()).is_empty());
-    let private = BeadsStore::open_existing(&layout.private_store(), StoreKind::Private)
-        .expect("private store");
-    let count = private.all_records().expect("records").len();
-    // Onboarding records are the owner's own words: in force, no drafts.
-    assert!(!private
-        .all_records()
-        .expect("records")
-        .iter()
-        .any(|record| matches!(record.body, RecordBody::Proposal(_))));
+    // The draft is the rulebook file in the working tree, and nothing else.
+    assert_eq!(git_status(&repo.root), "?? whetstone/\n");
+    let rulebook = repo.rulebook().expect("rulebook");
 
-    let established = run(
-        &[
-            "init",
-            "--json",
-            "--project-dir",
-            &project,
-            "--request-id",
-            "inspect-established",
-        ],
-        temp.path(),
-    );
-    assert_eq!(established.status.code(), Some(6));
-    let established_json = json(&established);
-    assert_eq!(established_json["state"], "needs_input");
-    assert_eq!(
-        established_json["data"]["progress"]["missing_decisions"],
-        serde_json::json!([])
-    );
-    assert_eq!(
-        established_json["data"]["progress"]["agreement_complete"],
-        true
-    );
-    assert_eq!(
-        established_json["data"]["inspection_writes"],
-        serde_json::json!([])
-    );
-    assert!(established_json["data"]["onboarding"]["starters"]
+    let established = repo.wh_json(&["init", "--request-id", "inspect-established"]);
+    assert_eq!(established["state"], "needs_input");
+    assert_eq!(established["data"]["progress"]["agreement_complete"], true);
+    assert!(established["data"]["onboarding"]["starters"]
         .as_array()
         .expect("starters")
         .iter()
         .all(|starter| starter["accepted"] == true));
+    assert_eq!(
+        established["permitted_actions"][0], "wh change --accept",
+        "{established}"
+    );
 
-    // Repeating the request never writes a second copy of anything.
-    let replay = run(&agreement_args, temp.path());
-    assert_ne!(json(&replay)["state"], "success");
-    assert_eq!(private.all_records().expect("records").len(), count);
-}
+    // Repeating the request drafts nothing a second time.
+    let replay = repo.agree(&answers);
+    assert_eq!(replay["state"], "needs_input", "{replay}");
+    assert_eq!(repo.rulebook().expect("rulebook"), rulebook);
 
-#[test]
-fn init_agree_exact_replay_returns_the_same_records_and_reuse_conflicts() {
-    let repo = Repo::new();
-    let inspect = repo.wh_json(&["init", "--request-id", "replay-1"]);
-    let token = inspect["resume_token"].as_str().expect("token").to_string();
-    let mut args = vec![
-        "init",
-        "--action",
-        "agree",
-        "--request-id",
-        "replay-1",
-        "--expected-revision",
-        "0",
-        "--resume",
-        &token,
-    ];
-    args.extend_from_slice(&AGREEMENT);
-    let first = repo.wh(&args);
-    assert_eq!(first.status.code(), Some(6));
-    let first = json(&first);
-    let replay = repo.wh(&args);
-    assert_eq!(replay.status.code(), Some(6), "{}", json(&replay));
-    assert_eq!(json(&replay)["data"]["records"], first["data"]["records"]);
-
-    let different = args
-        .iter()
-        .map(|arg| {
-            if *arg == "Keep project work aligned." {
-                "A different mission."
-            } else {
-                arg
-            }
-        })
-        .collect::<Vec<_>>();
-    let conflict = repo.wh(&different);
-    assert_eq!(conflict.status.code(), Some(8), "{}", json(&conflict));
-    assert_eq!(json(&conflict)["state"], "conflict");
+    let accepted = repo.wh_json(&["change", "--accept"]);
+    assert_eq!(accepted["state"], "success", "{accepted}");
+    let wired = repo.wh_json(&["init", "--action", "wire", "--hooks"]);
+    assert_eq!(wired["state"], "success", "{wired}");
+    let complete = repo.wh_json(&["init"]);
+    assert_eq!(complete["state"], "success", "{complete}");
+    assert_eq!(complete["data"]["progress"]["setup_complete"], true);
 }
 
 #[test]
@@ -589,19 +381,8 @@ fn init_needs_a_mission_and_names_only_catalogue_principles_and_starters() {
     let handoff = repo.wh_json(&["init", "--request-id", "explicit-input"]);
     assert_eq!(handoff["state"], "needs_input");
     assert!(!repo.root.join(".git/whetstone").exists());
-    let token = handoff["resume_token"].as_str().expect("token").to_string();
     let agree = |extra: &[&str]| {
-        let mut args = vec![
-            "init",
-            "--action",
-            "agree",
-            "--request-id",
-            "explicit-input",
-            "--expected-revision",
-            "0",
-            "--resume",
-            &token,
-        ];
+        let mut args = vec!["init", "--action", "agree"];
         args.extend_from_slice(extra);
         repo.wh(&args)
     };
@@ -650,24 +431,22 @@ fn init_needs_a_mission_and_names_only_catalogue_principles_and_starters() {
     let blank = agree(&["--mission", "   ", "--starter", "all"]);
     assert_eq!(blank.status.code(), Some(6));
 
-    let layout = ProjectLayout::resolve(&repo.root).expect("project layout");
-    // A refused agreement writes nothing, not even an empty store.
+    // A refused agreement writes nothing.
     assert!(
-        !layout.private_store_exists(),
-        "a refused agreement created the private store"
+        repo.rulebook().is_none(),
+        "a refused agreement wrote the rulebook"
     );
-    assert!(layout.shared_store().is_none());
     assert!(!repo.root.join("executed").exists());
 }
 
 #[test]
-fn init_completes_an_established_agreement_that_has_no_rule_yet() {
+fn init_completes_an_agreement_that_has_no_rule_yet() {
     let repo = Repo::new();
     repo.write("Cargo.toml", "[package]\nname = \"x\"\n");
     repo.commit("base");
-    let mission_only = repo.agree("mission-only", &["--mission", "Keep work aligned."]);
-    assert_eq!(mission_only["state"], "needs_input");
-    assert_eq!(record_ids(&mission_only), ["mission.project"]);
+    let mission_only = repo.agree(&["--mission", "Keep work aligned."]);
+    assert_eq!(mission_only["state"], "success", "{mission_only}");
+    assert_eq!(drafted(&mission_only), ["mission"]);
     assert_eq!(
         mission_only["data"]["progress"]["agreement_complete"],
         false
@@ -678,185 +457,42 @@ fn init_completes_an_established_agreement_that_has_no_rule_yet() {
     );
 
     let inspect = repo.wh_json(&["init", "--request-id", "add-rules"]);
-    assert_eq!(inspect["expected_revision"], 1);
     assert_eq!(
         inspect["data"]["progress"]["missing_decisions"],
         serde_json::json!(["rules"])
     );
     // A second mission through init is refused: missions change through wh change.
-    let token = inspect["resume_token"].as_str().expect("token").to_string();
-    let again = repo.wh(&[
-        "init",
-        "--action",
-        "agree",
-        "--request-id",
-        "add-rules",
-        "--expected-revision",
-        "1",
-        "--resume",
-        &token,
-        "--mission",
-        "Another mission.",
-    ]);
+    let again = repo.wh(&["init", "--action", "agree", "--mission", "Another mission."]);
     assert_eq!(again.status.code(), Some(5));
     assert_eq!(json(&again)["state"], "needs_decision");
 
-    let completed = repo.wh_json(&[
-        "init",
-        "--action",
-        "agree",
-        "--request-id",
-        "add-rules",
-        "--expected-revision",
-        "1",
-        "--resume",
-        &token,
+    // Resending the same mission drafts only what is new.
+    let completed = repo.agree(&[
+        "--mission",
+        "Keep work aligned.",
         "--starter",
         "prove-it-works",
     ]);
-    assert_eq!(record_ids(&completed), ["rule.prove-it-works"]);
+    assert_eq!(drafted(&completed), ["rule.prove-it-works"]);
     assert_eq!(completed["data"]["progress"]["agreement_complete"], true);
-    let missions = repo
-        .records()
-        .into_iter()
-        .filter(|record| record.id.as_str() == "mission.project")
-        .count();
-    assert_eq!(missions, 1);
 }
 
 #[test]
-fn init_dry_run_shows_the_exact_records_and_writes_nothing() {
+fn init_dry_run_shows_the_exact_entries_and_writes_nothing() {
     let repo = Repo::new();
-    let inspect = repo.wh_json(&["init", "--request-id", "dry-1"]);
-    let token = inspect["resume_token"].as_str().expect("token").to_string();
-    let mut args = vec![
-        "init",
-        "--action",
-        "agree",
-        "--request-id",
-        "dry-1",
-        "--expected-revision",
-        "0",
-        "--resume",
-        &token,
-        "--dry-run",
-    ];
+    let mut args = vec!["init", "--action", "agree", "--dry-run"];
     args.extend_from_slice(&AGREEMENT);
     let output = repo.wh(&args);
-    assert_eq!(output.status.code(), Some(5));
+    assert_eq!(output.status.code(), Some(5), "{}", json(&output));
     let value = json(&output);
+    assert_eq!(value["workflow"], "init");
     assert_eq!(value["data"]["dry_run"], true);
-    assert_eq!(value["data"]["records"].as_array().map(Vec::len), Some(3));
-    assert_eq!(value["data"]["effects"]["team_share"], false);
-    assert!(!ProjectLayout::resolve(&repo.root)
-        .expect("layout")
-        .private_store_exists());
-}
-
-#[test]
-fn init_agree_resumes_after_interruption_between_store_bootstrap_and_records() {
-    let repo = Repo::new();
-    let handoff = repo.wh_json(&["init", "--request-id", "resume-bootstrap"]);
-    let token = handoff["resume_token"].as_str().expect("token").to_string();
-    let layout = ProjectLayout::resolve(&repo.root).expect("layout");
-    // Model a process stop right after the private Beads store was created.
-    BeadsStore::initialize(&layout.private_store(), StoreKind::Private)
-        .expect("model the bootstrapped, empty store");
-    assert!(repo.records().is_empty());
-
-    let cancelled = repo.wh(&[
-        "init",
-        "--action",
-        "cancel",
-        "--request-id",
-        "cancel-interrupted-bootstrap",
-    ]);
-    assert!(cancelled.status.success());
-    let cancelled = json(&cancelled);
-    assert_eq!(cancelled["data"]["cancelled"], true);
-    assert_eq!(cancelled["data"]["writes"], serde_json::json!([]));
-    assert!(repo.records().is_empty(), "cancel wrote a record");
-
-    let again = repo.wh_json(&["init", "--request-id", "resume-bootstrap"]);
-    assert_eq!(again["resume_token"], token.as_str());
-    let mut args = vec![
-        "init",
-        "--action",
-        "agree",
-        "--request-id",
-        "resume-bootstrap",
-        "--expected-revision",
-        "0",
-        "--resume",
-        &token,
-    ];
-    args.extend_from_slice(&AGREEMENT);
-    let resumed = repo.wh(&args);
-    assert_eq!(resumed.status.code(), Some(6));
-    let resumed = json(&resumed);
-    assert_eq!(resumed["data"]["progress"]["agreement_complete"], true);
-    let agreement = repo
-        .records()
-        .into_iter()
-        .filter(|record| {
-            matches!(
-                record.body,
-                RecordBody::Mission(_) | RecordBody::Principle(_) | RecordBody::Rule(_)
-            )
-        })
-        .count();
-    assert_eq!(agreement, 3);
-}
-
-#[test]
-fn init_agree_completes_a_partly_written_batch() {
-    let repo = Repo::new();
-    let handoff = repo.wh_json(&["init", "--request-id", "partial"]);
-    let token = handoff["resume_token"].as_str().expect("token").to_string();
-    let layout = ProjectLayout::resolve(&repo.root).expect("layout");
-    let private =
-        BeadsStore::initialize(&layout.private_store(), StoreKind::Private).expect("private store");
-    // The first record of the batch landed before the process stopped.
-    let mission = whetstone::service::agreement_record(
-        &layout,
-        "mission.project",
-        "partial:base-0:mission".into(),
-        RecordBody::Mission(whetstone::domain::Mission {
-            statement: "Keep project work aligned.".into(),
-            desired_outcomes: Vec::new(),
-        }),
-        Some("Test Owner"),
-    )
-    .expect("mission record");
-    let written = private.append(&mission, None).expect("partial write");
-    let mut args = vec![
-        "init",
-        "--action",
-        "agree",
-        "--request-id",
-        "partial",
-        "--expected-revision",
-        "0",
-        "--resume",
-        &token,
-    ];
-    args.extend_from_slice(&AGREEMENT);
-    let resumed = repo.wh(&args);
-    assert_eq!(resumed.status.code(), Some(6), "{}", json(&resumed));
-    let resumed = json(&resumed);
-    assert_eq!(resumed["data"]["progress"]["agreement_complete"], true);
-    assert!(resumed["data"]["records"]
-        .as_array()
-        .expect("records")
-        .iter()
-        .any(|record| record["digest"] == written.digest.as_str()));
+    assert_eq!(value["data"]["entries"].as_array().map(Vec::len), Some(3));
     assert_eq!(
-        repo.records()
-            .iter()
-            .filter(|record| record.id.as_str() == "mission.project")
-            .count(),
-        1
+        value["data"]["entries"][0]["statement"],
+        "Keep project work aligned."
     );
+    assert!(repo.rulebook().is_none());
 }
 
 #[test]
@@ -1093,6 +729,7 @@ fn a_check_writes_no_record() {
     repo.rule("rule.lowercase-functions", UPPERCASE_FUNCTIONS);
 
     let args = ["--request-id", "check-idempotent"];
+    let before = (git_status(&repo.root), repo.rulebook());
     let (_, first) = repo.check(&args);
     let (_, second) = repo.check(&args);
     assert_eq!(first["state"], "success", "{first}");
@@ -1101,10 +738,10 @@ fn a_check_writes_no_record() {
         first["data"]["report"]["state"],
         second["data"]["report"]["state"]
     );
-    let layout = ProjectLayout::resolve(&repo.root).expect("layout");
-    assert!(
-        !layout.private_store().exists(),
-        "a check is its report, never a record"
+    assert_eq!(
+        (git_status(&repo.root), repo.rulebook()),
+        before,
+        "a check is its report and changes nothing"
     );
 }
 

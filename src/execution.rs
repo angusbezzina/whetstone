@@ -15,7 +15,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -165,15 +164,6 @@ fn cleanup_process_group(pid: u32) -> String {
 #[cfg(unix)]
 unsafe extern "C" {
     fn kill(pid: i32, signal: i32) -> i32;
-}
-
-fn sha256_bytes(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
-}
-
-/// Digest of an in-memory output, in the receipt's `sha256:` form.
-pub fn output_digest(bytes: &[u8]) -> String {
-    sha256_bytes(bytes)
 }
 
 #[cfg(all(test, unix))]

@@ -11,10 +11,10 @@ use sha2::{Digest, Sha256};
 use crate::domain::{
     Mission, Principle, PrincipleSource, RecordId, Rule, RuleSource, RULE_SCHEMA_V2,
 };
+use crate::layout::ProjectLayout;
 use crate::rulebook::{
     self, PrincipleEntry, RetiredEntry, Revision, RuleEntry, Rulebook, RulebookError, RULEBOOK_PATH,
 };
-use crate::storage::ProjectLayout;
 
 use super::{
     bounded_input, bounded_request_id, project_error, unknown_response, ChangeDefinition,
@@ -82,7 +82,7 @@ fn ask(request_id: String, question: impl Into<String>) -> ServiceResponse {
     response
 }
 
-fn rulebook_unreadable(request_id: String, error: &RulebookError) -> ServiceResponse {
+pub(super) fn rulebook_unreadable(request_id: String, error: &RulebookError) -> ServiceResponse {
     let mut response = ServiceResponse::new(
         request_id,
         "change",
@@ -106,7 +106,7 @@ fn digest_of(book: &Rulebook, id: &str) -> Option<String> {
 }
 
 /// Validate `after` strictly, then write it unless this is a preview.
-fn draft(
+pub(super) fn draft(
     root: &Path,
     request_id: String,
     preview: bool,
@@ -194,7 +194,6 @@ fn edit(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceResp
         (None, ChangeKind::Mission) => Rulebook {
             mission: Mission {
                 statement: String::new(),
-                desired_outcomes: Vec::new(),
             },
             principles: Vec::new(),
             rules: Vec::new(),

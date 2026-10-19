@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::domain::{ContentDigest, Enforcer, EvidenceRef, RecordId, Rule, Strength};
-use crate::storage::ProjectLayout;
+use crate::layout::ProjectLayout;
 
 pub mod ast;
 pub mod files;
@@ -66,89 +66,6 @@ pub fn evidence_root(layout: &ProjectLayout) -> PathBuf {
 
 fn sha256_hex(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
-}
-
-/// A cheap, exact fingerprint of the working tree: the HEAD commit plus the
-/// content of every modified or untracked (non-ignored) file.
-pub fn workspace_fingerprint(project_root: &Path) -> Result<String, String> {
-    let git = |args: &[&str]| -> Result<Vec<u8>, String> {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(project_root)
-            .args(args)
-            .output()
-            .map_err(|error| format!("git is unavailable: {error}"))?;
-        if output.status.success() {
-            Ok(output.stdout)
-        } else {
-            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-        }
-    };
-    let head = git(&["rev-parse", "--verify", "-q", "HEAD"]).unwrap_or_default();
-    let status = git(&["status", "--porcelain=v1", "-z", "--untracked-files=all"])?;
-    let mut hasher = Sha256::new();
-    hasher.update(b"whetstone.workspace.v1\0");
-    hasher.update(&head);
-    hasher.update(&status);
-    for entry in status.split(|byte| *byte == 0) {
-        if entry.len() < 4 {
-            continue;
-        }
-        let path = String::from_utf8_lossy(&entry[3..]).to_string();
-        let full = project_root.join(&path);
-        if let Ok(metadata) = fs::symlink_metadata(&full) {
-            if metadata.is_file() && metadata.len() <= 16 * 1024 * 1024 {
-                if let Ok(bytes) = fs::read(&full) {
-                    hasher.update(path.as_bytes());
-                    hasher.update(Sha256::digest(&bytes));
-                }
-            }
-        }
-    }
-    Ok(format!("sha256:{:x}", hasher.finalize()))
-}
-
-/// The current HEAD commit, if the repository has one.
-pub fn head_commit(project_root: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(project_root)
-        .args(["rev-parse", "--verify", "-q", "HEAD"])
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .filter(|head| !head.is_empty())
-}
-
-/// Paths changed in commits after `since` (exclusive) up to HEAD.
-pub fn changed_since(project_root: &Path, since: &str) -> Result<Vec<String>, String> {
-    if since.is_empty() || !since.chars().all(|character| character.is_ascii_hexdigit()) {
-        return Err("invalid commit id".into());
-    }
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(project_root)
-        .args(["diff", "--name-only", "-z", since, "HEAD"])
-        .output()
-        .map_err(|error| format!("git is unavailable: {error}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-    Ok(output
-        .stdout
-        .split(|byte| *byte == 0)
-        .filter(|entry| !entry.is_empty())
-        .map(|entry| String::from_utf8_lossy(entry).to_string())
-        .collect())
-}
-
-/// Paths changed in the working tree plus, with `base`, every path that
-/// differs between the merge base of `base` and HEAD (a committed change).
-pub fn changed_paths_since(project_root: &Path, base: Option<&str>) -> Result<Vec<String>, String> {
-    changed_paths_between(project_root, base, true)
 }
 
 /// Paths changed since `base`; with `worktree` false, only what the commits

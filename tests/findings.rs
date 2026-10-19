@@ -1,8 +1,7 @@
 //! Sweep findings: `wh check --sweep` turns every flag of a rule below must
 //! into one finding a night sweep's controller works. The sweep reads the
-//! rules from `whetstone/rulebook.json`, written straight into the file, and
-//! runs without `bd`. Every repository is a throwaway; nothing touches this
-//! repository's stores.
+//! rules from `whetstone/rulebook.json`, written straight into the file.
+//! Every repository is a throwaway.
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -28,15 +27,13 @@ fn git(root: &Path, args: &[&str]) {
     );
 }
 
-/// The binary with only the system tools on `PATH`: no `bd` to start.
-fn run_without_bd(root: &Path, args: &[&str]) -> Output {
+/// The binary with only the system tools on `PATH`.
+fn run_with_system_tools(root: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_whetstone"))
         .args(args)
         .current_dir(root)
         .env("PATH", "/usr/bin:/bin")
         .env("GIT_CEILING_DIRECTORIES", root.parent().expect("parent"))
-        .env_remove("BEADS_DIR")
-        .env_remove("BEADS_DB")
         .output()
         .expect("whetstone")
 }
@@ -149,14 +146,14 @@ fn a_sweep_reads_the_rulebook_file_and_its_findings_are_byte_stable_and_below_mu
     // default), byte-identical across runs and to the findings contract:
     // fingerprint sha256(rule \0 origin \0 subject), the flagged line's
     // digest, class, priority, title, responsibility and unsure.
-    let first = run_without_bd(root, &["check", "--sweep"]);
+    let first = run_with_system_tools(root, &["check", "--sweep"]);
     assert_eq!(
         first.status.code(),
         Some(0),
         "{}",
         String::from_utf8_lossy(&first.stderr)
     );
-    let second = run_without_bd(root, &["check", "--sweep", "--format", "findings"]);
+    let second = run_with_system_tools(root, &["check", "--sweep", "--format", "findings"]);
     assert_eq!(
         first.stdout, second.stdout,
         "the same state gives the same findings"
@@ -198,7 +195,7 @@ fn a_sweep_reads_the_rulebook_file_and_its_findings_are_byte_stable_and_below_mu
         "print('two')\nvalue = 1\nprint('two')\n",
     )
     .expect("write");
-    let changed = run_without_bd(root, &["check", "--sweep"]);
+    let changed = run_with_system_tools(root, &["check", "--sweep"]);
     let should_two = finding_line(
         "rule.print-should",
         "src/app.py",
@@ -241,7 +238,7 @@ fn a_sweep_reads_the_rulebook_file_and_its_findings_are_byte_stable_and_below_mu
 
     // A should flag is never required; the must rule's is. Each result
     // names its rule by id, digest and the rulebook's revision.
-    let checked = envelope(&run_without_bd(root, &["check", "--json"]));
+    let checked = envelope(&run_with_system_tools(root, &["check", "--json"]));
     let head = Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(root)
@@ -276,7 +273,7 @@ fn a_sweep_reads_the_rulebook_file_and_its_findings_are_byte_stable_and_below_mu
     );
 
     // `--format json` keeps the envelope, with the same findings in it.
-    let enveloped = envelope(&run_without_bd(
+    let enveloped = envelope(&run_with_system_tools(
         root,
         &["check", "--sweep", "--format", "json"],
     ));
@@ -300,7 +297,7 @@ fn a_check_without_a_rulebook_or_with_a_malformed_one_never_passes() {
         &["check", "--staged", "--json"],
         &["check", "--sweep", "--format", "json"],
     ] {
-        let response = envelope(&run_without_bd(root, args));
+        let response = envelope(&run_with_system_tools(root, args));
         assert_eq!(response["state"], "unknown", "{args:?}: {response}");
         assert!(
             response["summary"]
@@ -316,7 +313,7 @@ fn a_check_without_a_rulebook_or_with_a_malformed_one_never_passes() {
             "{response}"
         );
     }
-    let swept = run_without_bd(root, &["check", "--sweep"]);
+    let swept = run_with_system_tools(root, &["check", "--sweep"]);
     assert_ne!(swept.status.code(), Some(0));
     assert!(swept.stdout.is_empty(), "no findings.json without rules");
     assert!(String::from_utf8_lossy(&swept.stderr).contains("does not exist"));
@@ -328,9 +325,9 @@ fn a_check_without_a_rulebook_or_with_a_malformed_one_never_passes() {
         "No print at all.",
         &print_rule("must"),
     );
-    let local = envelope(&run_without_bd(root, &["check", "--json"]));
+    let local = envelope(&run_with_system_tools(root, &["check", "--json"]));
     assert_eq!(local["state"], "success", "{local}");
-    let ci = envelope(&run_without_bd(root, &["check", "--ci", "--json"]));
+    let ci = envelope(&run_with_system_tools(root, &["check", "--ci", "--json"]));
     assert_eq!(ci["state"], "unknown", "{ci}");
     assert!(
         ci["summary"]
@@ -340,9 +337,9 @@ fn a_check_without_a_rulebook_or_with_a_malformed_one_never_passes() {
     );
     git(root, &["add", "."]);
     git(root, &["commit", "-qm", "rules"]);
-    let ci = envelope(&run_without_bd(root, &["check", "--ci", "--json"]));
+    let ci = envelope(&run_with_system_tools(root, &["check", "--ci", "--json"]));
     assert_eq!(ci["state"], "success", "{ci}");
-    let unknown = envelope(&run_without_bd(
+    let unknown = envelope(&run_with_system_tools(
         root,
         &["check", "--json", "--rule", "rule.print-elsewhere"],
     ));
@@ -362,7 +359,7 @@ fn a_check_without_a_rulebook_or_with_a_malformed_one_never_passes() {
         }
         git(root, &["checkout", "-q", "--", "whetstone/rulebook.json"]);
         rulebook::add_rule(root, "rule.print-bad", "Bad.", &bad);
-        let response = envelope(&run_without_bd(root, &["check", "--json"]));
+        let response = envelope(&run_with_system_tools(root, &["check", "--json"]));
         assert_eq!(response["state"], "unknown", "{name}: {response}");
         assert!(
             response["summary"].as_str().is_some_and(|summary| summary
@@ -394,7 +391,7 @@ fn a_sweep_covers_a_large_repository_with_in_repository_symlinks() {
     git(root, &["add", "."]);
     git(root, &["commit", "-qm", "bulk"]);
 
-    let swept = run_without_bd(root, &["check", "--sweep"]);
+    let swept = run_with_system_tools(root, &["check", "--sweep"]);
     assert_eq!(
         swept.status.code(),
         Some(0),

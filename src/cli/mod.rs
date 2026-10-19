@@ -1,4 +1,4 @@
-//! Six public workflows backed by one typed service boundary.
+//! Four public workflows backed by one typed service boundary.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -40,8 +40,8 @@ struct Cli {
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Command {
-    /// Inspect the project, agree the mission, principles and rules, install
-    /// the tools, and wire the hooks and CI.
+    /// Inspect the project, draft the mission, principles and rules, and
+    /// wire the hooks and CI.
     Init {
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
@@ -49,10 +49,6 @@ enum Command {
         action: InitActionArg,
         #[arg(long)]
         request_id: Option<String>,
-        #[arg(long)]
-        expected_revision: Option<u64>,
-        #[arg(long = "resume")]
-        resume_token: Option<String>,
         /// What the project exists to do, in one sentence (agree).
         #[arg(long)]
         mission: Option<String>,
@@ -65,7 +61,7 @@ enum Command {
         /// A starter rule to accept, or `all` (agree; repeatable).
         #[arg(long = "starter")]
         starters: Vec<String>,
-        /// Show the exact records or files that would be written, and write nothing.
+        /// Show the exact rulebook entries or files that would be written, and write nothing.
         #[arg(long)]
         dry_run: bool,
         /// List the steps and the exact commands in the terminal instead of
@@ -78,13 +74,6 @@ enum Command {
         /// Scaffold the GitHub workflow that runs the required whetstone/policy check (wire).
         #[arg(long)]
         ci: bool,
-        /// Run the Beads install setup found (setup), or replace a rulebook
-        /// file that differs from the Beads export (export).
-        #[arg(long)]
-        yes: bool,
-        /// Where every record lives (setup, store): beads (standalone) or virgil.
-        #[arg(long = "store", value_parser = ["beads", "virgil"])]
-        store: Option<String>,
     },
 
     /// Open the inspectable local dashboard.
@@ -199,42 +188,6 @@ enum Command {
         #[arg(long, hide = true)]
         pushed: Option<String>,
     },
-
-    /// Receive shared records from the team's Beads remote. Nothing received
-    /// is executed or accepted; local drafts stay as they are.
-    Pull {
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-        #[arg(long)]
-        request_id: Option<String>,
-        /// Report the remote that would be pulled; receive nothing.
-        #[arg(long)]
-        dry_run: bool,
-    },
-
-    /// Share an exact, confirmed package of accepted records with the team:
-    /// run once to review the package, then again with --confirm <token>.
-    Push {
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-        #[arg(long)]
-        request_id: Option<String>,
-        /// Record id to share (repeatable); default: every accepted record not yet shared.
-        #[arg(long = "select")]
-        select: Vec<String>,
-        /// Also share this record's draft or withdrawn revisions (repeatable).
-        #[arg(long = "include-ancestry")]
-        include_ancestry: Vec<String>,
-        /// Text that must never leave this machine; any match blocks the push.
-        #[arg(long = "canary")]
-        canaries: Vec<String>,
-        /// The token from the reviewed package; any change invalidates it.
-        #[arg(long)]
-        confirm: Option<String>,
-        /// Show the exact package, destination and base; share nothing.
-        #[arg(long)]
-        dry_run: bool,
-    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -244,8 +197,6 @@ enum InitActionArg {
     Cancel,
     Wire,
     Setup,
-    Store,
-    Export,
 }
 
 impl From<InitActionArg> for InitAction {
@@ -256,8 +207,6 @@ impl From<InitActionArg> for InitAction {
             InitActionArg::Cancel => Self::Cancel,
             InitActionArg::Wire => Self::Wire,
             InitActionArg::Setup => Self::Setup,
-            InitActionArg::Store => Self::Store,
-            InitActionArg::Export => Self::Export,
         }
     }
 }
@@ -319,8 +268,6 @@ pub fn run() -> i32 {
             project_dir,
             action,
             request_id,
-            expected_revision,
-            resume_token,
             mission,
             principles,
             custom_principles,
@@ -329,8 +276,6 @@ pub fn run() -> i32 {
             no_open,
             hooks,
             ci,
-            yes,
-            store,
         }) => {
             // A person inspecting a project with no agreement is walked through
             // it in the dashboard. Machine callers always get the envelope.
@@ -342,8 +287,6 @@ pub fn run() -> i32 {
                 project_dir,
                 request_id,
                 action: action.into(),
-                expected_revision,
-                resume_token,
                 mission,
                 principles,
                 custom_principles,
@@ -351,9 +294,6 @@ pub fn run() -> i32 {
                 dry_run,
                 hooks,
                 ci,
-                yes,
-                store,
-                actor: crate::service::detect_actor(),
             }));
             if guided && needs_onboarding(&response) {
                 return run_dashboard(
@@ -503,32 +443,6 @@ pub fn run() -> i32 {
                 None => service.execute(ServiceRequest::Check(request)),
             }
         }
-        Some(Command::Pull {
-            project_dir,
-            request_id,
-            dry_run,
-        }) => service.execute(ServiceRequest::Pull(crate::sync::PullRequest {
-            project_dir,
-            request_id,
-            dry_run,
-        })),
-        Some(Command::Push {
-            project_dir,
-            request_id,
-            select,
-            include_ancestry,
-            canaries,
-            confirm,
-            dry_run,
-        }) => service.execute(ServiceRequest::Push(crate::sync::PushRequest {
-            project_dir,
-            request_id,
-            select,
-            include_ancestry,
-            canaries,
-            confirm,
-            dry_run,
-        })),
     };
     emit_response(&response, machine);
     response.state.exit_code()
@@ -676,7 +590,7 @@ fn format_onboarding_intro(response: &ServiceResponse, url: &str) -> String {
          \x20 {url}\n\n\
          Prefer the terminal? Press Ctrl-C, then:\n\
          \x20 wh init --no-open            lists each step and the exact command\n\
-         \x20 wh init --action agree ...   records them without the dashboard (--dry-run previews)\n\n\
+         \x20 wh init --action agree ...   drafts them without the dashboard (--dry-run previews)\n\n\
          This terminal logs each step the dashboard records. Press Ctrl-C when you are done.\n"
     )
 }
@@ -841,7 +755,7 @@ fn format_init_walkthrough(response: &ServiceResponse) -> Option<String> {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "Whetstone · init · no agreement here yet\n\nNothing is shared, published or committed: recording an agreement writes\nprivate state inside this repository's Git directory, and no working-tree files.\n\nStill needed:"
+        "Whetstone · init · no agreement here yet\n\nNothing is shared, published or committed: recording an agreement drafts\nwhetstone/rulebook.json in the working tree, and accepting it is one commit.\n\nStill needed:"
     );
     for (index, step) in missing.iter().enumerate() {
         let hint = step_hint(step);
@@ -878,12 +792,8 @@ fn format_init_walkthrough(response: &ServiceResponse) -> Option<String> {
     }
     let _ = writeln!(
         out,
-        "\nRecord it either way:\n\n  wh init        opens the dashboard (so does wh dash), walks you through it,\n                 shows the exact records before saving, then records them.\n\n  wh init --action agree --expected-revision {} --resume <token> \\\n    --mission \"…\" [--principle <catalogue id>]... [--custom-principle \"…\"]... \\\n    --starter all\n                 records the same thing without the dashboard. Add --dry-run to\n                 see the exact records first.",
-        response.expected_revision.unwrap_or(0)
+        "\nRecord it either way:\n\n  wh init        opens the dashboard (so does wh dash), walks you through it,\n                 shows the exact entries before saving, then drafts them.\n\n  wh init --action agree \\\n    --mission \"…\" [--principle <catalogue id>]... [--custom-principle \"…\"]... \\\n    --starter all\n                 drafts the same thing without the dashboard. Add --dry-run to\n                 see the exact entries first.\n\nThen wh change --accept commits whetstone/rulebook.json."
     );
-    if let Some(token) = &response.resume_token {
-        let _ = writeln!(out, "\nToken for this inspection: {token}");
-    }
     Some(out)
 }
 
@@ -902,12 +812,6 @@ fn format_human_response(response: &ServiceResponse) -> String {
         response.workflow, response.state
     );
     let _ = writeln!(rendered, "{}", response.summary);
-    if let Some(revision) = response.expected_revision {
-        let _ = writeln!(rendered, "Expected revision: {revision}");
-    }
-    if let Some(token) = &response.resume_token {
-        let _ = writeln!(rendered, "Resume: {token}");
-    }
     for question in &response.blocking_questions {
         let _ = writeln!(rendered, "Needs: {question}");
     }
@@ -1038,8 +942,6 @@ mod tests {
             workflow: "init".into(),
             state: ServiceState::NeedsInput,
             summary: "Inspection is complete and read-only.".into(),
-            expected_revision: Some(0),
-            resume_token: Some("resume-v1:abc".into()),
             required_snapshot: None,
             evidence: Vec::new(),
             blocking_questions: vec!["Provide mission.".into()],
@@ -1076,7 +978,7 @@ mod tests {
             rendered.contains("Nothing is shared, published or"),
             "the footprint is stated: {rendered}"
         );
-        assert!(rendered.contains("resume-v1:abc"), "{rendered}");
+        assert!(rendered.contains("wh change --accept"), "{rendered}");
         assert!(!rendered.contains("Needs: Provide mission."), "{rendered}");
     }
 
@@ -1093,8 +995,6 @@ mod tests {
             workflow: workflow.into(),
             state,
             summary: summary.into(),
-            expected_revision: Some(1),
-            resume_token: None,
             required_snapshot: None,
             evidence: Vec::new(),
             blocking_questions: Vec::new(),
@@ -1184,8 +1084,6 @@ mod tests {
             workflow: "check".into(),
             state: ServiceState::Violated,
             summary: "One rule failed.".into(),
-            expected_revision: None,
-            resume_token: None,
             required_snapshot: None,
             evidence: Vec::new(),
             blocking_questions: Vec::new(),

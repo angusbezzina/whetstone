@@ -26,7 +26,7 @@
       "pattern": "^[A-Za-z0-9._:-]+$"
     },
     "workflow": {
-      "enum": ["orientation", "init", "dash", "change", "check", "pull", "push"]
+      "enum": ["orientation", "init", "dash", "change", "check"]
     },
     "state": {
       "enum": [
@@ -41,8 +41,6 @@
       ]
     },
     "summary": { "type": "string", "minLength": 1 },
-    "expected_revision": { "type": "integer", "minimum": 0 },
-    "resume_token": { "type": "string", "pattern": "^resume-v1:[0-9a-f]{64}$" },
     "required_snapshot": {
       "type": "object",
       "additionalProperties": false,

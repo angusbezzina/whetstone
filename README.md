@@ -52,7 +52,7 @@ and the plan in epic `whetstone-ppq` is built:
   catalogue compiled into `wh` (pstack's) and the prove-it-works starter
   rule when the repository has a test command.
 - **Rules.** One strength and one enforcer per rule
-  ([rule schema](references/rule-v2.schema.json)): AST, lint, formatter, test,
+  ([rule schema](references/rulebook.schema.json)): AST, lint, formatter, test,
   or validator. Earlier standards are read as rules.
 - **Gates.** `wh init --action wire --hooks` installs git pre-commit (staged
   content, mechanical rules only) and pre-push (`wh check --base <remote>`)

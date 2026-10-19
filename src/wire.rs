@@ -12,8 +12,8 @@ use serde::Serialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
+use crate::layout::ProjectLayout;
 use crate::service::{InitRequest, ServiceResponse, ServiceState};
-use crate::storage::ProjectLayout;
 
 pub const CI_TEMPLATE: &str = include_str!("../assets/ci/whetstone.yml");
 /// The workflow `wh init --action wire --ci` scaffolds once.

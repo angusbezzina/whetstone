@@ -1,18 +1,9 @@
-//! The virgil store needs no `bd`: with `whetstone/store.json` naming
-//! Virgil and a PATH holding only the fake `virgil` (tests/fake_virgil.py)
-//! and the basic tools, init runs end to end, the accepted
-//! agreement reaches the rulebook's repository scope, `wh push` and `wh
-//! pull` are refused by name (their dry runs succeed), and no `.beads`
-//! appears.
+//! Whetstone needs neither `bd` nor `dolt`: init, change, dash and check run
+//! with a PATH that holds only `git` and the basic tools.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-
-use serde_json::{json, Value};
-
-const GROUP: &str = "01J8Z0000000000000000000AD";
-const REPOSITORY: &str = "01J8Z0000000000000000000RP";
 
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_whetstone"))
@@ -26,20 +17,17 @@ fn which(program: &str) -> Option<PathBuf> {
     })
 }
 
-fn run(args: &[&str], cwd: &Path, path: &Path, home: &Path) -> Output {
+fn run(args: &[&str], cwd: &Path, path: &Path) -> Output {
     Command::new(bin())
         .args(args)
         .current_dir(cwd)
         .env("PATH", path)
-        .env("HOME", home)
-        .env_remove("BEADS_DIR")
-        .env_remove("FAKE_VIRGIL_STATE")
-        .env_remove("FAKE_VIRGIL_LOG")
+        .env("GIT_CEILING_DIRECTORIES", cwd.parent().expect("parent"))
         .output()
         .expect("run whetstone")
 }
 
-fn json_of(output: &Output) -> Value {
+fn json(output: &Output) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
         panic!(
             "expected JSON ({error})\nstdout:\n{}\nstderr:\n{}",
@@ -49,309 +37,89 @@ fn json_of(output: &Output) -> Value {
     })
 }
 
-fn files_under(dir: &Path) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                found.extend(files_under(&path));
-            } else {
-                found.push(path);
-            }
-        }
-    }
-    found
-}
-
 #[cfg(unix)]
 #[test]
-fn the_virgil_store_runs_the_whole_flow_without_bd() {
+fn the_whole_local_flow_runs_with_only_git_on_the_path() {
     let temp = tempfile::tempdir().expect("temp");
     let tools = temp.path().join("bin");
     fs::create_dir(&tools).expect("bin");
-    for program in ["git", "date", "sh", "env", "python3"] {
+    for program in ["git", "date", "sh", "env", "true"] {
         let found = which(program).unwrap_or_else(|| panic!("{program} is required"));
         std::os::unix::fs::symlink(found, tools.join(program)).expect("link");
     }
-    let fake = tools.join("virgil");
-    fs::copy(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake_virgil.py"),
-        &fake,
-    )
-    .expect("fake");
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).expect("chmod");
-    }
-    assert!(!tools.join("bd").exists());
-    let home = temp.path().join("home");
-    fs::create_dir(&home).expect("home");
     let root = temp.path().join("project");
-    fs::create_dir_all(root.join("whetstone")).expect("project");
-    let git = Command::new(tools.join("git"))
-        .args(["init", "-q"])
-        .current_dir(&root)
-        .status()
-        .expect("git");
-    assert!(git.success());
-    let root = root.canonicalize().expect("root");
-    fs::write(
-        root.join("whetstone/store.json"),
-        "{\"store\":\"virgil\"}\n",
-    )
-    .expect("switch");
-    fs::create_dir_all(root.join(".virgil")).expect("attachment");
-    fs::write(
-        root.join(".virgil/repo.toml"),
-        format!("group = \"{GROUP}\"\nrepository = \"{REPOSITORY}\"\n"),
-    )
-    .expect("attachment");
-    fs::create_dir_all(root.join(".fake-virgil")).expect("fake state");
-    fs::write(
-        root.join(".fake-virgil/state.json"),
-        json!({"knobs": {"attached": [GROUP, REPOSITORY], "fail": {}, "page": 100}}).to_string(),
-    )
-    .expect("state");
-    let wh = |args: &[&str]| run(args, &root, &tools, &home);
-
+    fs::create_dir(&root).expect("project");
+    for args in [
+        &["init", "-q"][..],
+        &["config", "user.name", "Test Owner"],
+        &["config", "user.email", "owner@example.invalid"],
+        &["config", "commit.gpgsign", "false"],
+    ] {
+        let git = Command::new(tools.join("git"))
+            .args(args)
+            .current_dir(&root)
+            .status()
+            .expect("git");
+        assert!(git.success());
+    }
     // A test command, so the prove-it-works starter is offered.
     fs::write(root.join("package.json"), r#"{"scripts":{"test":"true"}}"#).expect("package.json");
-    let inspected = json_of(&wh(&["init", "--json", "--request-id", "i1"]));
-    assert!(
-        !inspected.to_string().contains("brew install beads")
-            && !inspected.to_string().contains("releases/download"),
-        "never offers to install bd under Virgil: {inspected}"
-    );
-    let token = inspected["resume_token"]
-        .as_str()
-        .expect("token")
-        .to_string();
-    let agreed = json_of(&wh(&[
-        "init",
-        "--json",
-        "--action",
-        "agree",
-        "--request-id",
-        "i1",
-        "--expected-revision",
-        "0",
-        "--resume",
-        &token,
-        "--mission",
-        "No bd needed.",
-        "--principle",
-        "prove-it-works",
-        "--starter",
-        "prove-it-works",
-    ]));
+
+    let inspected = json(&run(&["init", "--json"], &root, &tools));
     assert_eq!(
-        agreed["data"]["progress"]["agreement_complete"], true,
-        "{agreed}"
+        inspected["data"]["progress"]["missing_decisions"],
+        serde_json::json!(["mission", "rules"]),
+        "{inspected}"
     );
-    assert_eq!(
-        agreed["data"]["records"].as_array().map(Vec::len),
-        Some(3),
-        "{agreed}"
-    );
-    // The agreement is accepted, so it reached the group's Records.
-    assert_eq!(
-        agreed["data"]["shared"]["published"]
-            .as_array()
-            .map(Vec::len),
-        Some(3),
-        "{agreed}"
-    );
-
-    // Nothing is kept as a local revision file.
-    let common = root.join(".git/whetstone");
-    assert!(
-        !files_under(&common)
-            .iter()
-            .any(|path| path.components().any(|part| part.as_os_str() == "records")),
-        "no local revision files"
-    );
-
-    // Sync is the daemon's: refused by name, dry runs succeed.
-    for workflow in ["push", "pull"] {
-        let refused = wh(&[workflow, "--json"]);
-        assert_ne!(refused.status.code(), Some(0), "{workflow}");
-        let refused = json_of(&refused);
-        assert_eq!(refused["state"], "conflict", "{refused}");
-        assert_eq!(
-            refused["data"]["refusal"],
-            "records_sync_through_the_daemon"
-        );
-        assert!(
-            refused["summary"]
-                .as_str()
-                .expect("summary")
-                .contains("sync through the Virgil daemon"),
-            "{refused}"
-        );
-        let dry = wh(&[workflow, "--json", "--dry-run"]);
-        assert_eq!(dry.status.code(), Some(0), "{workflow} --dry-run");
-        assert_eq!(
-            json_of(&dry)["data"]["refusal"],
-            "records_sync_through_the_daemon"
-        );
-    }
-
-    assert!(
-        !files_under(&root)
-            .iter()
-            .chain(files_under(&common).iter())
-            .any(|path| path.components().any(|part| part.as_os_str() == ".beads")),
-        "no Beads database anywhere"
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn choosing_virgil_without_virgil_names_what_is_missing() {
-    let temp = tempfile::tempdir().expect("temp");
-    let tools = temp.path().join("bin");
-    fs::create_dir(&tools).expect("bin");
-    for program in ["git", "date", "sh", "env"] {
-        let found = which(program).unwrap_or_else(|| panic!("{program} is required"));
-        std::os::unix::fs::symlink(found, tools.join(program)).expect("link");
-    }
-    let home = temp.path().join("home");
-    fs::create_dir(&home).expect("home");
-    let root = temp.path().join("project");
-    fs::create_dir(&root).expect("project");
-    assert!(Command::new(tools.join("git"))
-        .args(["init", "-q"])
-        .current_dir(&root)
-        .status()
-        .expect("git")
-        .success());
-    let output = run(
-        &["init", "--json", "--action", "setup", "--store", "virgil"],
-        &root,
-        &tools,
-        &home,
-    );
-    let refused = json_of(&output);
-    assert_eq!(refused["state"], "unavailable", "{refused}");
-    assert!(
-        refused["summary"]
-            .as_str()
-            .expect("summary")
-            .contains("virgil is not available"),
-        "{refused}"
-    );
-    assert!(!root.join("whetstone/store.json").exists());
-    assert!(!refused.to_string().contains("brew install beads"));
-    // The read-only form names the store and what can be chosen.
-    let shown = json_of(&run(
-        &["init", "--json", "--action", "store"],
-        &root,
-        &tools,
-        &home,
-    ));
-    assert_eq!(shown["data"]["store"]["kind"], "beads", "{shown}");
-    assert_eq!(shown["data"]["proposed"], json!(["beads"]));
-    // An unknown store is refused by name.
-    let unknown = run(
-        &["init", "--json", "--action", "store", "--store", "linear"],
-        &root,
-        &tools,
-        &home,
-    );
-    assert_ne!(unknown.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&unknown.stderr).contains("linear"));
-}
-
-#[cfg(unix)]
-#[test]
-fn setup_with_store_virgil_flips_an_attached_checkout_and_never_offers_bd() {
-    let temp = tempfile::tempdir().expect("temp");
-    let tools = temp.path().join("bin");
-    fs::create_dir(&tools).expect("bin");
-    for program in ["git", "date", "sh", "env", "python3"] {
-        let found = which(program).unwrap_or_else(|| panic!("{program} is required"));
-        std::os::unix::fs::symlink(found, tools.join(program)).expect("link");
-    }
-    let fake = tools.join("virgil");
-    fs::copy(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake_virgil.py"),
-        &fake,
-    )
-    .expect("fake");
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).expect("chmod");
-    }
-    let home = temp.path().join("home");
-    fs::create_dir(&home).expect("home");
-    let root = temp.path().join("project");
-    fs::create_dir(&root).expect("project");
-    assert!(Command::new(tools.join("git"))
-        .args(["init", "-q"])
-        .current_dir(&root)
-        .status()
-        .expect("git")
-        .success());
-    let root = root.canonicalize().expect("root");
-    fs::create_dir_all(root.join(".virgil")).expect("attachment");
-    fs::write(
-        root.join(".virgil/repo.toml"),
-        format!("group = \"{GROUP}\"\nrepository = \"{REPOSITORY}\"\n"),
-    )
-    .expect("attachment");
-    fs::create_dir_all(root.join(".fake-virgil")).expect("fake state");
-    fs::write(
-        root.join(".fake-virgil/state.json"),
-        json!({"knobs": {"attached": [GROUP, REPOSITORY], "fail": {}, "page": 100}}).to_string(),
-    )
-    .expect("state");
-
-    // A dry run names the switch and writes nothing.
-    let dry = json_of(&run(
+    let agreed = json(&run(
         &[
             "init",
             "--json",
             "--action",
-            "setup",
-            "--store",
-            "virgil",
-            "--dry-run",
+            "agree",
+            "--mission",
+            "No bd needed.",
+            "--principle",
+            "prove-it-works",
+            "--starter",
+            "prove-it-works",
         ],
         &root,
         &tools,
-        &home,
     ));
-    assert_eq!(dry["state"], "needs_decision", "{dry}");
-    assert!(!root.join("whetstone/store.json").exists());
+    assert_eq!(agreed["state"], "success", "{agreed}");
+    assert_eq!(agreed["data"]["progress"]["agreement_complete"], true);
 
-    // Nothing in Beads to move: the switch flips, and setup's tools are the
-    // virgil CLI, never bd.
-    let output = run(
-        &["init", "--json", "--action", "setup", "--store", "virgil"],
+    let changed = json(&run(
+        &[
+            "change",
+            "--json",
+            "--kind",
+            "rule",
+            "--record-id",
+            "rule.git-answers",
+            "--content",
+            "Git answers.",
+            "--rationale",
+            "Git answers.",
+            "--definition",
+            r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"git --version"}}"#,
+        ],
         &root,
         &tools,
-        &home,
-    );
-    let flipped = json_of(&output);
-    assert_eq!(
-        fs::read_to_string(root.join("whetstone/store.json")).expect("switch"),
-        "{\n  \"store\": \"virgil\"\n}\n"
-    );
-    assert_eq!(flipped["data"]["store"]["written"], true, "{flipped}");
-    assert_eq!(flipped["data"]["store"]["store"]["kind"], "virgil");
-    let tools_seen = flipped["data"]["tools"]
-        .as_array()
-        .expect("tools")
-        .iter()
-        .filter_map(|tool| tool["tool"].as_str())
-        .collect::<Vec<_>>();
-    assert!(tools_seen.contains(&"virgil"), "{tools_seen:?}");
-    assert!(!tools_seen.contains(&"bd"), "{tools_seen:?}");
-    let text = flipped.to_string();
-    assert!(
-        !text.contains("brew install beads") && !text.contains("releases/download"),
-        "never offers to install bd under Virgil: {text}"
-    );
+    ));
+    assert_eq!(changed["state"], "success", "{changed}");
+    let accepted = json(&run(&["change", "--json", "--accept"], &root, &tools));
+    assert_eq!(accepted["state"], "success", "{accepted}");
+
+    let dash = json(&run(&["dash", "--json"], &root, &tools));
+    assert_eq!(dash["state"], "success", "{dash}");
+    assert_eq!(dash["data"]["current"]["established"], true);
+    let checked = json(&run(
+        &["check", "--json", "--rule", "rule.git-answers"],
+        &root,
+        &tools,
+    ));
+    assert_eq!(checked["state"], "success", "{checked}");
     assert!(!root.join(".beads").exists());
 }

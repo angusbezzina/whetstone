@@ -168,15 +168,12 @@ hooks.
 
 ## Required gates before every push
 
-CI and the pre-push hook must run these exact six gates meaningfully:
+CI and the pre-push hook must run these exact three gates meaningfully:
 
 ```bash
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --no-fail-fast && cargo test --doc
-python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
-python3 -m ruff format --check scripts/ tests/
 cargo build && scripts/self-check.sh target/debug/whetstone
-python3 -m pytest -q
 ```
 
 The self-check is Whetstone checking itself: `wh check --ci` over the whole
@@ -186,10 +183,10 @@ and when no must rule ran; zero work is not green. It needs `jq`. A must rule
 for Whetstone itself changes by a commit to that file.
 The tests run under `cargo-nextest` (`cargo install cargo-nextest --locked`),
 which runs every test binary in parallel; `cargo test --doc` covers doc tests.
-The hook prints each step's seconds and the total. The budget is 5 minutes for
+The hook prints each step's seconds and the total. The budget is 2 minutes for
 the hook on a warm cache and 10 minutes for CI's quality job; when a run goes
-over, find the slow step and cut it (`scripts/bd-timing.sh` shows where test
-time goes in `bd`) rather than loosening the budget or skipping a gate.
+over, find the slow step and cut it rather than loosening the budget or
+skipping a gate.
 
 At the start of a session that may push, ensure the hook is active:
 

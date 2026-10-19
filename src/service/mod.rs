@@ -2,9 +2,8 @@
 //! request and one versioned response envelope per workflow.
 //!
 //! Each workflow lives in its own module: `init`, `dash`, `change` and
-//! `check`; `record` builds the records and receipts they write, and `trail`
-//! reads the rulebook's Git log. `wh push` and `wh pull` are in
-//! `crate::sync`.
+//! `check`; `snapshot` binds a check's report to what it read, and `trail`
+//! reads the rulebook's Git log.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -12,22 +11,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
-use crate::domain::{
-    ActorKind, AgreementRecord, Enforcer, RuleExample, RuleSource, Strength, SweepClass,
-};
-use crate::storage::{ProjectLayout, StorageError};
+use crate::domain::{ActorKind, Enforcer, RuleExample, RuleSource, Strength, SweepClass};
+use crate::layout::LayoutError;
 
 mod change;
 mod check;
 mod dash;
-mod export;
 mod init;
-pub(crate) mod record;
+mod snapshot;
 mod trail;
 
-pub use record::{agreement_record, digest_bytes, utc_timestamp};
 pub use trail::{decision_trail, rulebook_log, RulebookCommit, TRAIL_HEADER};
 
 /// Environment variables agent hosts set in the shells they run. Any of them
@@ -42,15 +36,14 @@ pub const AGENT_MARKERS: &[&str] = &[
 ];
 
 /// Who is calling: a person at a terminal, or an agent. Anything that is not
-/// clearly a person (no terminal on stdin, an agent host's marker in the
-/// environment, or a launcher's `VIRGIL_VIA=agent:<client>`) is an agent, so
-/// an agent can never pass as a person by leaving something out.
+/// clearly a person (no terminal on stdin, or an agent host's marker in the
+/// environment) is an agent, so an agent can never pass as a person by
+/// leaving something out.
 pub fn detect_actor() -> ActorKind {
     use std::io::IsTerminal;
     let marked = AGENT_MARKERS
         .iter()
-        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
-        || std::env::var("VIRGIL_VIA").is_ok_and(|via| via.starts_with("agent:"));
+        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()));
     if !marked && std::io::stdin().is_terminal() {
         ActorKind::Person
     } else {
@@ -67,8 +60,6 @@ pub enum ServiceRequest {
     Dash(DashRequest),
     Change(ChangeRequest),
     Check(CheckRequest),
-    Pull(crate::sync::PullRequest),
-    Push(crate::sync::PushRequest),
 }
 
 #[derive(Debug, Clone)]
@@ -99,17 +90,14 @@ impl DashRequest {
 pub enum InitAction {
     #[default]
     Inspect,
-    /// Record the owner's mission, principles and accepted starter rules.
+    /// Draft the owner's mission, principles and accepted starter rules
+    /// into the rulebook.
     Agree,
     Cancel,
-    /// Install the Git hooks and scaffold CI.
+    /// Install the Git hooks or scaffold CI, as asked.
     Wire,
-    /// Detect and install the record store's tool.
+    /// Install the Git hooks and scaffold CI.
     Setup,
-    /// Choose the record store for every record kind: Beads or Virgil.
-    Store,
-    /// Write the Beads stores' accepted records as the rulebook file.
-    Export,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -117,8 +105,6 @@ pub struct InitRequest {
     pub project_dir: PathBuf,
     pub request_id: Option<String>,
     pub action: InitAction,
-    pub expected_revision: Option<u64>,
-    pub resume_token: Option<String>,
     pub mission: Option<String>,
     /// Catalogue principle ids the owner picked (agree).
     pub principles: Vec<String>,
@@ -132,13 +118,6 @@ pub struct InitRequest {
     pub hooks: bool,
     /// Scaffold the workflow that runs the required whetstone/policy check (wire).
     pub ci: bool,
-    /// Run the install commands setup found (setup); replace a rulebook
-    /// file that differs (export).
-    pub yes: bool,
-    /// The record store (store): `beads` or `virgil`.
-    pub store: Option<String>,
-    /// Who asked: confirming an import into Virgil is a person's (store).
-    pub actor: crate::domain::ActorKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -304,10 +283,6 @@ pub struct ServiceResponse {
     pub state: ServiceState,
     pub summary: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_revision: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resume_token: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required_snapshot: Option<RequiredSnapshot>,
     #[serde(default)]
     pub evidence: Vec<ServiceEvidence>,
@@ -342,8 +317,6 @@ impl ServiceResponse {
             workflow: workflow.into(),
             state,
             summary: summary.into(),
-            expected_revision: None,
-            resume_token: None,
             required_snapshot: None,
             evidence: Vec::new(),
             blocking_questions: Vec::new(),
@@ -353,77 +326,6 @@ impl ServiceResponse {
     }
 }
 
-/// Records from the private store and the repository's shared store.
-#[derive(Debug, Clone, Default)]
-pub struct LoadedRecords {
-    pub private: Option<Vec<AgreementRecord>>,
-    pub shared: Option<Vec<AgreementRecord>>,
-}
-
-/// A private revision that collides with a different shared revision.
-#[derive(Debug, Clone, Serialize)]
-pub struct SyncConflict {
-    pub record: String,
-    pub revision: u64,
-    pub private_digest: String,
-    pub shared_digest: String,
-}
-
-impl LoadedRecords {
-    pub fn exists(&self) -> bool {
-        self.private.is_some()
-            || self
-                .shared
-                .as_ref()
-                .is_some_and(|shared| !shared.is_empty())
-    }
-
-    /// Shared and private records as one agreement. The same revision in
-    /// both stores is one record; a private revision that collides with a
-    /// different shared revision is left out and reported, never merged.
-    pub fn union(&self) -> (Vec<AgreementRecord>, Vec<SyncConflict>) {
-        let shared = self.shared.clone().unwrap_or_default();
-        let mut by_slot = std::collections::BTreeMap::new();
-        for record in &shared {
-            if let Ok(reference) = record.reference() {
-                by_slot.insert((record.id.clone(), record.revision), reference.digest);
-            }
-        }
-        let mut records = shared;
-        let mut conflicts = Vec::new();
-        for record in self.private.clone().unwrap_or_default() {
-            let Ok(reference) = record.reference() else {
-                continue;
-            };
-            match by_slot.get(&(record.id.clone(), record.revision)) {
-                Some(digest) if *digest == reference.digest => {}
-                Some(digest) => conflicts.push(SyncConflict {
-                    record: record.id.as_str().into(),
-                    revision: record.revision,
-                    private_digest: reference.digest.as_str().into(),
-                    shared_digest: digest.as_str().into(),
-                }),
-                None => records.push(record),
-            }
-        }
-        (records, conflicts)
-    }
-}
-
-/// Read both stores without creating either.
-pub fn load_records(layout: &ProjectLayout) -> Result<LoadedRecords, StorageError> {
-    let private = if layout.private_store_exists() {
-        Some(crate::storage::open_private(layout)?.all_records()?)
-    } else {
-        None
-    };
-    let shared = match crate::storage::open_shared(layout)? {
-        Some(store) => Some(store.all_records()?),
-        None => None,
-    };
-    Ok(LoadedRecords { private, shared })
-}
-
 #[derive(Debug, Default)]
 pub struct CommandService;
 
@@ -431,23 +333,15 @@ impl CommandService {
     pub fn execute(&self, request: ServiceRequest) -> ServiceResponse {
         match request {
             ServiceRequest::Orientation => orientation(),
-            ServiceRequest::Init(request) => {
-                let project_dir = request.project_dir.clone();
-                let mut response = init::init(request);
-                crate::sync::attach_publication(&mut response, &project_dir);
-                response
-            }
+            ServiceRequest::Init(request) => init::init(request),
             ServiceRequest::Dash(request) => dash::dash(request),
             ServiceRequest::Change(request) => change::change(request),
             ServiceRequest::Check(request) => check::check(request),
-            ServiceRequest::Pull(request) => crate::sync::pull(request),
-            ServiceRequest::Push(request) => crate::sync::push(request),
         }
     }
 }
 
-/// Bare `wh`: honest, read-only orientation, including any tool that is
-/// missing or out of date and the command that fixes it.
+/// Bare `wh`: honest, read-only orientation.
 fn orientation() -> ServiceResponse {
     let mut response = ServiceResponse::new(
         "orientation".into(),
@@ -460,36 +354,11 @@ fn orientation() -> ServiceResponse {
         "wh dash".into(),
         "wh change".into(),
         "wh check".into(),
-        "wh pull".into(),
-        "wh push".into(),
     ];
-    let root = std::env::current_dir()
-        .ok()
-        .and_then(|dir| ProjectLayout::resolve(&dir).ok())
-        .map(|layout| layout.project_root().to_path_buf());
-    let setup = root.as_deref().map(crate::setup::detect);
-    if let Some(setup) = &setup {
-        if !setup.ready {
-            response.summary.push_str(" Setup needs attention: ");
-            response.summary.push_str(
-                &setup
-                    .tools
-                    .iter()
-                    .filter(|tool| tool.state != "ok")
-                    .map(|tool| format!("{} is {}", tool.tool, tool.state))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            );
-            response.summary.push('.');
-            response.permitted_actions.extend(setup.fixes.clone());
-        }
-    }
     response.data = json!({
-        "workflows": ["init", "dash", "change", "check", "pull", "push"],
-        "available_now": ["init", "dash", "change", "check", "pull", "push"],
-        "requires": {"pull": "a shared Beads database with a remote", "push": "a shared Beads database (bd init) and, to transmit, a remote"},
-        "tools": setup.as_ref().map(|setup| &setup.tools),
-        "fixes": setup.as_ref().map(|setup| &setup.fixes),
+        "workflows": ["init", "dash", "change", "check"],
+        "available_now": ["init", "dash", "change", "check"],
+        "rulebook": crate::rulebook::RULEBOOK_PATH,
         "read_only": true,
     });
     response
@@ -548,54 +417,6 @@ pub(crate) fn bounded_request_id(
     }
 }
 
-pub(crate) fn resume_token(
-    project_id: &str,
-    workflow: &str,
-    request_id: &str,
-    revision: u64,
-) -> String {
-    format!(
-        "resume-v1:{:x}",
-        Sha256::digest(format!("{project_id}\0{workflow}\0{request_id}\0{revision}").as_bytes())
-    )
-}
-
-pub(crate) fn needs_input(
-    workflow: &str,
-    request_id: String,
-    revision: u64,
-    resume: String,
-    question: String,
-) -> ServiceResponse {
-    let mut response = ServiceResponse::new(
-        request_id,
-        workflow,
-        ServiceState::NeedsInput,
-        "More owner input is required; no agreement change was recorded.",
-    );
-    response.expected_revision = Some(revision);
-    response.resume_token = Some(resume);
-    response.blocking_questions = vec![question];
-    response.permitted_actions = vec![format!("resume wh {workflow} with the returned token")];
-    response
-}
-
-pub(crate) fn stale_response(
-    workflow: &str,
-    request_id: String,
-    revision: u64,
-    resume: String,
-    summary: &str,
-) -> ServiceResponse {
-    let mut response = ServiceResponse::new(request_id, workflow, ServiceState::Stale, summary);
-    response.expected_revision = Some(revision);
-    response.resume_token = Some(resume);
-    response.permitted_actions = vec![format!(
-        "inspect, then resume wh {workflow} at revision {revision}"
-    )];
-    response
-}
-
 pub(crate) fn unknown_response(
     workflow: &str,
     request_id: String,
@@ -611,7 +432,7 @@ pub(crate) fn unknown_response(
 pub(crate) fn project_error(
     workflow: &str,
     request_id: Option<String>,
-    error: StorageError,
+    error: LayoutError,
 ) -> ServiceResponse {
     unknown_response(
         workflow,
@@ -620,94 +441,11 @@ pub(crate) fn project_error(
     )
 }
 
-pub(crate) fn storage_error(
-    workflow: &str,
-    request_id: String,
-    error: StorageError,
-) -> ServiceResponse {
-    let state = match error {
-        StorageError::StaleRevision { .. } => ServiceState::Stale,
-        StorageError::IdempotencyConflict(_) => ServiceState::Conflict,
-        StorageError::BeadsMissing | StorageError::UnsupportedBeadsVersion { .. } => {
-            ServiceState::Unavailable
-        }
-        StorageError::ConflictingRevision { .. } => ServiceState::Conflict,
-        StorageError::Virgil { ref code, .. } => match code.as_str() {
-            "store_unavailable" | "unattached" => ServiceState::Unavailable,
-            "not_permitted" | "refused_content" | "read_again" => ServiceState::Conflict,
-            _ => ServiceState::Unknown,
-        },
-        _ => ServiceState::Unknown,
-    };
-    let mut response = ServiceResponse::new(
-        request_id,
-        workflow,
-        state,
-        format!("The operation stopped without partial success: {error}"),
-    );
-    response.permitted_actions = vec!["inspect storage health and retry the same request".into()];
-    response
-}
-
-pub(crate) fn domain_response(
-    workflow: &str,
-    request_id: String,
-    error: crate::domain::DomainError,
-) -> ServiceResponse {
-    let mut response = ServiceResponse::new(
-        request_id,
-        workflow,
-        ServiceState::Conflict,
-        format!("The agreement input violates the domain contract: {error}"),
-    );
-    response.permitted_actions = vec!["correct the bounded input and submit a new request".into()];
-    response
-}
-
-pub(crate) fn idempotency_conflict(
-    workflow: &str,
-    request_id: String,
-    key: &str,
-) -> ServiceResponse {
-    let mut response = ServiceResponse::new(
-        request_id,
-        workflow,
-        ServiceState::Conflict,
-        format!("Request key {key} was already used with different input."),
-    );
-    response.permitted_actions =
-        vec!["inspect the accepted result or submit a new request ID".into()];
-    response
-}
-
 pub(crate) fn project_label(root: &Path) -> String {
     root.file_name()
         .map(|name| name.to_string_lossy().to_string())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "project".into())
-}
-
-pub(crate) fn latest_record<'a>(
-    records: &'a [AgreementRecord],
-    id: &str,
-) -> Option<&'a AgreementRecord> {
-    records
-        .iter()
-        .filter(|record| record.id.as_str() == id)
-        .max_by_key(|record| record.revision)
-}
-
-/// The owner's display name for records: Git's user.name, if set.
-pub(crate) fn owner_name(project_root: &Path) -> Option<String> {
-    Command::new("git")
-        .arg("-C")
-        .arg(project_root)
-        .args(["config", "user.name"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .filter(|name| !name.is_empty())
 }
 
 #[cfg(test)]
@@ -729,44 +467,5 @@ mod tests {
         .map(ServiceState::exit_code);
         let unique = codes.into_iter().collect::<std::collections::BTreeSet<_>>();
         assert_eq!(unique.len(), codes.len());
-    }
-
-    #[test]
-    fn push_without_an_agreement_never_claims_an_effect() {
-        let temp = tempfile::tempdir().expect("temp");
-        assert!(Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(temp.path())
-            .status()
-            .expect("git")
-            .success());
-        let response = CommandService.execute(ServiceRequest::Push(crate::sync::PushRequest {
-            project_dir: temp.path().to_path_buf(),
-            request_id: Some("push-1".into()),
-            ..Default::default()
-        }));
-        assert_eq!(response.state, ServiceState::NeedsInput);
-        assert!(response.summary.contains("nothing was published"));
-        assert_eq!(response.data, json!({}));
-    }
-
-    #[test]
-    fn resume_tokens_bind_workflow_project_and_revision() {
-        assert_eq!(
-            resume_token("a", "init", "request", 1),
-            resume_token("a", "init", "request", 1)
-        );
-        assert_ne!(
-            resume_token("a", "init", "request", 1),
-            resume_token("a", "init", "request", 2)
-        );
-        assert_ne!(
-            resume_token("a", "init", "request", 1),
-            resume_token("a", "change", "request", 1)
-        );
-        assert_ne!(
-            resume_token("a", "init", "request", 1),
-            resume_token("a", "init", "other", 1)
-        );
     }
 }

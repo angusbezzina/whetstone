@@ -4,9 +4,9 @@
 
 use serde_json::{json, Value};
 
+use crate::layout::ProjectLayout;
 use crate::projection;
 use crate::rulebook::{self, Revision, RulebookError, RULEBOOK_PATH};
-use crate::storage::ProjectLayout;
 
 use super::change::{changes, committed};
 use super::{

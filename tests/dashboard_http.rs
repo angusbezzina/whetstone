@@ -21,7 +21,6 @@ use whetstone::service::{
     ChangeKind, ChangeRequest, CheckRequest, CommandService, DashRequest, GateMode, ServiceRequest,
     ServiceResponse, ServiceState,
 };
-use whetstone::storage::ProjectLayout;
 
 const MISSION: &str = "Make project intent inspectable.";
 const CUSTOM_PRINCIPLE: &str = "Evidence before assertion.";
@@ -177,14 +176,6 @@ fn draft_rulebook(root: &Path) {
             ..Default::default()
         },
     );
-}
-
-/// No record store was opened or created for this project.
-fn no_store(root: &Path) {
-    assert!(!ProjectLayout::resolve(root)
-        .expect("layout")
-        .private_store_exists());
-    assert!(!root.join(".beads").exists(), "no Beads store appears");
 }
 
 fn start(project: &Path, allow_mutations: bool) -> DashboardHandle {
@@ -672,7 +663,6 @@ fn an_unestablished_project_shows_onboarding_and_no_removed_sections() {
     assert_eq!(workflows, ["init", "dash", "change", "check"]);
     // Nothing was written by looking.
     assert!(!temp.path().join("whetstone").exists());
-    no_store(temp.path());
 }
 
 #[test]
@@ -768,7 +758,6 @@ fn onboarding_drafts_the_starter_through_change_and_accepting_commits_it() {
     assert_eq!(changelog[0]["commit"], accepted["data"]["commit"]);
     assert_eq!(changelog[0]["owner"], "Dashboard Owner");
     assert_eq!(view["latest_change"]["title"], changelog[0]["title"]);
-    no_store(temp.path());
 }
 
 #[test]
@@ -777,8 +766,8 @@ fn request_bodies_name_no_other_project_and_no_workflow_but_change() {
     init_git(temp.path());
     let session = Session::open(start(temp.path(), true));
     // Request bodies cannot name another project, another workflow (init
-    // writes nothing from the dashboard; push and pull are gone), a removed
-    // field or a removed change kind.
+    // writes nothing from the dashboard, and there is no push or pull), a
+    // retired field or a retired change kind.
     for rejected in [
         r#"{"workflow":"check","project_dir":"/","paths":["."]}"#,
         r#"{"workflow":"init","action":"inspect"}"#,
@@ -800,7 +789,6 @@ fn request_bodies_name_no_other_project_and_no_workflow_but_change() {
         assert_eq!(response_body(&denied)["state"], "unknown", "{rejected}");
     }
     assert!(!temp.path().join("whetstone").exists());
-    no_store(temp.path());
 }
 
 #[test]
@@ -890,7 +878,6 @@ fn dashboard_queries_are_typed_filtered_and_match_the_cli_service() {
     );
     assert_eq!(current["header"]["revision"], "uncommitted");
     assert_eq!(body["data"]["rulebook"]["revision"], "uncommitted");
-    no_store(temp.path());
 }
 
 #[test]
@@ -1264,7 +1251,6 @@ fn the_rule_form_sets_the_sweep_fields_and_the_sweep_reads_them_back() {
     form["definition"]["sweep"] = json!("draft_pr");
     let widened = agent.command(&form);
     assert_eq!(widened["state"], "needs_input", "{widened}");
-    no_store(temp.path());
 }
 
 #[test]
@@ -1329,7 +1315,6 @@ fn retiring_from_the_dashboard_needs_a_reason_and_the_changelog_says_who_when_an
         &json!({"workflow": "change", "retire": "rule.tests-pass", "rationale": "Twice."}),
     );
     assert_eq!(again["state"], "needs_input", "{again}");
-    no_store(temp.path());
 }
 
 #[test]

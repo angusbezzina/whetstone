@@ -11,26 +11,13 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ### Added
 
-- One record store switch, `whetstone/store.json` (`{"store":"beads"}` or
-  `{"store":"virgil"}`), for every record kind together, chosen with
-  `wh init --action setup --store beads|virgil` (`--action store` chooses
-  it without the tool setup).
-  Every caller reaches storage through one `RecordStore` port with a
-  conformance suite any adapter runs.
-- The Virgil store: every record lives in the attached repository's
-  `rulebook` Records collection through `virgil rulebook`
-  (`virgil.rulebook/v1`, tested against the fake until the Virgil side
-  lands). Drafts and receipts live in its private scope, owned by the
-  signed-in person and visible to no one else; accepted records and the
-  decisions that accepted them live in its repository scope and reach the
-  group when they are accepted. The Virgil arm never needs `bd`, and `wh
-  push` and `wh pull` are refused by name there (their dry runs succeed).
-- Moving to Virgil exports Beads' records as the file
-  `virgil rulebook import-beads` reads, flips only after every exported revision reads back with
-  its digest (naming any that is missing or differs), and then copies the
-  private Beads store into the private scope. `wh dash` names the store and
-  the attachment, and reports records left in the store the switch no longer
-  names.
+- The rulebook is a file in the repository: `whetstone/rulebook.json`
+  (`whetstone.rulebook.v1`, [schema](references/rulebook.schema.json)) holds
+  the mission, the chosen principles and the rules, each rule with the
+  sha256 digest of its canonical JSON. A revision is the commit that last
+  touched the file, and the decision log is its Git history. `wh check`, the
+  sweep, `wh change` and the dashboard read and write it; there is no record
+  store.
 
 ### Changed
 
@@ -51,15 +38,19 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   retired entries beneath it. `wh dash --json` names the rulebook's state
   and revision in place of the store, sync and progress sections, and
   lists no push or pull.
-- Whetstone needs `bd` 1.3.0 or later (CI pins 1.3.0), and
-  `wh init --action setup` offers an upgrade for an older `bd`.
-- Whetstone's own gates (pre-push, CI and the release job) check
-  Whetstone with itself: `scripts/self-check.sh` runs `wh check --ci` over
-  the whole tree against the must rules accepted and shared in Whetstone's
-  Beads store (clippy's `dead_code`, rustfmt, and an AST rule against
-  `dbg!`, `todo!` and `unimplemented!`), and fails on any must finding or
-  when no must rule ran. CI reads the shared rules from `refs/dolt/data`
-  with the checkout's token.
+- Whetstone's own gates (pre-push, CI and the release job) check Whetstone
+  with itself: `scripts/self-check.sh` runs `wh check --ci` over the whole
+  tree against the must rules in Whetstone's committed
+  `whetstone/rulebook.json` (clippy's `dead_code`, rustfmt, and an AST rule
+  against `dbg!`, `todo!` and `unimplemented!`), and fails on any must
+  finding or when no must rule ran. The pre-push hook and CI run three
+  gates: clippy, the tests, and the self-check; no test needs `bd` or Python.
+- `wh init --action agree` drafts the mission, principles and starter rules
+  into `whetstone/rulebook.json` (`wh change --accept` commits them) and
+  takes no `--expected-revision` or `--resume`; repeating it drafts only
+  what is new. `wh init --action setup` installs the Git gates and scaffolds
+  the CI workflow (`wire --hooks --ci`). Bare `wh` lists four workflows and
+  names the rulebook file, and its tool report is gone.
 
 ### Fixed
 
@@ -68,13 +59,28 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 - Repeated sweep findings of one rule on one file are numbered in source
   order, so a flag added later in the file never changes an earlier
   finding's fingerprint (and never un-dismisses it in Messo).
-- A check or sweep over a large repository with symlinks inside it
-  succeeds: the report's code digest is Git's tree plus the bytes of the
-  changed and untracked paths, a symlink counts as its link text, and there
-  is no file cap. Paths that escape the project are still refused.
+- A check or sweep over a large repository with symlinks inside it succeeds:
+  the report's code digest is Git's tree plus the bytes of the changed and
+  untracked paths, a symlink counts as its link text, and there is no file
+  cap. Paths that escape the project are still refused.
 
 ### Removed
 
+- The record store, with `bd` and every Virgil-specific path: `wh push` and
+  `wh pull` (and `--select`, `--include-ancestry`, `--canary` and
+  `--confirm`), the private and shared Beads databases and the Virgil
+  `rulebook` collection behind one `RecordStore` port,
+  `whetstone/store.json`, `wh init --action store` and `--action export`
+  (the one-time export of the Beads stores to the rulebook file), `wh init
+  --store`, `--yes`, `--expected-revision` and `--resume`, `VIRGIL_VIA`, the
+  minimum `bd` version and its install and upgrade commands, the response
+  envelope's `expected_revision` and `resume_token`, the record envelope and
+  its kinds (`references/agreement-record-v1.schema.json`, and
+  `references/rule-v2.schema.json`, superseded by the rulebook schema),
+  stored records read as retired history, `scripts/bd-timing.sh`, and the
+  Python gates (ruff and the pytest black-box tests with the fake `virgil`).
+  Records already in a Beads store stay there untouched; Whetstone no longer
+  reads them.
 - `wh change`'s proposal, local review and retirement records and the
   decision-history read model behind them: `wh change --accept <proposal>`
   and `--withdraw <proposal>` (both are now plain flags), `--expected-revision`,
@@ -86,85 +92,65 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   `whetstone.native-scan` result and `raw_scan` data, the AST enforcer's
   fallback to a rule file by name, `wh change --migrate` (and the
   dashboard's Earlier records panel that ran it), and
-  `references/rule-schema.yaml`. Whetstone no longer depends on
-  `serde_yaml` or `toml`. A stored rule whose source kind is `migration`
-  is read as the owner's, its digest unchanged. A rule's `paths` scope a
-  check or a sweep.
-- The agent-host hook loop: `wh init --action wire --hooks` no longer
-  writes Stop and SessionStart hooks into `.claude/settings.json`,
+  `references/rule-schema.yaml`. Whetstone no longer depends on `serde_yaml`
+  or `toml`. A rule's `paths` scope a check or a sweep.
+- The agent-host hook loop: `wh init --action wire --hooks` no longer writes
+  Stop and SessionStart hooks into `.claude/settings.json`,
   `.codex/hooks.json` or `.cursor/hooks.json`, and `wh check --hook stop`,
   `wh dash --hook session-start`, `wh check --host` and the host checkpoint
   receipts are gone. The Git pre-commit and pre-push gates are the loop
-  every tool passes through. `wh init --action setup --yes` installs only
-  Beads.
+  every tool passes through.
 - Raised hands: `wh check --raise-hand`, `wh change --answer`, a rule's
   `hand_raise` triggers, the dashboard's Requests view and its Beads task
-  queue, and the Virgil task route. A sweep finding's `unsure` is how a
-  rule says it cannot decide. Stored `hand_raise` and `hand_answer` records
-  are read as retired history, and a stored rule with `hand_raise` loads
-  without it, its digest unchanged.
+  queue, and the Virgil task route. A sweep finding's `unsure` is how a rule
+  says it cannot decide.
 - Review attestations and briefs: `wh check --attest`, `--brief` and their
   flags, the `review` and `brief` enforcers, and the `/interrogate` or named
-  reviewer. Stored attestations, briefs and earlier guidance records are
-  read as retired history, and so is a stored rule held by a review or brief
-  enforcer. The prove-it-works starter is offered only when a test command
+  reviewer. The prove-it-works starter is offered only when a test command
   is detected.
 - Jev: the question enforcer, judgment receipts, the driver's `ask` command
   and every TypeSafe call, redaction, local-only rules, shadow mode and the
   shadow badges, flag labels (`wh change --accept-flag` and
-  `--dismiss-flag`), the tuning and hardening drafts they fed
-  (`wh change --tune`, `--hardens`), per-rule flag statistics, the
-  dashboard's Flags to label and Suggestions panels, and the Jev half of
-  `wh eval`. The tests-only-when-asked starter is gone. Stored judgments and
-  flag decisions are read as retired history, and so is a stored rule held
-  by a question or recorded in shadow; a stored rule's privacy and shadow
-  fields are dropped on read with its digest unchanged.
+  `--dismiss-flag`), the tuning and hardening drafts they fed (`wh change
+  --tune`, `--hardens`), per-rule flag statistics, the dashboard's Flags to
+  label and Suggestions panels, and the Jev half of `wh eval`. The
+  tests-only-when-asked starter is gone.
 - The `design_tokens` and `public_surface` enforcers and their built-in
   scanners, and the ask-before-public-API starter: pre-commit runs AST rules
-  only. A stored rule held by either is read as retired history. A design
-  token rule can be expressed as a validator rule.
+  only. A design token rule can be expressed as a validator rule.
 - The `advisory` strength: a rule is must (blocks the gate) or should
-  (flags, never blocks, and becomes a sweep finding). A stored advisory rule
-  loads as should with its digest unchanged, and earlier `may` standards
-  and YAML rules map to should; `wh change` refuses `advisory`.
+  (flags, never blocks, and becomes a sweep finding). `wh change` refuses
+  `advisory`.
 - The rule-example half of `wh eval` (per-rule precision and recall over
   labelled examples): `wh eval` runs the scanner's golden examples and the
-  pstack round trip. A stored rule whose source is `hardening` loads as the
-  owner's with its digest unchanged.
+  pstack round trip.
 - Lessons and the memory layer: `wh change --kind lesson`, `--admit`,
   `--supersede`, `--forget` and `--from-lesson`, the lesson anchor checks
   `wh check` recorded, the dashboard's Lessons panel and its Admit action,
   lesson sharing in `wh push`, the Virgil lessons backend and its import,
   `wh init --action memory`, `--group` and `whetstone/memory.json` (Virgil
-  owns lessons itself; `whetstone/store.json` names the record store).
-  Stored lessons and lesson checks are read as retired history, and a stored
-  rule drafted from a lesson loads as the owner's with its digest unchanged.
+  owns lessons itself).
 - The verification skill and drive proofs: `wh init --action wire --host`
   and `--regenerate-driver` (wire now installs the Git gates and the CI
   workflow only), `wh init --action import`, the verification driver
-  (`whetstone/verify/`, Node and Chrome), feature maps
-  (`wh change --kind feature` and `--kind map`), map hygiene, the `drive`
-  enforcer, flaky-proof quarantine, `wh check --feature`, `--step`,
-  `--mutate` and `--maintain-outcome`, the dashboard's Features panel and
-  feature editor, and the pstack round trip in `wh eval`. `wh check --sweep`
-  prints its findings by default; `--format json` gives the envelope.
-  Stored features, feature maps and rules or standards held by a drive are
-  read as retired history.
+  (`whetstone/verify/`, Node and Chrome), feature maps (`wh change --kind
+  feature` and `--kind map`), map hygiene, the `drive` enforcer, flaky-proof
+  quarantine, `wh check --feature`, `--step`, `--mutate` and
+  `--maintain-outcome`, the dashboard's Features panel and feature editor,
+  and the pstack round trip in `wh eval`. `wh check --sweep` prints its
+  findings by default; `--format json` gives the envelope.
 - Check receipts: `wh check` writes no record. Its report (now
   `whetstone.check-report.v1`, each finding's repair route in
   `recheck_command`) is the result, and a sweep's `findings.json` is the
-  record a night sweep keeps. Gone with them: the dashboard's Checks view and
-  its check runner, `/api/evidence`, the hosted dashboard mode and the
-  receipt rows in the changelog and decision trail. Stored check receipts
-  are read as retired history.
+  record a night sweep keeps. Gone with them: the dashboard's Checks view
+  and its check runner, `/api/evidence`, the hosted dashboard mode and the
+  receipt rows in the changelog and decision trail.
 - Onboarding extras: `wh init --action exemplar` (`--from`, `--url`) and the
   dashboard's Exemplars step, the read-only repository discovery `wh init`
-  and `wh dash` reported as `setup`, and the pstack skill detection in
-  `wh init --action setup` with `--host`, its install commands and
-  `whetstone/tools.lock.json`. Setup detects and installs `bd` 1.3.0 or
-  later (or names the virgil CLI under the virgil store), and the principle
-  catalogue is read only from the copy compiled into `wh`. A stored rule
-  distilled from an exemplar loads as the owner's with its digest unchanged.
+  and `wh dash` reported as `setup`, and the pstack skill detection in `wh
+  init --action setup` with `--host`, its install commands and
+  `whetstone/tools.lock.json`. The principle catalogue is read only from the
+  copy compiled into `wh`.
 
 ## [0.13.0] - 2026-10-15
 

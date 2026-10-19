@@ -199,26 +199,20 @@ impl RuleFile {
 }
 
 impl PrincipleFile {
-    fn from_entry(entry: &PrincipleEntry) -> Result<Self, RulebookError> {
+    fn from_entry(entry: &PrincipleEntry) -> Self {
         let source = match &entry.principle.source {
             PrincipleSource::Pstack { id, version } => PrincipleOrigin::Pstack {
                 id: id.clone(),
                 version: version.clone(),
             },
             PrincipleSource::Custom => PrincipleOrigin::Custom,
-            PrincipleSource::Migrated { .. } => {
-                return Err(RulebookError::Invalid(format!(
-                    "principles ({}).source: a migrated principle is neither pstack nor custom",
-                    entry.id.as_str()
-                )))
-            }
         };
-        Ok(Self {
+        Self {
             id: entry.id.clone(),
             statement: entry.principle.statement.clone(),
             source,
             rationale: entry.principle.rationale.clone(),
-        })
+        }
     }
 }
 
@@ -236,12 +230,9 @@ pub fn rule_value(entry: &RuleEntry) -> Value {
         .expect("a rule always encodes")
 }
 
-/// A principle as the file holds it; a migrated principle has no place.
-pub fn principle_value(entry: &PrincipleEntry) -> Result<Value, RulebookError> {
-    Ok(
-        serde_json::to_value(PrincipleFile::from_entry(entry)?)
-            .expect("a principle always encodes"),
-    )
+/// A principle as the file holds it.
+pub fn principle_value(entry: &PrincipleEntry) -> Value {
+    serde_json::to_value(PrincipleFile::from_entry(entry)).expect("a principle always encodes")
 }
 
 /// Read the project's rulebook and the commit that last touched it.
@@ -270,7 +261,6 @@ pub fn parse(text: &str, revision: Revision) -> Result<Rulebook, RulebookError> 
     };
     let mission = Mission {
         statement: file.mission.statement,
-        desired_outcomes: Vec::new(),
     };
     if mission.statement.trim().is_empty() {
         return Err(RulebookError::Invalid(
@@ -368,7 +358,7 @@ pub fn entry(book: &Rulebook, id: &str) -> Option<Value> {
             .principles
             .iter()
             .find(|entry| entry.id.as_str() == id)
-            .and_then(|principle| principle_value(principle).ok()),
+            .map(principle_value),
     }
 }
 
@@ -377,7 +367,7 @@ fn to_json(book: &Rulebook) -> Result<Value, RulebookError> {
         .principles
         .iter()
         .map(PrincipleFile::from_entry)
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
     principles.sort_by(|left, right| left.id.cmp(&right.id));
     let mut rules = book
         .rules
