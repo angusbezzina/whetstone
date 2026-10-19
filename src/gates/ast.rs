@@ -53,7 +53,7 @@ pub fn run_query(
         languages: compiled.iter().map(|(lang, _)| lang.as_str()).collect(),
         ..AstRun::default()
     };
-    for (path, bytes) in files.iter() {
+    for path in files.paths() {
         if !applies(path) {
             continue;
         }
@@ -63,7 +63,10 @@ pub fn run_query(
         let Some((_, query)) = compiled.iter().find(|(candidate, _)| *candidate == lang) else {
             continue;
         };
-        let Ok(source) = std::str::from_utf8(bytes) else {
+        let Some(bytes) = files.contents(path) else {
+            continue;
+        };
+        let Ok(source) = std::str::from_utf8(&bytes) else {
             continue;
         };
         let Some(tree) = ast::parse(lang, source) else {

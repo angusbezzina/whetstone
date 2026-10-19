@@ -1,9 +1,12 @@
 //! The files a content check reads: the staged index for pre-commit, or the
 //! working tree otherwise. Content checks (AST) read through this so staged
-//! mode never sees unstaged edits.
+//! mode never sees unstaged edits. Working-tree contents are read when a
+//! check asks for them, so a sweep of a large repository holds its paths,
+//! not its files.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Where file contents come from.
@@ -16,18 +19,20 @@ pub enum Source {
     Staged,
 }
 
-/// Files in scope for one check, with their contents, in path order.
+/// Files in scope for one check, in path order.
 #[derive(Debug, Clone, Default)]
 pub struct FileSet {
     pub source: Source,
-    files: BTreeMap<String, Vec<u8>>,
+    /// Each path with its contents, or `None` when they are read from `root`
+    /// on demand.
+    files: BTreeMap<String, Option<Vec<u8>>>,
+    root: PathBuf,
     /// Paths deleted by the change (present at the base, gone now).
     pub deleted: Vec<String>,
 }
 
 /// Larger files are skipped by content checks, never read into memory.
 pub const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
-const MAX_FILES: usize = 20_000;
 
 fn git(project_root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let output = Command::new("git")
@@ -84,7 +89,7 @@ impl FileSet {
             ],
         )?);
         let mut files = BTreeMap::new();
-        for name in names.into_iter().take(MAX_FILES) {
+        for name in names {
             let spec = format!(":{name}");
             let size = String::from_utf8_lossy(&git(project_root, &["cat-file", "-s", &spec])?)
                 .trim()
@@ -93,11 +98,12 @@ impl FileSet {
             if size > MAX_FILE_BYTES {
                 continue;
             }
-            files.insert(name, git(project_root, &["cat-file", "blob", &spec])?);
+            files.insert(name, Some(git(project_root, &["cat-file", "blob", &spec])?));
         }
         Ok(Self {
             source: Source::Staged,
             files,
+            root: project_root.to_path_buf(),
             deleted,
         })
     }
@@ -106,13 +112,10 @@ impl FileSet {
     pub fn working(project_root: &Path, paths: &[String]) -> Self {
         let mut files = BTreeMap::new();
         let mut deleted = Vec::new();
-        for path in paths.iter().take(MAX_FILES) {
-            let full = project_root.join(path);
-            match std::fs::symlink_metadata(&full) {
+        for path in paths {
+            match std::fs::symlink_metadata(project_root.join(path)) {
                 Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_FILE_BYTES => {
-                    if let Ok(bytes) = std::fs::read(&full) {
-                        files.insert(path.clone(), bytes);
-                    }
+                    files.insert(path.clone(), None);
                 }
                 Ok(_) => {}
                 Err(_) => deleted.push(path.clone()),
@@ -121,6 +124,7 @@ impl FileSet {
         Self {
             source: Source::WorkingTree,
             files,
+            root: project_root.to_path_buf(),
             deleted,
         }
     }
@@ -143,7 +147,11 @@ impl FileSet {
     pub fn from_contents(source: Source, files: BTreeMap<String, Vec<u8>>) -> Self {
         Self {
             source,
-            files,
+            files: files
+                .into_iter()
+                .map(|(path, bytes)| (path, Some(bytes)))
+                .collect(),
+            root: PathBuf::new(),
             deleted: Vec::new(),
         }
     }
@@ -152,16 +160,16 @@ impl FileSet {
         self.files.keys().map(String::as_str)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &[u8])> {
-        self.files
-            .iter()
-            .map(|(path, bytes)| (path.as_str(), bytes.as_slice()))
-    }
-
-    pub fn text(&self, path: &str) -> Option<&str> {
-        self.files
-            .get(path)
-            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+    /// The contents of `path`, read from disk for a working-tree file; `None`
+    /// when the path is not in the set or the file can no longer be read.
+    pub fn contents(&self, path: &str) -> Option<Cow<'_, [u8]>> {
+        match self.files.get(path)? {
+            Some(bytes) => Some(Cow::Borrowed(bytes)),
+            None => std::fs::read(self.root.join(path))
+                .ok()
+                .filter(|bytes| bytes.len() as u64 <= MAX_FILE_BYTES)
+                .map(Cow::Owned),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
