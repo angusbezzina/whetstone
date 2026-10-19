@@ -526,3 +526,102 @@ fn a_formatter_finding_carries_a_diff_that_applies_and_a_plain_lint_finding_carr
         }
     }
 }
+
+const UNWRAP_QUERY: &str = r#"((call_expression function: (field_expression field: (field_identifier) @method)) @match (#eq? @method "unwrap"))"#;
+const DBG_QUERY: &str =
+    r#"((macro_invocation macro: (identifier) @name) @match (#eq? @name "dbg"))"#;
+
+#[test]
+fn a_change_s_flags_become_annotations_on_the_lines_it_touched() {
+    let temp = repository();
+    let root = temp.path();
+    std::fs::write(
+        root.join("src/main.rs"),
+        "fn main() {\n    old().unwrap();\n}\n",
+    )
+    .expect("source");
+    rulebook::add_rule(
+        root,
+        "rule.no-unwrap",
+        "No unwrap.",
+        &json!({"type":"rule","strength":"must","enforcer":{"kind":"ast","query":UNWRAP_QUERY,"language":"rust"}}),
+    );
+    rulebook::add_rule(
+        root,
+        "rule.no-dbg",
+        "No dbg!, ever.",
+        &json!({"type":"rule","strength":"should","enforcer":{"kind":"ast","query":DBG_QUERY,"language":"rust"}}),
+    );
+    git(root, &["add", "."]);
+    git(root, &["commit", "-qm", "base"]);
+    let base = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(root)
+            .output()
+            .expect("rev-parse")
+            .stdout,
+    )
+    .expect("utf-8")
+    .trim()
+    .to_string();
+    std::fs::write(
+        root.join("src/main.rs"),
+        "fn main() {\n    old().unwrap();\n    new().unwrap();\n    dbg!(1);\n}\n",
+    )
+    .expect("change");
+    git(root, &["commit", "-qam", "change"]);
+    let output =
+        run_with_system_tools(root, &["check", "--base", &base, "--format", "annotations"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    let mut commands = stdout
+        .lines()
+        .filter(|line| line.starts_with("::"))
+        .collect::<Vec<_>>();
+    commands.sort();
+    assert_eq!(
+        commands,
+        [
+            "::error file=src/main.rs,line=3,title=rule.no-unwrap%3A No unwrap.::new().unwrap() (wh explain rule.no-unwrap)",
+            "::warning file=src/main.rs,line=4,title=rule.no-dbg%3A No dbg!%2C ever.::dbg!(1) (wh explain rule.no-dbg)",
+        ],
+        "the unchanged line 2 is not annotated:\n{stdout}"
+    );
+
+    // Annotations are a change's; findings and the envelope are a sweep's.
+    let mixed = run_with_system_tools(root, &["check", "--sweep", "--format", "annotations"]);
+    assert_eq!(mixed.status.code(), Some(2));
+    let bare = run_with_system_tools(root, &["check", "--format", "findings"]);
+    assert_eq!(bare.status.code(), Some(2));
+}
+
+#[test]
+fn the_ci_scaffold_uses_annotations_and_passes_actionlint() {
+    let template = include_str!("../assets/ci/whetstone.yml");
+    assert!(template.contains("--format annotations"));
+    let has_actionlint = Command::new("actionlint")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !has_actionlint {
+        eprintln!("actionlint is not installed; skipping the lint half");
+        return;
+    }
+    let temp = TempDir::new().expect("temp");
+    let workflows = temp.path().join(".github/workflows");
+    std::fs::create_dir_all(&workflows).expect("dir");
+    let path = workflows.join("whetstone.yml");
+    std::fs::write(&path, template.replace("__WHETSTONE_VERSION__", "0.13.0")).expect("write");
+    let output = Command::new("actionlint")
+        .arg(&path)
+        .current_dir(temp.path())
+        .output()
+        .expect("actionlint");
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

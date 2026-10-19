@@ -191,7 +191,10 @@ enum Command {
         #[arg(long)]
         sweep: bool,
         /// With --sweep: `findings` (the default) or `json` for the envelope.
-        #[arg(long, value_enum, requires = "sweep")]
+        /// `annotations` prints each flag as a GitHub workflow command
+        /// (::error for must, ::warning for should), only on lines the change
+        /// touched when --base is given.
+        #[arg(long, value_enum)]
         format: Option<CheckFormatArg>,
         /// Per-rule time bound in seconds (default 900).
         #[arg(long)]
@@ -258,6 +261,7 @@ enum CheckHookArg {
 enum CheckFormatArg {
     Findings,
     Json,
+    Annotations,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -438,6 +442,20 @@ pub fn run() -> i32 {
             hook,
             pushed,
         }) => {
+            match format {
+                Some(CheckFormatArg::Findings | CheckFormatArg::Json) if !sweep => {
+                    eprintln!(
+                        "error: --format findings and --format json report a sweep; add --sweep"
+                    );
+                    return 2;
+                }
+                Some(CheckFormatArg::Annotations) if sweep => {
+                    eprintln!("error: --format annotations shows a change's flags; drop --sweep");
+                    return 2;
+                }
+                _ => {}
+            }
+            let annotation_base = base.clone();
             let request = CheckRequest {
                 project_dir,
                 request_id,
@@ -480,6 +498,27 @@ pub fn run() -> i32 {
                             }
                         }
                     }
+                }
+                None if format == Some(CheckFormatArg::Annotations) => {
+                    let root = request
+                        .project_dir
+                        .canonicalize()
+                        .unwrap_or_else(|_| request.project_dir.clone());
+                    let response = service.execute(ServiceRequest::Check(request));
+                    if explicit_json {
+                        emit_response(&response, true);
+                    } else {
+                        print!(
+                            "{}",
+                            crate::annotations::render(
+                                &root,
+                                &response.data,
+                                annotation_base.as_deref()
+                            )
+                        );
+                        println!("{}", response.summary);
+                    }
+                    return response.state.exit_code();
                 }
                 None if sweep => {
                     // `--format json`: the envelope, wherever it is printed.

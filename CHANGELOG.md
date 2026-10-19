@@ -82,6 +82,10 @@ rulebook file, `findings.json` and the JSON envelope.
   carries the tool's own fix: an optional `fix` diff that applies with
   `git apply`, made on a throwaway copy (the working tree is never written).
   The findings shape is in [references](references/findings-v1.schema.json).
+- `wh check --format annotations` prints each flag as a GitHub workflow
+  command (`::error` for must, `::warning` for should); with `--base` only
+  lines the change touched are annotated. The CI scaffold runs the required
+  check this way.
 
 ### Changed
 

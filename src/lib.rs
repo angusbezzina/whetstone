@@ -1,3 +1,4 @@
+pub mod annotations;
 mod ast;
 pub mod catalogue;
 mod cli;

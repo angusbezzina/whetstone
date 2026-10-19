@@ -6,9 +6,12 @@
 #
 # On a pull request, `whetstone/policy` runs `wh check --ci` for the pull
 # request's commits against the committed rulebook, whetstone/rulebook.json:
-# a must finding fails it. On a push to main, the sweep runs the rules below
-# must and uploads findings.json as the `scan-findings` artifact for whatever
-# works the findings (an agent, a bot or a person).
+# a must finding fails it, and each flag on a line the pull request touched
+# is shown beside the code as an annotation (an error for a must rule, a
+# warning for a should rule; `wh explain <rule>` says why it exists). On a
+# push to main, the sweep runs the rules below must and uploads findings.json
+# as the `scan-findings` artifact for whatever works the findings (an agent,
+# a bot or a person).
 name: whetstone
 
 on:
@@ -42,8 +45,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          wh check --ci --base "$BASE_REF" --json > whetstone-policy.json || { cat whetstone-policy.json; exit 1; }
-          cat whetstone-policy.json
+          wh check --ci --base "$BASE_REF" --format annotations
 
   sweep:
     name: whetstone/sweep
