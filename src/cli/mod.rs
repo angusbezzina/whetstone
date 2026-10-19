@@ -24,7 +24,7 @@ use hooks::*;
 #[command(
     name = "whetstone",
     version,
-    about = "Agreed rules that every agent and person is briefed on, checked against and told when to ask",
+    about = "A repository's rulebook: enforced rules with a rationale, checked at pre-commit, pre-push and CI",
     disable_help_subcommand = true
 )]
 struct Cli {

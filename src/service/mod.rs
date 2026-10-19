@@ -347,7 +347,7 @@ fn orientation() -> ServiceResponse {
         "orientation".into(),
         "orientation",
         ServiceState::Success,
-        "Whetstone turns your mission and principles into rules every agent is briefed on, checked against and told when to ask.",
+        "Whetstone keeps the rulebook in whetstone/rulebook.json and checks every rule at pre-commit, pre-push and CI.",
     );
     response.permitted_actions = vec![
         "wh init".into(),

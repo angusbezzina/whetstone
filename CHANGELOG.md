@@ -24,10 +24,10 @@ rulebook file, `findings.json` and the JSON envelope.
   with `rm -rf .git/whetstone` (that also clears old check evidence, which
   the next check writes again).
 - To move a 0.13 store to the file, install the build at commit
-  `20fb5fb06bb3e27103427af0ad62a0b7607770da` (`cargo install --git
-  https://github.com/angusbezzina/whetstone --rev
-  20fb5fb06bb3e27103427af0ad62a0b7607770da`) and run `whetstone init
-  --action export` in the repository. It reads the shared Beads database and
+  `20fb5fb06bb3e27103427af0ad62a0b7607770da`, tagged
+  `rulebook-export-0.13` (`cargo install --git
+  https://github.com/angusbezzina/whetstone --tag rulebook-export-0.13`),
+  and run `whetstone init --action export` in the repository. It reads the shared Beads database and
   the private store and writes the latest accepted, shared revision of each
   principle and rule, with the mission, as `whetstone/rulebook.json`;
   records accepted only in that checkout, pending drafts and private
