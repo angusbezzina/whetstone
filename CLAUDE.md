@@ -14,7 +14,7 @@ In short:
   fields.
 - Checks run at pre-commit, at pre-push and as the required CI status
   `whetstone/policy`. `wh check --sweep` prints `findings.json` for any host.
-- The public surface is `wh init`, `wh dash`, `wh change` and `wh check`.
+- The public surface is `wh init`, `wh dash`, `wh change`, `wh check` and `wh explain`; `wh act` is the hidden runner the GitHub Action calls.
 - Whetstone keeps no store and no host-specific code. Beads tracks this
   project's tasks only.
 
