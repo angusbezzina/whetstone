@@ -19,6 +19,10 @@ rulebook file, `findings.json` and the JSON envelope.
 
 - 0.14.0 reads only `whetstone/rulebook.json`. It does not read a Beads
   store, and records already in one stay there untouched.
+- Private stores from 0.13 under `.git/whetstone/v1/<id>/private` are left
+  on disk and nothing reads them. Once the export below is done, delete them
+  with `rm -rf .git/whetstone` (that also clears old check evidence, which
+  the next check writes again).
 - To move a 0.13 store to the file, install the build at commit
   `20fb5fb06bb3e27103427af0ad62a0b7607770da` (`cargo install --git
   https://github.com/angusbezzina/whetstone --rev

@@ -68,10 +68,10 @@ enum Command {
         /// opening the dashboard's guided onboarding (inspect).
         #[arg(long)]
         no_open: bool,
-        /// Install the Git pre-commit and pre-push gates (wire).
+        /// Install the Git pre-commit and pre-push gates (wire; setup always does).
         #[arg(long)]
         hooks: bool,
-        /// Scaffold the GitHub workflow that runs the required whetstone/policy check (wire).
+        /// Scaffold the GitHub workflow that runs the required whetstone/policy check (wire; setup always does).
         #[arg(long)]
         ci: bool,
     },
