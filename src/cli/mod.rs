@@ -141,6 +141,11 @@ enum Command {
         /// why in its retired list; needs --rationale.
         #[arg(long, conflicts_with_all = ["accept", "withdraw", "kind", "content", "definition"])]
         retire: Option<String>,
+        /// Every rule a change adds or re-aims is probed on this repository
+        /// first (the enforcer runs once; nothing is written when it cannot
+        /// be checked here). Write it anyway; --rationale says why.
+        #[arg(long)]
+        allow_unvalidated: bool,
     },
 
     /// Run the rules and return actionable findings.
@@ -362,6 +367,7 @@ pub fn run() -> i32 {
             accept,
             withdraw,
             retire,
+            allow_unvalidated,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
             project_dir,
             request_id,
@@ -375,6 +381,7 @@ pub fn run() -> i32 {
             withdraw,
             retire,
             actor: crate::service::detect_actor(),
+            allow_unvalidated,
         })),
         Some(Command::Check {
             project_dir,

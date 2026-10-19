@@ -176,6 +176,9 @@ enum DashboardCommand {
         withdraw: bool,
         #[serde(default)]
         retire: Option<String>,
+        /// Write a rule even when its probe says it cannot be checked here.
+        #[serde(default)]
+        allow_unvalidated: bool,
     },
 }
 
@@ -197,6 +200,7 @@ impl DashboardCommand {
             accept,
             withdraw,
             retire,
+            allow_unvalidated,
         } = self;
         ServiceRequest::Change(ChangeRequest {
             project_dir,
@@ -211,6 +215,7 @@ impl DashboardCommand {
             withdraw,
             retire,
             actor,
+            allow_unvalidated,
         })
     }
 }

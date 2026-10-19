@@ -62,8 +62,10 @@ fn the_whole_local_flow_runs_with_only_git_on_the_path() {
             .expect("git");
         assert!(git.success());
     }
-    // A test command, so the prove-it-works starter is offered.
+    // A test command, so the prove-it-works starter is offered, and an npm
+    // that passes it, so the starter's probe runs.
     fs::write(root.join("package.json"), r#"{"scripts":{"test":"true"}}"#).expect("package.json");
+    std::os::unix::fs::symlink(which("true").expect("true"), tools.join("npm")).expect("npm");
 
     let inspected = json(&run(&["init", "--json"], &root, &tools));
     assert_eq!(

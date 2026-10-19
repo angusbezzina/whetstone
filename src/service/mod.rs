@@ -182,6 +182,9 @@ pub struct ChangeRequest {
     /// Who is asking: a person, or an agent (the default, so nothing passes
     /// as a person by omission).
     pub actor: ActorKind,
+    /// Write a rule even when its probe says the enforcer cannot be checked
+    /// on this repository.
+    pub allow_unvalidated: bool,
 }
 
 /// Which in-force rules a check runs.

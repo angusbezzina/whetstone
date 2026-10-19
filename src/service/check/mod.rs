@@ -188,6 +188,13 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             .filter(|path| !crate::wire::is_generated(path))
             .cloned()
             .collect::<Vec<_>>();
+        let mode = match request.gate_mode {
+            GateMode::Staged => crate::gates::RunMode::Staged,
+            GateMode::Sweep => crate::gates::RunMode::Sweep,
+            GateMode::Changed if request.base.is_some() => crate::gates::RunMode::Base,
+            GateMode::Changed => crate::gates::RunMode::Changed,
+            GateMode::All => crate::gates::RunMode::All,
+        };
         for selected in &selection.rules {
             let context = crate::gates::GateContext {
                 project_root: &project,
@@ -196,6 +203,8 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
                 timeout,
                 files: &files,
                 changed: &content_changed,
+                mode,
+                base: request.base.as_deref(),
             };
             let outcome = crate::gates::run_gate(&context, &selected.id, &selected.rule);
             results.push(gate_result(selected, &rulebook.revision, &outcome, &run_id));

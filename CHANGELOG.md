@@ -54,6 +54,12 @@ rulebook file, `findings.json` and the JSON envelope.
 - The CI scaffold (`wh init --action wire --ci`) runs the sweep on every
   push to main and uploads `findings.json` as the `scan-findings` artifact,
   next to the required `whetstone/policy` check on pull requests.
+- Every rule `wh change` writes is probed first: its enforcer runs once on
+  the repository, and a rule whose paths cover nothing, whose query does not
+  parse, whose lint code is unknown or whose command cannot start is not
+  written without `--allow-unvalidated`. Command enforcers get `WH_MODE`,
+  `WH_RULE`, `WH_PATHS` and `WH_BASE`; scripts under `whetstone/checks/` run
+  at pre-commit on the staged files.
 
 ### Changed
 

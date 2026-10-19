@@ -17,7 +17,7 @@ use crate::rulebook::{
     self, PrincipleEntry, Revision, RuleEntry, Rulebook, RulebookError, RULEBOOK_PATH,
 };
 
-use super::change::{committed, draft, rulebook_unreadable};
+use super::change::{committed, draft, probes_json, rulebook_unreadable, Probing};
 use super::{
     bounded_input, bounded_request_id, project_error, project_label, unknown_response, InitAction,
     InitRequest, ServiceResponse, ServiceState,
@@ -335,11 +335,12 @@ fn agree(
             "Nothing new to draft: add a principle (--principle <id>), your own (--custom-principle <text>) or a starter rule (--starter all).".into(),
         );
     }
-    let (written, mut response) = match draft(
+    let (written, mut response, probes) = match draft(
         root,
         request_id,
         request.dry_run,
         &after,
+        Probing::default(),
         format!("Dry run: {RULEBOOK_PATH} would hold these exact entries; nothing was written."),
         format!("{RULEBOOK_PATH} now holds the agreement as a draft. Accept it with wh change --accept (one commit), then install the gates with wh init --action wire --hooks."),
     ) {
@@ -369,6 +370,7 @@ fn agree(
         "written": !request.dry_run,
         "progress": progress,
         "onboarding": progress.onboarding,
+        "probes": probes_json(&probes),
     });
     response
 }

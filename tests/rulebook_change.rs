@@ -51,6 +51,11 @@ impl Repo {
         repo.git(&["config", "user.name", "Test Owner"]);
         repo.git(&["config", "user.email", "owner@example.invalid"]);
         repo.git(&["config", "commit.gpgsign", "false"]);
+        // Source the rules' paths cover, so each rule's probe has a file.
+        fs::create_dir(repo.root.join("src")).expect("src");
+        fs::write(repo.root.join("src/lib.rs"), "pub fn run() {}\n").expect("source");
+        repo.git(&["add", "src/lib.rs"]);
+        repo.git(&["commit", "--quiet", "-m", "Source"]);
         repo
     }
 

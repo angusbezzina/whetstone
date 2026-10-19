@@ -12,6 +12,7 @@ use crate::domain::{
     Mission, Principle, PrincipleSource, RecordId, Rule, RuleSource, RULE_SCHEMA_V2,
 };
 use crate::layout::ProjectLayout;
+use crate::probe::ProbeReport;
 use crate::rulebook::{
     self, PrincipleEntry, RetiredEntry, Revision, RuleEntry, Rulebook, RulebookError, RULEBOOK_PATH,
 };
@@ -60,7 +61,7 @@ fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String
         request.withdraw,
         request.retire,
         layout.project_id(),
-    );
+    ) + &format!("\0{}", request.allow_unvalidated);
     format!(
         "change-{}",
         &format!("{:x}", Sha256::digest(input.as_bytes()))[..16]
@@ -105,19 +106,128 @@ fn digest_of(book: &Rulebook, id: &str) -> Option<String> {
         .map(|entry| entry.digest.as_str().to_string())
 }
 
-/// Validate `after` strictly, then write it unless this is a preview.
+/// One rule's probe, kept with the rule it probed.
+pub(super) struct Probed {
+    pub(super) id: RecordId,
+    pub(super) rule: Rule,
+    pub(super) report: ProbeReport,
+}
+
+/// The probes as the envelope carries them.
+pub(super) fn probes_json(probes: &[Probed]) -> Value {
+    json!(probes
+        .iter()
+        .map(|probed| json!({"record_id": probed.id.as_str(), "probe": probed.report}))
+        .collect::<Vec<_>>())
+}
+
+/// Probe each rule `after` adds or re-aims (a new enforcer or new paths),
+/// compared with the rulebook on disk. A probe in `known` of the same rule is
+/// reused rather than run again.
+pub(super) fn probe_changed(root: &Path, after: &Rulebook, known: &[Probed]) -> Vec<Probed> {
+    let before = rulebook::load(root).ok();
+    let Ok(layout) = ProjectLayout::resolve(root) else {
+        return Vec::new();
+    };
+    after
+        .rules
+        .iter()
+        .filter(|entry| {
+            !before.as_ref().is_some_and(|book| {
+                book.rules.iter().any(|old| {
+                    old.id == entry.id
+                        && old.rule.enforcer == entry.rule.enforcer
+                        && old.rule.paths == entry.rule.paths
+                })
+            })
+        })
+        .map(|entry| {
+            let report = known
+                .iter()
+                .find(|probed| probed.id == entry.id && probed.rule == entry.rule)
+                .map_or_else(
+                    || crate::probe::probe(&layout, &entry.id, &entry.rule),
+                    |probed| probed.report.clone(),
+                );
+            Probed {
+                id: entry.id.clone(),
+                rule: entry.rule.clone(),
+                report,
+            }
+        })
+        .collect()
+}
+
+/// A change refused because a rule's enforcer cannot be checked here.
+fn unvalidated(request_id: String, probes: &[Probed]) -> ServiceResponse {
+    let refused = probes
+        .iter()
+        .filter(|probed| !probed.report.validatable)
+        .collect::<Vec<_>>();
+    let mut response = ServiceResponse::new(
+        request_id,
+        "change",
+        ServiceState::NeedsInput,
+        format!(
+            "{}; the rulebook was not changed. Fix the enforcer and try again, or pass --allow-unvalidated to write it anyway.",
+            refused
+                .iter()
+                .map(|probed| format!("{}: {}", probed.id.as_str(), probed.report.summary))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
+    );
+    response.blocking_questions = refused
+        .iter()
+        .map(|probed| {
+            format!(
+                "{}: {}",
+                probed.id.as_str(),
+                probed
+                    .report
+                    .reason
+                    .as_deref()
+                    .unwrap_or(&probed.report.summary)
+            )
+        })
+        .collect();
+    response.permitted_actions = vec![
+        "fix the enforcer or its paths, then repeat the change".into(),
+        "repeat with --allow-unvalidated to write it without a validating probe".into(),
+    ];
+    response.data = json!({"written": false, "probes": probes_json(probes)});
+    response
+}
+
+/// How [`draft`] treats the probes of the rules a change adds or re-aims.
+#[derive(Default)]
+pub(super) struct Probing<'a> {
+    /// Write a rule even when its probe says it is not validatable here.
+    pub(super) allow_unvalidated: bool,
+    /// Probes this change already ran, reused for the same rule.
+    pub(super) known: &'a [Probed],
+}
+
+/// Validate `after` strictly and probe every rule it adds or re-aims, then
+/// write it unless this is a preview. A rule whose probe says it is not
+/// validatable here is not written unless the probing allows it.
 pub(super) fn draft(
     root: &Path,
     request_id: String,
     preview: bool,
     after: &Rulebook,
+    probing: Probing<'_>,
     preview_summary: String,
     written_summary: String,
-) -> Result<(Rulebook, ServiceResponse), Box<ServiceResponse>> {
+) -> Result<(Rulebook, ServiceResponse, Vec<Probed>), Box<ServiceResponse>> {
+    let checked = rulebook::render(after)
+        .and_then(|text| rulebook::parse(&text, Revision::Uncommitted))
+        .map_err(|error| Box::new(invalid_change(request_id.clone(), &error)))?;
+    let probes = probe_changed(root, &checked, probing.known);
+    if !probing.allow_unvalidated && probes.iter().any(|probed| !probed.report.validatable) {
+        return Err(Box::new(unvalidated(request_id, &probes)));
+    }
     if preview {
-        let checked = rulebook::render(after)
-            .and_then(|text| rulebook::parse(&text, Revision::Uncommitted))
-            .map_err(|error| Box::new(invalid_change(request_id.clone(), &error)))?;
         let mut response = ServiceResponse::new(
             request_id,
             "change",
@@ -130,7 +240,7 @@ pub(super) fn draft(
             "repeat this exact request without --dry-run to write it".into(),
             "cancel without changing the rulebook".into(),
         ];
-        return Ok((checked, response));
+        return Ok((checked, response, probes));
     }
     let written = rulebook::write(root, after).map_err(|error| {
         Box::new(match error {
@@ -145,7 +255,7 @@ pub(super) fn draft(
         "wh change --withdraw".into(),
         "wh check".into(),
     ];
-    Ok((written, response))
+    Ok((written, response, probes))
 }
 
 fn invalid_change(request_id: String, error: &RulebookError) -> ServiceResponse {
@@ -293,17 +403,24 @@ fn edit(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceResp
         });
         return response;
     }
-    let (written, mut response) = match draft(
+    let (written, mut response, probes) = match draft(
         root,
         request_id,
         request.preview,
         &after,
+        Probing {
+            allow_unvalidated: request.allow_unvalidated,
+            known: &[],
+        },
         format!("Review the exact change to {id} before it is written to {RULEBOOK_PATH}."),
         format!("{RULEBOOK_PATH} now holds the change to {id}. It is a draft until you accept it, which commits the file."),
     ) {
         Ok(drafted) => drafted,
         Err(response) => return *response,
     };
+    if let Some(probed) = probes.first() {
+        response.summary = format!("{} {}", probed.report.summary, response.summary);
+    }
     response.data = json!({
         "record_id": id,
         "path": RULEBOOK_PATH,
@@ -316,6 +433,7 @@ fn edit(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceResp
             "before": before.as_ref().and_then(|book| digest_of(book, &id)),
             "after": digest_of(&written, &id),
         },
+        "probes": probes_json(&probes),
     });
     response
 }
@@ -467,11 +585,12 @@ fn retire(
         id,
         reason: reason.clone(),
     });
-    let (written, mut response) = match draft(
+    let (written, mut response, _) = match draft(
         root,
         request_id,
         request.preview,
         &after,
+        Probing::default(),
         format!("Review the exact effect before {target} is retired."),
         format!("{target} is out of {RULEBOOK_PATH} and its retirement is recorded there. It is a draft until you accept it, which commits the file."),
     ) {

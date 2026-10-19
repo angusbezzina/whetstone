@@ -343,6 +343,38 @@ pub struct GateContext<'a> {
     pub files: &'a FileSet,
     /// Paths the change touched (empty for a whole-repository check).
     pub changed: &'a [String],
+    /// What kind of check runs: scripts read it as `WH_MODE`.
+    pub mode: RunMode,
+    /// The revision a base check compares with, as `WH_BASE`.
+    pub base: Option<&'a str>,
+}
+
+/// What a check is looking at, as a script enforcer reads it in `WH_MODE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RunMode {
+    /// The whole repository (a plain `wh check`, or a rule probe).
+    #[default]
+    All,
+    /// The staged index only (pre-commit).
+    Staged,
+    /// What changed in the working tree, with no base revision.
+    Changed,
+    /// What changed since `WH_BASE` (pre-push and CI).
+    Base,
+    /// A sweep of the whole repository for findings.
+    Sweep,
+}
+
+impl RunMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Staged => "staged",
+            Self::Changed => "changed",
+            Self::Base => "base",
+            Self::Sweep => "sweep",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -427,13 +459,17 @@ fn write_evidence(
     })
 }
 
-/// Extract `path:line[:col]` locations that exist in the repository.
+/// Extract the findings a command printed: a `path:line[:col]` token on a
+/// line is a located finding, and a line that starts `path: message` is a
+/// finding about the whole file, wherever the path is a file in the
+/// repository. Anything else stays in the evidence log only.
 pub fn extract_failures(project_root: &Path, output: &str) -> Vec<ArtifactFailure> {
     let mut failures = Vec::new();
     for line in output.lines() {
         if failures.len() >= MAX_FAILURES {
             break;
         }
+        let before = failures.len();
         for token in line.split_whitespace() {
             let token = token.trim_matches(|character: char| {
                 matches!(character, '(' | ')' | '[' | ']' | ',' | '\'' | '"' | '`')
@@ -468,8 +504,37 @@ pub fn extract_failures(project_root: &Path, output: &str) -> Vec<ArtifactFailur
             });
             break;
         }
+        if failures.len() == before {
+            if let Some(failure) = file_level_failure(project_root, line) {
+                if !failures
+                    .iter()
+                    .any(|known: &ArtifactFailure| known.location == failure.location)
+                {
+                    failures.push(failure);
+                }
+            }
+        }
     }
     failures
+}
+
+/// A `path: message` line about a whole repository file.
+fn file_level_failure(project_root: &Path, line: &str) -> Option<ArtifactFailure> {
+    let (path, message) = line.trim().split_once(": ")?;
+    let path = path.trim_start_matches("./");
+    let message = message.trim();
+    if path.is_empty()
+        || message.is_empty()
+        || path.contains(char::is_whitespace)
+        || !crate::domain::safe_relative_path(path)
+        || !project_root.join(path).is_file()
+    {
+        return None;
+    }
+    Some(ArtifactFailure {
+        location: path.to_string(),
+        message: format!("{path}: {message}").chars().take(240).collect(),
+    })
 }
 
 fn last_meaningful_line(text: &str) -> String {
@@ -602,10 +667,10 @@ pub fn run_gate(context: &GateContext<'_>, id: &RecordId, rule: &Rule) -> GateOu
         Enforcer::Test { command }
         | Enforcer::Validator { command }
         | Enforcer::Formatter { tool: command } => {
-            run_command_gate(context, outcome, command, None)
+            run_command_gate(context, outcome, rule, command, None)
         }
         Enforcer::Lint { tool, code } => {
-            run_command_gate(context, outcome, tool, Some(code.as_str()))
+            run_command_gate(context, outcome, rule, tool, Some(code.as_str()))
         }
         Enforcer::Ast { query, language } => {
             run_ast_gate(context, outcome, rule, query, language.as_deref())
@@ -613,9 +678,41 @@ pub fn run_gate(context: &GateContext<'_>, id: &RecordId, rule: &Rule) -> GateOu
     }
 }
 
+/// The files a command enforcer is about, one repository path per line,
+/// written for the script to read as `WH_PATHS`: the check's files the rule's
+/// paths cover.
+fn write_paths_file(context: &GateContext<'_>, rule: &Rule, slug: &str) -> Result<PathBuf, String> {
+    let mut listed = String::new();
+    for path in context.files.paths().filter(|path| rule.applies_to(path)) {
+        listed.push_str(path);
+        listed.push('\n');
+    }
+    fs::create_dir_all(context.run_dir).map_err(|error| error.to_string())?;
+    let path = context.run_dir.join(format!("{slug}.paths"));
+    fs::write(&path, listed).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+/// What a command enforcer is told, beside the allowlisted environment.
+fn script_environment(
+    context: &GateContext<'_>,
+    rule_id: &str,
+    paths_file: &Path,
+) -> Vec<(&'static str, String)> {
+    vec![
+        ("WH_EVIDENCE_DIR", context.run_dir.display().to_string()),
+        ("WH_RUN_ID", context.run_id.to_string()),
+        ("WH_MODE", context.mode.as_str().to_string()),
+        ("WH_RULE", rule_id.to_string()),
+        ("WH_PATHS", paths_file.display().to_string()),
+        ("WH_BASE", context.base.unwrap_or_default().to_string()),
+    ]
+}
+
 fn run_command_gate(
     context: &GateContext<'_>,
     mut outcome: GateOutcome,
+    rule: &Rule,
     command: &str,
     lint_code: Option<&str>,
 ) -> GateOutcome {
@@ -633,14 +730,17 @@ fn run_command_gate(
         *argv = structured;
         reporter
     });
-    let run = match run_sequence(
-        context,
-        &sequences,
-        &[
-            ("WH_EVIDENCE_DIR", context.run_dir.display().to_string()),
-            ("WH_RUN_ID", context.run_id.to_string()),
-        ],
-    ) {
+    let paths_file = match write_paths_file(context, rule, &slug(&outcome.id)) {
+        Ok(path) => path,
+        Err(error) => {
+            let outcome = outcome.unknown(format!(
+                "The in-scope file list could not be written: {error}"
+            ));
+            return finish(context, outcome, None, json!({"started": false}));
+        }
+    };
+    let environment = script_environment(context, &outcome.id, &paths_file);
+    let run = match run_sequence(context, &sequences, &environment) {
         Ok(run) => run,
         Err(error) => {
             let outcome = outcome.unknown(error);
@@ -840,6 +940,8 @@ mod tests {
                 timeout: Duration::from_secs(20),
                 files: set,
                 changed: &changed,
+                mode: RunMode::All,
+                base: None,
             };
             run_gate(&context, &id, &rule(enforcer)).state
         };

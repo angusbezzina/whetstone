@@ -8,6 +8,8 @@ use super::{require_text, safe_relative_path, DomainError};
 pub const RULE_SCHEMA_V2: &str = "whetstone.rule.v2";
 pub const MAX_RULE_EXAMPLES: usize = 32;
 pub const MAX_RULE_LIST_ITEMS: usize = 32;
+/// Where a repository keeps its script enforcers.
+pub const SCRIPTS_DIR: &str = "whetstone/checks/";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -59,10 +61,28 @@ impl Enforcer {
         }
     }
 
-    /// Whether the enforcer reads only file contents, so pre-commit can run it
-    /// on the staged index within its budget.
+    /// Whether pre-commit runs the enforcer on the staged index: an AST
+    /// query reads only file contents, and a script reads only the staged
+    /// files it is given.
     pub fn runs_staged(&self) -> bool {
-        matches!(self, Self::Ast { .. })
+        matches!(self, Self::Ast { .. }) || self.is_script()
+    }
+
+    /// Whether this is a repository script under `whetstone/checks/`: a
+    /// validator or test command that names one. Scripts read the in-scope
+    /// file list (`WH_PATHS`).
+    pub fn is_script(&self) -> bool {
+        match self {
+            Self::Validator { command } | Self::Test { command } => command
+                .split(|character: char| character.is_whitespace() || character == '&')
+                .any(|token| {
+                    token
+                        .trim_matches(|character| character == '\'' || character == '"')
+                        .trim_start_matches("./")
+                        .starts_with(SCRIPTS_DIR)
+                }),
+            _ => false,
+        }
     }
 
     fn validate(&self) -> Result<(), DomainError> {
