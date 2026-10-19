@@ -72,8 +72,8 @@ jobs:
             .state == "success" and
             .workflow == "orientation" and
             .data.read_only == true and
-            .data.workflows == ["init", "dash", "change", "check"] and
-            .permitted_actions == ["wh init", "wh dash", "wh change", "wh check"]
+            .data.workflows == ["init", "dash", "change", "check", "explain"] and
+            .permitted_actions == ["wh init", "wh dash", "wh change", "wh check", "wh explain"]
           ' >/dev/null
           if "$root/bin/wh" status >/dev/null 2>&1; then
             echo 'retired command unexpectedly executed' >&2
