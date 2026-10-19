@@ -168,22 +168,25 @@ hooks.
 
 ## Required gates before every push
 
-CI and the pre-push hook must run these exact eight gates meaningfully:
+CI and the pre-push hook must run these exact six gates meaningfully:
 
 ```bash
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --no-fail-fast && cargo test --doc
 python3 -m ruff check scripts/ tests/ --select E,F,W,I --ignore E501
 python3 -m ruff format --check scripts/ tests/
-cargo run --quiet -- validate
-cargo run --quiet -- eval
-cargo run --quiet -- scan src --lang rust --json --no-fail
+cargo build && scripts/self-check.sh target/debug/whetstone
 python3 -m pytest -q
 ```
 
-The scan gate additionally requires `files_scanned > 0`, `rules_applied > 0`,
-`config_issues_count == 0`, and `violations_count == 0`. Eval must exercise at
-least one rule and one scanner-backed golden example. Zero work is not green.
+The self-check is Whetstone checking itself: `wh check --ci` over the whole
+tree against the must rules accepted (`wh change`) and shared (`wh push`) in
+Whetstone's own Beads store. It fails on any must finding or unknown
+evidence, and when no must rule ran; zero work is not green. It needs `jq`.
+CI and the release job pass `--bootstrap`, which fetches `refs/dolt/data`
+with the checkout's token and clones the shared database from it, so they
+need no SSH key. A must rule for Whetstone itself is changed only through
+`wh change` and reaches the gate with `wh push`.
 The tests run under `cargo-nextest` (`cargo install cargo-nextest --locked`),
 which runs every test binary in parallel; `cargo test --doc` covers doc tests.
 The hook prints each step's seconds and the total. The budget is 5 minutes for

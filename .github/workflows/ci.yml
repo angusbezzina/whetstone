@@ -17,7 +17,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - uses: actions/setup-python@v5
         with:
@@ -64,35 +64,14 @@ jobs:
       - name: 4 - Ruff format
         run: python3 -m ruff format --check scripts/ tests/
 
-      - name: 5 - Rule validation
-        run: cargo run --quiet -- validate
-
-      - name: 6 - Scanner-backed golden evaluation
+      - name: 5 - Self-check against Whetstone's own must rules
         shell: bash
         run: |
           set -euo pipefail
-          result=$(cargo run --quiet -- eval --json)
-          echo "$result" | jq -e '
-            .ok == true and
-            .rules_evaluated > 0 and
-            ([.scorecards[].golden_checked] | add) > 0 and
-            .golden_mismatch_count == 0 and
-            .source_fidelity_failure_count == 0
-          ' >/dev/null
+          cargo build --quiet
+          scripts/self-check.sh --bootstrap target/debug/whetstone
 
-      - name: 7 - Non-vacuous self scan
-        shell: bash
-        run: |
-          set -euo pipefail
-          result=$(cargo run --quiet -- scan src --lang rust --json --no-fail)
-          echo "$result" | jq -e '
-            .violations_count == 0 and
-            .config_issues_count == 0 and
-            .files_scanned > 0 and
-            .rules_applied > 0
-          ' >/dev/null
-
-      - name: 8 - Python black-box tests
+      - name: 6 - Python black-box tests
         run: python3 -m pytest -q
 
   install-smoke:

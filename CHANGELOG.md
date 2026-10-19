@@ -36,6 +36,13 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 - Whetstone needs `bd` 1.3.0 or later (CI pins 1.3.0), and
   `wh init --action setup` offers an upgrade for an older `bd`.
+- Whetstone's own gates (pre-push, CI and the release job) check
+  Whetstone with itself: `scripts/self-check.sh` runs `wh check --ci` over
+  the whole tree against the must rules accepted and shared in Whetstone's
+  Beads store (clippy's `dead_code`, rustfmt, and an AST rule against
+  `dbg!`, `todo!` and `unimplemented!`), and fails on any must finding or
+  when no must rule ran. CI reads the shared rules from `refs/dolt/data`
+  with the checkout's token.
 
 ### Fixed
 
