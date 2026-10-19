@@ -26,7 +26,7 @@
       "pattern": "^[A-Za-z0-9._:-]+$"
     },
     "workflow": {
-      "enum": ["orientation", "init", "dash", "change", "check", "explain"]
+      "enum": ["orientation", "init", "dash", "change", "check", "explain", "act"]
     },
     "state": {
       "enum": [

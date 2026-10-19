@@ -1,3 +1,4 @@
+pub mod act;
 pub mod annotations;
 mod ast;
 pub mod catalogue;

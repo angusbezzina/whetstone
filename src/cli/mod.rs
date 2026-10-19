@@ -228,6 +228,25 @@ enum Command {
         #[arg(long)]
         findings: Option<PathBuf>,
     },
+
+    /// The reusable GitHub Action's runner: work a sweep's findings.json by
+    /// class with gh (a draft pull request, an issue to approve, an issue
+    /// to discuss), idempotent by fingerprint.
+    #[command(hide = true)]
+    Act {
+        #[arg(long, default_value = ".")]
+        project_dir: PathBuf,
+        #[arg(long, default_value = "findings.json")]
+        findings: PathBuf,
+        /// The branch draft pull requests target.
+        #[arg(long, default_value = "main")]
+        base: String,
+        #[arg(long, default_value = "origin")]
+        remote: String,
+        /// Report what would be opened or updated, and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -540,6 +559,28 @@ pub fn run() -> i32 {
             target,
             findings,
         })),
+        Some(Command::Act {
+            project_dir,
+            findings,
+            base,
+            remote,
+            dry_run,
+        }) => {
+            let root = project_dir.canonicalize().unwrap_or(project_dir);
+            let findings = std::env::current_dir()
+                .map(|cwd| cwd.join(&findings))
+                .unwrap_or(findings);
+            crate::act::respond(
+                &crate::act::Gh { root: root.clone() },
+                &crate::act::ActRequest {
+                    project_dir: root,
+                    findings,
+                    base,
+                    remote,
+                    dry_run,
+                },
+            )
+        }
     };
     emit_response(&response, machine);
     response.state.exit_code()

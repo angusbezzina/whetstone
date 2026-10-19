@@ -1,0 +1,59 @@
+name: Whetstone runner
+description: >-
+  Act on a Whetstone sweep's findings.json by class: a draft pull request per
+  draft_pr finding (with the tool's own fix when it has one), an issue asking
+  a person to approve each confirm_first finding, and an issue for discussion
+  per discuss finding. Idempotent by fingerprint.
+author: Angus Bezzina
+branding:
+  icon: check-square
+  color: purple
+inputs:
+  findings:
+    description: The findings file `wh check --sweep` wrote.
+    default: findings.json
+  base:
+    description: The branch draft pull requests target.
+    default: ${{ github.event.repository.default_branch }}
+  token:
+    description: A token that can push branches and open issues and pull requests.
+    default: ${{ github.token }}
+  dry-run:
+    description: Report what would be opened or updated, and change nothing.
+    default: "false"
+outputs:
+  report:
+    description: The runner's JSON envelope; data holds created, updated, unchanged, quiet, parked and planned.
+    value: ${{ steps.act.outputs.report }}
+runs:
+  using: composite
+  steps:
+    - id: act
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        FINDINGS: ${{ inputs.findings }}
+        BASE: ${{ inputs.base }}
+        DRY_RUN: ${{ inputs.dry-run }}
+      run: |
+        set -euo pipefail
+        if ! command -v wh >/dev/null 2>&1; then
+          echo "::error::wh is not on PATH; install it before this step (see the sweep job in Whetstone's CI scaffold)."
+          exit 1
+        fi
+        git config user.name >/dev/null || git config user.name "whetstone[bot]"
+        git config user.email >/dev/null || git config user.email "whetstone@users.noreply.github.com"
+        args=(act --json --findings "$FINDINGS" --base "$BASE")
+        if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+        status=0
+        report=$(wh "${args[@]}") || status=$?
+        echo "$report"
+        {
+          echo "report<<WHETSTONE_REPORT"
+          echo "$report"
+          echo "WHETSTONE_REPORT"
+        } >> "$GITHUB_OUTPUT"
+        # A dry run reports needs_decision (exit 5): nothing was opened.
+        if [ "$status" -ne 0 ] && ! { [ "$DRY_RUN" = "true" ] && [ "$status" -eq 5 ]; }; then
+          exit "$status"
+        fi

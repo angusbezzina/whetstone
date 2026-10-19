@@ -71,3 +71,37 @@ jobs:
         with:
           name: scan-findings
           path: findings.json
+
+  # Work the sweep's findings by class with the Whetstone runner: a draft pull
+  # request per draft_pr finding, an issue to approve per confirm_first, an
+  # issue to discuss per discuss, idempotent by fingerprint. Off until the
+  # repository variable WHETSTONE_WORK is set to "on".
+  work:
+    name: whetstone/work
+    needs: sweep
+    if: github.event_name == 'push' && vars.WHETSTONE_WORK == 'on'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install pinned wh
+        shell: bash
+        env:
+          WHETSTONE_VERSION: "__WHETSTONE_VERSION__"
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://raw.githubusercontent.com/angusbezzina/whetstone/v${WHETSTONE_VERSION}/install.sh" \
+            | INSTALL_DIR="$RUNNER_TEMP/bin" sh -s -- --version "v${WHETSTONE_VERSION}"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - uses: actions/download-artifact@v4
+        with:
+          name: scan-findings
+      - name: Open work by class
+        uses: angusbezzina/whetstone@v__WHETSTONE_VERSION__
+        with:
+          findings: findings.json

@@ -1570,3 +1570,47 @@ fn a_recurring_finding_becomes_a_must_draft_with_the_flagged_line_as_its_example
     assert_eq!(rule["examples"][0]["input"], "x.unwrap();");
     assert_eq!(rule["examples"][0]["path"], "src/core/main.rs");
 }
+
+#[cfg(unix)]
+#[test]
+fn the_runner_reads_a_findings_file_and_plans_work_by_class_without_changing_anything() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    let tools = repo.root.join(".git/fake-bin");
+    std::fs::create_dir_all(&tools).expect("bin");
+    // A gh that knows no issues or pull requests and refuses to change any.
+    std::fs::write(
+        tools.join("gh"),
+        "#!/bin/sh\ncase \"$2\" in list) echo '[]' ;; *) echo \"unexpected gh $*\" >&2; exit 1 ;; esac\n",
+    )
+    .expect("gh");
+    std::fs::set_permissions(tools.join("gh"), std::fs::Permissions::from_mode(0o755))
+        .expect("chmod");
+    let fingerprint = format!("sha256:{}", "a".repeat(64));
+    repo.write(
+        "findings.json",
+        &format!(
+            r#"[{{"fingerprint":"{fingerprint}","subjectDigest":"sha256:b","class":"confirm_first","priority":1,"title":"No unwrap (src/lib.rs)","responsibility":"rule.no-unwrap"}},
+{{"fingerprint":"sha256:c","subjectDigest":"sha256:d","class":"discuss","priority":2,"title":"Doubtful","responsibility":"rule.no-unwrap","unsure":"borderline"}}]"#
+        ),
+    );
+    let path = format!(
+        "{}:{}",
+        tools.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = Command::new(bin())
+        .args(["act", "--json", "--dry-run"])
+        .current_dir(&repo.root)
+        .env("PATH", path)
+        .output()
+        .expect("act");
+    let report = json(&output);
+    assert_eq!(report["workflow"], "act", "{report}");
+    assert_eq!(report["state"], "needs_decision", "{report}");
+    assert_eq!(
+        report["data"]["planned"],
+        serde_json::json!([{"fingerprint": fingerprint, "class": "confirm_first", "action": "create"}])
+    );
+    assert_eq!(report["data"]["parked"], serde_json::json!(["sha256:c"]));
+}

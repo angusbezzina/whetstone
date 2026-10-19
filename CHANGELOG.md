@@ -86,6 +86,12 @@ rulebook file, `findings.json` and the JSON envelope.
   command (`::error` for must, `::warning` for should); with `--base` only
   lines the change touched are annotated. The CI scaffold runs the required
   check this way.
+- A reusable GitHub Action (`action.yml`) works a sweep's `findings.json` by
+  class, as Messo does inside Virgil: a draft pull request per `draft_pr`
+  finding (with its fix when it has one), an issue to approve per
+  `confirm_first` and an issue to discuss per `discuss`, idempotent by
+  fingerprint. The CI scaffold's `whetstone/work` job runs it on the
+  sweep's findings when the repository variable `WHETSTONE_WORK` is on.
 
 ### Changed
 
