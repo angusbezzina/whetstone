@@ -207,14 +207,12 @@ pub struct ChangeRequest {
     pub review: Option<ReviewRequest>,
     /// Propose retiring an accepted record (reviewed archival; history stays).
     pub retire: Option<String>,
-    /// Draft principles from earlier values and philosophy records.
-    pub migrate: bool,
     /// Who is asking: a person, or an agent (the default, so nothing passes
     /// as a person by omission).
     pub actor: ActorKind,
 }
 
-/// Which in-force rules a check runs besides the compiled-in scanner.
+/// Which in-force rules a check runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GateMode {
     /// Every in-force rule (or those named by `rules`).
@@ -232,8 +230,6 @@ pub enum GateMode {
 pub struct CheckRequest {
     pub project_dir: PathBuf,
     pub request_id: Option<String>,
-    pub paths: Vec<PathBuf>,
-    pub language: Option<String>,
     pub rules: Vec<String>,
     pub gate_mode: GateMode,
     pub timeout_seconds: Option<u64>,

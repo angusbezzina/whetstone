@@ -805,11 +805,6 @@ fn run_ast_gate(
     query: &str,
     language: Option<&str>,
 ) -> GateOutcome {
-    // An earlier standard named a rule in `whetstone/rules` instead of a
-    // query; that keeps working through the compiled-in scanner.
-    if !query.trim_start().starts_with('(') && !query.trim_start().starts_with('[') {
-        return run_scanner_rule_gate(context, outcome, query);
-    }
     match ast::run_query(
         context.files,
         query,
@@ -862,68 +857,6 @@ fn run_ast_gate(
         outcome,
         Some(&log),
         json!({"query": query, "language": language}),
-    )
-}
-
-fn run_scanner_rule_gate(
-    context: &GateContext<'_>,
-    mut outcome: GateOutcome,
-    scanner_rule: &str,
-) -> GateOutcome {
-    let scan_paths = vec![context.project_root.to_path_buf()];
-    let filter = vec![scanner_rule.to_string()];
-    let result = crate::check::run(crate::check::CheckOptions {
-        project_dir: context.project_root,
-        rules_dir: None,
-        scan_paths: &scan_paths,
-        lang_filter: None,
-        rule_filter: Some(&filter),
-        execute_command_validators: false,
-    });
-    let count = |field: &str| result.get(field).and_then(Value::as_u64).unwrap_or(0);
-    let rules = count("rules_applied");
-    let violations = count("violations_count");
-    if rules == 0 {
-        outcome = outcome.unknown(format!(
-            "No scanner rule named {scanner_rule} applied; bind the rule to an AST query or an existing rule in whetstone/rules."
-        ));
-    } else if violations > 0 {
-        outcome.state = GateState::Fail;
-        outcome.summary = format!("The scanner rule reported {violations} violation(s).");
-        outcome.failures = result
-            .get("violations")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .take(MAX_FAILURES)
-                    .map(|item| ArtifactFailure {
-                        location: format!(
-                            "{}:{}",
-                            item.get("file")
-                                .and_then(Value::as_str)
-                                .unwrap_or("unknown"),
-                            item.get("line").and_then(Value::as_u64).unwrap_or(0)
-                        ),
-                        message: item
-                            .get("message")
-                            .and_then(Value::as_str)
-                            .unwrap_or("violation")
-                            .to_string(),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-    } else {
-        outcome.state = GateState::Pass;
-        outcome.summary = format!("The scanner applied {rules} rule(s) without violations.");
-    }
-    let log = serde_json::to_string_pretty(&result).unwrap_or_default();
-    finish(
-        context,
-        outcome,
-        Some(&log),
-        json!({"scanner_rule": scanner_rule}),
     )
 }
 

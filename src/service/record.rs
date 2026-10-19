@@ -15,7 +15,7 @@ use crate::domain::{
 };
 use crate::storage::{ProjectLayout, RecordStore, StorageError};
 
-use super::check::{Finding, SnapshotBinding};
+use super::check::SnapshotBinding;
 use super::utc_now;
 
 /// Current UTC time in RFC 3339 form, second precision.
@@ -172,39 +172,13 @@ pub fn agreement_record(
     Ok(record)
 }
 
+/// What a check's report is bound to: Git's view of the code, the policy
+/// inputs, this binary, the rules asked for and the platform.
 pub(crate) fn compute_check_snapshot(
     project: &Path,
-    requested_paths: &[PathBuf],
-    language: Option<&str>,
     rules: &[String],
-) -> Result<(Vec<PathBuf>, Vec<PathBuf>, SnapshotBinding), String> {
-    let mut scan_paths = Vec::new();
-    for path in requested_paths {
-        let joined = if path.is_absolute() {
-            path.clone()
-        } else {
-            project.join(path)
-        };
-        let canonical = joined
-            .canonicalize()
-            .map_err(|error| format!("A requested check path is unavailable: {error}"))?;
-        if !canonical.starts_with(project) {
-            return Err("A requested path escapes the project root.".into());
-        }
-        scan_paths.push(canonical);
-    }
-    let relative_paths = scan_paths
-        .iter()
-        .map(|path| {
-            let relative = path.strip_prefix(project).unwrap_or(path);
-            if relative.as_os_str().is_empty() {
-                PathBuf::from(".")
-            } else {
-                relative.to_path_buf()
-            }
-        })
-        .collect::<Vec<_>>();
-    let code_tree = super::check::code_tree_digest(project, &relative_paths)
+) -> Result<SnapshotBinding, String> {
+    let code_tree = super::check::code_tree_digest(project, &[PathBuf::from(".")])
         .map_err(|error| format!("The code snapshot could not be bound safely: {error}"))?;
     let policy = digest_rule_inputs(project)
         .map_err(|error| error.to_string())
@@ -214,41 +188,22 @@ pub(crate) fn compute_check_snapshot(
         .map_err(|error| format!("The compiled checker could not be content-bound: {error}"))?;
     let scope = digest_json(&json!({
         "project": project.to_string_lossy(),
-        "paths": relative_paths,
-        "language": language,
         "rules": rules,
     }));
     let environment = digest_json(&json!({
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
-        "command_validators": false,
+        "owner_accepted_rules": true,
     }));
-    let trust = digest_bytes(
-        b"whetstone-trust-v2\0compiled-in-deterministic-scanner\0no-external-execution-receipt",
-    );
-    Ok((
-        scan_paths,
-        relative_paths,
-        SnapshotBinding {
-            code_tree,
-            policy,
-            checker_bundle,
-            scope,
-            environment,
-            trust,
-        },
-    ))
-}
-
-pub(crate) fn count(value: &Value, field: &str) -> u64 {
-    value.get(field).and_then(Value::as_u64).unwrap_or(0)
-}
-
-pub(crate) fn array_len(value: &Value, field: &str) -> u64 {
-    value
-        .get(field)
-        .and_then(Value::as_array)
-        .map_or(0, |items| items.len() as u64)
+    let trust = digest_bytes(b"whetstone-trust-v3\0owner-accepted-rules-bounded-execution");
+    Ok(SnapshotBinding {
+        code_tree,
+        policy,
+        checker_bundle,
+        scope,
+        environment,
+        trust,
+    })
 }
 
 pub fn digest_bytes(bytes: &[u8]) -> ContentDigest {
@@ -265,7 +220,7 @@ pub(crate) fn digest_json(value: &Value) -> ContentDigest {
 pub(crate) fn checker_bundle_digest() -> Result<ContentDigest, String> {
     let mut hasher = Sha256::new();
     hasher.update(format!(
-        "whetstone:{}:scanner-v1\0",
+        "whetstone:{}:checker-v1\0",
         env!("CARGO_PKG_VERSION")
     ));
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
@@ -274,130 +229,6 @@ pub(crate) fn checker_bundle_digest() -> Result<ContentDigest, String> {
     match ContentDigest::new(format!("sha256:{:x}", hasher.finalize())) {
         Ok(digest) => Ok(digest),
         Err(_) => unreachable!("SHA-256 formatting always satisfies the digest contract"),
-    }
-}
-
-pub(crate) fn scan_findings(project: &Path, result: &Value) -> Vec<Finding> {
-    let mut findings = Vec::new();
-    if let Some(violations) = result.get("violations").and_then(Value::as_array) {
-        for violation in violations {
-            let rule_id = value_text(violation, "rule_id", "whetstone.unknown-rule");
-            let description = value_text(
-                violation,
-                "description",
-                "the accepted deterministic rule must be satisfied",
-            );
-            let source = value_text(violation, "source_url", "accepted project policy");
-            let observed = value_text(violation, "match", "the rule matched this location");
-            findings.push(Finding {
-                file: finding_path(project, violation.get("file")),
-                line: violation
-                    .get("line")
-                    .and_then(Value::as_u64)
-                    .and_then(|line| u32::try_from(line).ok()),
-                column: violation
-                    .get("column")
-                    .and_then(Value::as_u64)
-                    .and_then(|column| u32::try_from(column).ok()),
-                rule_id,
-                observed,
-                expected: description.clone(),
-                rationale: format!("{description} Governing source: {source}."),
-                repair_direction: "Change the reported source within the current task scope so the accepted rule no longer matches.".into(),
-                permitted_next_action: "repair the reported source, then rerun the check".into(),
-                recheck_command: "wh check --json".into(),
-            });
-        }
-    }
-    if let Some(issues) = result.get("config_issues").and_then(Value::as_array) {
-        for issue in issues {
-            findings.push(Finding {
-                file: finding_path(project, issue.get("path")),
-                line: None,
-                column: None,
-                rule_id: value_text(issue, "rule_id", "whetstone.checker-configuration"),
-                observed: value_text(issue, "issue", "checker configuration is incomplete"),
-                expected: "Required rule and checker configuration must be available and valid."
-                    .into(),
-                rationale: "Unknown or unavailable required evidence cannot be treated as success."
-                    .into(),
-                repair_direction: value_text(
-                    issue,
-                    "fix",
-                    "restore the required checker configuration without weakening the policy",
-                ),
-                permitted_next_action: "repair checker configuration, then rerun the check".into(),
-                recheck_command: "wh check --json".into(),
-            });
-        }
-    }
-    if let Some(skipped) = result.get("skipped").and_then(Value::as_array) {
-        for item in skipped {
-            findings.push(Finding {
-                file: None,
-                line: None,
-                column: None,
-                rule_id: value_text(item, "rule_id", "whetstone.skipped-check"),
-                observed: value_text(item, "reason", "a required check was skipped"),
-                expected: "Every applicable required check must produce current evidence.".into(),
-                rationale: "Skipped required evidence cannot be treated as success.".into(),
-                repair_direction: "Restore a supported deterministic binding for the rule.".into(),
-                permitted_next_action: "restore the checker binding, then rerun the check".into(),
-                recheck_command: "wh check --json".into(),
-            });
-        }
-    }
-    if let Some(warnings) = result.get("warnings").and_then(Value::as_array) {
-        for warning in warnings.iter().filter_map(Value::as_str) {
-            findings.push(Finding {
-                file: None,
-                line: None,
-                column: None,
-                rule_id: "whetstone.scanner-warning".into(),
-                observed: warning.into(),
-                expected: "The scanner must inspect the complete requested scope without warnings."
-                    .into(),
-                rationale: "Partial scanner evidence cannot establish completion.".into(),
-                repair_direction: "Resolve the warning without narrowing the requested scope."
-                    .into(),
-                permitted_next_action: "resolve the warning, then rerun the check".into(),
-                recheck_command: "wh check --json".into(),
-            });
-        }
-    }
-    findings
-}
-
-fn value_text(value: &Value, field: &str, fallback: &str) -> String {
-    value
-        .get(field)
-        .and_then(Value::as_str)
-        .filter(|text| !text.trim().is_empty())
-        .unwrap_or(fallback)
-        .to_string()
-}
-
-fn finding_path(project: &Path, value: Option<&Value>) -> Option<String> {
-    let text = value.and_then(Value::as_str)?;
-    let path = Path::new(text);
-    let relative = if path.is_absolute() {
-        path.strip_prefix(project).ok()?
-    } else {
-        path
-    };
-    if relative.as_os_str().is_empty()
-        || relative.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir
-                    | std::path::Component::RootDir
-                    | std::path::Component::Prefix(_)
-            )
-        })
-    {
-        None
-    } else {
-        Some(relative.to_string_lossy().into_owned())
     }
 }
 

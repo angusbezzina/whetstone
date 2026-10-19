@@ -31,41 +31,6 @@ fn json(output: &Output) -> serde_json::Value {
     })
 }
 
-fn write_rule_project(root: &Path, source: &str) {
-    std::fs::create_dir_all(root.join("whetstone/rules/python")).expect("create rule fixture");
-    std::fs::create_dir_all(root.join("src")).expect("create source fixture");
-    std::fs::write(
-        root.join("whetstone/rules/python/names.yaml"),
-        r#"source:
-  name: team
-rules:
-  - id: team.lowercase-functions
-    severity: must
-    confidence: high
-    category: convention
-    description: Function names must begin with a lowercase character.
-    source_url: https://example.com/team/functions
-    approved: true
-    status: approved
-    signals:
-      - id: uppercase-function
-        strategy: ast
-        description: Finds uppercase function names.
-        weight: required
-        ast_query: '((function_definition name: (identifier) @match) (#match? @match "^[A-Z]"))'
-    golden_examples:
-      - code: "def read_config():\n    pass\n"
-        verdict: pass
-        reason: Lowercase names comply with the rule.
-      - code: "def ReadConfig():\n    pass\n"
-        verdict: fail
-        reason: Uppercase names violate the rule.
-"#,
-    )
-    .expect("write rule fixture");
-    std::fs::write(root.join("src/app.py"), source).expect("write source fixture");
-}
-
 fn git(root: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .args(args)
@@ -327,7 +292,9 @@ fn public_help_exposes_exactly_six_workflow_families() {
 #[test]
 fn retired_commands_cannot_execute() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for command in ["publish", "status", "debt", "report", "mcp", "actions"] {
+    for command in [
+        "publish", "status", "debt", "report", "mcp", "actions", "validate", "eval", "scan",
+    ] {
         let output = run(&[command], root);
         assert_eq!(output.status.code(), Some(2), "{command} unexpectedly ran");
         assert!(
@@ -397,6 +364,9 @@ fn removed_flags_and_change_kinds_are_rejected_before_anything_runs() {
         vec!["change", "--review-triggers", "x"],
         vec!["check", "--required"],
         vec!["check", "--repair-session", "x"],
+        vec!["check", "--path", "src"],
+        vec!["check", "--lang", "rust"],
+        vec!["change", "--migrate"],
         vec!["push", "--propose"],
         vec!["dash", "--history-after", "x"],
     ] {
@@ -1440,17 +1410,7 @@ fn check_is_observational_and_fails_closed_without_rules() {
         .expect("write source");
     let before = tree_digest(temp.path());
     let project = temp.path().to_string_lossy();
-    let output = run(
-        &[
-            "check",
-            "--json",
-            "--project-dir",
-            &project,
-            "--path",
-            "src",
-        ],
-        temp.path(),
-    );
+    let output = run(&["check", "--json", "--project-dir", &project], temp.path());
     assert_eq!(output.status.code(), Some(3));
     assert_eq!(json(&output)["state"], "unknown");
     assert_eq!(
@@ -1481,286 +1441,27 @@ fn tree_digest(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
 }
 
 #[test]
-fn validate_eval_and_self_scan_are_non_vacuous() {
-    let temp = tempfile::tempdir().expect("create gate fixture");
-    write_rule_project(temp.path(), "def ReadConfig():\n    pass\n");
-    let root = temp.path();
-    let root_arg = root.to_string_lossy();
+fn a_check_writes_no_record() {
+    let repo = Repo::new();
+    repo.write("src/app.py", "def read_config():\n    pass\n");
+    repo.commit("base");
+    repo.rule("rule.lowercase-functions", UPPERCASE_FUNCTIONS);
+    let before = repo.records().len();
 
-    let validate = run(&["validate", "--project-dir", &root_arg, "--json"], root);
-    assert!(validate.status.success());
-    let validate_json = json(&validate);
-    assert_eq!(validate_json["ok"], true);
-    let report = validate_json["report"]
-        .as_str()
-        .expect("validation report should be text");
-    assert!(report.contains("Checking "), "{validate_json}");
-    assert!(!report.contains("Checking 0 rule files"), "{validate_json}");
-
-    let eval = run(&["eval", "--project-dir", &root_arg, "--json"], root);
-    assert!(eval.status.success());
-    let eval_json = json(&eval);
-    assert_eq!(eval_json["ok"], true);
-    assert!(
-        eval_json["rules_evaluated"]
-            .as_u64()
-            .expect("rules_evaluated should be numeric")
-            > 0
-    );
-    let checked: u64 = eval_json["scorecards"]
-        .as_array()
-        .expect("scorecards should be an array")
-        .iter()
-        .filter_map(|card| card["golden_checked"].as_u64())
-        .sum();
-    assert!(
-        checked > 0,
-        "eval performed no scanner-backed golden checks"
-    );
-
-    let scan = run(
-        &[
-            "scan",
-            "src",
-            "--project-dir",
-            &root_arg,
-            "--lang",
-            "python",
-            "--json",
-            "--no-fail",
-        ],
-        root,
-    );
-    assert!(scan.status.success());
-    let scan_json = json(&scan);
-    assert_eq!(scan_json["violations_count"], 1);
-    assert!(
-        scan_json["files_scanned"]
-            .as_u64()
-            .expect("files_scanned should be numeric")
-            > 0
-    );
-    assert!(
-        scan_json["rules_applied"]
-            .as_u64()
-            .expect("rules_applied should be numeric")
-            > 0
-    );
-}
-
-#[test]
-fn scanner_finds_known_bad_and_accepts_known_good() {
-    let temp = tempfile::tempdir().expect("create scanner fixture");
-    write_rule_project(temp.path(), "def ReadConfig():\n    pass\n");
-    let project = temp.path().to_string_lossy();
-    let bad = run(
-        &[
-            "scan",
-            "src",
-            "--project-dir",
-            &project,
-            "--lang",
-            "python",
-            "--json",
-            "--no-fail",
-        ],
-        temp.path(),
-    );
-    assert!(bad.status.success());
-    let bad_json = json(&bad);
-    assert_eq!(bad_json["violations_count"], 1);
-    assert_eq!(bad_json["files_scanned"], 1);
-    assert_eq!(bad_json["rules_applied"], 1);
-
-    let public_bad = run(
-        &[
-            "check",
-            "--project-dir",
-            &project,
-            "--path",
-            "src",
-            "--lang",
-            "python",
-            "--json",
-        ],
-        temp.path(),
-    );
-    assert_eq!(public_bad.status.code(), Some(1));
-    let public_bad_json = json(&public_bad);
-    assert_eq!(public_bad_json["state"], "violated");
-    assert_eq!(public_bad_json["data"]["report"]["state"], "violated");
-    assert_eq!(
-        public_bad_json["data"]["report"]["results"][0]["findings"][0]["file"],
-        "src/app.py"
-    );
-    for field in [
-        "rationale",
-        "observed",
-        "expected",
-        "repair_direction",
-        "permitted_next_action",
-        "recheck_command",
-    ] {
-        assert!(
-            public_bad_json["data"]["report"]["results"][0]["findings"][0][field]
-                .as_str()
-                .is_some_and(|value| !value.is_empty())
-        );
-    }
-    let bad_code_digest = public_bad_json["required_snapshot"]["code_digest"]
-        .as_str()
-        .expect("bad code digest")
-        .to_string();
-
-    std::fs::write(
-        temp.path().join("src/app.py"),
-        "def read_config():\n    pass\n",
-    )
-    .expect("update source fixture");
-    let good = run(
-        &[
-            "scan",
-            "src",
-            "--project-dir",
-            &project,
-            "--lang",
-            "python",
-            "--json",
-            "--no-fail",
-        ],
-        temp.path(),
-    );
-    assert!(good.status.success());
-    assert_eq!(json(&good)["violations_count"], 0);
-
-    let public_good = run(
-        &[
-            "check",
-            "--project-dir",
-            &project,
-            "--path",
-            "src",
-            "--lang",
-            "python",
-            "--json",
-        ],
-        temp.path(),
-    );
-    assert!(public_good.status.success());
-    let public_good_json = json(&public_good);
-    assert_eq!(public_good_json["state"], "success");
-    assert_eq!(public_good_json["data"]["report"]["state"], "success");
-    assert!(public_good_json["summary"].as_str().is_some_and(|summary| {
-        summary.contains("whetstone.native-scan") && summary.contains("PASS")
-    }));
-    for field in [
-        "code_digest",
-        "policy_digest",
-        "checker_digest",
-        "scope_digest",
-        "environment_digest",
-        "trust_digest",
-    ] {
-        assert!(public_good_json["required_snapshot"][field]
-            .as_str()
-            .is_some_and(|digest| digest.starts_with("sha256:")));
-    }
-    assert_ne!(
-        public_good_json["required_snapshot"]["code_digest"],
-        bad_code_digest
-    );
-}
-
-#[test]
-fn a_check_writes_no_record_even_when_storage_exists() {
-    let temp = tempfile::tempdir().expect("create check fixture");
-    init_git(temp.path());
-    write_rule_project(temp.path(), "def read_config():\n    pass\n");
-    let project = temp.path().to_string_lossy();
-    let layout = ProjectLayout::resolve(temp.path()).expect("resolve check fixture");
-    BeadsStore::initialize(&layout.private_store(), StoreKind::Private)
-        .expect("initialize the private store explicitly");
-
-    let args = [
-        "check",
-        "--json",
-        "--project-dir",
-        &project,
-        "--request-id",
-        "check-idempotent",
-        "--path",
-        "src",
-        "--lang",
-        "python",
-    ];
-    let first = json(&run(&args, temp.path()));
-    let second = json(&run(&args, temp.path()));
-    assert_eq!(first["state"], "success");
-    assert_eq!(second["state"], "success");
+    let args = ["--request-id", "check-idempotent"];
+    let (_, first) = repo.check(&args);
+    let (_, second) = repo.check(&args);
+    assert_eq!(first["state"], "success", "{first}");
+    assert_eq!(second["state"], "success", "{second}");
     assert_eq!(
         first["data"]["report"]["state"],
         second["data"]["report"]["state"]
     );
-    let private = BeadsStore::initialize(&layout.private_store(), StoreKind::Private)
-        .expect("open private store");
-    assert!(
-        private
-            .all_records()
-            .expect("read private records")
-            .is_empty(),
+    assert_eq!(
+        repo.records().len(),
+        before,
         "a check is its report, never a record"
     );
-}
-
-#[test]
-fn public_check_does_not_execute_untrusted_command_validators() {
-    let temp = tempfile::tempdir().expect("create validator fixture");
-    init_git(temp.path());
-    let rules = temp.path().join("whetstone/rules/python");
-    std::fs::create_dir_all(&rules).expect("create rules");
-    std::fs::create_dir_all(temp.path().join("src")).expect("create source");
-    std::fs::write(temp.path().join("src/app.py"), "def good():\n    pass\n")
-        .expect("write source");
-    std::fs::write(
-        rules.join("command.yaml"),
-        r#"source:
-  name: team
-rules:
-  - id: team.untrusted-command
-    severity: must
-    confidence: high
-    category: convention
-    description: An untrusted command must never run at the public boundary.
-    source_url: https://example.com/command
-    approved: true
-    status: approved
-    validators:
-      - adapter: command
-        rule: command-check
-        config:
-          command: "touch should-not-exist; printf '{\"violations\":[]}'"
-          allow_shell: true
-    golden_examples: []
-"#,
-    )
-    .expect("write validator rule");
-    let project = temp.path().to_string_lossy();
-    let output = run(
-        &[
-            "check",
-            "--json",
-            "--project-dir",
-            &project,
-            "--path",
-            "src",
-            "--lang",
-            "python",
-        ],
-        temp.path(),
-    );
-    assert_eq!(output.status.code(), Some(3));
-    assert_eq!(json(&output)["state"], "unknown");
-    assert!(!temp.path().join("should-not-exist").exists());
 }
 
 #[test]
@@ -1812,215 +1513,6 @@ fn command_response_schema_and_clients_cover_all_states() {
         .success());
 }
 
-fn scan_json(root: &Path, no_fail: bool) -> Output {
-    let project = root.to_string_lossy();
-    let mut args = vec![
-        "scan",
-        "src",
-        "--project-dir",
-        &project,
-        "--lang",
-        "python",
-        "--json",
-    ];
-    if no_fail {
-        args.push("--no-fail");
-    }
-    run(&args, root)
-}
-
-fn complete_rule(id: &str, status: &str, approved: bool, query: Option<&str>) -> String {
-    let query = query
-        .map(|query| format!("        ast_query: '{query}'\n"))
-        .unwrap_or_default();
-    format!(
-        "source:\n  name: team\nrules:\n  - id: {id}\n    severity: must\n    confidence: high\n    category: convention\n    description: A deterministic test rule.\n    source_url: https://example.com/rule\n    approved: {approved}\n    status: {status}\n    signals:\n      - id: signal\n        strategy: ast\n        weight: required\n{query}    golden_examples:\n      - code: 'def good(): pass'\n        verdict: pass\n        reason: Expected pass.\n      - code: 'def Bad(): pass'\n        verdict: fail\n        reason: Expected failure.\n"
-    )
-}
-
-#[test]
-fn malformed_rule_inputs_are_configuration_failures() {
-    let temp = tempfile::tempdir().expect("create malformed-rule fixture");
-    let rules = temp.path().join("whetstone/rules/python");
-    std::fs::create_dir_all(&rules).expect("create rule directory");
-    std::fs::create_dir_all(temp.path().join("src")).expect("create source directory");
-    std::fs::write(temp.path().join("src/app.py"), "def good():\n    pass\n")
-        .expect("write source fixture");
-    std::fs::write(
-        rules.join("valid.yaml"),
-        complete_rule(
-            "team.valid",
-            "approved",
-            true,
-            Some("((function_definition name: (identifier) @match) (#match? @match \"^[A-Z]\"))"),
-        ),
-    )
-    .expect("write valid rule");
-
-    std::fs::write(rules.join("broken.yaml"), "source: [\nrules: nope")
-        .expect("write malformed YAML");
-    let malformed_yaml = scan_json(temp.path(), false);
-    assert_eq!(malformed_yaml.status.code(), Some(1));
-    let malformed_yaml_json = json(&malformed_yaml);
-    assert_eq!(malformed_yaml_json["status"], "config_issues_found");
-    assert!(
-        malformed_yaml_json["config_issues_count"]
-            .as_u64()
-            .expect("config issue count")
-            > 0
-    );
-
-    std::fs::write(
-        rules.join("broken.yaml"),
-        complete_rule(
-            "team.bad-query",
-            "approved",
-            true,
-            Some("(function_definition"),
-        ),
-    )
-    .expect("write malformed query");
-    let malformed_query = scan_json(temp.path(), false);
-    assert_eq!(malformed_query.status.code(), Some(1));
-    assert!(
-        json(&malformed_query)["config_issues_count"]
-            .as_u64()
-            .expect("config issue count")
-            > 0
-    );
-    let project = temp.path().to_string_lossy();
-    let malformed_validate = run(
-        &["validate", "--project-dir", &project, "--json"],
-        temp.path(),
-    );
-    assert_eq!(malformed_validate.status.code(), Some(1));
-    assert_eq!(json(&malformed_validate)["ok"], false);
-
-    std::fs::write(
-        rules.join("broken.yaml"),
-        complete_rule("team.missing-query", "approved", true, None),
-    )
-    .expect("write missing query");
-    let missing_query = scan_json(temp.path(), false);
-    assert_eq!(missing_query.status.code(), Some(1));
-    assert!(
-        json(&missing_query)["config_issues_count"]
-            .as_u64()
-            .expect("config issue count")
-            > 0
-    );
-}
-
-#[test]
-fn only_consistent_approved_rules_are_loaded() {
-    let temp = tempfile::tempdir().expect("create lifecycle fixture");
-    let rules = temp.path().join("whetstone/rules/python");
-    std::fs::create_dir_all(&rules).expect("create rule directory");
-    std::fs::create_dir_all(temp.path().join("src")).expect("create source directory");
-    std::fs::write(temp.path().join("src/app.py"), "def good():\n    pass\n")
-        .expect("write source fixture");
-
-    std::fs::write(
-        rules.join("candidate.yaml"),
-        complete_rule(
-            "team.candidate",
-            "candidate",
-            false,
-            Some("(function_definition) @match"),
-        ),
-    )
-    .expect("write valid candidate");
-    let candidate = scan_json(temp.path(), true);
-    let candidate_json = json(&candidate);
-    assert_eq!(candidate_json["rules_applied"], 0);
-    assert_eq!(candidate_json["config_issues_count"], 0);
-
-    std::fs::write(
-        rules.join("candidate.yaml"),
-        complete_rule(
-            "team.inconsistent",
-            "candidate",
-            true,
-            Some("(function_definition) @match"),
-        ),
-    )
-    .expect("write inconsistent candidate");
-    let inconsistent = scan_json(temp.path(), false);
-    assert_eq!(inconsistent.status.code(), Some(1));
-    assert!(
-        json(&inconsistent)["config_issues_count"]
-            .as_u64()
-            .expect("config issue count")
-            > 0
-    );
-}
-
-#[test]
-fn retained_gate_commands_do_not_mutate_user_data() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let protected: Vec<PathBuf> = [
-        root.join("whetstone/.metrics.jsonl"),
-        root.join("whetstone/.personal/config.yaml"),
-        root.join("whetstone/.personal/rules/python/snake.yaml"),
-        root.join("whetstone/.state/extraction-handoff.json"),
-        root.join("whetstone/.state/inventory.json"),
-        root.join("whetstone/.state/manifests.json"),
-        root.join("whetstone/.state/refresh-log.json"),
-        root.join("whetstone/.state/source-cache.json"),
-        root.join("whetstone/context/AGENTS.md"),
-        root.join("whetstone/evals/rust/test_anyhow.rs"),
-        root.join("whetstone/evals/rust/test_clap.rs"),
-        root.join("whetstone/evals/rust/test_reqwest.rs"),
-        root.join("whetstone/evals/rust/test_serde_yaml.rs"),
-        root.join("whetstone/evals/rust/test_whetstone:recommended/rust.rs"),
-        root.join("whetstone/rules/rust/anyhow.yaml"),
-        root.join("whetstone/whetstone.yaml"),
-    ]
-    .into_iter()
-    .filter(|path| path.exists())
-    .collect();
-    // Published crates deliberately exclude project/user state. Repository
-    // checkouts exercise every protected record that is present.
-    if protected.is_empty() {
-        return;
-    }
-    let before: Vec<Vec<u8>> = protected
-        .iter()
-        .map(|path| std::fs::read(path).expect("read protected fixture"))
-        .collect();
-    let root_arg = root.to_string_lossy();
-
-    assert!(run(&["validate", "--project-dir", &root_arg], root)
-        .status
-        .success());
-    assert!(run(&["eval", "--project-dir", &root_arg], root)
-        .status
-        .success());
-    assert!(run(
-        &[
-            "scan",
-            "src",
-            "--project-dir",
-            &root_arg,
-            "--lang",
-            "rust",
-            "--no-fail",
-        ],
-        root,
-    )
-    .status
-    .success());
-
-    for (path, expected) in protected.iter().zip(before) {
-        assert_eq!(
-            std::fs::read(path).expect("reread protected fixture"),
-            expected,
-            "mutated {}",
-            path.display()
-        );
-    }
-}
-
 const UPPERCASE_FUNCTIONS: &str = r#"{"type":"rule","strength":"must","enforcer":{"kind":"ast","language":"python","query":"((function_definition name: (identifier) @match) (#match? @match \"^[A-Z]\"))"}}"#;
 
 #[test]
@@ -2044,7 +1536,6 @@ fn staged_check_reads_the_index_and_ignores_unstaged_edits() {
         serde_json::json!(["src/app.py"])
     );
     assert_eq!(gate(&staged, "rule.lowercase-functions")["state"], "pass");
-    assert_eq!(staged["data"]["scanner_included"], false);
 
     // The working tree has the violation, and a full check says so.
     let (code, working) = repo.check(&["--rule", "rule.lowercase-functions"]);
@@ -2123,155 +1614,4 @@ fn a_check_of_only_should_rules_lists_the_flag() {
         checked["data"]["flags"],
         serde_json::json!(["rule.should-fail"])
     );
-}
-
-fn seed_legacy_records(root: &Path, indices: &[usize]) {
-    let layout = ProjectLayout::resolve(root).expect("layout");
-    let dir = layout.private_store();
-    BeadsStore::initialize(&dir, StoreKind::Private).expect("private store");
-    let fixtures: Vec<serde_json::Value> =
-        serde_json::from_str(include_str!("fixtures/legacy/records.json")).expect("fixture");
-    for index in indices {
-        let canonical = fixtures[*index]["canonical"].as_str().expect("canonical");
-        let record: AgreementRecord = serde_json::from_str(canonical).expect("legacy record");
-        let RecordBody::Retired(retired) = &record.body else {
-            panic!("fixture {index} is not a retired kind");
-        };
-        let metadata = serde_json::json!({
-            "wh_schema": 1,
-            "wh_kind": "record",
-            "wh_type": retired.record_type,
-            "wh_id": record.id.as_str(),
-            "wh_revision": record.revision,
-            "wh_digest": fixtures[*index]["digest"],
-            "wh_key": record.idempotency_key,
-            "wh_supersedes": null,
-            "wh_record": whetstone::beads::ascii_json(canonical.as_bytes()).expect("ascii"),
-        });
-        let file = dir.join(format!("legacy-{index}.json"));
-        std::fs::write(&file, metadata.to_string()).expect("metadata file");
-        let output = Command::new("bd")
-            .args([
-                "create",
-                "--json",
-                "--type",
-                "record",
-                "--title",
-                &format!("{} r1: legacy", record.id.as_str()),
-                "--metadata",
-                &format!("@{}", file.display()),
-                "--labels",
-                &format!(
-                    "whetstone,wh:{},wh:lifecycle:operational",
-                    retired.record_type
-                ),
-                "--dolt-auto-commit",
-                "on",
-            ])
-            .current_dir(&dir)
-            .env("BEADS_DIR", dir.join(".beads"))
-            .env("BD_NON_INTERACTIVE", "1")
-            .env("GIT_CEILING_DIRECTORIES", dir.parent().expect("parent"))
-            .env_remove("BEADS_DB")
-            .output()
-            .expect("bd create");
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        std::fs::remove_file(file).expect("remove metadata file");
-    }
-}
-
-#[test]
-fn migrate_turns_legacy_values_philosophy_and_rule_files_into_drafts() {
-    let repo = Repo::new();
-    write_rule_project(&repo.root, "def read_config():\n    pass\n");
-    // value.core, philosophy.implementation and a metric that has no principle text.
-    seed_legacy_records(&repo.root, &[0, 1, 2]);
-    let before = repo.records().len();
-    assert_eq!(before, 3);
-
-    let preview = repo.wh(&[
-        "change",
-        "--request-id",
-        "migrate-preview",
-        "--migrate",
-        "--preview",
-    ]);
-    assert_eq!(preview.status.code(), Some(5));
-    let preview = json(&preview);
-    assert_eq!(preview["data"]["preview_only"], true);
-    assert_eq!(preview["data"]["drafts"].as_array().map(Vec::len), Some(3));
-    assert_eq!(repo.records().len(), before, "a preview recorded something");
-
-    let migrated = repo.wh_json(&["change", "--request-id", "migrate-1", "--migrate"]);
-    assert_eq!(migrated["state"], "success", "{migrated}");
-    let drafts = migrated["data"]["drafts"].as_array().expect("drafts");
-    let mut ids = drafts
-        .iter()
-        .map(|draft| {
-            draft["record"]["id"]
-                .as_str()
-                .expect("draft id")
-                .to_string()
-        })
-        .collect::<Vec<_>>();
-    ids.sort();
-    assert_eq!(
-        ids,
-        [
-            "principle.philosophy-implementation",
-            "principle.value-core",
-            "rule.migrated-team-lowercase-functions",
-        ]
-    );
-    assert!(drafts
-        .iter()
-        .all(|draft| draft["proposal"]["id"].is_string()));
-
-    let records = repo.records();
-    let principles = records
-        .iter()
-        .filter_map(|record| match &record.body {
-            RecordBody::Principle(principle) => Some(principle),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(principles.len(), 2);
-    assert!(principles
-        .iter()
-        .any(|principle| principle.statement == "Prefer deletion to addition."));
-    let rule = records
-        .iter()
-        .find_map(|record| match &record.body {
-            RecordBody::Rule(rule)
-                if record.id.as_str() == "rule.migrated-team-lowercase-functions" =>
-            {
-                Some(rule)
-            }
-            _ => None,
-        })
-        .expect("migrated rule");
-    assert_eq!(rule.enforcer.kind(), "ast");
-    assert_eq!(rule.examples.len(), 2);
-    // Migrated drafts are not in force until the owner accepts each.
-    let (_, dry) = repo.check(&["--dry-run"]);
-    assert_eq!(
-        dry["data"]["selection"]["skipped_drafts"],
-        serde_json::json!(["rule.migrated-team-lowercase-functions"])
-    );
-    // The legacy records themselves are untouched.
-    assert!(
-        records
-            .iter()
-            .filter(|record| matches!(record.body, RecordBody::Retired(_)))
-            .count()
-            == 3
-    );
-
-    let again = repo.wh_json(&["change", "--request-id", "migrate-2", "--migrate"]);
-    assert_eq!(again["state"], "success");
-    assert_eq!(again["data"]["drafts"], serde_json::json!([]));
 }

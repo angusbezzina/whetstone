@@ -58,8 +58,8 @@ https://claude.ai/artifact/J9Z4jFMRZMizJGVRDHJE2S (private to the owner).
 
 ### Public surface
 Six commands: `wh init`, `wh dash`, `wh change`, `wh check`, `wh pull`,
-`wh push`. The hidden developer gates stay `validate`, `eval` and `scan`. New
-behaviour goes into these families, never into new top-level commands.
+`wh push`, with no hidden commands. New behaviour goes into these families,
+never into new top-level commands.
 
 ### Records
 Beads is the only record store. Rules change through `wh change` and are

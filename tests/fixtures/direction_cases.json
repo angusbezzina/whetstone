@@ -252,6 +252,21 @@
       "rule_view_source": "owner"
     },
     {
+      "id": "R-023",
+      "name": "a stored rule migrated from a rule file loads as the owner's",
+      "record_type": "rule",
+      "record": {
+        "schema": "whetstone.rule.v2",
+        "statement": "Function names begin lowercase.",
+        "rationale": "One naming style.",
+        "strength": "must",
+        "enforcer": { "kind": "ast", "query": "(function_definition) @match", "language": "python" },
+        "source": { "kind": "migration", "reference": "team.lowercase-functions" }
+      },
+      "expect": "stored",
+      "rule_view_source": "owner"
+    },
+    {
       "id": "P-020",
       "name": "a pstack principle is pinned to its id and version",
       "record_type": "principle",

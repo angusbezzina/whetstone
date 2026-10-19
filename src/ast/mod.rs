@@ -1,10 +1,5 @@
-//! Tree-sitter substrate for Whetstone's deterministic checks.
-//!
-//! The goal is a small, opinionated surface: parse a file into a [`Tree`],
-//! then ask a handful of well-defined questions (imports, function defs,
-//! classes, decorators) without having to hand-roll tree-sitter queries in
-//! every caller. `wh check` uses this for its AST signals, and the eval
-//! scanner and golden evaluator share these exact parsing primitives.
+//! Tree-sitter substrate for the AST enforcer: parse a file into a [`Tree`]
+//! and compile a rule's query for its language.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -20,22 +15,24 @@ pub enum AstLang {
 }
 
 impl AstLang {
-    /// Parse the language name used in rule YAML (`python | typescript | rust`).
+    /// Parse a rule's language name or alias (`python`, `ts`, `rust`, ...).
     pub fn from_str(s: &str) -> Option<Self> {
-        match crate::types::canonical_language(s)? {
-            "python" => Some(AstLang::Python),
-            "typescript" | "javascript" => Some(AstLang::TypeScript),
-            "rust" => Some(AstLang::Rust),
+        match s.trim().to_ascii_lowercase().as_str() {
+            "python" | "py" => Some(AstLang::Python),
+            "typescript" | "ts" | "tsx" | "javascript" | "js" | "jsx" | "mjs" | "cjs" => {
+                Some(AstLang::TypeScript)
+            }
+            "rust" | "rs" => Some(AstLang::Rust),
             _ => None,
         }
     }
 
     /// Infer language from a source-file extension (`py | ts | tsx | rs`).
     pub fn from_extension(ext: &str) -> Option<Self> {
-        match crate::types::source_language_for_extension(ext)? {
-            "python" => Some(AstLang::Python),
-            "typescript" | "javascript" => Some(AstLang::TypeScript),
-            "rust" => Some(AstLang::Rust),
+        match ext.trim_start_matches('.').to_ascii_lowercase().as_str() {
+            "py" | "pyi" => Some(AstLang::Python),
+            "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" => Some(AstLang::TypeScript),
+            "rs" => Some(AstLang::Rust),
             _ => None,
         }
     }
@@ -58,7 +55,7 @@ impl AstLang {
 }
 
 /// Compile a rule query for a supported language and require the capture that
-/// the scanner reports as a violation. Configuration errors must never degrade
+/// the enforcer reports as a violation. Configuration errors must never degrade
 /// into an empty (apparently successful) scan.
 pub fn compile_query(lang: AstLang, source: &str) -> Result<Query, String> {
     let query = Query::new(&lang.ts_language(), source)

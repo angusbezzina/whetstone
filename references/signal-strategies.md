@@ -16,67 +16,49 @@ Every candidate safeguard belongs to one bucket:
 Do not turn bucket 2 into a fake deterministic rule. Do not duplicate bucket 1
 with custom scanning. Prefer a handful of trusted, actionable safeguards.
 
+Each bucket-1 or bucket-3 safeguard is a rule v2 enforcer
+([schema](rule-v2.schema.json)), recorded through `wh change` and run by
+`wh check`.
+
 ## `ast`
 
-An AST signal contains a real tree-sitter S-expression in `ast_query`. Every
-node captured as `@match` is a violation. The same source and query must always
-produce the same findings.
+A real tree-sitter S-expression in `query`, with an optional `language`.
+Every node captured as `@match` is a violation, and the same source and query
+always produce the same findings. A query that compiles for no language, or a
+whole-repository check with no file in scope, is unknown, never a pass; there
+is no fallback to raw text matching.
 
-```yaml
-signals:
-  - id: sync-route-handler
-    strategy: ast
-    description: Route handler is synchronous
-    weight: required
-    ast_query: '(function_definition) @match'
+```json
+{"kind": "ast", "language": "rust",
+ "query": "((macro_invocation macro: (identifier) @name) @match (#eq? @name \"dbg\"))"}
 ```
 
-The R0 validator rejects project AST signals without a query. The scanner never
-falls back to raw text matching if parsing or query compilation fails.
+## `lint`
 
-## `lint_proxy`
+The native linter's command and the exact rule code. The check runs the
+linter with its structured reporter (Ruff, Clippy or Cargo, Biome, ESLint)
+and reads the code from its JSON, so a code is never matched by searching
+text.
 
-A lint proxy declares the native tool and exact rule code. The kernel verifies
-that project configuration actually enables it; it does not pretend to run or
-generate a second implementation.
-
-```yaml
-signals:
-  - id: mutable-defaults
-    strategy: lint_proxy
-    description: Ruff owns this safeguard
-    weight: required
-    lint:
-      tool: ruff
-      code: B006
+```json
+{"kind": "lint", "tool": "cargo clippy --all-targets -- -D warnings", "code": "dead_code"}
 ```
 
-R0 supports Ruff, Biome, and Clippy configuration checks.
-
-## Formatter, test, and validator bindings
+## Formatter, test, and validator commands
 
 Bind existing mechanical or executable safeguards directly:
 
-- `formatter`: Ruff, Biome, or rustfmt configuration.
-- `tests`: pytest, Vitest, or Cargo test paths and optional selectors.
-- `validators`: an explicit command or linked/native check.
+- `formatter`: the formatter in check mode, for example `cargo fmt --check`.
+- `test`: a test command.
+- `validator`: any other checking command.
 
-Executable validators are untrusted. Paths must be repository-relative,
-execution is time-bounded, and errors or unavailable tools are configuration
-issues rather than passes.
+Commands run without a shell, with a bounded environment and a time limit;
+a timeout, an unavailable tool or a signal is unknown rather than a pass.
 
-## `pattern`
+## Raw patterns
 
-Raw regex patterns are legacy migration data, not executable R0 enforcement.
-The scanner skips them explicitly. New project rules must use native-tool
-bindings or AST queries. Personal legacy records may remain readable so their
-owners can migrate them later, but they cannot be represented as enforced.
-
-## Golden examples
-
-Every approved scanner-backed rule needs both known-good and known-bad examples.
-`wh eval` passes each example through the real scanner. A mismatch fails the
-gate; a rule with no scanner-backed examples does not count toward non-vacuity.
+Raw regex is not an enforcement strategy. Use a native-tool binding or an
+AST query.
 
 ## Initial language support
 

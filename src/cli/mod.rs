@@ -15,7 +15,7 @@ use crate::service::{
     GateMode, InitAction, InitRequest, ReviewRequest, ServiceRequest, ServiceResponse,
     ServiceState,
 };
-use crate::{check, dashboard, dashboard_service, output, rules};
+use crate::{dashboard, dashboard_service, output};
 
 mod hooks;
 
@@ -166,9 +166,6 @@ enum Command {
         /// Propose retiring an accepted record (history stays); needs --rationale.
         #[arg(long, conflicts_with_all = ["accept", "withdraw", "kind", "content", "definition"])]
         retire: Option<String>,
-        /// Draft principles from earlier values and philosophy records.
-        #[arg(long, conflicts_with_all = ["accept", "withdraw", "retire", "kind"])]
-        migrate: bool,
     },
 
     /// Run the rules and return actionable findings.
@@ -177,10 +174,6 @@ enum Command {
         project_dir: PathBuf,
         #[arg(long)]
         request_id: Option<String>,
-        #[arg(long = "path")]
-        paths: Vec<PathBuf>,
-        #[arg(long = "lang")]
-        language: Option<String>,
         /// Run only this rule (repeatable).
         #[arg(long = "rule")]
         rules: Vec<String>,
@@ -255,40 +248,6 @@ enum Command {
         /// Show the exact package, destination and base; share nothing.
         #[arg(long)]
         dry_run: bool,
-    },
-
-    /// Internal schema gate retained for repository maintenance.
-    #[command(hide = true)]
-    Validate {
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-    },
-
-    /// Internal golden-example gate: every scanner rule against its golden
-    /// examples.
-    #[command(hide = true)]
-    Eval {
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-        #[arg(long)]
-        lang: Option<String>,
-    },
-
-    /// Internal deterministic scanner retained for repository maintenance.
-    #[command(hide = true)]
-    Scan {
-        #[arg(default_value = ".")]
-        paths: Vec<PathBuf>,
-        #[arg(long, default_value = ".")]
-        project_dir: PathBuf,
-        #[arg(long)]
-        lang: Option<String>,
-        #[arg(long = "rule")]
-        rules: Vec<String>,
-        #[arg(long)]
-        rules_dir: Option<PathBuf>,
-        #[arg(long)]
-        no_fail: bool,
     },
 }
 
@@ -484,7 +443,6 @@ pub fn run() -> i32 {
             accept,
             withdraw,
             retire,
-            migrate,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
             project_dir,
             request_id,
@@ -514,14 +472,11 @@ pub fn run() -> i32 {
                     })
                 }),
             retire,
-            migrate,
             actor: crate::service::detect_actor(),
         })),
         Some(Command::Check {
             project_dir,
             request_id,
-            paths,
-            language,
             rules,
             changed,
             base,
@@ -537,8 +492,6 @@ pub fn run() -> i32 {
             let request = CheckRequest {
                 project_dir,
                 request_id,
-                paths,
-                language,
                 rules,
                 gate_mode: if staged || hook == Some(CheckHookArg::PreCommit) {
                     GateMode::Staged
@@ -614,28 +567,6 @@ pub fn run() -> i32 {
             confirm,
             dry_run,
         })),
-        Some(Command::Validate { project_dir }) => return validate(&project_dir, machine),
-        Some(Command::Eval { project_dir, lang }) => {
-            return eval(&project_dir, lang.as_deref(), machine)
-        }
-        Some(Command::Scan {
-            paths,
-            project_dir,
-            lang,
-            rules,
-            rules_dir,
-            no_fail,
-        }) => {
-            return scan(
-                &project_dir,
-                &paths,
-                lang.as_deref(),
-                &rules,
-                rules_dir.as_deref(),
-                machine,
-                no_fail,
-            )
-        }
     };
     emit_response(&response, machine);
     response.state.exit_code()
@@ -1145,76 +1076,6 @@ fn finding_detail_lines(data: &serde_json::Value) -> Vec<String> {
     lines
 }
 
-fn validate(project_dir: &Path, machine: bool) -> i32 {
-    let (report, ok) = rules::validate_schema_and_fixtures(project_dir);
-    if machine {
-        output::print_json(&json!({
-            "status": if ok { "ok" } else { "validation_failed" },
-            "ok": ok,
-            "report": report,
-        }));
-    } else {
-        print!("{report}");
-    }
-    i32::from(!ok)
-}
-
-/// The rule-file scanner eval: every rule against its golden examples.
-fn eval(project_dir: &Path, lang: Option<&str>, machine: bool) -> i32 {
-    let result = check::eval(project_dir, lang);
-    let ok = result.get("ok").and_then(|value| value.as_bool()) == Some(true);
-    if machine {
-        output::print_json(&result);
-    } else {
-        print!("{}", check::format_eval_output(&result));
-    }
-    i32::from(!ok)
-}
-
-fn scan(
-    project_dir: &Path,
-    paths: &[PathBuf],
-    lang: Option<&str>,
-    rule_filter: &[String],
-    rules_dir: Option<&Path>,
-    machine: bool,
-    no_fail: bool,
-) -> i32 {
-    let scan_paths: Vec<PathBuf> = paths
-        .iter()
-        .map(|path| {
-            if path.is_absolute() {
-                path.clone()
-            } else {
-                project_dir.join(path)
-            }
-        })
-        .collect();
-    let filter = (!rule_filter.is_empty()).then_some(rule_filter);
-    let result = check::run(check::CheckOptions {
-        project_dir,
-        rules_dir,
-        scan_paths: &scan_paths,
-        lang_filter: lang,
-        rule_filter: filter,
-        execute_command_validators: true,
-    });
-    let violations = result
-        .get("violations_count")
-        .and_then(|value| value.as_u64())
-        .unwrap_or(0);
-    let config_issues = result
-        .get("config_issues_count")
-        .and_then(|value| value.as_u64())
-        .unwrap_or(0);
-    if machine {
-        output::print_json(&result);
-    } else {
-        print!("{}", check::format_human_output(&result));
-    }
-    i32::from(!no_fail && (violations > 0 || config_issues > 0))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1384,7 +1245,7 @@ mod tests {
         let check = envelope(
             "check",
             ServiceState::Unknown,
-            "project:abc:check: Required evidence is missing. (unknown)\nUNKNOWN whetstone.native-scan: …",
+            "project:abc:check: Required evidence is missing. (unknown)\nUNKNOWN gate:rule.tests: …",
             json!({}),
         );
         assert_eq!(

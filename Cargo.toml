@@ -31,9 +31,7 @@ fs2 = "0.4"
 serde = { version = "1", features = ["derive"] }
 regex = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
-serde_yaml = "0.9"
 sha2 = "0.10"
-toml = "0.8"
 tree-sitter = "0.22"
 tree-sitter-python = "0.21"
 tree-sitter-rust = "0.21"

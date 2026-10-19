@@ -8,20 +8,17 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::agreement::AgreementState;
-use crate::check;
 use crate::domain::{Enforcer, RecordId, RecordRef, Rule, Strength};
 use crate::gates::{ArtifactFailure, FileSet, GateOutcome, GateState};
 use crate::storage::ProjectLayout;
 
-use super::record::{
-    array_len, compute_check_snapshot, count, digest_bytes, digest_json, scan_findings,
-};
+use super::record::{compute_check_snapshot, digest_bytes};
 use super::{
     bounded_request_id, load_records, storage_error, unix_now, unknown_response, utc_now,
     CheckRequest, GateMode, RequiredSnapshot, ServiceEvidence, ServiceResponse, ServiceState,
@@ -53,31 +50,18 @@ fn invalid(summary: &str) -> ServiceResponse {
 }
 
 pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
-    if request.paths.len() > 64 || request.rules.len() > 64 {
-        return invalid("A check accepts at most 64 paths and 64 rule filters.");
+    if request.rules.len() > 64 {
+        return invalid("A check accepts at most 64 rule filters.");
     }
     if request
-        .paths
+        .rules
         .iter()
-        .any(|path| path.as_os_str().to_string_lossy().len() > 4096)
-        || request
-            .rules
-            .iter()
-            .any(|rule| rule.is_empty() || rule.len() > 256)
-        || request.language.as_ref().is_some_and(|language| {
-            language.is_empty()
-                || language.len() > 32
-                || !language
-                    .chars()
-                    .all(|character| character.is_ascii_alphanumeric() || character == '-')
-        })
+        .any(|rule| rule.is_empty() || rule.len() > 256)
         || request
             .timeout_seconds
             .is_some_and(|seconds| seconds == 0 || seconds > 3_600)
     {
-        return invalid(
-            "A check input exceeds its bound or contains an invalid language, rule or timeout.",
-        );
+        return invalid("A check input exceeds its bound or contains an invalid rule or timeout.");
     }
     // CI sends the all-zero sha for a branch's first push: no base.
     if request
@@ -136,7 +120,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             return unknown_response("check", request_id, reason);
         }
     }
-    let staged = request.gate_mode == GateMode::Staged;
     let files = match request.gate_mode {
         GateMode::Staged => match FileSet::staged(&project) {
             Ok(files) => files,
@@ -163,124 +146,11 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     if request.dry_run {
         return dry_run_response(request_id, &request, &selection);
     }
-    let scanner_rules = request
-        .rules
-        .iter()
-        .filter(|rule| !selection.rule_ids.contains(rule.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    let rules_only_name_rules = !request.rules.is_empty() && scanner_rules.is_empty();
-    let requested_paths = if request.paths.is_empty() {
-        vec![PathBuf::from(".")]
-    } else {
-        request.paths.clone()
-    };
-    let (scan_paths, _relative_paths, mut snapshot) = match compute_check_snapshot(
-        &project,
-        &requested_paths,
-        request.language.as_deref(),
-        &request.rules,
-    ) {
+    let snapshot = match compute_check_snapshot(&project, &request.rules) {
         Ok(snapshot) => snapshot,
         Err(error) => return unknown_response("check", request_id, error),
     };
-    if !selection.rules.is_empty() {
-        snapshot.environment = digest_json(&json!({
-            "os": std::env::consts::OS,
-            "arch": std::env::consts::ARCH,
-            "command_validators": false,
-            "owner_accepted_rules": true,
-        }));
-        snapshot.trust = digest_bytes(
-            b"whetstone-trust-v2\0compiled-in-deterministic-scanner\0owner-accepted-rules-bounded-execution",
-        );
-    }
-    // The compiled-in scanner reads the working tree, so it never runs at
-    // pre-commit (which must ignore unstaged edits); a sweep reports the
-    // rules' own flags.
-    let include_native = !staged && !rules_only_name_rules && request.gate_mode != GateMode::Sweep;
-    let filter = (!scanner_rules.is_empty()).then_some(scanner_rules.as_slice());
-    let result = if include_native {
-        check::run(check::CheckOptions {
-            project_dir: &project,
-            rules_dir: None,
-            scan_paths: &scan_paths,
-            lang_filter: request.language.as_deref(),
-            rule_filter: filter,
-            execute_command_validators: false,
-        })
-    } else {
-        json!({})
-    };
-    let violations = count(&result, "violations_count");
-    let configuration_issues = count(&result, "config_issues_count");
-    let rules_applied = count(&result, "rules_applied");
-    let files_scanned = count(&result, "files_scanned");
-    let delegated = result
-        .get("skipped")
-        .and_then(Value::as_array)
-        .map_or(0, |items| {
-            items
-                .iter()
-                .filter(|item| item.get("delegated_to").is_some())
-                .count() as u64
-        });
-    // A rule delegated to the linter's verified configuration is enforced
-    // there, not missing here; any other skip is incomplete evidence.
-    let skipped = array_len(&result, "skipped") - delegated;
-    let warnings = array_len(&result, "warnings");
-    let native_state = if violations > 0 {
-        CheckState::Violated
-    } else if configuration_issues > 0
-        || rules_applied == 0
-        || files_scanned == 0
-        || skipped > 0
-        || warnings > 0
-    {
-        CheckState::Unknown
-    } else {
-        CheckState::Success
-    };
-    // With accepted rules, a scanner that has no project rules is simply not
-    // part of this check rather than an unknown requirement.
-    let include_native =
-        include_native && (selection.rules.is_empty() || rules_applied > 0 || violations > 0);
-    let native_summary = match native_state {
-        CheckState::Success if delegated > 0 => format!(
-            "The compiled-in scanner applied {rules_applied} rules to {files_scanned} files without violations; {delegated} rule signals are delegated to the linter configuration (binding verified, enforced by the linter, not run here)."
-        ),
-        CheckState::Success => format!(
-            "The compiled-in scanner applied {rules_applied} rules to {files_scanned} files without violations."
-        ),
-        CheckState::Violated => format!(
-            "The compiled-in scanner found {violations} violations; incomplete evidence remains visible in the findings."
-        ),
-        CheckState::Unknown => format!(
-            "The compiled-in scanner could not establish complete evidence ({configuration_issues} configuration issues, {skipped} skipped checks, {warnings} warnings)."
-        ),
-        CheckState::Unavailable => "The compiled-in scanner was unavailable.".into(),
-    };
-    let findings = scan_findings(&project, &result);
-    let scan_digest = digest_json(&result);
     let mut results = Vec::new();
-    if include_native {
-        results.push(CheckResult {
-            requirement_id: "whetstone.native-scan".into(),
-            required: true,
-            state: native_state,
-            summary: native_summary,
-            evidence: EvidencePointer {
-                source: "whetstone-compiled-in-scanner".into(),
-                locator: "local-project".into(),
-                digest: scan_digest,
-            },
-            findings,
-            governing_records: Vec::new(),
-            repair_direction: "Repair reported source or checker configuration without changing policy, tests, or baselines to hide the result.".into(),
-            permitted_next_action: "repair within the current task scope, then wh check".into(),
-            recheck_command: "wh check --json".into(),
-        });
-    }
     // Each check is its own run with its own evidence directory.
     let started_at = format!("{}:{}", utc_now(), std::process::id());
     let run_id = {
@@ -407,8 +277,6 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     response.permitted_actions = next_actions(state, &outcomes);
     response.data = json!({
         "report": report,
-        "raw_scan": result,
-        "scanner_included": include_native,
         "gates": outcomes,
         "flags": flags,
         "run_id": if selection.rules.is_empty() { None } else { Some(run_id) },
@@ -548,8 +416,7 @@ fn nothing_ran(
         "No fast mechanical rule applies at pre-commit; the other rules in force run at pre-push and in CI."
             .to_string()
     } else if selection.skipped_drafts.is_empty() {
-        "Nothing ran: no scanner rule or in-force rule applies, which is unknown, not a pass."
-            .to_string()
+        "Nothing ran: no in-force rule applies, which is unknown, not a pass.".to_string()
     } else {
         format!(
             "Nothing ran: {} is a draft and cannot run until accepted; that is unknown, not a pass.",

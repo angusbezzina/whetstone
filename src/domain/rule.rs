@@ -121,8 +121,6 @@ pub enum RuleSourceKind {
     Owner,
     /// One of Whetstone's starter rules.
     Starter,
-    /// Migrated from an earlier record or rule file.
-    Migration,
 }
 
 impl RuleSourceKind {
@@ -132,7 +130,6 @@ impl RuleSourceKind {
             Self::Principle => "principle",
             Self::Owner => "owner",
             Self::Starter => "starter",
-            Self::Migration => "migration",
         }
     }
 }
@@ -404,7 +401,7 @@ impl Rule {
             enforcer,
             examples: Vec::new(),
             source: RuleSource {
-                kind: RuleSourceKind::Migration,
+                kind: RuleSourceKind::Owner,
                 reference: Some("standard".into()),
                 provenance: Vec::new(),
             },
@@ -419,7 +416,7 @@ impl Rule {
 /// Fields of stored rule revisions that the current model drops on read.
 const DROPPED_RULE_FIELDS: &[&str] = &["hand_raise", "privacy", "shadow"];
 /// Source kinds of stored rule revisions that read as owner.
-const OWNER_SOURCES: &[&str] = &["hardening", "lesson", "exemplar"];
+const OWNER_SOURCES: &[&str] = &["hardening", "lesson", "exemplar", "migration"];
 /// Enforcer kinds of stored rule revisions that nothing holds any more.
 const RETIRED_ENFORCERS: &[&str] = &[
     "review",

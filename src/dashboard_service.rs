@@ -215,8 +215,6 @@ enum DashboardCommand {
         review: Option<DashboardReview>,
         #[serde(default)]
         retire: Option<String>,
-        #[serde(default)]
-        migrate: bool,
     },
 }
 
@@ -278,7 +276,6 @@ impl DashboardCommand {
                 preview,
                 review,
                 retire,
-                migrate,
             } => ServiceRequest::Change(ChangeRequest {
                 project_dir,
                 request_id,
@@ -304,7 +301,6 @@ impl DashboardCommand {
                     },
                 }),
                 retire,
-                migrate,
                 // The backend sets who is asking; a request cannot claim it.
                 actor: crate::domain::ActorKind::Agent,
             }),

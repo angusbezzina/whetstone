@@ -53,9 +53,7 @@ and the plan in epic `whetstone-ppq` is built:
   rule when the repository has a test command.
 - **Rules.** One strength and one enforcer per rule
   ([rule schema](references/rule-v2.schema.json)): AST, lint, formatter, test,
-  or validator. Earlier standards are read as rules, and
-  `wh change --migrate` turns earlier values, philosophy and YAML rules into
-  drafts.
+  or validator. Earlier standards are read as rules.
 - **Gates.** `wh init --action wire --hooks` installs git pre-commit (staged
   content, mechanical rules only) and pre-push (`wh check --base <remote>`)
   hooks, chaining any existing hook. `--ci` writes the `whetstone/policy` required status workflow.
@@ -102,8 +100,10 @@ to the code branch: the team remote carries Beads data in `refs/dolt/data`.
 
 ### Developer gates
 
-Three hidden gates keep the kernel honest: `validate`, `eval` and `scan`.
-They run with the other five in [AGENTS.md](AGENTS.md) before every push.
+Whetstone checks itself: `scripts/self-check.sh` runs `wh check --ci` over
+this repository against the must rules accepted and shared in its own Beads
+store. It runs with the other gates in [AGENTS.md](AGENTS.md) before every
+push, in CI and in the release job.
 
 ## Install
 

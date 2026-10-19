@@ -66,8 +66,8 @@ The public workflow families are exactly `wh init`, `wh dash`, `wh change`,
 `wh check`, `wh pull`, and `wh push`, all implemented against the Beads store.
 New behaviour goes into these families, never new top-level commands. Do not
 describe the product as accepted until the milestone exits in `whetstone-ppq`
-are recorded. Bare `wh` is honest read-only orientation. The hidden developer
-gates are `validate`, `eval`, and `scan`.
+are recorded. Bare `wh` is honest read-only orientation. There are no hidden
+commands; the repository's own gate is `scripts/self-check.sh`.
 
 Authoritative references:
 
@@ -157,10 +157,10 @@ use, and explicitly flag stale material.
 
 ## Rules and source changes
 
-Do not hand-edit `whetstone/rules/**`; those files are preserved user data until
-task `whetstone-ppq.2.6` migrates them into Beads rules. The retained verifier must fail closed for malformed project rules,
-missing AST queries, unsafe validator paths, unavailable required tooling, and
-non-vacuous gate failures.
+Whetstone's own rules are records in its Beads store, changed through
+`wh change` and shared with `wh push`. The check must fail closed for
+malformed rules, unusable AST queries, unavailable required tooling, and
+vacuous gates.
 
 Use `apply_patch` for source and documentation edits. Preserve unrelated work.
 Do not hide failures by weakening tests, deleting a required gate, or bypassing

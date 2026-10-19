@@ -19,9 +19,7 @@ if(!c.established&&!c.rules.length){el.append(T("p","notice","No rule is agreed 
 const by=s=>c.rules.filter(r=>r.strength===s);
 el.append(panel(a,"r-mission","Mission","why the project exists",c.mission?[c.mission]:[],x=>rec(a,x,true),c.mission?null:[{kind:"mission",record_id:"mission.project",content:"",definition:null},"State the mission"]));
 el.append(panel(a,"r-principles","Principles","what the rules are drawn from",c.principles,x=>rec(a,x),[{kind:"principle",record_id:null,content:"",definition:null},"Add principle"]));
-for(const[s,t,why]of GROUPS)el.append(panel(a,"r-"+s,t,why,by(s),x=>rule(a,x),[{kind:"rule",record_id:null,content:"",definition:{type:"rule",strength:s,enforcer:{kind:"test",command:""}}},"Add "+s+" rule"]));
-const act=(p,id,text,fn)=>{if(a.csrf())p.append(D("act",B("",{id,text,onclick:ed(a,fn)})));el.append(p)};
-const lg=c.onboarding.legacy.filter(x=>!x.migrated);if(lg.length)act(panel(a,"r-legacy","Earlier records","values, philosophy and YAML rules from before",lg,x=>a.row(x.text,x.kind,{tone:"muted",label:"not migrated"})),"migrate-btn","Draft principles and rules from these","migrate")}
+for(const[s,t,why]of GROUPS)el.append(panel(a,"r-"+s,t,why,by(s),x=>rule(a,x),[{kind:"rule",record_id:null,content:"",definition:{type:"rule",strength:s,enforcer:{kind:"test",command:""}}},"Add "+s+" rule"]));}
 function changelog(a){const el=a.$("changelog"),c=a.W.value?.data?.current,o=a.$("cl-q"),sel=o&&document.activeElement===o?[o.selectionStart,o.selectionEnd]:null;el.textContent="";if(!c?.established)return;
 el.append(head("Changelog","The decision trail, newest first: how the mission, principles and rules changed and why."));
 const q=h("input",{type:"search",id:"cl-q",value:F.q,placeholder:"title, summary, area"}),at=h("input",{type:"datetime-local",id:"cl-asof",value:F.asOf});

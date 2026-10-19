@@ -44,9 +44,6 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
     if let Some(target) = request.retire.clone() {
         return retire_record(&layout, private, request_id, &target, &request);
     }
-    if request.migrate {
-        return migrate(&layout, private, request_id, &request);
-    }
     propose(&layout, private, request_id, &request)
 }
 
@@ -55,9 +52,8 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
 /// never collide on it. The revision, token and preview flag are left out:
 /// they differ between the inspection and the confirmation.
 fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String {
-    let input =
-        format!(
-        "{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{}\0{:?}\0{:?}\0{:?}",
+    let input = format!(
+        "{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}",
         request.kind,
         request.record_id,
         request.content,
@@ -67,9 +63,11 @@ fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String
         request.source,
         request.expected_effect,
         request.impact,
-        request.review.as_ref().map(|review| (&review.proposal, review.verdict)),
+        request
+            .review
+            .as_ref()
+            .map(|review| (&review.proposal, review.verdict)),
         request.retire,
-        request.migrate,
         request.examples,
         request.conflicts,
         layout.project_id(),
@@ -366,46 +364,6 @@ pub(crate) fn write_draft(
     Ok((record, reference))
 }
 
-/// Record one draft with its proposal in a single call, idempotently by key.
-pub(crate) fn draft_with_proposal(
-    layout: &ProjectLayout,
-    private: &dyn RecordStore,
-    key: &str,
-    record_id: &RecordId,
-    body: RecordBody,
-    narrative: &ChangeNarrative,
-) -> Result<(RecordRef, RecordRef), StorageError> {
-    let existing = private.by_idempotency_key(key)?;
-    let (record, reference) = match existing {
-        Some(existing) => {
-            let reference = existing.reference().map_err(StorageError::Domain)?;
-            (existing, reference)
-        }
-        None => {
-            let current = private.latest(record_id)?;
-            let owner = current
-                .as_ref()
-                .and_then(|record| record.owner.display_name.clone())
-                .or_else(|| mission_owner(private))
-                .or_else(|| owner_name(layout.project_root()));
-            write_draft(
-                layout,
-                private,
-                record_id,
-                key.to_string(),
-                body,
-                owner.as_deref(),
-                current.as_ref(),
-                &narrative.source,
-            )?
-        }
-    };
-    let base = record.revision.saturating_sub(1);
-    let proposal =
-        ensure_local_change_proposal(private, &record, &reference, narrative, base, key)?;
-    Ok((reference, proposal))
-}
-
 fn change_narrative(request: &ChangeRequest) -> Result<ChangeNarrative, String> {
     Ok(ChangeNarrative {
         rationale: bounded_input(request.rationale.clone(), "rationale", 4_000)?,
@@ -536,152 +494,6 @@ fn state_of(layout: &ProjectLayout) -> Result<AgreementState, StorageError> {
     Ok(AgreementState::from_records(
         load_records(layout)?.union().0,
     ))
-}
-
-/// Earlier values and philosophy become principle drafts the owner reviews;
-/// nothing is rewritten.
-fn migrate(
-    layout: &ProjectLayout,
-    private: &dyn RecordStore,
-    request_id: String,
-    request: &ChangeRequest,
-) -> ServiceResponse {
-    let state = match state_of(layout) {
-        Ok(state) => state,
-        Err(error) => return storage_error("change", request_id, error),
-    };
-    let migrated = state
-        .records()
-        .iter()
-        .filter_map(|record| match &record.body {
-            RecordBody::Principle(Principle {
-                source: PrincipleSource::Migrated { record },
-                ..
-            }) => Some(record.id.clone()),
-            _ => None,
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut latest = std::collections::BTreeMap::<RecordId, &AgreementRecord>::new();
-    for record in state.records() {
-        if let RecordBody::Retired(retired) = &record.body {
-            if retired.principle_text().is_some()
-                && latest
-                    .get(&record.id)
-                    .map_or(true, |current| current.revision < record.revision)
-            {
-                latest.insert(record.id.clone(), record);
-            }
-        }
-    }
-    let candidates = latest
-        .into_values()
-        .filter(|record| !migrated.contains(&record.id))
-        .collect::<Vec<_>>();
-    // Rules from `whetstone/rules` become v2 rule drafts, once.
-    let (legacy_rules, legacy_skipped) = crate::rules::legacy_rules_as_v2(layout.project_root());
-    let legacy_rules = legacy_rules
-        .into_iter()
-        .filter(|(id, _, _)| {
-            RecordId::new(id.as_str())
-                .ok()
-                .is_some_and(|id| state.latest(&id).is_none())
-        })
-        .collect::<Vec<_>>();
-    if candidates.is_empty() && legacy_rules.is_empty() {
-        let mut response = ServiceResponse::new(
-            request_id,
-            "change",
-            ServiceState::Success,
-            "Nothing is waiting to migrate: no earlier value or philosophy, and every rule file is already a rule draft.",
-        );
-        response.data = json!({"drafts": [], "skipped": legacy_skipped});
-        return response;
-    }
-    let mut drafts = Vec::new();
-    for (id, rule, source) in legacy_rules {
-        let Ok(record_id) = RecordId::new(id.as_str()) else {
-            continue;
-        };
-        let body = RecordBody::Rule(rule);
-        if request.preview {
-            drafts.push(json!({"record": record_id, "after": body}));
-            continue;
-        }
-        let narrative = ChangeNarrative {
-            rationale: "Rules move from whetstone/rules into Beads; review the migrated rule and its examples before accepting it.".into(),
-            source: source.clone(),
-            expected_effect: "The rule is enforced from Beads once accepted; the rule file can then be retired.".into(),
-            impact: "none until accepted".into(),
-            examples: Vec::new(),
-            conflicts: Vec::new(),
-        };
-        let key = format!("migrate:{request_id}:{id}");
-        match draft_with_proposal(layout, private, &key, &record_id, body, &narrative) {
-            Ok((reference, proposal)) => {
-                drafts.push(json!({"record": reference, "proposal": proposal, "from": source}))
-            }
-            Err(error) => return storage_error("change", request_id, error),
-        }
-    }
-    for record in candidates {
-        let RecordBody::Retired(retired) = &record.body else {
-            continue;
-        };
-        let Some((statement, note)) = retired.principle_text() else {
-            continue;
-        };
-        let Ok(reference) = record.reference() else {
-            continue;
-        };
-        let slug = record.id.as_str().replace(['.', ':'], "-");
-        let Ok(id) = RecordId::new(format!("principle.{slug}")) else {
-            continue;
-        };
-        let body = RecordBody::Principle(Principle {
-            statement,
-            source: PrincipleSource::Migrated { record: reference },
-            rationale: note,
-        });
-        if request.preview {
-            drafts.push(json!({"record": id, "after": body}));
-            continue;
-        }
-        let narrative = ChangeNarrative {
-            rationale: format!(
-                "The delegation plan replaces {} with principles; review this wording before accepting it.",
-                retired.record_type.replace('_', " ")
-            ),
-            source: format!("migration from {}", record.id.as_str()),
-            expected_effect: "A principle rules can cite as their source.".into(),
-            impact: "none until accepted".into(),
-            examples: Vec::new(),
-            conflicts: Vec::new(),
-        };
-        let key = format!("migrate:{request_id}:{}", record.id.as_str());
-        match draft_with_proposal(layout, private, &key, &id, body, &narrative) {
-            Ok((reference, proposal)) => {
-                drafts.push(json!({"record": reference, "proposal": proposal}))
-            }
-            Err(error) => return storage_error("change", request_id, error),
-        }
-    }
-    let mut response = ServiceResponse::new(
-        request_id,
-        "change",
-        if request.preview {
-            ServiceState::NeedsDecision
-        } else {
-            ServiceState::Success
-        },
-        format!(
-            "{} earlier record(s) (values, philosophy or whetstone/rules YAML) {} drafts (principles and rules); accept, edit or withdraw each.",
-            drafts.len(),
-            if request.preview { "would become" } else { "became" }
-        ),
-    );
-    response.permitted_actions = vec!["wh dash".into(), "wh change --accept <proposal>".into()];
-    response.data = json!({"drafts": drafts, "preview_only": request.preview});
-    response
 }
 
 pub(crate) fn review_draft(

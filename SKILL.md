@@ -75,8 +75,7 @@ resume token. A retry with the same request ID must keep the same input.
 - `wh init --action wire --hooks` installs the git pre-commit and pre-push
   hooks. `--ci` adds the required CI status.
 - `wh change` drafts, previews, accepts, withdraws or retires records
-  (`--kind mission|principle|rule`). `--migrate` records
-  drafts. Accepting is the owner's call.
+  (`--kind mission|principle|rule`). Accepting is the owner's call.
 - `wh check` runs the rules: `--staged` for pre-commit, `--changed` or
   `--base` for the change. `--sweep` runs only the rules below must and
   prints a JSON array (`--format json` gives the envelope instead), one finding per flag (`fingerprint`, `subjectDigest`, `class`,
@@ -91,8 +90,6 @@ resume token. A retry with the same request ID must keep the same input.
 - `wh push` previews an exact package of accepted records and needs
   `--confirm <token>`. `wh pull` receives shared records and never executes
   or accepts them.
-- Hidden `validate`, `eval` and `scan` are repository gates, not product
-  workflows.
 
 The earlier direction's `wh push --propose`, `wh change --activate`,
 `wh init --ci --reviewer` and repair-session flags have been removed.

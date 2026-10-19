@@ -58,6 +58,15 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ### Removed
 
+- The legacy YAML rule scanner: `whetstone/rules`, the hidden `validate`,
+  `eval` and `scan` commands, `wh check --path` and `--lang`, the
+  `whetstone.native-scan` result and `raw_scan` data, the AST enforcer's
+  fallback to a rule file by name, `wh change --migrate` (and the
+  dashboard's Earlier records panel that ran it), and
+  `references/rule-schema.yaml`. Whetstone no longer depends on
+  `serde_yaml` or `toml`. A stored rule whose source kind is `migration`
+  is read as the owner's, its digest unchanged. A rule's `paths` scope a
+  check or a sweep.
 - The agent-host hook loop: `wh init --action wire --hooks` no longer
   writes Stop and SessionStart hooks into `.claude/settings.json`,
   `.codex/hooks.json` or `.cursor/hooks.json`, and `wh check --hook stop`,

@@ -1,5 +1,5 @@
-//! The check report: one result per requirement (the compiled-in scanner and
-//! each rule's gate) and the state they add up to. Only a pass of every
+//! The check report: one result per requirement (each rule's gate) and the
+//! state they add up to. Only a pass of every
 //! required result is success; a check with nothing required is unknown.
 
 use std::fs::File;
