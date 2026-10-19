@@ -253,6 +253,7 @@ pub fn build(loaded: &LoadedRecords) -> Export {
             mission: mission.clone(),
             principles,
             rules,
+            retired: Vec::new(),
             revision: Revision::Uncommitted,
         }),
         mission: mission.map(|(id, _)| id),

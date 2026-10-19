@@ -97,64 +97,43 @@ fn the_whole_local_flow_runs_without_a_dolt_binary() {
     );
     assert_eq!(agreed["data"]["progress"]["agreement_complete"], true);
 
-    let change = |request_id: &str, id: &str, content: &str, definition: &str| {
-        let base = [
-            "change",
-            "--json",
-            "--request-id",
-            request_id,
-            "--kind",
-            "rule",
-            "--record-id",
-            id,
-            "--content",
-            content,
-            "--rationale",
-            "Git answers.",
-            "--definition",
-            definition,
-        ];
-        let probe = json(&run(&base, &root, &tools));
-        let revision = probe["expected_revision"]
-            .as_u64()
-            .expect("revision")
-            .to_string();
-        let resume = probe["resume_token"].as_str().expect("token").to_string();
-        let mut args = base.to_vec();
-        args.extend(["--expected-revision", &revision, "--resume", &resume]);
-        json(&run(&args, &root, &tools))
-    };
-    let definition =
-        r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"git --version"}}"#;
-    let changed = change("c1", "rule.git-answers", "Git answers.", definition);
-    assert_eq!(changed["state"], "success", "{changed}");
-    let proposal = changed["data"]["proposal"]["id"]
-        .as_str()
-        .expect("proposal")
-        .to_string();
-    let accepted = json(&run(
+    let mission = json(&run(
         &[
             "change",
             "--json",
-            "--request-id",
-            "a1",
-            "--accept",
-            &proposal,
+            "--kind",
+            "mission",
+            "--content",
+            "Git answers.",
         ],
         &root,
         &tools,
     ));
-    assert_eq!(accepted["state"], "success", "{accepted}");
-    let pending = change(
-        "c2",
-        "rule.git-still-answers",
-        "Git still answers.",
-        definition,
-    );
-    assert_eq!(pending["state"], "success", "{pending}");
+    assert_eq!(mission["state"], "success", "{mission}");
+    let changed = json(&run(
+        &[
+            "change",
+            "--json",
+            "--kind",
+            "rule",
+            "--record-id",
+            "rule.git-answers",
+            "--content",
+            "Git answers.",
+            "--rationale",
+            "Git answers.",
+            "--definition",
+            r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"git --version"}}"#,
+        ],
+        &root,
+        &tools,
+    ));
+    assert_eq!(changed["state"], "success", "{changed}");
+    assert!(fs::read_to_string(root.join("whetstone/rulebook.json"))
+        .expect("rulebook")
+        .contains("rule.git-answers"));
 
     let dash = json(&run(&["dash", "--json"], &root, &tools));
     assert_eq!(dash["state"], "success", "{dash}");
     assert_eq!(dash["data"]["current"]["established"], true);
-    assert_eq!(dash["data"]["current"]["header"]["drafts"], 1);
 }

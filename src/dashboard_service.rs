@@ -6,7 +6,6 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 use crate::dashboard::{BackendResponse, DashboardBackend};
-use crate::domain::ContentDigest;
 use crate::service::{
     ChangeDefinition, ChangeKind, ChangeRequest, CommandService, DashRequest, InitAction,
     InitRequest, ServiceRequest, ServiceResponse,
@@ -96,7 +95,6 @@ impl DashboardBackend for CommandDashboardBackend {
             search: query.search,
             as_of: query.as_of,
             page_size: query.page_size,
-            expected_snapshot: query.expected_snapshot,
             trail: false,
         })))
     }
@@ -143,7 +141,6 @@ struct DashboardInspectRequest {
     search: Option<String>,
     as_of: Option<String>,
     page_size: usize,
-    expected_snapshot: Option<ContentDigest>,
 }
 
 impl Default for DashboardInspectRequest {
@@ -152,7 +149,6 @@ impl Default for DashboardInspectRequest {
             search: None,
             as_of: None,
             page_size: 100,
-            expected_snapshot: None,
         }
     }
 }
@@ -192,44 +188,16 @@ enum DashboardCommand {
         #[serde(default)]
         definition: Option<Box<ChangeDefinition>>,
         #[serde(default)]
-        new_owner: Option<String>,
-        #[serde(default)]
         rationale: Option<String>,
-        #[serde(default)]
-        source: Option<String>,
-        #[serde(default)]
-        expected_effect: Option<String>,
-        #[serde(default)]
-        impact: Option<String>,
-        #[serde(default)]
-        examples: Vec<String>,
-        #[serde(default)]
-        conflicts: Vec<String>,
-        #[serde(default)]
-        expected_revision: Option<u64>,
-        #[serde(default)]
-        resume_token: Option<String>,
         #[serde(default)]
         preview: bool,
         #[serde(default)]
-        review: Option<DashboardReview>,
+        accept: bool,
+        #[serde(default)]
+        withdraw: bool,
         #[serde(default)]
         retire: Option<String>,
     },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DashboardReview {
-    proposal: String,
-    verdict: DashboardVerdict,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum DashboardVerdict {
-    Accept,
-    Withdraw,
 }
 
 impl DashboardCommand {
@@ -264,17 +232,10 @@ impl DashboardCommand {
                 record_id,
                 content,
                 definition,
-                new_owner,
                 rationale,
-                source,
-                expected_effect,
-                impact,
-                examples,
-                conflicts,
-                expected_revision,
-                resume_token,
                 preview,
-                review,
+                accept,
+                withdraw,
                 retire,
             } => ServiceRequest::Change(ChangeRequest {
                 project_dir,
@@ -283,23 +244,10 @@ impl DashboardCommand {
                 record_id,
                 content,
                 definition,
-                new_owner,
                 rationale,
-                source,
-                expected_effect,
-                impact,
-                examples,
-                conflicts,
-                expected_revision,
-                resume_token,
                 preview,
-                review: review.map(|review| crate::service::ReviewRequest {
-                    proposal: review.proposal,
-                    verdict: match review.verdict {
-                        DashboardVerdict::Accept => crate::domain::LocalReviewVerdict::Accept,
-                        DashboardVerdict::Withdraw => crate::domain::LocalReviewVerdict::Withdraw,
-                    },
-                }),
+                accept,
+                withdraw,
                 retire,
                 // The backend sets who is asking; a request cannot claim it.
                 actor: crate::domain::ActorKind::Agent,

@@ -1,24 +1,24 @@
-//! `wh change`: propose a bounded change as a private draft the owner
-//! accepts, and the owner's other decisions: accepting or withdrawing a
-//! draft, retiring a record, and migrating earlier values and philosophy.
+//! `wh change`: edit the rulebook file. A change or a retirement is a draft,
+//! an edit to `whetstone/rulebook.json` in the working tree; accepting it is
+//! committing the file, and withdrawing it restores the last commit.
 
-use serde_json::json;
+use std::path::Path;
+use std::process::Command;
+
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::agreement::AgreementState;
 use crate::domain::{
-    AgreementRecord, EvidenceRef, Principle, PrincipleSource, Provenance, ProvenanceAuthority,
-    ProvenanceKind, RecordBody, RecordId, RecordRef, Rule, RuleSource, RULE_SCHEMA_V2,
-    SCHEMA_VERSION_V1,
+    Mission, Principle, PrincipleSource, RecordId, Rule, RuleSource, RULE_SCHEMA_V2,
 };
-use crate::storage::{ProjectLayout, RecordStore, StorageError};
+use crate::rulebook::{
+    self, PrincipleEntry, RetiredEntry, Revision, RuleEntry, Rulebook, RulebookError, RULEBOOK_PATH,
+};
+use crate::storage::ProjectLayout;
 
-use super::record::{agreement_record, ensure_local_change_proposal, ChangeNarrative};
 use super::{
-    bounded_input, bounded_list, bounded_request_id, domain_response, idempotency_conflict,
-    load_records, needs_input, optional_input, owner_name, project_error, resume_token,
-    stale_response, storage_error, unknown_response, utc_now, ChangeDefinition, ChangeKind,
-    ChangeRequest, ReviewRequest, ServiceResponse, ServiceState,
+    bounded_input, bounded_request_id, project_error, unknown_response, ChangeDefinition,
+    ChangeKind, ChangeRequest, ServiceResponse, ServiceState,
 };
 
 pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
@@ -33,43 +33,32 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
         Ok(request_id) => request_id,
         Err(summary) => return unknown_response("change", "invalid-request-id".into(), summary),
     };
-    let private = match crate::storage::initialize_private(&layout) {
-        Ok(repository) => repository,
-        Err(error) => return storage_error("change", request_id, error),
-    };
-    let private: &dyn RecordStore = &*private;
-    if let Some(review) = request.review.clone() {
-        return review_draft(private, request_id, &review, &request);
+    let root = layout.project_root();
+    if request.accept {
+        return accept(root, request_id, &request);
     }
-    if let Some(target) = request.retire.clone() {
-        return retire_record(&layout, private, request_id, &target, &request);
+    if request.withdraw {
+        return withdraw(root, request_id, &request);
     }
-    propose(&layout, private, request_id, &request)
+    if let Some(target) = request.retire.as_deref() {
+        return retire(root, request_id, target, &request);
+    }
+    edit(root, request_id, &request)
 }
 
-/// Without `--request-id`, the id is derived from what the change says, so the
-/// inspect-then-confirm round trip shares one id and two different changes
-/// never collide on it. The revision, token and preview flag are left out:
-/// they differ between the inspection and the confirmation.
+/// Without `--request-id`, the id is derived from what the change says, so
+/// two different changes never share one.
 fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String {
     let input = format!(
-        "{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}",
+        "{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}",
         request.kind,
         request.record_id,
         request.content,
         request.definition,
-        request.new_owner,
         request.rationale,
-        request.source,
-        request.expected_effect,
-        request.impact,
-        request
-            .review
-            .as_ref()
-            .map(|review| (&review.proposal, review.verdict)),
+        request.accept,
+        request.withdraw,
         request.retire,
-        request.examples,
-        request.conflicts,
         layout.project_id(),
     );
     format!(
@@ -78,757 +67,729 @@ fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String
     )
 }
 
-fn propose(
-    layout: &ProjectLayout,
-    private: &dyn RecordStore,
-    request_id: String,
-    request: &ChangeRequest,
-) -> ServiceResponse {
-    let id_text = request.record_id.as_deref().unwrap_or("change.pending");
-    let record_id = match RecordId::new(id_text) {
-        Ok(id) => id,
-        Err(error) => return domain_response("change", request_id, error),
-    };
-    let current = match private.latest(&record_id) {
-        Ok(current) => current,
-        Err(error) => return storage_error("change", request_id, error),
-    };
-    let current_revision = current.as_ref().map_or(0, |record| record.revision);
-    let resume = resume_token(
-        layout.project_id(),
+fn ask(request_id: String, question: impl Into<String>) -> ServiceResponse {
+    let mut response = ServiceResponse::new(
+        request_id,
         "change",
-        &format!("{request_id}:{id_text}"),
-        current_revision,
+        ServiceState::NeedsInput,
+        "More owner input is required; the rulebook was not changed.",
     );
+    response.blocking_questions = vec![question.into()];
+    response.permitted_actions = vec![
+        "wh change --kind <mission|principle|rule> --record-id <id> --content <text> --rationale <why>"
+            .into(),
+    ];
+    response
+}
+
+fn rulebook_unreadable(request_id: String, error: &RulebookError) -> ServiceResponse {
+    let mut response = ServiceResponse::new(
+        request_id,
+        "change",
+        ServiceState::Unknown,
+        format!("The rulebook was not changed: {error}"),
+    );
+    response.permitted_actions = vec![format!("repair {RULEBOOK_PATH}, then retry")];
+    response
+}
+
+/// A rule's or principle's entry as the file holds it, or the mission.
+fn entry_json(book: &Rulebook, id: &str) -> Value {
+    rulebook::entry(book, id).unwrap_or(Value::Null)
+}
+
+fn digest_of(book: &Rulebook, id: &str) -> Option<String> {
+    book.rules
+        .iter()
+        .find(|entry| entry.id.as_str() == id)
+        .map(|entry| entry.digest.as_str().to_string())
+}
+
+/// Validate `after` strictly, then write it unless this is a preview.
+fn draft(
+    root: &Path,
+    request_id: String,
+    preview: bool,
+    after: &Rulebook,
+    preview_summary: String,
+    written_summary: String,
+) -> Result<(Rulebook, ServiceResponse), Box<ServiceResponse>> {
+    if preview {
+        let checked = rulebook::render(after)
+            .and_then(|text| rulebook::parse(&text, Revision::Uncommitted))
+            .map_err(|error| Box::new(invalid_change(request_id.clone(), &error)))?;
+        let mut response = ServiceResponse::new(
+            request_id,
+            "change",
+            ServiceState::NeedsDecision,
+            preview_summary,
+        );
+        response.blocking_questions =
+            vec!["Does this exact before-and-after change express the intended decision?".into()];
+        response.permitted_actions = vec![
+            "repeat this exact request without --dry-run to write it".into(),
+            "cancel without changing the rulebook".into(),
+        ];
+        return Ok((checked, response));
+    }
+    let written = rulebook::write(root, after).map_err(|error| {
+        Box::new(match error {
+            RulebookError::Invalid(_) => invalid_change(request_id.clone(), &error),
+            other => rulebook_unreadable(request_id.clone(), &other),
+        })
+    })?;
+    let mut response =
+        ServiceResponse::new(request_id, "change", ServiceState::Success, written_summary);
+    response.permitted_actions = vec![
+        "wh change --accept".into(),
+        "wh change --withdraw".into(),
+        "wh check".into(),
+    ];
+    Ok((written, response))
+}
+
+fn invalid_change(request_id: String, error: &RulebookError) -> ServiceResponse {
+    let mut response = ServiceResponse::new(
+        request_id,
+        "change",
+        ServiceState::Conflict,
+        format!("The change would not make a valid rulebook: {error}"),
+    );
+    response.permitted_actions = vec!["correct the bounded input and submit a new request".into()];
+    response
+}
+
+fn edit(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceResponse {
+    let Some(kind) = request.kind else {
+        return ask(request_id, "Missing --kind (mission, principle or rule).");
+    };
     let missing = [
-        ("--kind", request.kind.is_none()),
-        ("--record-id", request.record_id.is_none()),
+        (
+            "--record-id",
+            kind != ChangeKind::Mission && request.record_id.is_none(),
+        ),
         ("--content", request.content.is_none()),
-        ("--rationale", request.rationale.is_none()),
+        (
+            "--rationale",
+            kind == ChangeKind::Rule && request.rationale.is_none(),
+        ),
     ]
     .into_iter()
     .filter_map(|(flag, absent)| absent.then_some(flag))
     .collect::<Vec<_>>();
-    if !missing.is_empty() || request.expected_revision.is_none() {
-        let question = if missing.is_empty() {
-            format!(
-                "Base revision {current_revision} is ready. Repeat the same request with --expected-revision {current_revision} --resume {resume} to record it (add --dry-run to preview)."
-            )
-        } else {
-            format!(
-                "Missing {}. Then repeat with --expected-revision {current_revision} --resume {resume}.",
-                missing.join(", ")
-            )
-        };
-        let mut response = needs_input(
-            "change",
-            request_id,
-            current_revision,
-            resume.clone(),
-            question,
-        );
-        response.permitted_actions = vec![format!(
-            "wh change --request-id {} --kind <mission|principle|rule> --record-id {} --content <text> --rationale <why> --expected-revision {current_revision} --resume {resume}",
-            response.request_id, id_text
-        )];
-        response.data = json!({
-            "current_record": current,
-            "base_revision": current_revision,
-            "effects": {
-                "private_record_write": true,
-                "private_proposal_write": true,
-                "team_share": false,
-                "platform_configuration_write": false,
-                "requires_later_review_to_share": true
-            }
-        });
-        return response;
+    if !missing.is_empty() {
+        return ask(request_id, format!("Missing {}.", missing.join(", ")));
     }
-    let narrative = match change_narrative(request) {
-        Ok(narrative) => narrative,
-        Err(question) => {
-            return needs_input("change", request_id, current_revision, resume, question)
-        }
+    let content = match bounded_input(request.content.clone(), "content", 16_000) {
+        Ok(content) => content,
+        Err(question) => return ask(request_id, question),
     };
-    let body = match change_body(layout, request) {
-        Ok(body) => body,
-        Err(question) => {
-            return needs_input("change", request_id, current_revision, resume, question)
-        }
+    let before = match rulebook::load(root) {
+        Ok(book) => Some(book),
+        Err(RulebookError::Missing) => None,
+        Err(error) => return rulebook_unreadable(request_id, &error),
     };
-    let existing = match private.by_idempotency_key(&request_id) {
-        Ok(existing) => existing,
-        Err(error) => return storage_error("change", request_id, error),
-    };
-    if let Some(existing) = existing.as_ref() {
-        if existing.id != record_id || existing.body != body {
-            return idempotency_conflict("change", request_id.clone(), &request_id);
-        }
-    }
-    if existing.is_none()
-        && (request.expected_revision != Some(current_revision)
-            || request.resume_token.as_deref() != Some(resume.as_str()))
-    {
-        let summary = if request.expected_revision == Some(current_revision) {
-            "The revision is current, but this exact change has not been confirmed: repeat the same command (same --request-id and content) with the returned --resume token."
-        } else if request.expected_revision.is_none() {
-            "Confirm this exact change: repeat the same command (same --request-id and content) with --expected-revision and --resume from this response."
-        } else {
-            "The change targets a stale agreement revision."
-        };
-        return stale_response("change", request_id, current_revision, resume, summary);
-    }
-    if request.preview {
-        if existing.is_some() {
-            return idempotency_conflict("change", request_id.clone(), &request_id);
-        }
-        let mut response = ServiceResponse::new(
-            request_id,
-            "change",
-            ServiceState::NeedsDecision,
-            "Review the exact draft and its bound base revision before recording it.",
-        );
-        response.expected_revision = Some(current_revision);
-        response.resume_token = Some(resume);
-        response.blocking_questions = vec![
-            "Does this exact before-and-after change express the intended decision and consequences?"
-                .into(),
-        ];
-        response.permitted_actions = vec![
-            "repeat this exact request without --dry-run to record it".into(),
-            "cancel without changing project state".into(),
-        ];
-        response.data = json!({
-            "preview_only": true,
-            "record_id": record_id,
-            "base_revision": current_revision,
-            "diff": {
-                "before": current.as_ref().map(|record| &record.body),
-                "after": &body,
+    let mut after = match (&before, kind) {
+        (Some(book), _) => book.clone(),
+        (None, ChangeKind::Mission) => Rulebook {
+            mission: Mission {
+                statement: String::new(),
+                desired_outcomes: Vec::new(),
             },
-            "explanation": narrative_json(&narrative, current.as_ref().map(|record| &record.owner)),
-            "effects": {
-                "private_record_write_on_confirm": true,
-                "private_proposal_write_on_confirm": true,
-                "team_share": false,
-                "platform_configuration_write": false,
-                "requires_later_review_to_share": true
-            }
-        });
-        return response;
-    }
-    let idempotent_replay = existing.is_some();
-    let base_revision = existing
-        .as_ref()
-        .map_or(current_revision, |record| record.revision.saturating_sub(1));
-    let (record, reference) = if let Some(existing) = existing {
-        let reference = match existing.reference() {
-            Ok(reference) => reference,
-            Err(error) => return domain_response("change", request_id, error),
-        };
-        (existing, reference)
-    } else {
-        let new_owner = request
-            .new_owner
-            .as_deref()
-            .map(|owner| bounded_input(Some(owner.to_string()), "accountable owner", 200))
-            .transpose();
-        let new_owner = match new_owner {
-            Ok(owner) => owner,
-            Err(question) => {
-                return needs_input("change", request_id, current_revision, resume, question)
-            }
-        };
-        let owner_display = new_owner
-            .or_else(|| {
-                current
-                    .as_ref()
-                    .and_then(|record| record.owner.display_name.clone())
-            })
-            .or_else(|| mission_owner(private))
-            .or_else(|| owner_name(layout.project_root()));
-        match write_draft(
-            layout,
-            private,
-            &record_id,
-            request_id.clone(),
-            body,
-            owner_display.as_deref(),
-            current.as_ref(),
-            &narrative.source,
-        ) {
-            Ok(written) => written,
-            Err(error) => return storage_error("change", request_id, error),
-        }
-    };
-    let proposal = match ensure_local_change_proposal(
-        private,
-        &record,
-        &reference,
-        &narrative,
-        base_revision,
-        &request_id,
-    ) {
-        Ok(reference) => reference,
-        Err(error) => return storage_error("change", request_id, error),
-    };
-    let before = match record.supersedes.as_ref() {
-        Some(previous) => match private.get(previous) {
-            Ok(previous) => previous.map(|record| record.body),
-            Err(error) => return storage_error("change", request_id, error),
+            principles: Vec::new(),
+            rules: Vec::new(),
+            retired: Vec::new(),
+            revision: Revision::Uncommitted,
         },
-        None => None,
-    };
-    let mut response = ServiceResponse::new(
-        request_id,
-        "change",
-        ServiceState::Success,
-        if idempotent_replay {
-            "The existing draft was returned; no duplicate was created."
-        } else {
-            "The private draft was recorded. It is not in force until you accept it; nothing was shared."
-        },
-    );
-    response.expected_revision = Some(record.revision);
-    response.permitted_actions = vec![
-        format!("wh change --accept {}", proposal.id.as_str()),
-        format!("wh change --withdraw {}", proposal.id.as_str()),
-    ];
-    response.data = json!({
-        "record": reference,
-        "proposal": proposal,
-        "shared": false,
-        "recorded": true,
-        "idempotent_replay": idempotent_replay,
-        "base_revision": base_revision,
-        "diff": {"before": before, "after": record.body},
-        "explanation": narrative_json(&narrative, Some(&record.owner)),
-    });
-    response
-}
-
-fn narrative_json(
-    narrative: &ChangeNarrative,
-    owner: Option<&crate::domain::PrincipalRef>,
-) -> serde_json::Value {
-    json!({
-        "rationale": narrative.rationale,
-        "source": narrative.source,
-        "expected_effect": narrative.expected_effect,
-        "impact": narrative.impact,
-        "examples": narrative.examples,
-        "conflicts": narrative.conflicts,
-        "owner": owner,
-    })
-}
-
-fn mission_owner(private: &dyn RecordStore) -> Option<String> {
-    RecordId::new(crate::projection::MISSION_ID)
-        .ok()
-        .and_then(|id| private.latest(&id).ok().flatten())
-        .and_then(|record| record.owner.display_name)
-}
-
-/// Append a new draft revision of `record_id` on top of `current`.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn write_draft(
-    layout: &ProjectLayout,
-    private: &dyn RecordStore,
-    record_id: &RecordId,
-    idempotency_key: String,
-    body: RecordBody,
-    owner_display: Option<&str>,
-    current: Option<&AgreementRecord>,
-    source: &str,
-) -> Result<(AgreementRecord, RecordRef), StorageError> {
-    let current_revision = current.map_or(0, |record| record.revision);
-    let mut record = agreement_record(
-        layout,
-        record_id.as_str(),
-        idempotency_key,
-        body,
-        owner_display,
-    )
-    .map_err(StorageError::Domain)?;
-    record.revision = current_revision + 1;
-    record.supersedes = current
-        .map(AgreementRecord::reference)
-        .transpose()
-        .map_err(StorageError::Domain)?;
-    record.provenance.sources = vec![EvidenceRef {
-        system: "owner_selected_source".into(),
-        locator: source.chars().take(2_000).collect(),
-        digest: None,
-    }];
-    let reference = private.append(&record, (current_revision > 0).then_some(current_revision))?;
-    Ok((record, reference))
-}
-
-fn change_narrative(request: &ChangeRequest) -> Result<ChangeNarrative, String> {
-    Ok(ChangeNarrative {
-        rationale: bounded_input(request.rationale.clone(), "rationale", 4_000)?,
-        source: optional_input(request.source.clone(), "source", 2_048, "owner")?,
-        expected_effect: optional_input(
-            request.expected_effect.clone(),
-            "expected effect",
-            4_000,
-            "not stated",
-        )?,
-        impact: optional_input(request.impact.clone(), "impact", 4_000, "not stated")?,
-        examples: bounded_list(&request.examples, "examples", 16, 2_000)?,
-        conflicts: bounded_list(&request.conflicts, "conflicts", 16, 2_000)?,
-    })
-}
-
-fn change_body(layout: &ProjectLayout, request: &ChangeRequest) -> Result<RecordBody, String> {
-    let kind = request.kind.ok_or_else(|| "Provide kind.".to_string())?;
-    let content = bounded_input(request.content.clone(), "content", 16_000)?;
-    let rationale = request
-        .rationale
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("Owner-authored change.")
-        .trim()
-        .to_string();
-    Ok(match kind {
-        ChangeKind::Mission => RecordBody::Mission(crate::domain::Mission {
-            statement: content,
-            desired_outcomes: Vec::new(),
-        }),
-        ChangeKind::Principle => {
-            let (pstack, principle_rationale) = match request.definition.as_deref() {
-                Some(ChangeDefinition::Principle { pstack, rationale }) => {
-                    (pstack.clone(), rationale.clone())
-                }
-                None => (None, None),
-                Some(_) => return Err(
-                    "A principle's definition is {\"type\": \"principle\", \"pstack\": \"<id>\"}."
-                        .into(),
-                ),
-            };
-            let source = match pstack {
-                Some(id) => {
-                    let catalogue = crate::catalogue::catalogue();
-                    if catalogue.get(&id).is_none() {
-                        return Err(format!(
-                            "{id} is not a principle in the catalogue (version {}); pick one of its ids or leave pstack out for your own.",
-                            catalogue.version
-                        ));
-                    }
-                    PrincipleSource::Pstack {
-                        id,
-                        version: catalogue.version,
-                    }
-                }
-                None => PrincipleSource::Custom,
-            };
-            let principle = Principle {
-                statement: content,
-                source,
-                rationale: principle_rationale.or(Some(rationale)),
-            };
-            RecordBody::Principle(principle)
-        }
-        ChangeKind::Rule => {
-            let Some(ChangeDefinition::Rule {
-                strength,
-                enforcer,
-                examples,
-                source,
-                paths,
-                sweep,
-                sweep_priority,
-                sweep_unsure,
-            }) = request.definition.as_deref()
-            else {
-                return Err("Provide the rule's strength and its one enforcer as a rule definition: {\"type\": \"rule\", \"strength\": \"must\", \"enforcer\": {\"kind\": \"test\", \"command\": \"cargo test\"}}.".into());
-            };
-            if let crate::domain::Enforcer::Test { command }
-            | crate::domain::Enforcer::Validator { command } = enforcer
-            {
-                crate::gates::parse_command(command)?;
-            }
-            let source = source.clone().unwrap_or_else(RuleSource::owner);
-            let rule = Rule {
-                schema: RULE_SCHEMA_V2.into(),
-                statement: content,
-                rationale,
-                strength: *strength,
-                enforcer: enforcer.clone(),
-                examples: examples.clone(),
-                source,
-                paths: paths.clone(),
-                sweep: *sweep,
-                sweep_priority: *sweep_priority,
-                sweep_unsure: sweep_unsure.clone(),
-            };
-            // How far a sweep may reach over this rule's flags is a person's
-            // call: an agent never widens it.
-            if request.actor != crate::domain::ActorKind::Person {
-                let current = request
-                    .record_id
-                    .as_deref()
-                    .and_then(|id| RecordId::new(id).ok())
-                    .and_then(|id| {
-                        let state = state_of(layout).ok()?;
-                        let class = state.in_force(&id)?.body.rule_view()?.sweep_class();
-                        Some(class)
-                    })
-                    .unwrap_or_default();
-                if rule.sweep_class().reach() > current.reach() {
-                    return Err(format!(
-                        "An agent cannot widen how a sweep works this rule (from {} to {}); a person sets the sweep class.",
-                        current.label(),
-                        rule.sweep_class().label()
-                    ));
-                }
-            }
-            rule.validate()
-                .map_err(|error| format!("The rule is not valid: {error}"))?;
-            RecordBody::Rule(rule)
-        }
-    })
-}
-
-fn state_of(layout: &ProjectLayout) -> Result<AgreementState, StorageError> {
-    Ok(AgreementState::from_records(
-        load_records(layout)?.union().0,
-    ))
-}
-
-pub(crate) fn review_draft(
-    private: &dyn RecordStore,
-    request_id: String,
-    review: &ReviewRequest,
-    request: &ChangeRequest,
-) -> ServiceResponse {
-    use crate::domain::{LocalReview, LocalReviewVerdict, LOCAL_REVIEW_ASSURANCE};
-    let key = format!("review:{request_id}:{}", review.proposal);
-    match private.by_idempotency_key(&key) {
-        Ok(Some(existing)) => {
-            let mut response = ServiceResponse::new(
+        (None, _) => {
+            return ask(
                 request_id,
-                "change",
-                ServiceState::Success,
-                "The existing review was returned; no duplicate was created.",
-            );
-            response.data = json!({"review": existing.reference().ok(), "idempotent_replay": true});
-            return response;
+                format!("{RULEBOOK_PATH} does not exist yet. Set the mission first: wh change --kind mission --content <text>."),
+            )
         }
-        Ok(None) => {}
-        Err(error) => return storage_error("change", request_id, error),
-    }
-    let records = match private.all_records() {
-        Ok(records) => records,
-        Err(error) => return storage_error("change", request_id, error),
     };
-    let state = AgreementState::from_records(records);
-    let pending = state.pending_proposals();
-    let Some(target) = pending
-        .iter()
-        .find(|pending| pending.proposal.id.as_str() == review.proposal)
-    else {
-        let mut response = needs_input(
-            "change",
-            request_id,
-            0,
-            String::new(),
-            if pending.is_empty() {
-                format!(
-                    "{} is not a pending draft; nothing awaits review.",
-                    review.proposal
-                )
+    let id = match kind {
+        ChangeKind::Mission => {
+            if request.rationale.is_some() {
+                return ask(
+                    request_id,
+                    "The mission has no rationale in the rulebook; give the reason when you accept: wh change --accept --rationale <why>.",
+                );
+            }
+            after.mission.statement = content;
+            "mission".to_string()
+        }
+        ChangeKind::Principle | ChangeKind::Rule => {
+            let id_text = request.record_id.clone().unwrap_or_default();
+            let id = match RecordId::new(id_text.trim()) {
+                Ok(id) => id,
+                Err(error) => return ask(request_id, format!("--record-id: {error}")),
+            };
+            let (taken, other) = match kind {
+                ChangeKind::Rule => (
+                    after.principles.iter().any(|entry| entry.id == id),
+                    "principle",
+                ),
+                _ => (after.rules.iter().any(|entry| entry.id == id), "rule"),
+            };
+            if taken {
+                return ask(
+                    request_id,
+                    format!(
+                        "{} is already a {other} in the rulebook; pick another id.",
+                        id.as_str()
+                    ),
+                );
+            }
+            if kind == ChangeKind::Rule {
+                let current = after.rules.iter().find(|entry| entry.id == id);
+                let entry = match rule_of(request, content, current.map(|entry| &entry.rule)) {
+                    Ok(rule) => RuleEntry::new(id.clone(), rule),
+                    Err(question) => return ask(request_id, question),
+                };
+                match entry {
+                    Ok(entry) => {
+                        after.rules.retain(|entry| entry.id != id);
+                        after.rules.push(entry);
+                    }
+                    Err(error) => return invalid_change(request_id, &error),
+                }
             } else {
-                format!(
-                    "{} is not a pending draft. Pending: {}.",
-                    review.proposal,
-                    pending
-                        .iter()
-                        .map(|pending| pending.proposal.id.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            },
-        );
-        response.expected_revision = None;
-        response.resume_token = None;
-        response.data = json!({
-            "pending": pending.iter().map(|pending| json!({
-                "proposal": pending.proposal.id.as_str(),
-                "title": crate::projection::record_title(pending.proposal),
-            })).collect::<Vec<_>>(),
-        });
-        return response;
+                let principle = match principle_of(request, content) {
+                    Ok(principle) => principle,
+                    Err(question) => return ask(request_id, question),
+                };
+                after.principles.retain(|entry| entry.id != id);
+                after.principles.push(PrincipleEntry {
+                    id: id.clone(),
+                    principle,
+                });
+            }
+            after.retired.retain(|entry| entry.id != id);
+            id.as_str().to_string()
+        }
     };
-    let proposal_ref = match target.proposal.reference() {
-        Ok(reference) => reference,
-        Err(error) => return domain_response("change", request_id, error),
-    };
-    let rationale = request
-        .rationale
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map_or_else(
-            || match review.verdict {
-                LocalReviewVerdict::Accept => "Explicit solo acceptance by the owner.".to_string(),
-                LocalReviewVerdict::Withdraw => "Withdrawn by the owner.".to_string(),
-            },
-            |value| value.chars().take(4_000).collect(),
-        );
-    let reviewer = target.proposal.owner.clone();
-    let suffix = &format!("{:x}", Sha256::digest(key.as_bytes()))[..24];
-    let record = AgreementRecord {
-        schema_version: SCHEMA_VERSION_V1,
-        id: match RecordId::new(format!("review.{suffix}")) {
-            Ok(id) => id,
-            Err(error) => return domain_response("change", request_id, error),
-        },
-        revision: 1,
-        scope: target.proposal.scope.clone(),
-        owner: reviewer.clone(),
-        provenance: Provenance {
-            kind: ProvenanceKind::HumanAuthored,
-            recorded_by: reviewer.clone(),
-            recorded_at: utc_now(),
-            sources: vec![EvidenceRef {
-                system: "whetstone_cli".into(),
-                locator: "explicit_owner_review".into(),
-                digest: None,
-            }],
-            authority: ProvenanceAuthority::OwnerAuthored,
-        },
-        supersedes: None,
-        idempotency_key: key,
-        body: RecordBody::LocalReview(LocalReview {
-            proposal: proposal_ref.clone(),
-            verdict: review.verdict,
-            reviewer,
-            assurance: LOCAL_REVIEW_ASSURANCE.into(),
-            rationale: rationale.clone(),
-            reviewed_at: utc_now(),
-            team_activation_permitted: false,
-            cites: Vec::new(),
-        }),
-    };
-    let candidates = target
-        .candidates
-        .iter()
-        .map(|candidate| {
-            json!({
-                "record": candidate.id.as_str(),
-                "version": candidate.revision,
-                "title": crate::projection::record_title(candidate),
-                "replaces": state.in_force(&candidate.id).map(|current| current.revision),
-            })
-        })
-        .collect::<Vec<_>>();
-    let verb = match review.verdict {
-        LocalReviewVerdict::Accept => "accept",
-        LocalReviewVerdict::Withdraw => "withdraw",
-    };
-    if request.preview {
+    let reinstated = before
+        .as_ref()
+        .is_some_and(|book| book.retired.iter().any(|entry| entry.id.as_str() == id));
+    let diff = json!({
+        "before": before.as_ref().map_or(Value::Null, |book| entry_json(book, &id)),
+        "after": entry_json(&after, &id),
+    });
+    if before
+        .as_ref()
+        .is_some_and(|book| entry_json(book, &id) == diff["after"] && !reinstated)
+    {
         let mut response = ServiceResponse::new(
             request_id,
             "change",
-            ServiceState::NeedsDecision,
-            format!("Review the exact effect before you {verb} this draft."),
+            ServiceState::Success,
+            format!("The rulebook already says this about {id}; nothing was written."),
         );
-        response.permitted_actions = vec!["repeat without --dry-run to record the review".into()];
         response.data = json!({
-            "preview_only": true,
-            "proposal": proposal_ref,
-            "verdict": verb,
-            "candidates": candidates,
-            "effects": {
-                "private_record_write_on_confirm": true,
-                "becomes_in_force": review.verdict == LocalReviewVerdict::Accept,
-                "team_share": false,
-            },
+            "record_id": id,
+            "path": RULEBOOK_PATH,
+            "written": false,
+            "diff": diff,
         });
         return response;
     }
-    let reference = match private.append(&record, None) {
-        Ok(reference) => reference,
-        Err(error) => return storage_error("change", request_id, error),
-    };
-    let mut response = ServiceResponse::new(
+    let (written, mut response) = match draft(
+        root,
         request_id,
-        "change",
-        ServiceState::Success,
-        match review.verdict {
-            LocalReviewVerdict::Accept => {
-                "The draft was accepted and is now in force for this agreement; nothing was shared."
-            }
-            LocalReviewVerdict::Withdraw => {
-                "The draft was withdrawn; the previously accepted record stays in force."
-            }
-        },
-    );
-    response.permitted_actions = vec!["wh check".into(), "wh init --action wire".into()];
+        request.preview,
+        &after,
+        format!("Review the exact change to {id} before it is written to {RULEBOOK_PATH}."),
+        format!("{RULEBOOK_PATH} now holds the change to {id}. It is a draft until you accept it, which commits the file."),
+    ) {
+        Ok(drafted) => drafted,
+        Err(response) => return *response,
+    };
     response.data = json!({
-        "review": reference,
-        "proposal": proposal_ref,
-        "verdict": verb,
-        "candidates": candidates,
-        "rationale": rationale,
-        "shared": false,
+        "record_id": id,
+        "path": RULEBOOK_PATH,
+        "preview_only": request.preview,
+        "written": !request.preview,
+        "reinstated": reinstated,
+        "revision": written.revision,
+        "diff": diff,
+        "digest": {
+            "before": before.as_ref().and_then(|book| digest_of(book, &id)),
+            "after": digest_of(&written, &id),
+        },
     });
     response
 }
 
-/// Record a private draft that retires an accepted record. Accepting it takes
-/// the record out of force; every revision stays in history.
-pub(crate) fn retire_record(
-    layout: &ProjectLayout,
-    private: &dyn RecordStore,
+fn principle_of(request: &ChangeRequest, content: String) -> Result<Principle, String> {
+    let (pstack, rationale) = match request.definition.as_deref() {
+        Some(ChangeDefinition::Principle { pstack, rationale }) => {
+            (pstack.clone(), rationale.clone())
+        }
+        None => (None, None),
+        Some(_) => {
+            return Err(
+                "A principle's definition is {\"type\": \"principle\", \"pstack\": \"<id>\"}."
+                    .into(),
+            )
+        }
+    };
+    let source = match pstack {
+        Some(id) => {
+            let catalogue = crate::catalogue::catalogue();
+            if catalogue.get(&id).is_none() {
+                return Err(format!(
+                    "{id} is not a principle in the catalogue (version {}); pick one of its ids or leave pstack out for your own.",
+                    catalogue.version
+                ));
+            }
+            PrincipleSource::Pstack {
+                id,
+                version: catalogue.version,
+            }
+        }
+        None => PrincipleSource::Custom,
+    };
+    let rationale = rationale
+        .or_else(|| request.rationale.clone())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    Ok(Principle {
+        statement: content,
+        source,
+        rationale,
+    })
+}
+
+fn rule_of(
+    request: &ChangeRequest,
+    content: String,
+    current: Option<&Rule>,
+) -> Result<Rule, String> {
+    let Some(ChangeDefinition::Rule {
+        strength,
+        enforcer,
+        examples,
+        source,
+        paths,
+        sweep,
+        sweep_priority,
+        sweep_unsure,
+    }) = request.definition.as_deref()
+    else {
+        return Err("Provide the rule's strength and its one enforcer as a rule definition: {\"type\": \"rule\", \"strength\": \"must\", \"enforcer\": {\"kind\": \"test\", \"command\": \"cargo test\"}}.".into());
+    };
+    if let crate::domain::Enforcer::Test { command }
+    | crate::domain::Enforcer::Validator { command } = enforcer
+    {
+        crate::gates::parse_command(command)?;
+    }
+    let rule = Rule {
+        schema: RULE_SCHEMA_V2.into(),
+        statement: content,
+        rationale: bounded_input(request.rationale.clone(), "rationale", 4_000)?,
+        strength: *strength,
+        enforcer: enforcer.clone(),
+        examples: examples.clone(),
+        source: source.clone().unwrap_or_else(RuleSource::owner),
+        paths: paths.clone(),
+        sweep: *sweep,
+        sweep_priority: *sweep_priority,
+        sweep_unsure: sweep_unsure.clone(),
+    };
+    // How far a sweep may reach over this rule's flags is a person's call:
+    // an agent never widens it.
+    if request.actor != crate::domain::ActorKind::Person {
+        let current = current.map(Rule::sweep_class).unwrap_or_default();
+        if rule.sweep_class().reach() > current.reach() {
+            return Err(format!(
+                "An agent cannot widen how a sweep works this rule (from {} to {}); a person sets the sweep class.",
+                current.label(),
+                rule.sweep_class().label()
+            ));
+        }
+    }
+    rule.validate()
+        .map_err(|error| format!("The rule is not valid: {error}"))?;
+    Ok(rule)
+}
+
+/// Take a rule or principle out of the rulebook and record why in its
+/// `retired` list. The entry itself stays in Git history.
+fn retire(
+    root: &Path,
     request_id: String,
     target: &str,
     request: &ChangeRequest,
 ) -> ServiceResponse {
-    let target_id = match RecordId::new(target) {
-        Ok(id) => id,
-        Err(error) => return domain_response("change", request_id, error),
+    let before = match rulebook::load(root) {
+        Ok(book) => book,
+        Err(error) => return rulebook_unreadable(request_id, &error),
     };
-    let records = match private.all_records() {
-        Ok(records) => records,
-        Err(error) => return storage_error("change", request_id, error),
-    };
-    let state = AgreementState::from_records(records);
-    let Some(current) = state.in_force(&target_id) else {
-        return needs_input(
-            "change",
-            request_id,
-            0,
-            String::new(),
-            format!("{target} is not an accepted record in force, so there is nothing to retire."),
-        );
-    };
-    let rationale = match bounded_input(request.rationale.clone(), "rationale", 4_000) {
-        Ok(rationale) => rationale,
-        Err(question) => return needs_input("change", request_id, 0, String::new(), question),
-    };
-    let target_ref = match current.reference() {
-        Ok(reference) => reference,
-        Err(error) => return domain_response("change", request_id, error),
-    };
-    let retirement_id = {
-        let candidate = format!("retirement.{target}");
-        if candidate.len() <= 96 {
-            candidate
-        } else {
-            format!(
-                "retirement.{}",
-                &format!("{:x}", Sha256::digest(target.as_bytes()))[..32]
+    let reason = match bounded_input(request.rationale.clone(), "rationale", 4_000) {
+        Ok(reason) => reason,
+        Err(question) => {
+            return ask(
+                request_id,
+                format!("{question} Say why {target} is retired."),
             )
         }
     };
-    let retirement_id = match RecordId::new(retirement_id) {
-        Ok(id) => id,
-        Err(error) => return domain_response("change", request_id, error),
+    let title = before
+        .rules
+        .iter()
+        .find(|entry| entry.id.as_str() == target)
+        .map(|entry| entry.rule.statement.clone())
+        .or_else(|| {
+            before
+                .principles
+                .iter()
+                .find(|entry| entry.id.as_str() == target)
+                .map(|entry| entry.principle.statement.clone())
+        });
+    let (Some(title), Ok(id)) = (title, RecordId::new(target)) else {
+        let retired = before
+            .retired
+            .iter()
+            .any(|entry| entry.id.as_str() == target);
+        return ask(
+            request_id,
+            if retired {
+                format!("{target} is already retired.")
+            } else {
+                format!("{target} is not a rule or principle in {RULEBOOK_PATH}, so there is nothing to retire.")
+            },
+        );
     };
-    let existing = match private.by_idempotency_key(&request_id) {
-        Ok(existing) => existing,
-        Err(error) => return storage_error("change", request_id, error),
-    };
-    let body = RecordBody::Retirement(crate::domain::Retirement {
-        target: target_ref.clone(),
-        reason: rationale.clone(),
-        replacement: None,
+    let mut after = before.clone();
+    after.rules.retain(|entry| entry.id != id);
+    after.principles.retain(|entry| entry.id != id);
+    after.retired.push(RetiredEntry {
+        id,
+        reason: reason.clone(),
     });
-    let previous = state.latest(&retirement_id).cloned();
-    let (record, reference) = match existing {
-        Some(existing) if existing.id == retirement_id && existing.body == body => {
-            match existing.reference() {
-                Ok(reference) => (existing, reference),
-                Err(error) => return domain_response("change", request_id, error),
-            }
-        }
-        Some(_) => return idempotency_conflict("change", request_id.clone(), &request_id),
-        None => {
-            let mut record = match agreement_record(
-                layout,
-                retirement_id.as_str(),
-                request_id.clone(),
-                body,
-                current.owner.display_name.as_deref(),
-            ) {
-                Ok(record) => record,
-                Err(error) => return domain_response("change", request_id, error),
-            };
-            record.revision = previous.as_ref().map_or(1, |record| record.revision + 1);
-            record.supersedes = match previous.as_ref().map(AgreementRecord::reference) {
-                Some(Ok(reference)) => Some(reference),
-                Some(Err(error)) => return domain_response("change", request_id, error),
-                None => None,
-            };
-            if request.preview {
-                let mut response = ServiceResponse::new(
-                    request_id,
-                    "change",
-                    ServiceState::NeedsDecision,
-                    format!("Review the exact effect before you retire {target}."),
-                );
-                response.permitted_actions =
-                    vec!["repeat without --dry-run to record the retirement draft".into()];
-                response.data = json!({
-                    "preview_only": true,
-                    "retire": target_ref,
-                    "title": crate::projection::record_title(current),
-                    "effects": {
-                        "private_record_write_on_confirm": true,
-                        "leaves_force_on_accept": true,
-                        "history_preserved": true,
-                        "team_share": false,
-                    },
-                });
-                return response;
-            }
-            let reference =
-                match private.append(&record, previous.as_ref().map(|record| record.revision)) {
-                    Ok(reference) => reference,
-                    Err(error) => return storage_error("change", request_id, error),
-                };
-            (record, reference)
-        }
-    };
-    let narrative = ChangeNarrative {
-        rationale,
-        source: "owner".into(),
-        expected_effect: format!("{target} leaves force and the sweep; its history stays."),
-        impact: "not stated".into(),
-        examples: Vec::new(),
-        conflicts: Vec::new(),
-    };
-    let proposal = match ensure_local_change_proposal(
-        private,
-        &record,
-        &reference,
-        &narrative,
-        current.revision,
-        &request_id,
+    let (written, mut response) = match draft(
+        root,
+        request_id,
+        request.preview,
+        &after,
+        format!("Review the exact effect before {target} is retired."),
+        format!("{target} is out of {RULEBOOK_PATH} and its retirement is recorded there. It is a draft until you accept it, which commits the file."),
     ) {
-        Ok(reference) => reference,
-        Err(error) => return storage_error("change", request_id, error),
+        Ok(drafted) => drafted,
+        Err(response) => return *response,
+    };
+    response.data = json!({
+        "retire": target,
+        "title": title,
+        "reason": reason,
+        "path": RULEBOOK_PATH,
+        "preview_only": request.preview,
+        "written": !request.preview,
+        "revision": written.revision,
+        "diff": {"before": entry_json(&before, target), "after": Value::Null},
+        "digest": {"before": digest_of(&before, target), "after": Value::Null},
+    });
+    response
+}
+
+fn git(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .map_err(|error| format!("git could not start: {error}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        let mut message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if message.is_empty() {
+            message = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        }
+        Err(format!("git {} failed: {message}", args[0]))
+    }
+}
+
+fn git_failed(request_id: String, error: String) -> ServiceResponse {
+    let mut response = ServiceResponse::new(
+        request_id,
+        "change",
+        ServiceState::Unknown,
+        format!("The operation stopped without partial success: {error}"),
+    );
+    response.permitted_actions = vec!["fix what Git reported, then retry the same request".into()];
+    response
+}
+
+/// The rulebook as last committed, if it was ever committed. `Err` holds the
+/// reader's complaint about a committed file it cannot read.
+fn committed(root: &Path) -> Option<Result<Rulebook, RulebookError>> {
+    let text = git(root, &["show", &format!("HEAD:{RULEBOOK_PATH}")]).ok()?;
+    let commit = git(root, &["log", "-1", "--format=%H", "--", RULEBOOK_PATH])
+        .map(|commit| commit.trim().to_string())
+        .unwrap_or_default();
+    Some(rulebook::parse(&text, Revision::Commit(commit)))
+}
+
+/// The edits from one rulebook to another (from nothing when `before` is
+/// absent), each as the edit and its detail: `add rule.x` with the digest,
+/// `retire rule.y` with the reason, and so on.
+fn changes(before: Option<&Rulebook>, after: &Rulebook) -> Vec<(String, String)> {
+    let mut lines = Vec::new();
+    let Some(before) = before else {
+        lines.push(("set the mission".into(), String::new()));
+        let empty = Rulebook {
+            principles: Vec::new(),
+            rules: Vec::new(),
+            retired: Vec::new(),
+            ..after.clone()
+        };
+        lines.extend(changes(Some(&empty), after));
+        return lines;
+    };
+    if before.mission.statement != after.mission.statement {
+        lines.push(("change the mission".into(), String::new()));
+    }
+    let ids = |book: &Rulebook| {
+        book.principles
+            .iter()
+            .map(|entry| entry.id.as_str().to_string())
+            .chain(book.rules.iter().map(|entry| entry.id.as_str().to_string()))
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    for id in ids(before).union(&ids(after)) {
+        let (old, new) = (entry_json(before, id), entry_json(after, id));
+        let digests = (digest_of(before, id), digest_of(after, id));
+        if old.is_null() {
+            let detail = digests
+                .1
+                .map(|digest| format!(" ({digest})"))
+                .unwrap_or_default();
+            lines.push((format!("add {id}"), detail));
+        } else if new.is_null() {
+            match after.retired.iter().find(|entry| entry.id.as_str() == id) {
+                Some(retired) => {
+                    lines.push((format!("retire {id}"), format!(": {}", retired.reason)))
+                }
+                None => lines.push((format!("remove {id}"), String::new())),
+            }
+        } else if old != new {
+            let detail = match digests {
+                (Some(old), Some(new)) => format!(" ({old} -> {new})"),
+                _ => String::new(),
+            };
+            lines.push((format!("change {id}"), detail));
+        }
+    }
+    lines
+}
+
+/// The commit message: a subject naming the edits and a body with the
+/// owner's reason, each edit, the new digests and the retirement reasons.
+fn message(edits: &[(String, String)], rationale: Option<&str>) -> (String, String) {
+    let subject = match edits {
+        [(only, _)] => match only.split_once(' ') {
+            Some(("add", id)) => format!("Add {id} to the rulebook"),
+            Some(("change", "the mission")) => "Change the rulebook's mission".into(),
+            Some((verb @ ("retire" | "remove"), id)) => {
+                format!("{} {id} from the rulebook", capitalized(verb))
+            }
+            _ => format!("{} in the rulebook", capitalized(only)),
+        },
+        _ => {
+            let listed = format!(
+                "Change the rulebook: {}",
+                edits
+                    .iter()
+                    .map(|(edit, _)| edit.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            if listed.len() <= 72 {
+                listed
+            } else {
+                format!("Change the rulebook: {} edits", edits.len())
+            }
+        }
+    };
+    let mut body = rationale
+        .map(str::trim)
+        .filter(|rationale| !rationale.is_empty())
+        .map(|rationale| format!("{rationale}\n\n"))
+        .unwrap_or_default();
+    for (edit, detail) in edits {
+        body.push_str(&format!("{}{detail}\n", capitalized(edit)));
+    }
+    (subject, body.trim_end().to_string())
+}
+
+fn capitalized(text: &str) -> String {
+    let mut characters = text.chars();
+    characters
+        .next()
+        .map(|first| first.to_uppercase().chain(characters).collect())
+        .unwrap_or_default()
+}
+
+fn uncommitted(root: &Path) -> Result<bool, String> {
+    git(
+        root,
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--",
+            RULEBOOK_PATH,
+        ],
+    )
+    .map(|status| !status.trim().is_empty())
+}
+
+/// Accept the drafted edits: commit the rulebook file, and only it.
+fn accept(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceResponse {
+    match uncommitted(root) {
+        Ok(true) => {}
+        Ok(false) => {
+            return ask(
+                request_id,
+                format!("{RULEBOOK_PATH} has no uncommitted edit, so there is nothing to accept."),
+            )
+        }
+        Err(error) => return git_failed(request_id, error),
+    }
+    let current = match rulebook::load(root) {
+        Ok(book) => book,
+        Err(error) => return rulebook_unreadable(request_id, &error),
+    };
+    let edits = match committed(root) {
+        Some(Ok(head)) => changes(Some(&head), &current),
+        Some(Err(_)) => vec![(
+            "replace the unreadable committed rulebook".into(),
+            String::new(),
+        )],
+        None => changes(None, &current),
+    };
+    let rationale = request.rationale.as_deref();
+    if rationale.is_some_and(|value| value.len() > 4_000) {
+        return ask(request_id, "rationale exceeds the 4000-byte limit.");
+    }
+    let (subject, body) = message(&edits, rationale);
+    let listed = edits
+        .iter()
+        .map(|(edit, detail)| format!("{edit}{detail}"))
+        .collect::<Vec<_>>();
+    if request.preview {
+        let mut response = ServiceResponse::new(
+            request_id,
+            "change",
+            ServiceState::NeedsDecision,
+            format!("Review the commit before {RULEBOOK_PATH} is accepted."),
+        );
+        response.permitted_actions = vec!["repeat without --dry-run to commit it".into()];
+        response.data = json!({
+            "preview_only": true,
+            "path": RULEBOOK_PATH,
+            "message": {"subject": subject, "body": body},
+            "changes": listed,
+        });
+        return response;
+    }
+    let mut commit = vec!["commit", "--quiet", "-m", subject.as_str()];
+    if !body.is_empty() {
+        commit.extend(["-m", body.as_str()]);
+    }
+    commit.extend(["--", RULEBOOK_PATH]);
+    let committed = git(root, &["add", "--", RULEBOOK_PATH])
+        .and_then(|_| git(root, &commit))
+        .and_then(|_| git(root, &["rev-parse", "HEAD"]));
+    let commit = match committed {
+        Ok(commit) => commit.trim().to_string(),
+        Err(error) => return git_failed(request_id, error),
     };
     let mut response = ServiceResponse::new(
         request_id,
         "change",
         ServiceState::Success,
         format!(
-            "A private draft to retire {target} was recorded. It stays in force until you accept the retirement; history is never deleted."
+            "Accepted: {RULEBOOK_PATH} was committed as {}. Share it the way you share any commit.",
+            &commit[..12.min(commit.len())]
         ),
     );
-    response.permitted_actions = vec![
-        format!("wh change --accept {}", proposal.id.as_str()),
-        format!("wh change --withdraw {}", proposal.id.as_str()),
-    ];
+    response.permitted_actions = vec!["wh check".into(), "git push".into()];
     response.data = json!({
-        "record": reference,
-        "proposal": proposal,
-        "retires": target_ref,
-        "title": crate::projection::record_title(current),
-        "shared": false,
+        "path": RULEBOOK_PATH,
+        "commit": commit,
+        "revision": commit,
+        "message": {"subject": subject, "body": body},
+        "changes": listed,
+    });
+    response
+}
+
+/// Withdraw the drafted edits: restore the rulebook to its last commit.
+fn withdraw(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceResponse {
+    let Some(head) = committed(root) else {
+        return ask(
+            request_id,
+            format!("{RULEBOOK_PATH} was never committed, so there is no accepted rulebook to go back to."),
+        );
+    };
+    match uncommitted(root) {
+        Ok(true) => {}
+        Ok(false) => {
+            return ask(
+                request_id,
+                format!(
+                    "{RULEBOOK_PATH} has no uncommitted edit, so there is nothing to withdraw."
+                ),
+            )
+        }
+        Err(error) => return git_failed(request_id, error),
+    }
+    let edits = match (head, rulebook::load(root)) {
+        (Ok(head), Ok(current)) => changes(Some(&head), &current),
+        _ => vec![("restore the rulebook as committed".into(), String::new())],
+    };
+    let listed = edits
+        .into_iter()
+        .map(|(edit, detail)| format!("{edit}{detail}"))
+        .collect::<Vec<_>>();
+    if request.preview {
+        let mut response = ServiceResponse::new(
+            request_id,
+            "change",
+            ServiceState::NeedsDecision,
+            format!("Review the edits that withdrawing discards from {RULEBOOK_PATH}."),
+        );
+        response.permitted_actions = vec!["repeat without --dry-run to withdraw them".into()];
+        response.data = json!({"preview_only": true, "path": RULEBOOK_PATH, "discards": listed});
+        return response;
+    }
+    if let Err(error) = git(
+        root,
+        &[
+            "restore",
+            "--source=HEAD",
+            "--staged",
+            "--worktree",
+            "--",
+            RULEBOOK_PATH,
+        ],
+    ) {
+        return git_failed(request_id, error);
+    }
+    let mut response = ServiceResponse::new(
+        request_id,
+        "change",
+        ServiceState::Success,
+        format!("The drafted edits were withdrawn; {RULEBOOK_PATH} is as last committed."),
+    );
+    response.permitted_actions = vec!["wh check".into()];
+    response.data = json!({
+        "path": RULEBOOK_PATH,
+        "discarded": listed,
+        "revision": rulebook::revision(root),
     });
     response
 }

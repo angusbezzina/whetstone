@@ -8,7 +8,6 @@ pub mod dashboard_service;
 pub mod domain;
 pub mod execution;
 pub mod gates;
-pub mod history;
 mod output;
 pub mod projection;
 pub mod rulebook;

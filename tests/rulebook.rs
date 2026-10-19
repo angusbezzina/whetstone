@@ -92,7 +92,8 @@ fn the_published_schema_names_exactly_the_fields_the_reader_accepts() {
         "schema": RULEBOOK_SCHEMA,
         "mission": {"statement": "Ship code people can trust."},
         "principles": [full_principle],
-        "rules": [full_rule]
+        "rules": [full_rule],
+        "retired": [{"id": "rule.retired", "reason": "Superseded by rule.full."}]
     });
     rulebook::parse(&book.to_string(), Revision::Uncommitted).expect("every field parses");
     assert_eq!(keys(&schema["properties"]), keys(&book));
@@ -110,7 +111,12 @@ fn the_published_schema_names_exactly_the_fields_the_reader_accepts() {
         keys(&defs["sweep_unsure"]["properties"]),
         keys(&book["rules"][0]["sweep_unsure"][0])
     );
+    assert_eq!(
+        keys(&defs["retired"]["properties"]),
+        keys(&book["retired"][0])
+    );
     for name in [
+        "retired",
         "rule",
         "principle",
         "sweep_unsure",

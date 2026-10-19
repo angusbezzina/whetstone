@@ -1,9 +1,9 @@
 //! The virgil store needs no `bd`: with `whetstone/store.json` naming
 //! Virgil and a PATH holding only the fake `virgil` (tests/fake_virgil.py)
-//! and the basic tools, init, change and dash run end to end, drafts land in the rulebook's private scope,
-//! accepted records reach its repository scope when they are accepted, `wh
-//! push` and `wh pull` are refused by name (their dry runs succeed), and no
-//! `.beads` appears.
+//! and the basic tools, init and dash run end to end, the accepted
+//! agreement reaches the rulebook's repository scope, `wh push` and `wh
+//! pull` are refused by name (their dry runs succeed), and no `.beads`
+//! appears.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -163,88 +163,9 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
         "{agreed}"
     );
 
-    let change = |request_id: &str, id: &str, content: &str| {
-        let definition = r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"git --version"}}"#;
-        let base = [
-            "change",
-            "--json",
-            "--request-id",
-            request_id,
-            "--kind",
-            "rule",
-            "--record-id",
-            id,
-            "--content",
-            content,
-            "--rationale",
-            "Git answers.",
-            "--definition",
-            definition,
-        ];
-        let probe = json_of(&wh(&base));
-        let revision = probe["expected_revision"]
-            .as_u64()
-            .expect("revision")
-            .to_string();
-        let resume = probe["resume_token"].as_str().expect("token").to_string();
-        let mut args = base.to_vec();
-        args.extend(["--expected-revision", &revision, "--resume", &resume]);
-        json_of(&wh(&args))
-    };
-    let changed = change("c1", "rule.git-answers", "Git answers.");
-    assert_eq!(changed["state"], "success", "{changed}");
-    let proposal = changed["data"]["proposal"]["id"]
-        .as_str()
-        .expect("proposal")
-        .to_string();
-    let state = |root: &Path| -> Value {
-        serde_json::from_str(
-            &fs::read_to_string(root.join(".fake-virgil/state.json")).expect("state"),
-        )
-        .expect("json")
-    };
-    let scope_ids = |root: &Path, scope: &str| -> Vec<String> {
-        state(root)["rulebook"][scope]
-            .as_array()
-            .map(|records| {
-                records
-                    .iter()
-                    .filter_map(|record| record["record_id"].as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-    let shared_ids = |root: &Path| scope_ids(root, "repository");
-    assert!(
-        scope_ids(&root, "private").contains(&"rule.git-answers".to_string()),
-        "the draft is in the private scope"
-    );
-    assert!(
-        !shared_ids(&root).contains(&"rule.git-answers".to_string()),
-        "a draft never leaves the machine"
-    );
-    let accepted = json_of(&wh(&[
-        "change",
-        "--json",
-        "--request-id",
-        "a1",
-        "--accept",
-        &proposal,
-    ]));
-    assert_eq!(accepted["state"], "success", "{accepted}");
-    let ids = shared_ids(&root);
-    assert!(ids.contains(&"rule.git-answers".to_string()), "{ids:?}");
-    assert!(
-        ids.contains(&proposal),
-        "the proposal travels with it: {ids:?}"
-    );
-    let pending = change("c2", "rule.git-still-answers", "Git still answers.");
-    assert_eq!(pending["state"], "success", "{pending}");
-
     let dash = json_of(&wh(&["dash", "--json"]));
     assert_eq!(dash["state"], "success", "{dash}");
     assert_eq!(dash["data"]["current"]["established"], true);
-    assert_eq!(dash["data"]["current"]["header"]["drafts"], 1);
     assert_eq!(
         dash["data"]["store"]["kind"], "virgil",
         "{}",
@@ -256,18 +177,7 @@ fn the_virgil_store_runs_the_whole_flow_without_bd() {
     );
     assert_eq!(dash["data"]["store"]["left_behind"], json!([]));
 
-    // Drafts live in the private scope, and nothing is kept as a local
-    // revision file.
-    let private = state(&root)["rulebook"]["private"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    assert!(
-        private
-            .iter()
-            .any(|record| record["record_id"] == "rule.git-still-answers"),
-        "the draft is in the private scope"
-    );
+    // Nothing is kept as a local revision file.
     let common = root.join(".git/whetstone");
     assert!(
         !files_under(&common)

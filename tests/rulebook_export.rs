@@ -8,7 +8,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use serde_json::Value;
+use serde_json::{json, Value};
+use whetstone::domain::{
+    LocalReview, LocalReviewVerdict, Proposal, ProposalState, RecordBody, RecordRef, Rule,
+    LOCAL_REVIEW_ASSURANCE,
+};
+use whetstone::service::{agreement_record, utc_timestamp};
+use whetstone::storage::{initialize_private, ProjectLayout, RecordStore};
 
 mod support;
 
@@ -49,60 +55,73 @@ fn tool(program: &str, root: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).to_string()
 }
 
-fn change(root: &Path, request: &str, args: &[&str]) -> Value {
-    let mut probe = vec!["change", "--json", "--request-id", request];
-    probe.extend_from_slice(args);
-    let inspected = run(&probe, root);
-    let revision = inspected["expected_revision"]
-        .as_u64()
-        .expect("revision")
-        .to_string();
-    let token = inspected["resume_token"]
-        .as_str()
-        .expect("token")
-        .to_string();
-    let mut record = probe.clone();
-    record.extend_from_slice(&["--expected-revision", &revision, "--resume", &token]);
-    let drafted = run(&record, root);
-    assert_eq!(drafted["state"], "success", "{drafted}");
-    drafted
+/// The private store, written directly as the workflows wrote drafts and
+/// reviews before the rulebook was a file.
+struct Private {
+    layout: ProjectLayout,
+    store: Box<dyn RecordStore>,
 }
 
-fn rule(root: &Path, id: &str, statement: &str) -> Value {
-    change(
-        root,
-        &format!("{id}-draft"),
-        &[
-            "--kind",
-            "rule",
-            "--record-id",
-            id,
-            "--content",
-            statement,
-            "--rationale",
-            "The team relies on it.",
-            "--definition",
-            r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"git --version"},"paths":["src/**"]}"#,
-        ],
-    )
-}
+impl Private {
+    fn open(root: &Path) -> Self {
+        let layout = ProjectLayout::resolve(root).expect("layout");
+        let store = initialize_private(&layout).expect("private store");
+        Self { layout, store }
+    }
 
-fn accept(root: &Path, drafted: &Value) {
-    let proposal = drafted["data"]["proposal"]["id"]
-        .as_str()
-        .expect("proposal");
-    let accepted = run(
-        &[
-            "change",
-            "--json",
-            "--request-id",
-            &format!("accept-{proposal}"),
-            "--accept",
-            proposal,
-        ],
-        root,
-    );
-    assert_eq!(accepted["state"], "success", "{accepted}");
+    fn append(&self, id: &str, body: RecordBody) -> RecordRef {
+        let record = agreement_record(&self.layout, id, format!("{id}:test"), body, Some("Owner"))
+            .expect("record");
+        self.store.append(&record, None).expect("append")
+    }
+
+    /// A rule draft and the proposal that carries it; returns the proposal.
+    fn rule(&self, id: &str, statement: &str) -> RecordRef {
+        let rule: Rule = serde_json::from_value(json!({
+            "schema": "whetstone.rule.v2",
+            "statement": statement,
+            "rationale": "The team relies on it.",
+            "strength": "must",
+            "enforcer": {"kind": "test", "command": "git --version"},
+            "source": {"kind": "owner"},
+            "paths": ["src/**"],
+        }))
+        .expect("rule");
+        let drafted = self.append(id, RecordBody::Rule(rule));
+        self.append(
+            &format!("proposal.{id}"),
+            RecordBody::Proposal(Proposal {
+                state: ProposalState::Draft,
+                title: format!("Rule proposed: {statement}"),
+                rationale: "Rationale: The team relies on it.".into(),
+                proposed_records: vec![drafted],
+                binding: None,
+            }),
+        )
+    }
+
+    /// The owner's acceptance of a proposal.
+    fn accept(&self, proposal: &RecordRef) {
+        let reviewer = self
+            .store
+            .get(proposal)
+            .expect("read")
+            .expect("proposal")
+            .owner;
+        self.append(
+            &format!("review.{}", proposal.id.as_str()),
+            RecordBody::LocalReview(LocalReview {
+                proposal: proposal.clone(),
+                verdict: LocalReviewVerdict::Accept,
+                reviewer,
+                assurance: LOCAL_REVIEW_ASSURANCE.into(),
+                rationale: "Accepted for the test.".into(),
+                reviewed_at: utc_timestamp(),
+                team_activation_permitted: false,
+                cites: Vec::new(),
+            }),
+        );
+    }
 }
 
 fn agree(root: &Path) {
@@ -214,16 +233,20 @@ fn repository(temp: &Path) -> PathBuf {
 
 #[test]
 fn the_shared_store_becomes_the_rulebook_and_drafts_stay_out_of_it() {
+    // The records this test writes itself go through the same fast bd.
+    std::env::set_var("PATH", support::path_with_bd_template());
     let temp = tempfile::tempdir().expect("temp");
     let root = repository(temp.path());
     agree(&root);
-    let shared = rule(&root, "rule.toolchain", "The toolchain answers.");
-    accept(&root, &shared);
+    std::env::remove_var("BEADS_DIR");
+    let private = Private::open(&root);
+    let shared = private.rule("rule.toolchain", "The toolchain answers.");
+    private.accept(&shared);
     push(&root);
     // Accepted here but never shared, and a draft never accepted.
-    let local = rule(&root, "rule.local", "Only this checkout agreed.");
-    accept(&root, &local);
-    rule(&root, "rule.proposed", "Still a proposal.");
+    let local = private.rule("rule.local", "Only this checkout agreed.");
+    private.accept(&local);
+    private.rule("rule.proposed", "Still a proposal.");
     let rows = shared_rows(&root);
 
     let dry = run(

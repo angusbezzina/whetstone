@@ -74,8 +74,11 @@ resume token. A retry with the same request ID must keep the same input.
   `--action setup` detects Beads and (with `--yes`) installs it.
 - `wh init --action wire --hooks` installs the git pre-commit and pre-push
   hooks. `--ci` adds the required CI status.
-- `wh change` drafts, previews, accepts, withdraws or retires records
-  (`--kind mission|principle|rule`). Accepting is the owner's call.
+- `wh change` edits `whetstone/rulebook.json` (`--kind
+  mission|principle|rule`, `--retire <id>`): the edit in the working tree is
+  the draft, `--preview` shows it without writing, `--accept` commits the
+  file and `--withdraw` restores its last commit. Accepting is the owner's
+  call.
 - `wh check` runs the rules: `--staged` for pre-commit, `--changed` or
   `--base` for the change. `--sweep` runs only the rules below must and
   prints a JSON array (`--format json` gives the envelope instead), one finding per flag (`fingerprint`, `subjectDigest`, `class`,

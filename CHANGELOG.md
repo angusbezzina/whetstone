@@ -34,6 +34,14 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ### Changed
 
+- `wh change` edits `whetstone/rulebook.json`. A change or a `--retire` is
+  a draft, the edit in the working tree; `wh change --accept` commits the
+  file, and only it, with the edits, the rules' new digests and the reasons
+  in the message; `wh change --withdraw` restores the file's last commit. A
+  retired rule or principle leaves the rulebook and is listed under its
+  `retired` entries with the reason. The decision log is Git: `wh dash
+  --trail` and the dashboard's changelog are the commits that touched the
+  file, with author, date and message.
 - Whetstone needs `bd` 1.3.0 or later (CI pins 1.3.0), and
   `wh init --action setup` offers an upgrade for an older `bd`.
 - Whetstone's own gates (pre-push, CI and the release job) check
@@ -58,6 +66,12 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ### Removed
 
+- `wh change`'s proposal, local review and retirement records and the
+  decision-history read model behind them: `wh change --accept <proposal>`
+  and `--withdraw <proposal>` (both are now plain flags), `--expected-revision`,
+  `--resume`, `--new-owner`, `--source`, `--expected-effect`, `--impact`,
+  `--example` and `--conflict`, `wh dash --json`'s `history` section and
+  the dashboard inspection's `expected_snapshot`.
 - The legacy YAML rule scanner: `whetstone/rules`, the hidden `validate`,
   `eval` and `scan` commands, `wh check --path` and `--lang`, the
   `whetstone.native-scan` result and `raw_scan` data, the AST enforcer's

@@ -72,11 +72,12 @@ wh init --action agree --mission "..." --principle prove-it-works --starter all 
 wh init --action wire --hooks --ci
 wh change --kind rule --record-id rule.no-todo --content "..." --rationale "..." \
   --definition '{"type":"rule","strength":"should","enforcer":{"kind":"ast","query":"(comment) @match","language":"rust"}}'
+wh change --accept --rationale "..."                        # commit the drafted rulebook edits
 wh check --staged                                           # what pre-commit runs
 wh check --base origin/main                                 # what pre-push runs
 wh check --sweep                                            # findings.json for a night sweep
 wh dash                                                     # local dashboard
-wh dash --trail                                             # decision trail as TSV
+wh dash --trail                                             # the rulebook's Git log as a TSV trail
 wh push                                                     # review the exact package, then --confirm <token>
 wh pull                                                     # receive; never executes or accepts
 ```

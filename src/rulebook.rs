@@ -1,9 +1,12 @@
 //! The rulebook file (`whetstone/rulebook.json`, `whetstone.rulebook.v1`):
-//! the mission, the chosen principles and the rules, kept in the repository.
+//! the mission, the chosen principles, the rules and the retired entries,
+//! kept in the repository.
 //!
 //! A revision is the commit that last touched the file, and a rule's digest
 //! is the sha256 of its canonical JSON. The reader is strict: an unknown
 //! field, a missing one or an earlier shape is an error that names the field.
+//! The writer keeps one layout (entries sorted by id, two-space indents,
+//! arrays of plain values on one line), so an edit is a small diff.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -29,6 +32,8 @@ pub struct Rulebook {
     pub mission: Mission,
     pub principles: Vec<PrincipleEntry>,
     pub rules: Vec<RuleEntry>,
+    /// Rules and principles taken out of the rulebook, with the reason.
+    pub retired: Vec<RetiredEntry>,
     pub revision: Revision,
 }
 
@@ -44,6 +49,13 @@ pub struct RuleEntry {
     pub rule: Rule,
     /// sha256 of the rule's canonical JSON, its id included.
     pub digest: ContentDigest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetiredEntry {
+    pub id: RecordId,
+    pub reason: String,
 }
 
 /// The commit that last touched the rulebook, or `uncommitted` when the
@@ -74,6 +86,7 @@ pub enum RulebookError {
     /// The project has no rulebook file.
     Missing,
     Unreadable(String),
+    Unwritable(String),
     /// The file is not a rulebook; the message names the field.
     Invalid(String),
 }
@@ -83,6 +96,9 @@ impl fmt::Display for RulebookError {
         match self {
             Self::Missing => write!(formatter, "{RULEBOOK_PATH} does not exist"),
             Self::Unreadable(error) => write!(formatter, "{RULEBOOK_PATH} cannot be read: {error}"),
+            Self::Unwritable(error) => {
+                write!(formatter, "{RULEBOOK_PATH} cannot be written: {error}")
+            }
             Self::Invalid(error) => write!(formatter, "{RULEBOOK_PATH} is not a rulebook: {error}"),
         }
     }
@@ -97,6 +113,8 @@ struct RulebookFile {
     mission: MissionFile,
     principles: Vec<PrincipleFile>,
     rules: Vec<RuleFile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    retired: Vec<RetiredEntry>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -226,34 +244,6 @@ pub fn principle_value(entry: &PrincipleEntry) -> Result<Value, RulebookError> {
     )
 }
 
-/// The file's text for a rulebook, principles and rules sorted by id, with a
-/// final newline; [`parse`] reads it back.
-pub fn render(book: &Rulebook) -> Result<String, RulebookError> {
-    let mut principles = book
-        .principles
-        .iter()
-        .map(PrincipleFile::from_entry)
-        .collect::<Result<Vec<_>, _>>()?;
-    principles.sort_by(|left, right| left.id.cmp(&right.id));
-    let mut rules = book
-        .rules
-        .iter()
-        .map(|entry| RuleFile::from_rule(&entry.id, &entry.rule))
-        .collect::<Vec<_>>();
-    rules.sort_by(|left, right| left.id.cmp(&right.id));
-    let file = RulebookFile {
-        schema: RULEBOOK_SCHEMA.into(),
-        mission: MissionFile {
-            statement: book.mission.statement.clone(),
-        },
-        principles,
-        rules,
-    };
-    let mut text = serde_json::to_string_pretty(&file).expect("a rulebook always encodes");
-    text.push('\n');
-    Ok(text)
-}
-
 /// Read the project's rulebook and the commit that last touched it.
 pub fn load(project_root: &Path) -> Result<Rulebook, RulebookError> {
     let text = match std::fs::read_to_string(project_root.join(RULEBOOK_PATH)) {
@@ -339,12 +329,141 @@ pub fn parse(text: &str, revision: Revision) -> Result<Rulebook, RulebookError> 
             .map_err(|error| invalid(format!("{field} ({})", id.as_str()), error))?;
         rules.push(RuleEntry { id, rule, digest });
     }
+    for (index, entry) in file.retired.iter().enumerate() {
+        let field = format!("retired[{index}]");
+        unique(format!("{field}.id"), &entry.id)?;
+        if entry.reason.trim().is_empty() {
+            return Err(RulebookError::Invalid(format!(
+                "{field}.reason: required text is empty"
+            )));
+        }
+    }
     Ok(Rulebook {
         mission,
         principles,
         rules,
+        retired: file.retired,
         revision,
     })
+}
+
+/// The rulebook's text: principles, rules and retired entries sorted by id,
+/// in the layout [`write`] keeps.
+pub fn render(book: &Rulebook) -> Result<String, RulebookError> {
+    let mut text = String::new();
+    layout(&to_json(book)?, 0, &mut text);
+    text.push('\n');
+    Ok(text)
+}
+
+/// One entry as the file holds it: a principle or rule by id, or the
+/// mission under `mission`.
+pub fn entry(book: &Rulebook, id: &str) -> Option<Value> {
+    if id == "mission" {
+        return to_json(book).ok().map(|value| value["mission"].clone());
+    }
+    match book.rules.iter().find(|entry| entry.id.as_str() == id) {
+        Some(rule) => Some(rule_value(rule)),
+        None => book
+            .principles
+            .iter()
+            .find(|entry| entry.id.as_str() == id)
+            .and_then(|principle| principle_value(principle).ok()),
+    }
+}
+
+fn to_json(book: &Rulebook) -> Result<Value, RulebookError> {
+    let mut principles = book
+        .principles
+        .iter()
+        .map(PrincipleFile::from_entry)
+        .collect::<Result<Vec<_>, _>>()?;
+    principles.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut rules = book
+        .rules
+        .iter()
+        .map(|entry| RuleFile::from_rule(&entry.id, &entry.rule))
+        .collect::<Vec<_>>();
+    rules.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut retired = book.retired.clone();
+    retired.sort_by(|left, right| left.id.cmp(&right.id));
+    serde_json::to_value(RulebookFile {
+        schema: RULEBOOK_SCHEMA.into(),
+        mission: MissionFile {
+            statement: book.mission.statement.clone(),
+        },
+        principles,
+        rules,
+        retired,
+    })
+    .map_err(|error| RulebookError::Invalid(format!("the rulebook cannot be encoded: {error}")))
+}
+
+/// Pretty JSON with two-space indents, except that an array of plain values
+/// (strings, numbers, booleans) stays on one line.
+fn layout(value: &Value, depth: usize, out: &mut String) {
+    let indent = |depth: usize| "  ".repeat(depth);
+    match value {
+        Value::Object(object) if !object.is_empty() => {
+            out.push_str("{\n");
+            for (index, (key, item)) in object.iter().enumerate() {
+                out.push_str(&indent(depth + 1));
+                out.push_str(&Value::String(key.clone()).to_string());
+                out.push_str(": ");
+                layout(item, depth + 1, out);
+                if index + 1 < object.len() {
+                    out.push(',');
+                }
+                out.push('\n');
+            }
+            out.push_str(&indent(depth));
+            out.push('}');
+        }
+        Value::Array(items)
+            if items
+                .iter()
+                .any(|item| matches!(item, Value::Object(_) | Value::Array(_))) =>
+        {
+            out.push_str("[\n");
+            for (index, item) in items.iter().enumerate() {
+                out.push_str(&indent(depth + 1));
+                layout(item, depth + 1, out);
+                if index + 1 < items.len() {
+                    out.push(',');
+                }
+                out.push('\n');
+            }
+            out.push_str(&indent(depth));
+            out.push(']');
+        }
+        Value::Array(items) => {
+            out.push('[');
+            out.push_str(
+                &items
+                    .iter()
+                    .map(Value::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            out.push(']');
+        }
+        other => out.push_str(&other.to_string()),
+    }
+}
+
+/// Write the rulebook into the working tree and read it back. Nothing is
+/// written unless the strict reader accepts the text first.
+pub fn write(project_root: &Path, book: &Rulebook) -> Result<Rulebook, RulebookError> {
+    let text = render(book)?;
+    parse(&text, Revision::Uncommitted)?;
+    let path = project_root.join(RULEBOOK_PATH);
+    let unwritable = |error: std::io::Error| RulebookError::Unwritable(error.to_string());
+    let directory = path.parent().expect("the rulebook path has a directory");
+    std::fs::create_dir_all(directory).map_err(unwritable)?;
+    let staging = directory.join(".rulebook.json.tmp");
+    std::fs::write(&staging, &text).map_err(unwritable)?;
+    std::fs::rename(&staging, &path).map_err(unwritable)?;
+    parse(&text, revision(project_root))
 }
 
 /// An earlier shape (a stored record, a bare rule, a later version) is named
@@ -612,6 +731,66 @@ mod tests {
         let mut value = rulebook();
         value["mission"]["statement"] = json!(" ");
         assert_eq!(error(&value), "mission.statement: required text is empty");
+    }
+
+    #[test]
+    fn the_writer_keeps_the_hand_written_layout_byte_for_byte() {
+        let text = include_str!("../whetstone/rulebook.json");
+        let book = parse(text, Revision::Uncommitted).expect("Whetstone's rulebook");
+        assert_eq!(render(&book).expect("render"), text);
+        let mut shuffled = book.clone();
+        shuffled.rules.reverse();
+        assert_eq!(
+            render(&shuffled).expect("render"),
+            text,
+            "entries are sorted by id"
+        );
+    }
+
+    #[test]
+    fn retired_entries_are_read_strictly_and_written_last() {
+        let mut value = rulebook();
+        value["retired"] = json!([{"id": "rule.old", "reason": "Superseded by rule.no-dbg."}]);
+        let book = read(&value).expect("valid");
+        assert_eq!(book.retired[0].id.as_str(), "rule.old");
+        let text = render(&book).expect("render");
+        assert!(text.ends_with(
+            "  \"retired\": [\n    {\n      \"id\": \"rule.old\",\n      \"reason\": \"Superseded by rule.no-dbg.\"\n    }\n  ]\n}\n"
+        ), "{text}");
+        assert_eq!(
+            parse(&text, Revision::Uncommitted).expect("round trip"),
+            book
+        );
+        assert!(!render(&read(&rulebook()).expect("valid"))
+            .expect("render")
+            .contains("retired"));
+        let mut value = rulebook();
+        value["retired"] = json!([{"id": "rule.no-dbg", "reason": "Gone."}]);
+        assert_eq!(
+            error(&value),
+            "retired[0].id: rule.no-dbg appears more than once"
+        );
+        value["retired"] = json!([{"id": "rule.old", "reason": " "}]);
+        assert_eq!(error(&value), "retired[0].reason: required text is empty");
+        value["retired"] = json!([{"id": "rule.old", "reason": "Gone.", "at": "today"}]);
+        assert!(error(&value).starts_with("retired[0].at: unknown field `at`"));
+    }
+
+    #[test]
+    fn an_entry_is_found_as_the_file_holds_it() {
+        let book = read(&rulebook()).expect("valid");
+        assert_eq!(
+            entry(&book, "rule.no-dbg"),
+            Some(rulebook()["rules"][0].clone())
+        );
+        assert_eq!(entry(&book, "mission"), Some(rulebook()["mission"].clone()));
+        assert_eq!(entry(&book, "rule.absent"), None);
+        let rebuilt =
+            RuleEntry::new(book.rules[0].id.clone(), book.rules[0].rule.clone()).expect("entry");
+        assert_eq!(
+            rebuilt, book.rules[0],
+            "a new entry's digest is the reader's"
+        );
     }
 
     #[test]

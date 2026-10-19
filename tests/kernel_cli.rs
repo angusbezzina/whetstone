@@ -130,47 +130,6 @@ impl Repo {
         self.wh_json(&args)
     }
 
-    /// Probe for the base revision and token, then record the draft.
-    fn propose(
-        &self,
-        request_id: &str,
-        kind: &str,
-        record_id: &str,
-        content: &str,
-        definition: Option<&str>,
-    ) -> serde_json::Value {
-        let mut base = vec![
-            "change",
-            "--request-id",
-            request_id,
-            "--kind",
-            kind,
-            "--record-id",
-            record_id,
-            "--content",
-            content,
-            "--rationale",
-            "The owner wants this.",
-        ];
-        if let Some(definition) = definition {
-            base.extend(["--definition", definition]);
-        }
-        let probe = self.wh_json(&base);
-        assert_eq!(probe["state"], "needs_input", "{probe}");
-        let revision = probe["expected_revision"]
-            .as_u64()
-            .expect("revision")
-            .to_string();
-        let token = probe["resume_token"].as_str().expect("token").to_string();
-        let mut args = base.clone();
-        args.extend(["--expected-revision", &revision, "--resume", &token]);
-        self.wh_json(&args)
-    }
-
-    fn accept(&self, request_id: &str, proposal: &str) -> serde_json::Value {
-        self.wh_json(&["change", "--request-id", request_id, "--accept", proposal])
-    }
-
     /// Write a rule into the rulebook, where a check reads it.
     fn rule(&self, record_id: &str, definition: &str) {
         rulebook::add_rule(
@@ -186,21 +145,6 @@ impl Repo {
         all.extend_from_slice(args);
         let output = self.wh(&all);
         (output.status.code(), json(&output))
-    }
-
-    /// The rules `wh dash` shows as in force or pending.
-    fn rule_entries(&self) -> Vec<serde_json::Value> {
-        self.wh_json(&["dash"])["data"]["current"]["rules"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    fn rule_entry(&self, id: &str) -> serde_json::Value {
-        self.rule_entries()
-            .into_iter()
-            .find(|rule| rule["id"] == id)
-            .unwrap_or_else(|| panic!("no rule {id} in wh dash"))
     }
 
     fn records(&self) -> Vec<AgreementRecord> {
@@ -376,6 +320,17 @@ fn removed_flags_and_change_kinds_are_rejected_before_anything_runs() {
         vec!["check", "--path", "src"],
         vec!["check", "--lang", "rust"],
         vec!["change", "--migrate"],
+        vec!["change", "--idempotency-key", "x"],
+        vec!["change", "--expected-revision", "1"],
+        vec!["change", "--resume", "x"],
+        vec!["change", "--new-owner", "x"],
+        vec!["change", "--source", "x"],
+        vec!["change", "--expected-effect", "x"],
+        vec!["change", "--impact", "x"],
+        vec!["change", "--example", "x"],
+        vec!["change", "--conflict", "x"],
+        vec!["change", "--accept", "proposal.x"],
+        vec!["dash", "--expected-snapshot", "x"],
         vec!["push", "--propose"],
         vec!["dash", "--history-after", "x"],
     ] {
@@ -905,68 +860,6 @@ fn init_agree_completes_a_partly_written_batch() {
 }
 
 #[test]
-fn init_keeps_the_base_revision_when_new_records_have_no_supersedes() {
-    let repo = Repo::new();
-    repo.write("Cargo.toml", "[package]\nname = \"x\"\n");
-    repo.commit("base");
-    // An accepted principle exists before onboarding.
-    let drafted = repo.propose(
-        "existing-principle",
-        "principle",
-        "principle.small-steps",
-        "Take small, reversible steps.",
-        None,
-    );
-    assert_eq!(drafted["state"], "success", "{drafted}");
-    let proposal = drafted["data"]["proposal"]["id"]
-        .as_str()
-        .expect("proposal")
-        .to_string();
-    assert_eq!(
-        repo.accept("accept-principle", &proposal)["state"],
-        "success"
-    );
-
-    let inspect = repo.wh_json(&["init", "--request-id", "fill-around-principle"]);
-    assert_eq!(inspect["expected_revision"], 1);
-    assert_eq!(
-        inspect["data"]["progress"]["missing_decisions"],
-        serde_json::json!(["mission", "rules"])
-    );
-    let token = inspect["resume_token"].as_str().expect("token").to_string();
-    let agreed = repo.wh(&[
-        "init",
-        "--action",
-        "agree",
-        "--request-id",
-        "fill-around-principle",
-        "--expected-revision",
-        "1",
-        "--resume",
-        &token,
-        "--mission",
-        "Keep project work aligned.",
-        "--starter",
-        "prove-it-works",
-    ]);
-    assert_eq!(agreed.status.code(), Some(6));
-    let agreed = json(&agreed);
-    let mut ids = record_ids(&agreed);
-    ids.sort();
-    assert_eq!(ids, ["mission.project", "rule.prove-it-works"]);
-    for record in repo.records() {
-        if matches!(record.body, RecordBody::Mission(_) | RecordBody::Rule(_)) {
-            assert_eq!(record.revision, 1);
-            assert!(record.supersedes.is_none());
-            assert!(record
-                .idempotency_key
-                .starts_with("fill-around-principle:base-1:"));
-        }
-    }
-    assert_eq!(agreed["data"]["progress"]["agreement_complete"], true);
-}
-
-#[test]
 fn init_inspect_and_cancel_from_nested_directory_are_read_only() {
     let temp = tempfile::tempdir().expect("create nested onboarding fixture");
     init_git(temp.path());
@@ -1020,268 +913,18 @@ fn init_inspect_and_cancel_from_nested_directory_are_read_only() {
 }
 
 #[test]
-fn stale_change_is_rejected_and_a_replay_returns_the_same_draft() {
-    let temp = tempfile::tempdir().expect("create change fixture");
-    init_git(temp.path());
-    let project = temp.path().to_string_lossy();
-    let probe = run(
-        &[
-            "change",
-            "--json",
-            "--project-dir",
-            &project,
-            "--request-id",
-            "change-stale",
-            "--record-id",
-            "principle.boundaries",
-        ],
-        temp.path(),
-    );
-    assert_eq!(probe.status.code(), Some(6));
-    let handoff = json(&probe);
-    assert_eq!(handoff["expected_revision"], 0);
-    let token = handoff["resume_token"].as_str().expect("resume token");
-    let change_args = |revision: &'static str| {
-        vec![
-            "change",
-            "--json",
-            "--project-dir",
-            project.as_ref(),
-            "--request-id",
-            "change-stale",
-            "--kind",
-            "principle",
-            "--record-id",
-            "principle.boundaries",
-            "--content",
-            "Use explicit boundaries.",
-            "--rationale",
-            "Keep integration boundaries explicit.",
-            "--source",
-            "owner:change-stale",
-            "--expected-effect",
-            "Fewer accidental cross-boundary dependencies.",
-            "--impact",
-            "Local engineering principle.",
-            "--example",
-            "Use a typed adapter.",
-            "--expected-revision",
-            revision,
-            "--resume",
-            token,
-        ]
-    };
-
-    let stale = run(&change_args("1"), temp.path());
-    assert_eq!(stale.status.code(), Some(7));
-    assert_eq!(json(&stale)["state"], "stale");
-
-    let accepted = run(&change_args("0"), temp.path());
-    assert!(accepted.status.success());
-    let accepted_json = json(&accepted);
-    assert_eq!(accepted_json["data"]["base_revision"], 0);
-    assert_eq!(accepted_json["data"]["recorded"], true);
-    assert_eq!(accepted_json["data"]["shared"], false);
-    assert!(accepted_json["data"]["proposal"].is_object());
-    assert_eq!(
-        accepted_json["data"]["explanation"]["expected_effect"],
-        "Fewer accidental cross-boundary dependencies."
-    );
-    assert_eq!(
-        accepted_json["data"]["explanation"]["examples"],
-        serde_json::json!(["Use a typed adapter."])
-    );
-    assert_eq!(
-        accepted_json["data"]["diff"]["before"],
-        serde_json::Value::Null
-    );
-    assert_eq!(
-        accepted_json["data"]["diff"]["after"]["record_type"],
-        "principle"
-    );
-    let replay = run(&change_args("0"), temp.path());
-    assert!(replay.status.success());
-    let replay_json = json(&replay);
-    assert_eq!(replay_json["data"]["idempotent_replay"], true);
-    assert_eq!(
-        replay_json["data"]["record"],
-        accepted_json["data"]["record"]
-    );
-    assert_eq!(
-        replay_json["data"]["proposal"],
-        accepted_json["data"]["proposal"]
-    );
-
-    // The same request id with different content is a conflict, not a new draft.
-    let mut different = change_args("0");
-    different[11] = "Use implicit boundaries.";
-    let conflict = run(&different, temp.path());
-    assert_eq!(conflict.status.code(), Some(8));
-    assert_eq!(json(&conflict)["state"], "conflict");
-}
-
-#[test]
-fn change_preview_shows_the_exact_draft_and_records_nothing() {
-    let repo = Repo::new();
-    let definition =
-        r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"true"}}"#;
-    let base = [
-        "change",
-        "--request-id",
-        "preview-1",
-        "--kind",
-        "rule",
-        "--record-id",
-        "rule.previewed",
-        "--content",
-        "Run the tests.",
-        "--rationale",
-        "Prove it works.",
-        "--definition",
-        definition,
-    ];
-    let probe = repo.wh_json(&base);
-    let token = probe["resume_token"].as_str().expect("token").to_string();
-    let mut args = base.to_vec();
-    args.extend(["--expected-revision", "0", "--resume", &token, "--preview"]);
-    let preview = repo.wh(&args);
-    assert_eq!(preview.status.code(), Some(5));
-    let preview = json(&preview);
-    assert_eq!(preview["state"], "needs_decision");
-    assert_eq!(preview["data"]["preview_only"], true);
-    assert_eq!(preview["data"]["diff"]["before"], serde_json::Value::Null);
-    assert_eq!(
-        preview["data"]["diff"]["after"]["record"]["enforcer"],
-        serde_json::json!({"kind": "test", "command": "true"})
-    );
-    assert_eq!(preview["data"]["effects"]["team_share"], false);
-    assert!(repo.records().is_empty(), "a preview recorded something");
-}
-
-#[test]
-fn a_rule_draft_is_only_in_force_once_accepted_and_withdraw_and_retire_keep_history() {
-    let repo = Repo::new();
-    let definition =
-        r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"true"}}"#;
-    let drafted = repo.propose(
-        "rule-1",
-        "rule",
-        "rule.boundary",
-        "Do not import private modules.",
-        Some(definition),
-    );
-    assert_eq!(drafted["state"], "success", "{drafted}");
-    assert_eq!(drafted["data"]["recorded"], true);
-    assert_eq!(drafted["data"]["diff"]["after"]["record_type"], "rule");
-    let proposal = drafted["data"]["proposal"]["id"]
-        .as_str()
-        .expect("proposal id")
-        .to_string();
-
-    // A draft is not in force until accepted.
-    assert_eq!(repo.rule_entry("rule.boundary")["lifecycle"], "draft");
-
-    let accepted = repo.accept("accept-1", &proposal);
-    assert_eq!(accepted["state"], "success", "{accepted}");
-    assert_eq!(accepted["data"]["verdict"], "accept");
-    assert_eq!(accepted["data"]["shared"], false);
-    let replayed = repo.accept("accept-1", &proposal);
-    assert_eq!(replayed["data"]["idempotent_replay"], true);
-    let again = repo.wh(&["change", "--request-id", "accept-2", "--accept", &proposal]);
-    assert_eq!(again.status.code(), Some(6));
-    assert_eq!(
-        json(&again)["state"],
-        "needs_input",
-        "a reviewed draft is no longer pending"
-    );
-    assert_eq!(repo.rule_entry("rule.boundary")["lifecycle"], "accepted");
-
-    // A withdrawn revision leaves the accepted one in force.
-    let revised = repo.propose(
-        "rule-2",
-        "rule",
-        "rule.boundary",
-        "Do not import private modules, ever.",
-        Some(r#"{"type":"rule","strength":"must","enforcer":{"kind":"test","command":"false"}}"#),
-    );
-    assert_eq!(revised["data"]["base_revision"], 1);
-    assert!(revised["data"]["diff"]["before"].is_object());
-    let revised_proposal = revised["data"]["proposal"]["id"]
-        .as_str()
-        .expect("proposal")
-        .to_string();
-    let withdrawn = repo.wh_json(&[
-        "change",
-        "--request-id",
-        "withdraw-1",
-        "--withdraw",
-        &revised_proposal,
-    ]);
-    assert_eq!(withdrawn["state"], "success");
-    assert_eq!(withdrawn["data"]["verdict"], "withdraw");
-    let still = repo.rule_entry("rule.boundary");
-    assert_eq!(
-        still["command"], "true",
-        "the withdrawn revision took force: {still}"
-    );
-
-    // Retiring needs a reason, is a draft, and takes force only once accepted.
-    let no_reason = repo.wh(&[
-        "change",
-        "--request-id",
-        "retire-0",
-        "--retire",
-        "rule.boundary",
-    ]);
-    assert_eq!(no_reason.status.code(), Some(6));
-    let retire = repo.wh_json(&[
-        "change",
-        "--request-id",
-        "retire-1",
-        "--retire",
-        "rule.boundary",
-        "--rationale",
-        "The module boundary is gone.",
-    ]);
-    assert_eq!(retire["state"], "success", "{retire}");
-    let retirement = retire["data"]["proposal"]["id"]
-        .as_str()
-        .expect("retirement proposal")
-        .to_string();
-    assert_eq!(repo.rule_entry("rule.boundary")["lifecycle"], "accepted");
-    assert_eq!(
-        repo.accept("accept-retire", &retirement)["state"],
-        "success"
-    );
-    assert!(
-        repo.rule_entries()
-            .iter()
-            .all(|rule| rule["id"] != "rule.boundary"),
-        "a retired rule is no longer in force"
-    );
-    let history = repo
-        .records()
-        .into_iter()
-        .filter(|record| record.id.as_str() == "rule.boundary")
-        .count();
-    assert_eq!(history, 2, "retiring deleted history");
-    let nothing = repo.wh(&[
-        "change",
-        "--request-id",
-        "retire-2",
-        "--retire",
-        "rule.boundary",
-        "--rationale",
-        "Again.",
-    ]);
-    assert_eq!(nothing.status.code(), Some(6));
-}
-
-#[test]
 fn rule_definitions_hold_one_strength_and_one_enforcer() {
     let repo = Repo::new();
+    repo.wh(&[
+        "change",
+        "--kind",
+        "mission",
+        "--content",
+        "Keep project work aligned.",
+    ]);
+    let rulebook = std::fs::read(repo.root.join("whetstone/rulebook.json")).expect("rulebook");
     let preview = |request_id: &str, definition: &str| {
-        let base = [
+        repo.wh(&[
             "change",
             "--request-id",
             request_id,
@@ -1295,16 +938,8 @@ fn rule_definitions_hold_one_strength_and_one_enforcer() {
             "Checking the definition.",
             "--definition",
             definition,
-        ];
-        let probe = repo.wh(&base);
-        let probe_json = json(&probe);
-        let token = probe_json["resume_token"]
-            .as_str()
-            .expect("token")
-            .to_string();
-        let mut args = base.to_vec();
-        args.extend(["--expected-revision", "0", "--resume", &token, "--preview"]);
-        repo.wh(&args)
+            "--preview",
+        ])
     };
     let enforcers = [
         r#"{"kind":"ast","query":"(identifier) @match","language":"python"}"#,
@@ -1325,7 +960,7 @@ fn rule_definitions_hold_one_strength_and_one_enforcer() {
                 json(&output)
             );
             let value = json(&output);
-            let rule = &value["data"]["diff"]["after"]["record"];
+            let rule = &value["data"]["diff"]["after"];
             assert_eq!(rule["strength"], strength);
             let expected: serde_json::Value = serde_json::from_str(enforcer).expect("enforcer");
             assert_eq!(rule["enforcer"]["kind"], expected["kind"]);
@@ -1386,13 +1021,24 @@ fn rule_definitions_hold_one_strength_and_one_enforcer() {
         assert_eq!(output.status.code(), Some(6), "{enforcer} was accepted");
         assert_eq!(json(&output)["state"], "needs_input");
     }
-    assert!(
-        repo.records().is_empty(),
-        "a rejected definition was recorded"
+    assert_eq!(
+        std::fs::read(repo.root.join("whetstone/rulebook.json")).expect("rulebook"),
+        rulebook,
+        "a rejected definition was written"
     );
 
     // A rule without a definition is asked for its strength and enforcer.
-    let missing = repo.propose("no-definition", "rule", "rule.vague", "Be good.", None);
+    let missing = repo.wh_json(&[
+        "change",
+        "--kind",
+        "rule",
+        "--record-id",
+        "rule.vague",
+        "--content",
+        "Be good.",
+        "--rationale",
+        "The owner wants this.",
+    ]);
     assert_eq!(missing["state"], "needs_input");
     assert!(missing["blocking_questions"][0]
         .as_str()

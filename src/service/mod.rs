@@ -2,8 +2,9 @@
 //! request and one versioned response envelope per workflow.
 //!
 //! Each workflow lives in its own module: `init`, `dash`, `change` and
-//! `check`; `record` builds the records and receipts they write. `wh push`
-//! and `wh pull` are in `crate::sync`.
+//! `check`; `record` builds the records and receipts they write, and `trail`
+//! reads the rulebook's Git log. `wh push` and `wh pull` are in
+//! `crate::sync`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,8 +15,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
-    ActorKind, AgreementRecord, ContentDigest, Enforcer, RuleExample, RuleSource, Strength,
-    SweepClass,
+    ActorKind, AgreementRecord, Enforcer, RuleExample, RuleSource, Strength, SweepClass,
 };
 use crate::storage::{ProjectLayout, StorageError};
 
@@ -25,8 +25,10 @@ mod dash;
 mod export;
 mod init;
 pub(crate) mod record;
+mod trail;
 
 pub use record::{agreement_record, digest_bytes, utc_timestamp};
+pub use trail::{decision_trail, rulebook_log, RulebookCommit, TRAIL_HEADER};
 
 /// Environment variables agent hosts set in the shells they run. Any of them
 /// makes the caller an agent, whatever else is true.
@@ -76,7 +78,6 @@ pub struct DashRequest {
     pub search: Option<String>,
     pub as_of: Option<String>,
     pub page_size: usize,
-    pub expected_snapshot: Option<ContentDigest>,
     /// Include the show-me-your-work TSV decision trail as `data.trail`.
     pub trail: bool,
 }
@@ -89,7 +90,6 @@ impl DashRequest {
             search: None,
             as_of: None,
             page_size: 100,
-            expected_snapshot: None,
             trail: false,
         }
     }
@@ -148,13 +148,6 @@ pub enum ChangeKind {
     Rule,
 }
 
-/// Explicit solo review of a pending local draft.
-#[derive(Debug, Clone)]
-pub struct ReviewRequest {
-    pub proposal: String,
-    pub verdict: crate::domain::LocalReviewVerdict,
-}
-
 /// Always stored boxed (`Option<Box<ChangeDefinition>>`), so the rule
 /// variant's size never inflates the requests that carry it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,20 +189,16 @@ pub struct ChangeRequest {
     pub record_id: Option<String>,
     pub content: Option<String>,
     pub definition: Option<Box<ChangeDefinition>>,
-    /// Change the accountable owner on the proposed record revision.
-    pub new_owner: Option<String>,
+    /// The rule's or principle's rationale, the reason for a retirement, or
+    /// the body of the commit that accepts the drafted edits.
     pub rationale: Option<String>,
-    pub source: Option<String>,
-    pub expected_effect: Option<String>,
-    pub impact: Option<String>,
-    pub examples: Vec<String>,
-    pub conflicts: Vec<String>,
-    pub expected_revision: Option<u64>,
-    pub resume_token: Option<String>,
+    /// Show the exact effect without writing or committing anything.
     pub preview: bool,
-    /// Accept or withdraw an existing draft instead of proposing content.
-    pub review: Option<ReviewRequest>,
-    /// Propose retiring an accepted record (reviewed archival; history stays).
+    /// Commit the rulebook's drafted edits.
+    pub accept: bool,
+    /// Restore the rulebook to its last commit.
+    pub withdraw: bool,
+    /// Take a rule or principle out of the rulebook, recording why.
     pub retire: Option<String>,
     /// Who is asking: a person, or an agent (the default, so nothing passes
     /// as a person by omission).
@@ -475,12 +464,7 @@ impl CommandService {
                 response
             }
             ServiceRequest::Dash(request) => dash::dash(request),
-            ServiceRequest::Change(request) => {
-                let project_dir = request.project_dir.clone();
-                let mut response = change::change(request);
-                crate::sync::attach_publication(&mut response, &project_dir);
-                response
-            }
+            ServiceRequest::Change(request) => change::change(request),
             ServiceRequest::Check(request) => check::check(request),
             ServiceRequest::Pull(request) => crate::sync::pull(request),
             ServiceRequest::Push(request) => crate::sync::push(request),
@@ -570,33 +554,6 @@ pub(crate) fn bounded_input(
     } else {
         Ok(trimmed.to_string())
     }
-}
-
-pub(crate) fn optional_input(
-    value: Option<String>,
-    name: &str,
-    maximum: usize,
-    fallback: &str,
-) -> Result<String, String> {
-    match value.as_deref().map(str::trim) {
-        None | Some("") => Ok(fallback.to_string()),
-        Some(_) => bounded_input(value, name, maximum),
-    }
-}
-
-pub(crate) fn bounded_list(
-    values: &[String],
-    name: &str,
-    maximum_items: usize,
-    maximum_bytes: usize,
-) -> Result<Vec<String>, String> {
-    if values.len() > maximum_items {
-        return Err(format!("{name} exceeds the {maximum_items}-item limit."));
-    }
-    values
-        .iter()
-        .map(|value| bounded_input(Some(value.clone()), name, maximum_bytes))
-        .collect()
 }
 
 pub(crate) fn bounded_request_id(

@@ -83,6 +83,7 @@ fn init_git(root: &Path) {
         vec!["init", "--quiet"],
         vec!["config", "user.name", "Dashboard Owner"],
         vec!["config", "user.email", "owner@example.test"],
+        vec!["config", "commit.gpgsign", "false"],
     ] {
         let output = Command::new("git")
             .args(&args)
@@ -223,17 +224,6 @@ impl Session {
         );
         assert!(response.starts_with("HTTP/1.1 200"), "{response}");
         response_body(&response)
-    }
-
-    /// Send a change twice: once to learn the base revision and token, then
-    /// confirmed with them, exactly as the dashboard's editor does.
-    fn confirmed_change(&self, body: Value) -> Value {
-        let probe = self.command(&body);
-        assert_eq!(probe["state"], "needs_input", "{probe}");
-        let mut confirmed = body;
-        confirmed["expected_revision"] = probe["expected_revision"].clone();
-        confirmed["resume_token"] = probe["resume_token"].clone();
-        self.command(&confirmed)
     }
 }
 
@@ -813,7 +803,6 @@ fn private_only_dashboard_queries_are_typed_filtered_and_do_not_create_shareable
         search: Some(CUSTOM_PRINCIPLE.into()),
         as_of: Some("2099-01-01T00:00:00Z".into()),
         page_size: 7,
-        expected_snapshot: None,
         trail: false,
     }));
     let handle = DashboardHandle::start(
@@ -843,17 +832,15 @@ fn private_only_dashboard_queries_are_typed_filtered_and_do_not_create_shareable
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     let body = response_body(&response);
     assert_eq!(body, serde_json::to_value(direct).expect("service JSON"));
-    let page = &body["data"]["history"]["decision_history"]["items"];
-    assert_eq!(page.as_array().map(Vec::len), Some(1), "{page}");
-    assert_eq!(page[0]["record"]["record_type"], "principle", "{page}");
     assert_eq!(
-        page[0]["record"]["record"]["statement"], CUSTOM_PRINCIPLE,
-        "{page}"
+        body["data"]["changelog"],
+        json!([]),
+        "the changelog is the rulebook's Git log, and nothing committed it"
     );
     let current = &body["data"]["current"];
     assert_eq!(
         current["mission"]["title"], MISSION,
-        "filtered history must never replace the independent current-state projection"
+        "a filtered changelog must never replace the independent current-state projection"
     );
     assert_eq!(current["principles"].as_array().map(Vec::len), Some(2));
     assert_eq!(current["rules"].as_array().map(Vec::len), Some(1));
@@ -871,7 +858,7 @@ fn private_only_dashboard_queries_are_typed_filtered_and_do_not_create_shareable
 }
 
 #[test]
-fn dashboard_history_query_rejects_unknown_fields_and_marks_invalid_time_unknown() {
+fn dashboard_changelog_query_rejects_unknown_fields_and_marks_invalid_time_unknown() {
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
     install_private_agreement(temp.path());
@@ -893,21 +880,27 @@ fn dashboard_history_query_rejects_unknown_fields_and_marks_invalid_time_unknown
         assert!(response.starts_with(expected_status), "{body}: {response}");
         if body.get("as_of").is_some() {
             assert_eq!(response_body(&response)["state"], "unknown");
-            assert_eq!(
-                response_body(&response)["data"]["history_state"],
-                "unavailable"
-            );
+            assert!(response_body(&response)["summary"]
+                .as_str()
+                .is_some_and(|summary| summary.contains("not an RFC 3339 UTC instant")));
         } else {
             assert_eq!(response_body(&response)["state"], "unknown");
         }
     }
 }
 
+/// The rulebook file as the dashboard's change commands left it.
+fn rulebook(root: &Path) -> Value {
+    serde_json::from_str(
+        &std::fs::read_to_string(root.join("whetstone/rulebook.json")).expect("rulebook"),
+    )
+    .expect("rulebook JSON")
+}
+
 #[test]
-fn a_rule_change_is_drafted_and_accepted() {
+fn a_rule_change_is_drafted_in_the_file_and_accepted_as_a_commit() {
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
-    install_private_agreement(temp.path());
     let project = temp.path().to_path_buf();
     let handle = start(&project, true);
     let host = host(&handle);
@@ -929,9 +922,15 @@ fn a_rule_change_is_drafted_and_accepted() {
     );
     assert!(denied.starts_with("HTTP/1.1 401"), "{denied}");
     let session = Session::open(handle);
+    let mission = session.command(&json!({
+        "workflow": "change",
+        "kind": "mission",
+        "content": MISSION
+    }));
+    assert_eq!(mission["state"], "success", "{mission}");
 
     // A rule needs its definition: one strength and one enforcer.
-    let missing_definition = session.confirmed_change(json!({
+    let missing_definition = session.command(&json!({
         "workflow": "change",
         "request_id": "dash-rule-bare",
         "kind": "rule",
@@ -977,62 +976,53 @@ fn a_rule_change_is_drafted_and_accepted() {
         }
     });
     // Preview first: nothing is written.
-    let probe = session.command(&change);
-    assert_eq!(probe["state"], "needs_input");
     let mut preview = change.clone();
-    preview["expected_revision"] = probe["expected_revision"].clone();
-    preview["resume_token"] = probe["resume_token"].clone();
     preview["preview"] = json!(true);
     let preview = session.command(&preview);
     assert_eq!(preview["state"], "needs_decision", "{preview}");
     assert_eq!(preview["data"]["preview_only"], true);
     assert_eq!(preview["data"]["diff"]["before"], Value::Null);
-    assert_eq!(preview["data"]["diff"]["after"]["record_type"], "rule");
     assert_eq!(
-        preview["data"]["diff"]["after"]["record"]["schema"],
-        "whetstone.rule.v2"
-    );
-    assert_eq!(
-        preview["data"]["diff"]["after"]["record"]["enforcer"],
+        preview["data"]["diff"]["after"]["enforcer"],
         json!({"kind": "test", "command": "false"})
     );
-    let view = session.inspect()["data"]["current"].clone();
-    assert!(
-        !view["rules"]
-            .as_array()
-            .expect("rules")
-            .iter()
-            .any(|rule| rule["id"] == "rule.always-flags"),
+    assert_eq!(
+        rulebook(&project)["rules"],
+        json!([]),
         "a preview writes nothing"
     );
 
-    let drafted = session.confirmed_change(change.clone());
+    let drafted = session.command(&change);
     assert_eq!(drafted["state"], "success", "{drafted}");
-    assert_eq!(drafted["data"]["shared"], false);
-    let proposal = drafted["data"]["proposal"]["id"]
-        .as_str()
-        .expect("proposal id")
-        .to_string();
-    // A draft is not in force: it shows as pending.
-    let view = session.inspect()["data"]["current"].clone();
-    let pending = rule_entry(&view, "rule.always-flags");
-    assert_eq!(pending["lifecycle"], "draft", "{pending}");
-    // The same change replayed is the same draft.
-    let replayed = session.confirmed_change(change);
-    assert_eq!(replayed["data"]["idempotent_replay"], true, "{replayed}");
+    assert_eq!(drafted["data"]["revision"], "uncommitted");
+    let rule = &rulebook(&project)["rules"][0];
+    assert_eq!(rule["id"], "rule.always-flags");
+    assert_eq!(rule["strength"], "should");
+    assert_eq!(rule["examples"].as_array().map(Vec::len), Some(1));
+    // The same change again leaves the file as it is.
+    let replayed = session.command(&change);
+    assert_eq!(replayed["data"]["written"], false, "{replayed}");
 
     let accepted = session.command(&json!({
         "workflow": "change",
         "request_id": "dash-rule-accept",
-        "review": {"proposal": proposal, "verdict": "accept"},
+        "accept": true,
         "rationale": "Accepted from the dashboard."
     }));
     assert_eq!(accepted["state"], "success", "{accepted}");
-    let view = session.inspect()["data"]["current"].clone();
-    let rule = rule_entry(&view, "rule.always-flags");
-    assert_eq!(rule["strength"], "should");
-    assert_eq!(rule["lifecycle"], "accepted", "{rule}");
-    assert_eq!(rule["examples"].as_array().map(Vec::len), Some(1));
+    let log = Command::new("git")
+        .args(["log", "-1", "--format=%H%n%B"])
+        .current_dir(&project)
+        .output()
+        .expect("git log");
+    let log = String::from_utf8_lossy(&log.stdout);
+    assert!(
+        log.starts_with(accepted["data"]["commit"].as_str().expect("commit")),
+        "{log}"
+    );
+    assert!(log.contains("Accepted from the dashboard."), "{log}");
+    let changelog = session.inspect()["data"]["changelog"].clone();
+    assert_eq!(changelog[0]["commit"], accepted["data"]["commit"]);
 
     // Checks run from the CLI and the Git gates, never from the dashboard.
     let check = session.raw_command(
@@ -1088,42 +1078,43 @@ fn mutations_are_observed_but_inspections_and_rejected_bodies_are_not() {
 }
 
 #[test]
-fn accepting_two_drafts_without_request_ids_accepts_both() {
-    // The dashboard's review buttons send no request id; each review must
-    // still decide its own draft.
+fn one_accept_without_a_request_id_commits_every_drafted_edit() {
+    // The dashboard's accept button sends no request id.
     let temp = tempfile::tempdir().expect("temp project");
     init_git(temp.path());
-    install_private_agreement(temp.path());
     let session = Session::open(start(temp.path(), true));
-    let mut proposals = Vec::new();
+    session.command(&json!({"workflow": "change", "kind": "mission", "content": MISSION}));
     for name in ["first", "second"] {
-        let drafted = session.confirmed_change(json!({
+        let drafted = session.command(&json!({
             "workflow": "change",
-            "request_id": format!("dash-two-{name}"),
             "kind": "principle",
             "record_id": format!("principle.custom-{name}"),
             "content": format!("The {name} principle."),
             "rationale": "Two drafts."
         }));
         assert_eq!(drafted["state"], "success", "{drafted}");
-        proposals.push(drafted["data"]["proposal"]["id"].clone());
     }
-    for proposal in proposals {
-        let reviewed = session.command(&json!({
-            "workflow": "change",
-            "review": {"proposal": proposal, "verdict": "accept"}
-        }));
-        assert_eq!(reviewed["state"], "success", "{reviewed}");
-        assert_eq!(reviewed["data"]["proposal"]["id"], proposal, "{reviewed}");
-    }
-    let view = session.inspect()["data"]["current"].clone();
-    for id in ["principle.custom-first", "principle.custom-second"] {
-        let entry = view["principles"]
-            .as_array()
-            .expect("principles")
-            .iter()
-            .find(|entry| entry["id"] == id)
-            .unwrap_or_else(|| panic!("{id} missing"));
-        assert_eq!(entry["lifecycle"], "accepted", "{entry}");
-    }
+    let accepted = session.command(&json!({"workflow": "change", "accept": true}));
+    assert_eq!(accepted["state"], "success", "{accepted}");
+    assert_eq!(
+        accepted["data"]["changes"],
+        json!([
+            "set the mission",
+            "add principle.custom-first",
+            "add principle.custom-second"
+        ])
+    );
+    let ids = rulebook(temp.path())["principles"]
+        .as_array()
+        .expect("principles")
+        .iter()
+        .map(|entry| entry["id"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        [
+            json!("principle.custom-first"),
+            json!("principle.custom-second")
+        ]
+    );
 }

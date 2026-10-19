@@ -13,13 +13,6 @@ use serde_json::{json, Value};
 use crate::agreement::{AgreementState, Lifecycle};
 use crate::domain::{AgreementRecord, PrincipleSource, RecordBody, RecordId, RecordRef, Rule};
 
-mod journal;
-
-pub use journal::{
-    decision_trail, journal, journal_from_items, proposal_candidates, search_journal, JournalEntry,
-    TRAIL_HEADER,
-};
-
 pub const MISSION_ID: &str = "mission.project";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -190,18 +183,6 @@ pub struct ProjectionInput {
     /// Shared record refs (id -> `id@revision#digest`) in the team's store:
     /// what `wh push` already shared and CI enforces.
     pub shared: BTreeMap<String, String>,
-}
-
-pub(crate) fn snippet(text: &str, limit: usize) -> String {
-    let text = text.trim();
-    if text.chars().count() <= limit {
-        return text.to_string();
-    }
-    let mut cut = text.chars().take(limit).collect::<String>();
-    if let Some(space) = cut.rfind(' ') {
-        cut.truncate(space);
-    }
-    format!("{cut}…")
 }
 
 /// Where in the gate ladder a rule runs.

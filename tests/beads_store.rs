@@ -250,17 +250,23 @@ fn a_bd_older_than_the_floor_is_refused_by_name() {
         "{bd}"
     );
 
+    let token = wh(&["init", "--json"])["resume_token"]
+        .as_str()
+        .expect("token")
+        .to_string();
     let refused = wh(&[
-        "change",
+        "init",
+        "--action",
+        "agree",
         "--json",
-        "--kind",
-        "rule",
-        "--record-id",
-        "rule.example",
-        "--content",
+        "--expected-revision",
+        "0",
+        "--resume",
+        &token,
+        "--mission",
         "An example.",
-        "--rationale",
-        "For the test.",
+        "--starter",
+        "all",
     ]);
     assert_eq!(refused["state"], "unavailable", "{refused}");
     let summary = refused["summary"].as_str().expect("summary");

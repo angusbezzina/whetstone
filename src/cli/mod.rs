@@ -12,8 +12,7 @@ use serde_json::json;
 
 use crate::service::{
     ChangeDefinition, ChangeKind, ChangeRequest, CheckRequest, CommandService, DashRequest,
-    GateMode, InitAction, InitRequest, ReviewRequest, ServiceRequest, ServiceResponse,
-    ServiceState,
+    GateMode, InitAction, InitRequest, ServiceRequest, ServiceResponse, ServiceState,
 };
 use crate::{dashboard, dashboard_service, output};
 
@@ -120,8 +119,8 @@ enum Command {
         trail: bool,
     },
 
-    /// Draft a change for the owner to accept, or record the owner's call on
-    /// a draft.
+    /// Draft a change to whetstone/rulebook.json, retire a rule, or accept
+    /// (commit) or withdraw the drafted edits.
     Change {
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
@@ -136,35 +135,21 @@ enum Command {
         /// Typed rule or principle details as a JSON object.
         #[arg(long, value_parser = parse_change_definition)]
         definition: Option<Box<ChangeDefinition>>,
-        /// Change the accountable owner on the proposed record revision.
-        #[arg(long)]
-        new_owner: Option<String>,
+        /// The rule's or principle's rationale, why a record is retired, or
+        /// the body of the commit that accepts the drafted edits.
         #[arg(long)]
         rationale: Option<String>,
-        #[arg(long)]
-        source: Option<String>,
-        #[arg(long)]
-        expected_effect: Option<String>,
-        #[arg(long)]
-        impact: Option<String>,
-        #[arg(long = "example")]
-        examples: Vec<String>,
-        #[arg(long = "conflict")]
-        conflicts: Vec<String>,
-        #[arg(long)]
-        expected_revision: Option<u64>,
-        #[arg(long = "resume")]
-        resume_token: Option<String>,
-        /// Inspect the exact before/after without recording it.
+        /// Show the exact effect without writing or committing anything.
         #[arg(long, visible_alias = "dry-run")]
         preview: bool,
-        /// Accept a pending draft by its proposal id (the owner's call).
-        #[arg(long, conflicts_with_all = ["withdraw", "kind", "content", "definition"])]
-        accept: Option<String>,
-        /// Withdraw a pending draft by its proposal id.
-        #[arg(long, conflicts_with_all = ["accept", "kind", "content", "definition"])]
-        withdraw: Option<String>,
-        /// Propose retiring an accepted record (history stays); needs --rationale.
+        /// Accept the drafted edits: commit whetstone/rulebook.json, and only it.
+        #[arg(long, conflicts_with_all = ["withdraw", "retire", "kind", "content", "definition"])]
+        accept: bool,
+        /// Withdraw the drafted edits: restore whetstone/rulebook.json to its last commit.
+        #[arg(long, conflicts_with_all = ["accept", "retire", "kind", "content", "definition"])]
+        withdraw: bool,
+        /// Retire a rule or principle: take it out of the rulebook and record
+        /// why in its retired list; needs --rationale.
         #[arg(long, conflicts_with_all = ["accept", "withdraw", "kind", "content", "definition"])]
         retire: Option<String>,
     },
@@ -400,7 +385,6 @@ pub fn run() -> i32 {
                     search,
                     as_of,
                     page_size,
-                    expected_snapshot: None,
                     trail,
                 }));
                 if trail && !explicit_json {
@@ -433,15 +417,7 @@ pub fn run() -> i32 {
             record_id,
             content,
             definition,
-            new_owner,
             rationale,
-            source,
-            expected_effect,
-            impact,
-            examples,
-            conflicts,
-            expected_revision,
-            resume_token,
             preview,
             accept,
             withdraw,
@@ -453,27 +429,10 @@ pub fn run() -> i32 {
             record_id,
             content,
             definition,
-            new_owner,
             rationale,
-            source,
-            expected_effect,
-            impact,
-            examples,
-            conflicts,
-            expected_revision,
-            resume_token,
             preview,
-            review: accept
-                .map(|proposal| ReviewRequest {
-                    proposal,
-                    verdict: crate::domain::LocalReviewVerdict::Accept,
-                })
-                .or_else(|| {
-                    withdraw.map(|proposal| ReviewRequest {
-                        proposal,
-                        verdict: crate::domain::LocalReviewVerdict::Withdraw,
-                    })
-                }),
+            accept,
+            withdraw,
             retire,
             actor: crate::service::detect_actor(),
         })),

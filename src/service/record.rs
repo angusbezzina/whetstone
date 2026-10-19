@@ -9,11 +9,10 @@ use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use crate::domain::{
-    AgreementRecord, ContentDigest, EvidenceRef, PrincipalKind, PrincipalRef, Proposal,
-    ProposalState, Provenance, ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, Scope,
-    SCHEMA_VERSION_V1,
+    AgreementRecord, ContentDigest, EvidenceRef, PrincipalKind, PrincipalRef, Provenance,
+    ProvenanceAuthority, ProvenanceKind, RecordBody, RecordId, Scope, SCHEMA_VERSION_V1,
 };
-use crate::storage::{ProjectLayout, RecordStore, StorageError};
+use crate::storage::ProjectLayout;
 
 use super::check::SnapshotBinding;
 use super::utc_now;
@@ -35,100 +34,6 @@ pub(crate) fn key_suffix(key: &str, length: usize) -> String {
         .chars()
         .take(length)
         .collect()
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ChangeNarrative {
-    pub(crate) rationale: String,
-    pub(crate) source: String,
-    pub(crate) expected_effect: String,
-    pub(crate) impact: String,
-    pub(crate) examples: Vec<String>,
-    pub(crate) conflicts: Vec<String>,
-}
-
-impl ChangeNarrative {
-    pub(crate) fn render(&self, base_revision: u64) -> String {
-        format!(
-            "Base revision: {base_revision}\nRationale: {}\nSource: {}\nExpected effect: {}\nImpact: {}\nExamples: {}\nConflicts: {}",
-            self.rationale,
-            self.source,
-            self.expected_effect,
-            self.impact,
-            self.examples.join("; "),
-            self.conflicts.join("; ")
-        )
-    }
-}
-
-pub(crate) fn ensure_local_change_proposal(
-    repository: &dyn RecordStore,
-    candidate: &AgreementRecord,
-    candidate_reference: &crate::domain::RecordRef,
-    narrative: &ChangeNarrative,
-    base_revision: u64,
-    request_id: &str,
-) -> Result<crate::domain::RecordRef, StorageError> {
-    let proposal_key = format!("{request_id}:proposal");
-    let proposal_id = RecordId::new(format!(
-        "proposal.change_{}",
-        &format!("{:x}", Sha256::digest(request_id.as_bytes()))[..24]
-    ))
-    .map_err(StorageError::Domain)?;
-    let proposal = AgreementRecord {
-        schema_version: SCHEMA_VERSION_V1,
-        id: proposal_id,
-        revision: 1,
-        scope: candidate.scope.clone(),
-        owner: candidate.owner.clone(),
-        provenance: Provenance {
-            kind: ProvenanceKind::HumanAuthored,
-            recorded_by: candidate.owner.clone(),
-            recorded_at: utc_now(),
-            sources: vec![EvidenceRef {
-                system: "owner_selected_source".into(),
-                locator: narrative.source.clone(),
-                digest: None,
-            }],
-            authority: ProvenanceAuthority::OwnerAuthored,
-        },
-        supersedes: None,
-        idempotency_key: proposal_key.clone(),
-        body: RecordBody::Proposal(Proposal {
-            state: ProposalState::Draft,
-            title: format!(
-                "{} {}: {}",
-                crate::projection::kind_label(match &candidate.body {
-                    RecordBody::Mission(_) => "mission",
-                    RecordBody::Principle(_) => "principle",
-                    RecordBody::Rule(_) | RecordBody::StoredRule(_) | RecordBody::Standard(_) => {
-                        "rule"
-                    }
-                    RecordBody::Retirement(_) => "retirement",
-                    _ => "record",
-                }),
-                if candidate.revision <= 1 {
-                    "proposed"
-                } else {
-                    "revised"
-                },
-                crate::projection::record_title(candidate)
-                    .chars()
-                    .take(120)
-                    .collect::<String>()
-            ),
-            rationale: narrative.render(base_revision),
-            proposed_records: vec![candidate_reference.clone()],
-            binding: None,
-        }),
-    };
-    if let Some(existing) = repository.by_idempotency_key(&proposal_key)? {
-        if existing.id != proposal.id || existing.body != proposal.body {
-            return Err(StorageError::IdempotencyConflict(proposal_key));
-        }
-        return existing.reference().map_err(StorageError::Domain);
-    }
-    repository.append(&proposal, None)
 }
 
 pub fn agreement_record(

@@ -291,7 +291,7 @@ fn rulebook_error(request_id: String, error: &RulebookError) -> ServiceResponse 
     let (summary, action) = match error {
         RulebookError::Missing => (
             format!("{RULEBOOK_PATH} does not exist, so no rule was checked, which is not a pass."),
-            format!("create {RULEBOOK_PATH} with wh change --kind rule, or export the record store with wh init --action export, then wh check"),
+            format!("create {RULEBOOK_PATH} with wh change --kind mission and add rules with wh change --kind rule, or export the record store with wh init --action export, then wh check"),
         ),
         other => (
             format!("{other}; no rule was checked, which is not a pass."),

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/angusbezzina/whetstone/references/rulebook.schema.json",
   "title": "Whetstone rulebook (whetstone.rulebook.v1)",
-  "description": "whetstone/rulebook.json: the mission, the chosen principles and the rules. A revision is the commit that last touched the file. A rule's digest is sha256 over its canonical JSON: the entry with its id, fields at their default left out, object keys sorted, no insignificant whitespace.",
+  "description": "whetstone/rulebook.json: the mission, the chosen principles, the rules and the retired entries. A revision is the commit that last touched the file. A rule's digest is sha256 over its canonical JSON: the entry with its id, fields at their default left out, object keys sorted, no insignificant whitespace.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -39,9 +39,32 @@
         "$ref": "#/$defs/rule"
       },
       "description": "Rule ids are unique across principles and rules."
+    },
+    "retired": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/retired"
+      },
+      "description": "Rules and principles taken out of the rulebook, with the reason; absent when none. An id is never both retired and in force."
     }
   },
   "$defs": {
+    "retired": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "reason"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/record_id"
+        },
+        "reason": {
+          "$ref": "#/$defs/nonempty"
+        }
+      }
+    },
     "principle": {
       "type": "object",
       "additionalProperties": false,
