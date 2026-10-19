@@ -21,7 +21,14 @@ cd "$(git rev-parse --show-toplevel)"
 
 if $bootstrap; then
   git fetch --quiet --no-tags origin +refs/dolt/data:refs/dolt/data
-  BD_NON_INTERACTIVE=1 BD_SYNC_REMOTE="git+file://$PWD/.git" bd bootstrap --yes >/dev/null
+  # Dolt clones only from a Git remote that has a branch, and a CI checkout
+  # is a detached, shallow merge ref: serve the data from a throwaway bare
+  # repository whose one branch is a parentless empty commit.
+  remote=$(mktemp -d)/beads-data.git
+  git init --quiet --bare "$remote"
+  empty=$(git commit-tree "$(git hash-object -t tree /dev/null)" -m "Beads data")
+  git push --quiet "$remote" refs/dolt/data:refs/dolt/data "$empty:refs/heads/main"
+  BD_NON_INTERACTIVE=1 BD_SYNC_REMOTE="git+file://$remote" bd bootstrap --yes >/dev/null
   # Bootstrap writes the local remote into the tracked config; the check only reads.
   git checkout --quiet -- .beads
 fi
