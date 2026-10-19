@@ -85,7 +85,7 @@ The dashboard has three views:
   of user content, and widths of 320, 390, 768 and 1024 px.
 - Startup HTML/CSS/JS stays dependency-free and under 24 KiB.
 - CLI and dashboard read the same typed projections; the UI invents no state.
-- The four public commands (`wh init`, `dash`, `change`, `check`) support the
+- The five public commands (`wh init`, `dash`, `change`, `check`, `explain`) support the
   UI and may be progressively disclosed; they are not the human information
   architecture.
 

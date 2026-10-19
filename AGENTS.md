@@ -10,32 +10,54 @@ planning any work.
 
 - **The rulebook is a file.** `whetstone/rulebook.json`
   (`whetstone.rulebook.v1`, [schema](references/rulebook.schema.json)) holds
-  the mission, the principles (from the catalogue compiled into `wh`, or the
-  owner's own) and the rules. A revision is the commit that last touched the
+  the mission, the principles (from a principle pack: pstack compiled into
+  `wh`, or a pack under `whetstone/principles/`; or the owner's own) and the
+  rules. A revision is the commit that last touched the
   file, a rule's digest is the sha256 of its canonical JSON, the decision log
   is Git history, a draft is an uncommitted edit, and a rule change on a team
   is a pull request.
 - **One strength, one enforcer per rule.** `must` blocks the gate; `should`
   reports, never blocks, and becomes a sweep finding. The enforcer is
-  mechanical: `ast`, `lint`, `formatter`, `test` or `validator`.
+  mechanical: `ast`, `lint`, `formatter`, `test` or `validator`. A
+  `validator` or `test` command that names a script under `whetstone/checks/`
+  is a script enforcer (contract in `whetstone/checks/README.md`).
+- **Probed on every write.** Every rule `wh change` writes (onboarding, prose
+  compilation and pack imports included) has its enforcer run once over the
+  repository first; a rule that cannot be checked here is not written
+  without `--allow-unvalidated`.
 - **Sweep fields.** `sweep` (`discuss`, `confirm_first`, `draft_pr`; absent
   is discuss), `sweep_priority` (0 to 4, default 2) and `sweep_unsure`
   (paths or a pattern, with a reason).
-- **Gates.** Pre-commit runs `wh check --staged` (AST rules on the staged
-  index), pre-push runs `wh check` for the pushed commits, and CI runs the
-  required status `whetstone/policy` (`wh check --ci --base`).
+- **Gates.** Pre-commit runs `wh check --staged` (AST and script rules on
+  the staged index), pre-push runs `wh check` for the pushed commits, and CI
+  runs the required status `whetstone/policy` (`wh check --ci --base
+  --format annotations`, so each flag shows beside the code).
 - **Findings.** `wh check --sweep` prints `findings.json`: one finding per
   flag with `fingerprint`, `subjectDigest`, `class`, `priority`, `title`,
-  `responsibility` and `unsure`. Its shape is a contract; do not change it.
+  `responsibility`, `unsure` and, for a tool that can rewrite files, `fix`
+  ([schema](references/findings-v1.schema.json)). Its shape is a contract;
+  do not change it. `wh explain <fingerprint>` resolves a finding to its
+  rule and the commits that accepted it.
 - **Hosts.** A host (Virgil's Messo, a GitHub Action, an agent session)
   consumes three things: the rulebook file, `findings.json` and the
   `whetstone.command-response.v1` envelope. Whetstone keeps no store and no
-  host-specific code; hosts own memory, tasks and the agent.
+  host-specific code; hosts own memory, tasks and the agent. The reusable
+  Action (`action.yml`) is one such host: it works `findings.json` by class
+  with `gh`.
+- **The agent contract.** `wh init --action wire` writes a short block into
+  the repository's `AGENTS.md` between `whetstone:agent-contract` markers
+  (`src/contract.rs`); text outside them is the team's. Keep it under 25
+  lines and true to the commands.
+- **Packs.** A principle pack (`whetstone.principle-pack.v1`) lists
+  principles; a rule pack (`whetstone.rule-pack.v1`, `wh change
+  --export-pack` / `--import-pack`) carries accepted rules with a digest and
+  arrives as drafts.
 
-The public surface is exactly `wh init`, `wh dash`, `wh change` and
-`wh check`. New behaviour goes into these four, never into a new top-level
-command. Bare `wh` is read-only orientation, and there are no hidden
-commands.
+The public surface is exactly `wh init`, `wh dash`, `wh change`, `wh check`
+and `wh explain`. New behaviour goes into these five, never into a new
+top-level command. Bare `wh` is read-only orientation. The one hidden
+command is `wh act`, the runner the reusable Action calls; it is not for
+people.
 
 ## Product invariants
 

@@ -38,8 +38,9 @@ order, simple, customisable, versatile, strong and scalable.
 ## Fixed decisions
 
 ### Public surface
-Four commands: `wh init`, `wh dash`, `wh change`, `wh check`, with no hidden
-commands. New behaviour goes into these four, never into new top-level
+Five commands: `wh init`, `wh dash`, `wh change`, `wh check`, `wh explain`.
+The one hidden command is `wh act`, the runner the reusable GitHub Action
+calls. New behaviour goes into these five, never into new top-level
 commands. Bare `wh` is read-only orientation; `--json` is the agent
 interface.
 

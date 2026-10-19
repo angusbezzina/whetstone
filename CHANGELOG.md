@@ -11,7 +11,8 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 Whetstone becomes a repository's rulebook: enforced rules with a rationale
 and an agent protocol, kept as `whetstone/rulebook.json` in the repository.
-Four commands remain (`wh init`, `wh dash`, `wh change`, `wh check`).
+Five commands remain (`wh init`, `wh dash`, `wh change`, `wh check` and
+the new `wh explain`).
 Whetstone keeps no store and no host-specific code: hosts consume the
 rulebook file, `findings.json` and the JSON envelope.
 
@@ -135,7 +136,7 @@ rulebook file, `findings.json` and the JSON envelope.
 - The CI scaffold installs only the pinned `wh`: no Node, no secrets.
 - `README.md`, `AGENTS.md`, `CLAUDE.md`, `PRODUCT.md`, `DESIGN.md`,
   `planning/direction.md` and `planning/skill-cli-boundary.md` describe the
-  rulebook file, the four commands, the gates and the host contracts.
+  rulebook file, the five commands, the gates and the host contracts.
   Whetstone's own rulebook states its real mission.
 - The crate ships only the manifest, the README, the changelog, `assets/`,
   `src/` and `references/`.
@@ -143,7 +144,7 @@ rulebook file, `findings.json` and the JSON envelope.
   into `whetstone/rulebook.json` (`wh change --accept` commits them) and
   takes no `--expected-revision` or `--resume`; repeating it drafts only
   what is new. `wh init --action setup` installs the Git gates and scaffolds
-  the CI workflow (`wire --hooks --ci`). Bare `wh` lists four workflows and
+  the CI workflow (`wire --hooks --ci`). Bare `wh` lists five workflows and
   names the rulebook file, and its tool report is gone.
 
 ### Fixed
