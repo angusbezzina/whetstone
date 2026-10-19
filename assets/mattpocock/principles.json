@@ -1,0 +1,105 @@
+{
+  "schema": "whetstone.principle-pack.v1",
+  "name": "mattpocock",
+  "version": "1.3.1",
+  "source": "github.com/mattpocock/skills",
+  "license": "Distilled by Whetstone from Matt Pocock's skills, MIT License. The wording and the enforcer hints are Whetstone's, not the skills'.",
+  "commit": "5beb35b040e3de97e54fa9e386d7e42d15c295c2",
+  "principles": [
+    {
+      "id": "deep-modules",
+      "group": "architecture",
+      "text": "Design deep modules: a lot of behaviour behind a small interface. Apply the deletion test: if deleting a module makes its complexity vanish, it was a pass-through; if the complexity reappears across its callers, it earns its keep.",
+      "enforcer_hint": "none",
+      "rationale": "From codebase-design: depth gives callers leverage and maintainers locality.",
+      "starting": true
+    },
+    {
+      "id": "real-seams-only",
+      "group": "architecture",
+      "text": "Put a seam only where something actually varies: one adapter is a hypothetical seam, two adapters are a real one.",
+      "enforcer_hint": "none",
+      "rationale": "From codebase-design: a speculative seam adds interface without adding leverage."
+    },
+    {
+      "id": "accept-dependencies-return-results",
+      "group": "architecture",
+      "text": "Accept dependencies instead of constructing them, and return results instead of producing side effects, so the interface is also the test surface.",
+      "enforcer_hint": "none",
+      "rationale": "From codebase-design: designing for testability."
+    },
+    {
+      "id": "vertical-slices",
+      "group": "verification",
+      "text": "Work in vertical slices: one failing test at an agreed seam, the least code that makes it pass, then the next. Red before green; refactor in review, not inside the loop.",
+      "enforcer_hint": "test",
+      "rationale": "From tdd: tests written in bulk ahead of the code verify imagined behaviour.",
+      "starting": true
+    },
+    {
+      "id": "mock-at-system-boundaries",
+      "group": "verification",
+      "text": "Mock only at system boundaries (external services, time, randomness), never your own modules, and take expected values from an independent source, not by recomputing them the way the code does.",
+      "enforcer_hint": "none",
+      "rationale": "From tdd: implementation-coupled and tautological tests break on refactors and never disagree with the code."
+    },
+    {
+      "id": "feedback-loop-first",
+      "group": "verification",
+      "text": "Before forming a theory about a bug, build a tight feedback loop: one fast, deterministic command that goes red on the reported symptom. No loop, no hypothesis.",
+      "enforcer_hint": "none",
+      "rationale": "From diagnosing-bugs: with a loop that goes red on this bug, bisection and hypothesis testing become mechanical.",
+      "starting": true
+    },
+    {
+      "id": "falsifiable-hypotheses",
+      "group": "verification",
+      "text": "Rank several falsifiable hypotheses before testing any, each stating the prediction it makes, and change one variable per probe.",
+      "enforcer_hint": "none",
+      "rationale": "From diagnosing-bugs: a single hypothesis anchors on the first plausible idea."
+    },
+    {
+      "id": "regression-test-at-the-real-seam",
+      "group": "verification",
+      "text": "Lock a fix with a regression test written before the fix, at the seam where the bug actually occurs; when no such seam exists, record that as an architectural finding instead of writing a shallow test.",
+      "enforcer_hint": "test",
+      "rationale": "From diagnosing-bugs: a test at the wrong seam gives false confidence."
+    },
+    {
+      "id": "review-standards-and-spec-apart",
+      "group": "verification",
+      "text": "Review a change on two separate axes: does it follow the documented standards, and does it do what the spec asked. Report them apart so one cannot mask the other.",
+      "enforcer_hint": "none",
+      "rationale": "From code-review: correct code can implement the wrong thing, and the right thing can break the conventions."
+    },
+    {
+      "id": "shared-domain-language",
+      "group": "domain",
+      "text": "Keep one glossary of the domain's terms and use them exactly in code, tests and docs; when a term conflicts with the glossary or the code, resolve it and record the result.",
+      "enforcer_hint": "none",
+      "rationale": "From domain-modeling: a shared vocabulary names the seams and keeps humans and agents talking about the same thing.",
+      "starting": true
+    },
+    {
+      "id": "record-hard-decisions",
+      "group": "domain",
+      "text": "Record a decision as an ADR only when it is hard to reverse, surprising without context and the result of a real trade-off.",
+      "enforcer_hint": "none",
+      "rationale": "From domain-modeling: a decision record that meets all three stops the next reader re-litigating it."
+    },
+    {
+      "id": "throwaway-prototypes",
+      "group": "core",
+      "text": "Answer a design question with a throwaway prototype, marked as one and kept off the main branch; carry only the validated decision into the real code.",
+      "enforcer_hint": "none",
+      "rationale": "From prototype: the prototype exists to learn fast, not to ship."
+    },
+    {
+      "id": "write-for-agents",
+      "group": "meta",
+      "text": "Write agent-facing docs as ordered steps that end on checkable completion criteria; keep each meaning in one place and state the behaviour you want, not the one you forbid.",
+      "enforcer_hint": "none",
+      "rationale": "From writing-for-agents: vague criteria invite premature completion, and duplication and negation add variance."
+    }
+  ]
+}

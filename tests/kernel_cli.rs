@@ -372,6 +372,47 @@ fn init_inspects_read_only_then_drafts_the_agreement_once() {
 }
 
 #[test]
+fn the_starting_principles_draft_as_editable_records_and_stay_retired() {
+    let repo = Repo::new();
+    let agreed = repo.agree(&[
+        "--mission",
+        "Keep project work aligned.",
+        "--principle",
+        "starting",
+    ]);
+    assert_eq!(agreed["state"], "success", "{agreed}");
+    let ids = drafted(&agreed);
+    assert_eq!(ids.len(), 11, "{agreed}");
+    assert!(ids.contains(&"principle.prove-it-works".to_string()));
+    assert!(ids.contains(&"principle.mattpocock.deep-modules".to_string()));
+    let rulebook: serde_json::Value =
+        serde_json::from_slice(&repo.rulebook().expect("rulebook")).expect("rulebook JSON");
+    let deep = rulebook["principles"]
+        .as_array()
+        .expect("principles")
+        .iter()
+        .find(|entry| entry["id"] == "principle.mattpocock.deep-modules")
+        .expect("deep-modules");
+    assert_eq!(
+        deep["source"],
+        serde_json::json!({"kind": "pack", "pack": "mattpocock", "id": "deep-modules", "version": "1.3.1"})
+    );
+
+    let retired = repo.wh_json(&[
+        "change",
+        "--retire",
+        "principle.mattpocock.deep-modules",
+        "--rationale",
+        "This project keeps modules small on purpose.",
+    ]);
+    assert_eq!(retired["state"], "success", "{retired}");
+    let before = repo.rulebook().expect("rulebook");
+    let replay = repo.agree(&["--principle", "starting"]);
+    assert_eq!(replay["state"], "needs_input", "{replay}");
+    assert_eq!(repo.rulebook().expect("rulebook"), before);
+}
+
+#[test]
 fn init_needs_a_mission_and_names_only_catalogue_principles_and_starters() {
     let repo = Repo::new();
     std::fs::create_dir_all(repo.root.join("whetstone/packs/team"))
@@ -1332,7 +1373,10 @@ fn a_repository_principle_pack_is_offered_beside_pstack_and_written_with_its_ver
     assert!(offered
         .iter()
         .any(|entry| entry["spec"] == "prove-it-works"));
-    assert_eq!(onboarding["catalogue_version"], "pstack 0.15.5, team 2.1.0");
+    assert_eq!(
+        onboarding["catalogue_version"],
+        "pstack 0.15.5, mattpocock 1.3.1, team 2.1.0"
+    );
 
     let unknown = repo.agree(&[
         "--mission",

@@ -27,7 +27,8 @@ host-specific code. A check's evidence (command output) is written under
 
 - `mission`: one statement;
 - `principles`: each with an id, a statement and a source, either a
-  principle from the catalogue compiled into `wh` (pstack's, pinned to a
+  principle from a pack (pstack's or the one distilled from Matt Pocock's
+  skills, both compiled into `wh`, or a repository's own, each pinned to a
   version) or the owner's own;
 - `rules`: each with an id, a statement, a rationale, one `strength`
   (`must`, `should`), one `enforcer`, optional labelled `examples`, a
