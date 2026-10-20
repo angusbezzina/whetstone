@@ -34,7 +34,7 @@ export function Command({ text, className }: { text: string; className?: string 
   const [copied, setCopied] = useState(false);
   return (
     <span className={cn("inline-flex min-w-0 max-w-full items-stretch border border-rule bg-card", className)}>
-      <code className="bare min-w-0 flex-1 overflow-x-auto px-2 py-1 text-[0.8125rem] whitespace-nowrap">{text}</code>
+      <code className="bare min-w-0 flex-1 overflow-x-auto px-2 py-1 text-[0.8125rem] whitespace-nowrap text-foreground">{text}</code>
       <button
         type="button"
         className="inline-flex shrink-0 cursor-pointer items-center border-l border-rule px-2 text-ink-3 hover:text-foreground"

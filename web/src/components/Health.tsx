@@ -3,7 +3,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useDash } from "@/state";
 import { Command, Prose } from "./marks";
 
-/** One line per problem: the gates, the CI check, the file, coverage. A
+/** A strip that needs attention, one line per problem: the gates, the CI check, the file, coverage. A
  * single line says so when nothing is wrong. */
 export function Health() {
   const { data } = useDash();
@@ -15,24 +15,40 @@ export function Health() {
   }
   if (!items.length && !health?.healthy) return null;
   return (
-    <section aria-label="Health" className="border-b border-rule px-4 py-2 sm:px-6">
+    <section
+      aria-label={items.length ? undefined : "Health"}
+      aria-labelledby={items.length ? "health-title" : undefined}
+      className={
+        items.length
+          ? "alert grid gap-x-8 gap-y-2 border-b border-frame bg-primary px-4 py-3 text-primary-foreground sm:px-6 lg:grid-cols-[13rem_minmax(0,1fr)]"
+          : "border-b border-rule px-4 py-2 sm:px-6"
+      }
+    >
       {items.length ? (
-        <ul className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
+        <div>
+          <h2 id="health-title" className="display text-[1.125rem] leading-tight font-semibold">
+            Needs attention <span className="font-normal">({items.length})</span>
+          </h2>
+          <p className="mt-1.5 text-[0.8125rem] leading-snug">Until these are fixed, the rules are not enforced everywhere they should be.</p>
+        </div>
+      ) : null}
+      {items.length ? (
+        <ul className="grid grid-cols-[minmax(0,1fr)] content-center gap-1.5">
           {items.map((item, index) => (
             <li key={item.kind + index}>
               <Collapsible>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.9375rem]">
                   {item.tone === "fail" ? (
-                    <CircleX className="size-4 shrink-0 text-struck" aria-label="Problem" />
+                    <CircleX className="size-4 shrink-0" aria-label="Problem" />
                   ) : (
-                    <CircleAlert className="size-4 shrink-0 text-struck" aria-label="Warning" />
+                    <CircleAlert className="size-4 shrink-0" aria-label="Warning" />
                   )}
                   <span className="min-w-0 flex-1 basis-48">
                     <Prose text={item.text} />
                   </span>
                   {item.fix ? <Command text={item.fix} /> : null}
                   {item.detail.length ? (
-                    <CollapsibleTrigger className="group label inline-flex cursor-pointer items-center gap-1 hover:text-foreground">
+                    <CollapsibleTrigger className="group label inline-flex cursor-pointer items-center gap-1 underline-offset-4 hover:underline">
                       {item.detail.length} {item.detail.length === 1 ? "detail" : "details"}
                       <ChevronDown className="size-3 transition-transform group-data-[state=open]:rotate-180" />
                     </CollapsibleTrigger>
@@ -40,7 +56,7 @@ export function Health() {
                 </div>
                 {item.detail.length ? (
                   <CollapsibleContent>
-                    <ul className="mt-1 mb-1 ml-7 grid gap-0.5 text-[0.8125rem] text-ink-2">
+                    <ul className="mt-1 mb-1 ml-7 grid gap-0.5 text-[0.8125rem]">
                       {item.detail.map((line) => (
                         <li key={line}>
                           <code>{line}</code>

@@ -242,6 +242,23 @@
     color: var(--ink-3);
     line-height: 1.2;
   }
+  /* The health strip with problems in it: ink on the brand orange. Code
+     chips and commands keep their own plane; the focus ring turns ink so
+     it shows on the orange. */
+  /* A zone mark mid-drift lights orange and fades back as it settles. */
+  [data-zone] {
+    transition: color 600ms ease-out;
+  }
+  [data-zone][data-shifting] {
+    color: var(--primary);
+    transition-duration: 80ms;
+  }
+  .alert {
+    --ring: var(--primary-foreground);
+  }
+  .alert .label {
+    color: inherit;
+  }
   .display {
     font-family: var(--font-display);
     text-transform: uppercase;

@@ -7,19 +7,20 @@ import { PendingBar } from "@/components/PendingBar";
 import { Rulebook } from "@/components/Rulebook";
 import { Setup } from "@/components/Setup";
 import { TitleBlock } from "@/components/TitleBlock";
-import { flash, plotSheet } from "@/motion";
+import { drift, drop, plotSheet } from "@/motion";
 import { DashProvider, useDash } from "@/state";
 
 const COLUMNS = ["1", "2", "3", "4", "5", "6"];
 const ROWS = ["A", "B", "C", "D"];
 
-/** The drawing frame: an outer edge, zone ticks in the margin, and the
- * sheet inside it. */
+/** The drawing frame: an outer edge, zone ticks in the margin that drift
+ * now and then, and the sheet inside it. */
 function Sheet({ children }: { children: React.ReactNode }) {
   const root = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (root.current) plotSheet(root.current);
   }, []);
+  useEffect(() => (root.current ? drift(root.current) : undefined), []);
   return (
     <div ref={root} className="relative mx-auto max-w-[84rem] bg-background lg:p-6">
       {(["top", "bottom", "left", "right"] as const).map((edge) => (
@@ -40,28 +41,28 @@ function Sheet({ children }: { children: React.ReactNode }) {
       ))}
       <div aria-hidden="true" className="pointer-events-none absolute inset-x-6 top-0 hidden h-6 grid-cols-6 lg:grid">
         {COLUMNS.map((zone) => (
-          <span key={zone} className="label flex items-center justify-center border-l border-rule first:border-l-0">
+          <span key={zone} data-zone={zone} className="label flex items-center justify-center border-l border-rule first:border-l-0">
             {zone}
           </span>
         ))}
       </div>
       <div aria-hidden="true" className="pointer-events-none absolute inset-x-6 bottom-0 hidden h-6 grid-cols-6 lg:grid">
         {COLUMNS.map((zone) => (
-          <span key={zone} className="label flex items-center justify-center border-l border-rule first:border-l-0">
+          <span key={zone} data-zone={zone} className="label flex items-center justify-center border-l border-rule first:border-l-0">
             {zone}
           </span>
         ))}
       </div>
       <div aria-hidden="true" className="pointer-events-none absolute inset-y-6 left-0 hidden w-6 grid-rows-4 lg:grid">
         {ROWS.map((zone) => (
-          <span key={zone} className="label flex items-center justify-center border-t border-rule first:border-t-0">
+          <span key={zone} data-zone={zone} className="label flex items-center justify-center border-t border-rule first:border-t-0">
             {zone}
           </span>
         ))}
       </div>
       <div aria-hidden="true" className="pointer-events-none absolute inset-y-6 right-0 hidden w-6 grid-rows-4 lg:grid">
         {ROWS.map((zone) => (
-          <span key={zone} className="label flex items-center justify-center border-t border-rule first:border-t-0">
+          <span key={zone} data-zone={zone} className="label flex items-center justify-center border-t border-rule first:border-t-0">
             {zone}
           </span>
         ))}
@@ -75,7 +76,7 @@ function Notice() {
   const { notice } = useDash();
   const ref = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
-    if (notice) flash(ref.current);
+    if (notice) drop(ref.current);
   }, [notice]);
   return (
     <div className="pointer-events-none fixed inset-x-0 top-0 z-40 flex justify-center p-3">
@@ -85,8 +86,8 @@ function Notice() {
         role="status"
         aria-live="polite"
         className={
-          "max-w-md border bg-background px-3 py-2 text-[0.9375rem] " +
-          (notice ? (notice.tone === "warn" ? "pointer-events-auto border-struck" : "pointer-events-auto border-frame") : "sr-only")
+          "max-w-md border border-frame bg-primary px-3 py-2 text-[0.9375rem] text-primary-foreground shadow-[0_2px_0_var(--frame)] " +
+          (notice ? "pointer-events-auto" : "sr-only")
         }
       >
         {notice?.text}

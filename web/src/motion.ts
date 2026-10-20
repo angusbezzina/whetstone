@@ -30,6 +30,48 @@ export function plotSheet(root: HTMLElement) {
   });
 }
 
+/** The zone marks in the margin drift: every few seconds one of them runs
+ * through a handful of characters from its own set, lit orange, and settles
+ * back on its label. Paused while the tab is hidden; still under reduced
+ * motion. Returns the stop function. */
+export function drift(root: HTMLElement) {
+  if (reduced()) return () => {};
+  const marks = [...root.querySelectorAll<HTMLElement>("[data-zone]")];
+  const timers = new Set<number>();
+  const later = (fn: () => void, ms: number) => {
+    const id = window.setTimeout(() => {
+      timers.delete(id);
+      fn();
+    }, ms);
+    timers.add(id);
+  };
+  const shift = (mark: HTMLElement) => {
+    const label = mark.dataset.zone!;
+    const glyphs = /\d/.test(label) ? "0123456789" : "ABCDEFGHJKLMNPRSTUVWXYZ";
+    const steps = 5 + Math.floor(Math.random() * 4);
+    mark.dataset.shifting = "";
+    for (let step = 0; step < steps; step++) {
+      later(() => (mark.textContent = glyphs[Math.floor(Math.random() * glyphs.length)]), step * 70);
+    }
+    later(() => {
+      mark.textContent = label;
+      delete mark.dataset.shifting;
+    }, steps * 70);
+  };
+  const tick = () => {
+    if (!document.hidden && marks.length) shift(marks[Math.floor(Math.random() * marks.length)]);
+    later(tick, 2200 + Math.random() * 2600);
+  };
+  later(tick, 1800);
+  return () => {
+    timers.forEach((id) => window.clearTimeout(id));
+    marks.forEach((mark) => {
+      mark.textContent = mark.dataset.zone!;
+      delete mark.dataset.shifting;
+    });
+  };
+}
+
 /** Rows arrive in the order they rank: blocks first, then reports. */
 export function cascade(rows: Iterable<Element>) {
   if (reduced()) return;
@@ -69,13 +111,13 @@ export function stamp(element: Element | null) {
   });
 }
 
-/** A short emphasis on something that just changed, without moving it. */
-export function flash(element: Element | null) {
+/** A notice arriving: it drops a few pixels into place. */
+export function drop(element: Element | null) {
   if (reduced() || !element) return;
-  const wash = getComputedStyle(document.documentElement).getPropertyValue("--wash").trim();
   animate(element, {
-    backgroundColor: [wash || "#fdf1eb", "rgba(0,0,0,0)"],
-    duration: 1200,
+    translateY: [-8, 0],
+    opacity: [0, 1],
+    duration: 320,
     ease: "outQuad",
   });
 }
