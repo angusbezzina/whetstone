@@ -9,6 +9,8 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-19
+
 ### Added
 
 - Principle coverage: the chain from principle to rule is checked.

@@ -50,12 +50,8 @@ ln -sf ~/.local/bin/whetstone ~/.local/bin/wh
 Whetstone needs `git` and nothing else. Releases before v0.13.0 are an
 earlier product: if `wh --help` lists commands such as `extract`, `pack` or
 `mcp`, an old copy is ahead on your `PATH` (check `which -a wh`).
-
-This README describes `main`. The latest release, v0.14.0, does not yet have
-what [CHANGELOG.md](CHANGELOG.md) lists under Unreleased: the one-page
-dashboard, the starting set of principles, the `mattpocock` pack,
-`wh change --serves` and `--export-pack --principles`. Build from source to
-use them before the next release.
+Building from source overwrites `~/.local/bin/whetstone`, including a copy
+the installer put there.
 
 ## Five commands
 
