@@ -36,7 +36,7 @@ export type Enforcer =
   | { kind: "formatter"; tool: string }
   | { kind: "test"; command: string }
   | { kind: "validator"; command: string };
-export type SweepUnsure = { paths?: string[]; matching?: string; reason: string };
+export type SweepUnsure = { paths?: string[]; exclude?: string[]; matching?: string; reason: string };
 export type RuleDefinition = {
   type: "rule";
   strength: "must" | "should";
@@ -44,6 +44,10 @@ export type RuleDefinition = {
   examples: unknown[];
   source: unknown;
   paths: string[];
+  /** Absent or null: generated code is excluded; [] excludes nothing. */
+  exclude?: string[] | null;
+  mode?: "tree" | "change";
+  batch?: "by-file" | "by-crate" | null;
   sweep: "discuss" | "confirm_first" | "draft_pr" | null;
   sweep_priority: number | null;
   sweep_unsure: SweepUnsure[];
@@ -66,6 +70,10 @@ export type Rule = {
   check: { kind: Enforcer["kind"]; label: string; command: string; language: string | null };
   stages: { key: "commit" | "push" | "ci"; label: string; runs: boolean }[];
   paths: string[];
+  /** The paths the rule never applies to: its own, or generated code by default. */
+  exclude: string[];
+  mode: "tree" | "change";
+  batch: "by-file" | "by-crate" | null;
   examples: Example[];
   source: { kind: string; label: string; reference: string | null };
   /** The principle the rule serves, when its source names one held in the rulebook. */

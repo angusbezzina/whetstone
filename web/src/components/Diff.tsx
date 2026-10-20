@@ -7,6 +7,9 @@ const FIELD: Record<string, string> = {
   strength: "Strength",
   enforcer: "Checked by",
   paths: "Applies to",
+  exclude: "Excludes",
+  mode: "Mode",
+  batch: "Batched",
   examples: "Examples",
   source: "Source",
   sweep: "When broken",
@@ -33,7 +36,7 @@ function words(field: string, value: string | null): string | null {
 
 /** Commands, paths and patterns are literal text: set them as code. */
 function literal(field: string, value: string | null) {
-  return ["enforcer", "paths", "sweep_unsure", "examples", "source"].includes(field) ? <code className="whitespace-normal">{value}</code> : value;
+  return ["enforcer", "paths", "exclude", "sweep_unsure", "examples", "source"].includes(field) ? <code className="whitespace-normal">{value}</code> : value;
 }
 
 function Fields({ fields }: { fields: FieldChange[] }) {
