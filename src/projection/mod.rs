@@ -77,7 +77,9 @@ pub struct ProjectionInput {
 
 /// Where in the gate ladder a rule runs.
 pub fn runs_at(rule: &Rule) -> &'static str {
-    if rule.enforcer.runs_staged() {
+    if rule.mode == crate::domain::RuleMode::Change {
+        "pre-push and CI, on the change since the base"
+    } else if rule.enforcer.runs_staged() {
         "pre-commit, pre-push and CI"
     } else {
         "pre-push and CI"
@@ -93,6 +95,9 @@ fn rule_definition(rule: &Rule) -> Value {
         "examples": rule.examples,
         "source": rule.source,
         "paths": rule.paths,
+        "exclude": rule.exclude,
+        "mode": rule.mode,
+        "batch": rule.batch,
         "sweep": rule.sweep,
         "sweep_priority": rule.sweep_priority,
         "sweep_unsure": rule.sweep_unsure,

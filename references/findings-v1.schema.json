@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/angusbezzina/whetstone/references/findings-v1.schema.json",
   "title": "Whetstone sweep findings (findings.json)",
-  "description": "What `wh check --sweep` prints: one finding per flag of every rule below must. The same repository state gives byte-identical findings. Runners (Messo inside Virgil, the reusable GitHub Action elsewhere) act on each by class and stay idempotent by fingerprint.",
+  "description": "What `wh check --sweep` prints: one finding per flag of every rule below must, or one per batch for a rule with `batch`; a change-mode rule files none (the `--format json` envelope counts its flags in `data.counts`). The same repository state gives byte-identical findings. Runners (Messo inside Virgil, the reusable GitHub Action elsewhere) act on each by class and stay idempotent by fingerprint.",
   "type": "array",
   "items": {
     "type": "object",
@@ -28,6 +28,21 @@
       "responsibility": { "type": "string", "description": "The rule id that raised the finding." },
       "principle": { "type": "string", "description": "The id of the principle the rule serves, when its source names one in the rulebook; `wh explain` gives the statement. A runner quotes it so the why travels with the finding." },
       "unsure": { "type": "string", "description": "Present only where the rule doubts its own flag; a runner parks such a finding until a person raises it." },
+      "sites": {
+        "type": "array",
+        "minItems": 1,
+        "description": "Present only on a batched rule's finding (`batch: by-file` or `by-crate`): every flag the finding stands for, in source order. The fingerprint is then the rule, the repository and the batch (`by-file:<path>` or `by-crate:<directory>`), stable while the batch exists, and `subjectDigest` covers every site's path and flagged content, so it changes when a site is fixed, added or edited.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "text"],
+          "properties": {
+            "path": { "type": "string", "description": "The repository path flagged." },
+            "line": { "type": "integer", "minimum": 1, "description": "The flagged line; absent when the flag is about the whole file." },
+            "text": { "type": "string", "maxLength": 240, "description": "The flagged line, trimmed, or the tool's message for a flag on the whole file." }
+          }
+        }
+      },
       "fix": {
         "type": "string",
         "maxLength": 65536,

@@ -18,8 +18,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
-    ContentDigest, DomainError, Enforcer, Mission, Principle, PrincipleSource, RecordId, Rule,
-    RuleExample, RuleSource, RuleSourceKind, Strength, SweepClass, SweepUnsure, RULE_SCHEMA_V2,
+    Batch, ContentDigest, DomainError, Enforcer, Mission, Principle, PrincipleSource, RecordId,
+    Rule, RuleExample, RuleMode, RuleSource, RuleSourceKind, Strength, SweepClass, SweepUnsure,
+    RULE_SCHEMA_V2,
 };
 
 pub const RULEBOOK_SCHEMA: &str = "whetstone.rulebook.v1";
@@ -270,6 +271,12 @@ struct RuleFile {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    exclude: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "RuleMode::is_tree")]
+    mode: RuleMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    batch: Option<Batch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     sweep: Option<SweepClass>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sweep_priority: Option<u8>,
@@ -288,6 +295,9 @@ impl RuleFile {
             examples: self.examples,
             source: self.source,
             paths: self.paths,
+            exclude: self.exclude,
+            mode: self.mode,
+            batch: self.batch,
             sweep: self.sweep,
             sweep_priority: self.sweep_priority,
             sweep_unsure: self.sweep_unsure,
@@ -304,6 +314,9 @@ impl RuleFile {
             examples: rule.examples.clone(),
             source: rule.source.clone(),
             paths: rule.paths.clone(),
+            exclude: rule.exclude.clone(),
+            mode: rule.mode,
+            batch: rule.batch,
             sweep: rule.sweep,
             sweep_priority: rule.sweep_priority,
             sweep_unsure: rule.sweep_unsure.clone(),
@@ -759,6 +772,64 @@ mod tests {
         let mut renamed = rulebook();
         renamed["rules"][0]["id"] = json!("rule.no-dbg-macro");
         assert_ne!(first, read(&renamed).expect("valid").rules[0].digest);
+    }
+
+    #[test]
+    fn exclude_mode_and_batch_round_trip_and_leave_other_digests_alone() {
+        let plain = read(&rulebook()).expect("valid");
+        // The digest of a rule that names none of the fields is the one it
+        // had before they existed, and an explicit tree mode is the default.
+        let mut tree = rulebook();
+        tree["rules"][0]["mode"] = json!("tree");
+        assert_eq!(
+            read(&tree).expect("valid").rules[0].digest,
+            plain.rules[0].digest
+        );
+        assert!(
+            !render(&read(&tree).expect("valid"))
+                .expect("render")
+                .contains("\"mode\""),
+            "tree mode is left out of the file"
+        );
+        assert!(!plain.rules[0].rule.applies_to("src/generated/api.rs"));
+
+        // An empty exclude is not an absent one: it wants generated code.
+        let mut wants_generated = rulebook();
+        wants_generated["rules"][0]["exclude"] = json!([]);
+        let book = read(&wants_generated).expect("valid");
+        assert_ne!(book.rules[0].digest, plain.rules[0].digest);
+        assert!(book.rules[0].rule.applies_to("src/generated/api.rs"));
+        let text = render(&book).expect("render");
+        assert!(text.contains("\"exclude\": []"), "{text}");
+        assert_eq!(
+            parse(&text, Revision::Uncommitted).expect("valid").rules[0].digest,
+            book.rules[0].digest
+        );
+
+        let mut all = rulebook();
+        all["rules"][0]["exclude"] = json!(["src/vendor/**"]);
+        all["rules"][0]["mode"] = json!("change");
+        all["rules"][0]["batch"] = json!("by-crate");
+        let book = read(&all).expect("valid");
+        let rule = &book.rules[0].rule;
+        assert_eq!(rule.mode, RuleMode::Change);
+        assert_eq!(rule.batch, Some(Batch::ByCrate));
+        assert!(!rule.applies_to("src/vendor/a.rs"));
+        assert!(
+            rule.applies_to("src/generated/api.rs"),
+            "a named exclude replaces the default"
+        );
+        let text = render(&book).expect("render");
+        assert_eq!(
+            read(&serde_json::from_str(&text).expect("json"))
+                .expect("valid")
+                .rules[0]
+                .rule,
+            *rule
+        );
+        let mut unknown = rulebook();
+        unknown["rules"][0]["batch"] = json!("by-line");
+        assert!(read(&unknown).is_err());
     }
 
     fn ids(ids: &[RecordId]) -> Vec<&str> {

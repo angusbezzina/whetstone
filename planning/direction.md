@@ -62,7 +62,12 @@ Whetstone keeps no other store.
 ### Rules
 - One strength: `must` or `should`.
 - One mechanical enforcer: `ast`, `lint`, `formatter`, `test`, `validator`.
-- Optional `paths` scope the rule.
+- Optional `paths` scope the rule and `exclude` takes paths out of it in
+  every mode; a rule without `exclude` leaves out `**/generated/**`.
+- `mode`: `tree` (absent) checks every file in scope; `change` checks only
+  a change against a base, and a sweep counts its flags without filing them.
+- `batch` (`by-file`, `by-crate`) groups a sweep's flags into one finding
+  per file or crate.
 - Sweep fields: `sweep` (`discuss`, `confirm_first`, `draft_pr`; absent is
   discuss), `sweep_priority` (0 most urgent to 4; default 2) and
   `sweep_unsure` (paths or a pattern, with a reason). Only a person widens a
@@ -83,7 +88,8 @@ holds, the gates enforce the principles through the rules.
 - Principles carry no strength, priority or metric.
 
 ### Findings
-The contract does not change shape. One finding per flag:
+The contract does not change shape: fields are added, never changed. One
+finding per flag, or per batch for a batched rule (which adds `sites`):
 `fingerprint` (sha256 of rule, repository origin and subject, numbered in
 source order for repeats), `subjectDigest`, `class`, `priority`, `title`,
 `responsibility`, `principle` (the id of the principle the rule serves,

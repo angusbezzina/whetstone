@@ -18,6 +18,9 @@ fn rule(enforcer: Enforcer) -> Rule {
         sweep: None,
         sweep_priority: None,
         sweep_unsure: Vec::new(),
+        exclude: None,
+        mode: RuleMode::Tree,
+        batch: None,
     }
 }
 
@@ -112,4 +115,94 @@ fn paths_match_prefixes_and_globs_only() {
     assert!(entry_point_matches("tests/*.rs", "tests/a.rs"));
     assert!(!entry_point_matches("tests/*.rs", "tests/nested/a.rs"));
     assert!(entry_point_matches("**/README.md", "docs/deep/README.md"));
+}
+
+#[test]
+fn exclude_takes_paths_out_of_scope_and_defaults_to_generated_code() {
+    let mut scoped = rule(Enforcer::Ast {
+        query: "(unsafe_block) @match".into(),
+        language: Some("rust".into()),
+    });
+    scoped.paths = vec!["crates/**".into()];
+    assert!(scoped.applies_to("crates/api/src/lib.rs"));
+    assert!(
+        !scoped.applies_to("crates/api/src/generated/client.rs"),
+        "no exclude means generated code is out of scope"
+    );
+    assert_eq!(scoped.exclusions(), DEFAULT_EXCLUDE);
+
+    scoped.exclude = Some(Vec::new());
+    assert!(
+        scoped.applies_to("crates/api/src/generated/client.rs"),
+        "an empty exclude wants generated code"
+    );
+    assert!(scoped.exclusions().is_empty());
+
+    scoped.exclude = Some(vec!["crates/legacy/".into(), "**/*.pb.rs".into()]);
+    assert!(!scoped.applies_to("crates/legacy/src/lib.rs"));
+    assert!(!scoped.applies_to("crates/api/src/types.pb.rs"));
+    assert!(scoped.applies_to("crates/api/src/generated/client.rs"));
+    assert!(
+        !scoped.applies_to("docs/a.rs"),
+        "exclude never widens paths"
+    );
+    scoped.validate().expect("valid exclude");
+
+    for everything in ["**", "./**", "*"] {
+        let mut broken = scoped.clone();
+        broken.exclude = Some(vec![everything.into()]);
+        assert!(
+            broken.validate().is_err(),
+            "{everything} excludes everything"
+        );
+    }
+    let mut outside = scoped.clone();
+    outside.exclude = Some(vec!["../outside".into()]);
+    assert!(outside.validate().is_err());
+}
+
+#[test]
+fn an_unsure_entry_never_covers_its_excluded_paths() {
+    let unsure = SweepUnsure {
+        paths: vec!["tests/**".into()],
+        exclude: vec!["tests/golden/**".into()],
+        matching: Some("fixture".into()),
+        reason: "fixtures may flag".into(),
+    };
+    assert!(unsure.covers(Some("tests/a.rs"), "x"));
+    assert!(!unsure.covers(Some("tests/golden/a.rs"), "x"));
+    assert!(
+        !unsure.covers(Some("tests/golden/a.rs"), "a fixture"),
+        "exclude wins over the pattern too"
+    );
+    assert!(unsure.covers(Some("src/a.rs"), "a fixture"));
+    assert!(unsure.covers(None, "a fixture"));
+}
+
+#[test]
+fn mode_and_batch_read_and_write_their_file_names() {
+    let tree = rule(Enforcer::Ast {
+        query: "(unsafe_block) @match".into(),
+        language: Some("rust".into()),
+    });
+    let json = serde_json::to_value(&tree).expect("json");
+    for field in ["exclude", "mode", "batch"] {
+        assert!(
+            json.get(field).is_none(),
+            "{field} is left out at its default"
+        );
+    }
+    let mut change = tree.clone();
+    change.mode = RuleMode::Change;
+    change.batch = Some(Batch::ByCrate);
+    change.exclude = Some(Vec::new());
+    let json = serde_json::to_value(&change).expect("json");
+    assert_eq!(json["mode"], "change");
+    assert_eq!(json["batch"], "by-crate");
+    assert_eq!(json["exclude"], serde_json::json!([]));
+    assert_eq!(serde_json::from_value::<Rule>(json).expect("rule"), change);
+    assert_eq!(
+        serde_json::to_value(Batch::ByFile).expect("json"),
+        "by-file"
+    );
 }

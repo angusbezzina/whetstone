@@ -99,7 +99,8 @@ fn replace_flag(argv: &mut [String], from: &str, to: &str) -> Option<()> {
 }
 
 /// Attach each fixable rule's diff to its findings: the part for the
-/// finding's file, or the whole diff for a repository-wide finding.
+/// finding's file (or a batch's files), or the whole diff for a
+/// repository-wide finding.
 pub(crate) fn attach(project: &Path, selected: &[SelectedRule], found: &mut [SweepFinding]) {
     let rules = selected
         .iter()
@@ -118,10 +119,22 @@ pub(crate) fn attach(project: &Path, selected: &[SelectedRule], found: &mut [Swe
         let Some(per_file) = per_file else {
             continue;
         };
-        let diff = match per_file.get(&finding.subject) {
-            Some(diff) => diff.clone(),
-            None if finding.subject == "repository" => per_file.values().cloned().collect(),
-            None => continue,
+        let diff = if !finding.sites.is_empty() {
+            let files = finding
+                .sites
+                .iter()
+                .map(|site| site.path.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            files
+                .into_iter()
+                .filter_map(|file| per_file.get(file).cloned())
+                .collect()
+        } else {
+            match per_file.get(&finding.subject) {
+                Some(diff) => diff.clone(),
+                None if finding.subject == "repository" => per_file.values().cloned().collect(),
+                None => continue,
+            }
         };
         if !diff.is_empty() && diff.len() <= MAX_FIX_BYTES {
             finding.fix = Some(diff);

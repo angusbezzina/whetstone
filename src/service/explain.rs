@@ -84,7 +84,7 @@ pub(crate) fn explain(request: ExplainRequest) -> ServiceResponse {
             Ok(found) => found,
             Err(error) => return needs(request_id, error),
         };
-        let found = found.or_else(|| recompute(root, &rule_ids, &fingerprint));
+        let found = found.or_else(|| recompute(root, &book, &fingerprint));
         let Some((rule, subject, source)) = found else {
             return needs(
                 request_id,
@@ -137,10 +137,13 @@ pub(crate) fn explain(request: ExplainRequest) -> ServiceResponse {
         "command": command,
         "runs_at": crate::projection::runs_at(rule),
         "paths": rule.paths,
+        "exclude": rule.exclusions(),
+        "mode": rule.mode.label(),
         "sweep": {
             "class": rule.sweep_class().label(),
             "priority": rule.sweep_priority(),
             "unsure": rule.sweep_unsure,
+            "batch": rule.batch.map(crate::domain::Batch::label),
         },
         "source": rule.source,
     });
@@ -341,19 +344,22 @@ pub(crate) fn from_findings_file(
 }
 
 /// Recompute fingerprints for every rule over every subject a sweep could
-/// have named, and return the one that matches: `(rule, subject, how)`.
+/// have named (a batched rule's batches included), and return the one that
+/// matches: `(rule, subject, how)`.
 pub(crate) fn recompute(
     root: &Path,
-    rule_ids: &[String],
+    book: &Rulebook,
     fingerprint: &str,
 ) -> Option<(String, String, String)> {
     let repository = findings::repository_identity(root);
+    let files = crate::gates::FileSet::repository(root)
+        .map(|files| files.paths().map(str::to_owned).collect::<Vec<_>>())
+        .unwrap_or_default();
     let mut subjects = vec!["repository".to_string()];
-    if let Ok(files) = crate::gates::FileSet::repository(root) {
-        subjects.extend(files.paths().map(str::to_owned));
-    }
+    subjects.extend(files.iter().cloned());
     for repeat in 1..=MAX_SUBJECT_REPEATS {
-        for rule in rule_ids {
+        for entry in &book.rules {
+            let rule = entry.id.as_str();
             for subject in &subjects {
                 let subject = if repeat == 1 {
                     subject.clone()
@@ -361,7 +367,33 @@ pub(crate) fn recompute(
                     format!("{subject}#{repeat}")
                 };
                 if findings::fingerprint(rule, &repository, &subject).starts_with(fingerprint) {
-                    return Some((rule.clone(), subject, "recomputed".into()));
+                    return Some((rule.to_string(), subject, "recomputed".into()));
+                }
+            }
+        }
+    }
+    for entry in &book.rules {
+        let Some(batch) = entry.rule.batch else {
+            continue;
+        };
+        let keys = files
+            .iter()
+            .map(|path| findings::batch_key(root, batch, path))
+            .collect::<std::collections::BTreeSet<_>>();
+        let doubts = std::iter::once(None).chain(
+            entry
+                .rule
+                .sweep_unsure
+                .iter()
+                .map(|unsure| Some(unsure.reason.trim())),
+        );
+        for doubt in doubts {
+            for key in &keys {
+                let subject = findings::batch_subject(batch, key, doubt);
+                if findings::fingerprint(entry.id.as_str(), &repository, &subject)
+                    .starts_with(fingerprint)
+                {
+                    return Some((entry.id.as_str().to_string(), subject, "recomputed".into()));
                 }
             }
         }
@@ -477,11 +509,38 @@ fn render_text(
             rule.paths.join(", ")
         }
     );
+    let exclusions = rule.exclusions();
     let _ = writeln!(
         out,
-        "Sweep: {}, priority {}",
+        "Excludes: {}{}",
+        if exclusions.is_empty() {
+            "nothing".to_string()
+        } else {
+            exclusions.join(", ")
+        },
+        if rule.exclude.is_none() {
+            " (the default)"
+        } else {
+            ""
+        }
+    );
+    let _ = writeln!(
+        out,
+        "Mode: {}",
+        match rule.mode {
+            crate::domain::RuleMode::Tree => "tree: every check runs it over the files in scope",
+            crate::domain::RuleMode::Change =>
+                "change: only a check against a base runs it (pre-push, wh check --ci --base); a sweep counts its flags and files no finding",
+        }
+    );
+    let _ = writeln!(
+        out,
+        "Sweep: {}, priority {}{}",
         rule.sweep_class().label(),
-        rule.sweep_priority()
+        rule.sweep_priority(),
+        rule.batch
+            .map(|batch| format!(", one finding per batch {}", batch.label()))
+            .unwrap_or_default()
     );
     if let Some(principle) = principle {
         let _ = writeln!(

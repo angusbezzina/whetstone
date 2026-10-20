@@ -146,7 +146,7 @@ wants the chain whole before anything is committed sets strict mode with
 `wh change --require-served true` (the rulebook's `require_served` field).
 `wh change --accept` then refuses a rulebook with a gap and lists it.
 
-Every rule a change adds or re-aims (a new enforcer or new paths) is probed
+Every rule a change adds or re-aims (a new enforcer, paths or exclusions) is probed
 before it is written: its enforcer runs once over the repository, and the
 envelope's `data.probes` says whether it ran, how many files are in scope,
 how many places it matched and where. A rule whose paths cover no file,
@@ -155,11 +155,21 @@ script is missing or whose command cannot start is not written; pass
 `--allow-unvalidated` to write it anyway. A probe runs the command, so a
 `test` rule runs the test suite.
 
-A rule's definition also takes its sweep fields: `sweep` (`discuss`, the
-default, `confirm_first` or `draft_pr`: how far a host may go with a
-finding), `sweep_priority` (0, most urgent, to 4; default 2) and
-`sweep_unsure` (paths or a pattern, with a reason, where the rule cannot
-decide). Only a person widens a rule's sweep class: a `wh change` from an
+Beside its statement, rationale, strength, enforcer, examples and source,
+a rule's definition takes the fields that say where it applies and how a
+sweep works its flags:
+
+| Field | Values | Absent means |
+| --- | --- | --- |
+| `paths` | globs or prefixes the rule applies to | the whole repository |
+| `exclude` | globs or prefixes the rule never applies to, whatever `paths` says, in every mode (staged, base, sweep, tree); a lint's or formatter's flags there are dropped | `["**/generated/**"]`: write `"exclude": []` for a rule that wants generated code |
+| `mode` | `tree` or `change`: a change-mode rule runs only against a base (pre-push, `wh check --ci --base`), and a sweep counts its flags without filing a finding | `tree` |
+| `batch` | `by-file` or `by-crate`: a sweep files one finding per file, or per crate or package (the nearest directory above the file with a `Cargo.toml` or `package.json`), listing its `sites` | one finding per flag |
+| `sweep` | `discuss`, `confirm_first` or `draft_pr`: how far a host may go with a finding | `discuss` |
+| `sweep_priority` | 0 (most urgent) to 4 | 2 |
+| `sweep_unsure` | entries of `paths`, `exclude` and a `matching` pattern, with a `reason`, where the rule cannot decide | every flag is sure |
+
+Only a person widens a rule's sweep class: a `wh change` from an
 agent (no terminal, or an agent host's environment) may keep or narrow it,
 and a person sets it in a terminal or the dashboard. A retired rule leaves `rules` and is listed under `retired` with its
 reason. Add `--preview` to any change to see its exact effect without
@@ -197,7 +207,9 @@ When no lint code or AST query can express a rule, write a script under
 `whetstone/checks/` and point a `validator` rule at it. The script runs from
 the repository root without a shell and is given `WH_MODE` (`staged`,
 `base`, `changed`, `sweep` or `all`), `WH_RULE`, `WH_PATHS` (a file listing
-the files in scope, one per line) and `WH_BASE`. It exits 0 to pass; a line
+the files in scope, one per line, the rule's exclusions left out) and
+`WH_BASE`. A script that should judge only a change needs no guard on
+`WH_MODE`: give its rule `"mode": "change"`. It exits 0 to pass; a line
 `path:line message` is a finding at that line and `path: message` one about
 the whole file. Scripts run at pre-commit on the staged files. The full
 contract is `whetstone/checks/README.md`, which wiring writes with a working
@@ -241,7 +253,13 @@ repository's origin and the subject, stable across runs), `subjectDigest`,
 principle the rule serves, when the rulebook names one) and, where
 `sweep_unsure` covers the flag, `unsure` with its reason. A formatter or lint
 rule whose tool can rewrite files also carries `fix`, the tool's own diff,
-which applies with `git apply` (the check never applies it). The shape is in
+which applies with `git apply` (the check never applies it). A batched rule
+files one finding per batch instead: its subject is the batch
+(`by-file:<path>` or `by-crate:<directory>`), `sites` lists every flag as
+`{path, line, text}`, and `subjectDigest` covers every site's content, so it
+moves when a site is fixed or added. A change-mode rule files nothing; with
+`--format json` the envelope's `data.counts` lists
+`{rule, state, count}` for each one. The shape is in
 [references](references/findings-v1.schema.json). The CI workflow uploads it
 as the `scan-findings` artifact on every push to main.
 

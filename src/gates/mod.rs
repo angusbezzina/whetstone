@@ -787,8 +787,17 @@ fn run_command_gate(
     } else if run.truncated {
         outcome = outcome.unknown("The gate output exceeded its bound and was stopped.");
     } else if let (Some(code), Some(reporter)) = (lint_code, reporter) {
-        match lint::findings(reporter, &run.output, code) {
-            Ok(found) if !found.is_empty() => {
+        match lint::findings(reporter, &run.output, code)
+            .map(|found| in_scope(context.project_root, rule, found))
+        {
+            Ok((found, dropped)) if found.is_empty() && dropped > 0 => {
+                outcome.state = GateState::Pass;
+                outcome.summary = format!(
+                    "The linter reported {code} only on files outside the rule's scope ({dropped} time(s), {}).",
+                    reporter.label()
+                );
+            }
+            Ok((found, _)) if !found.is_empty() => {
                 outcome.state = GateState::Fail;
                 outcome.summary = format!(
                     "The linter reported {code} {} time(s) ({}).",
@@ -822,6 +831,26 @@ fn run_command_gate(
             Some(code) => {
                 outcome.state = GateState::Fail;
                 outcome.failures = extract_failures(context.project_root, &run.output);
+                if matches!(rule.enforcer, Enforcer::Formatter { .. }) {
+                    let (kept, dropped) = in_scope(
+                        context.project_root,
+                        rule,
+                        std::mem::take(&mut outcome.failures),
+                    );
+                    outcome.failures = kept;
+                    if outcome.failures.is_empty() && dropped > 0 {
+                        outcome.state = GateState::Pass;
+                        outcome.summary = format!(
+                            "The formatter flagged only files outside the rule's scope ({dropped})."
+                        );
+                        return finish(
+                            context,
+                            outcome,
+                            Some(&run.output),
+                            json!({"argv": sequences}),
+                        );
+                    }
+                }
                 if outcome.failures.is_empty() {
                     outcome.failures.push(ArtifactFailure {
                         location: format!("exit code {code}"),
@@ -841,6 +870,34 @@ fn run_command_gate(
         Some(&run.output),
         json!({"argv": sequences}),
     )
+}
+
+/// A lint's or formatter's flags split by the rule's scope: the tool reads
+/// the whole repository, so a flag on a file the rule does not apply to
+/// (outside its paths, or excluded) is dropped and counted. A flag that
+/// names no repository file stays.
+fn in_scope(
+    project_root: &Path,
+    rule: &Rule,
+    failures: Vec<ArtifactFailure>,
+) -> (Vec<ArtifactFailure>, usize) {
+    let total = failures.len();
+    let kept = failures
+        .into_iter()
+        .filter(|failure| {
+            let path = failure
+                .location
+                .split(':')
+                .next()
+                .unwrap_or_default()
+                .trim_start_matches("./");
+            !(crate::domain::safe_relative_path(path)
+                && project_root.join(path).is_file()
+                && !rule.applies_to(path))
+        })
+        .collect::<Vec<_>>();
+    let dropped = total - kept.len();
+    (kept, dropped)
 }
 
 fn run_ast_gate(
@@ -1087,6 +1144,49 @@ mod tests {
         let failures = extract_failures(temp.path(), output);
         assert_eq!(failures.len(), 1);
         assert_eq!(failures[0].location, "src/lib.rs:12");
+    }
+
+    #[test]
+    fn a_tool_s_flags_on_files_out_of_the_rule_s_scope_are_dropped() {
+        let temp = tempfile::tempdir().expect("temp");
+        let root = temp.path();
+        for path in ["src/lib.rs", "src/generated/api.rs", "docs/a.rs"] {
+            fs::create_dir_all(root.join(path).parent().expect("parent")).expect("dir");
+            fs::write(root.join(path), "fn main() {}\n").expect("file");
+        }
+        let rule: Rule = serde_json::from_value(json!({
+            "schema": "whetstone.rule.v2",
+            "statement": "No unused imports.",
+            "rationale": "Because.",
+            "strength": "must",
+            "enforcer": {"kind": "lint", "tool": "ruff check", "code": "F401"},
+            "source": {"kind": "owner"},
+            "paths": ["src/**"],
+        }))
+        .expect("rule");
+        let flag = |location: &str| ArtifactFailure {
+            location: location.into(),
+            message: "F401".into(),
+        };
+        let (kept, dropped) = in_scope(
+            root,
+            &rule,
+            vec![
+                flag("src/lib.rs:1"),
+                flag("src/generated/api.rs:1"),
+                flag("docs/a.rs"),
+                flag("linter output"),
+                flag("src/missing.rs:3"),
+            ],
+        );
+        assert_eq!(dropped, 2, "generated code and a file outside the paths");
+        assert_eq!(
+            kept.iter()
+                .map(|failure| failure.location.as_str())
+                .collect::<Vec<_>>(),
+            ["src/lib.rs:1", "linter output", "src/missing.rs:3"],
+            "a flag on no repository file stays"
+        );
     }
 
     #[test]

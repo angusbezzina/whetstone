@@ -200,6 +200,29 @@
           },
           "description": "Repository paths or globs the rule applies to; absent means everywhere."
         },
+        "exclude": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Repository paths or globs the rule never applies to, whatever `paths` says, in every mode (staged, base, sweep, tree). Absent means [\"**/generated/**\"]; an empty list excludes nothing, so a rule that wants generated code says `\"exclude\": []`."
+        },
+        "mode": {
+          "enum": [
+            "tree",
+            "change"
+          ],
+          "description": "`tree` (the default, left out of the file): every check runs the rule. `change`: only a check against a base runs it (pre-push, `wh check --ci --base`); a sweep counts its flags and files no finding."
+        },
+        "batch": {
+          "enum": [
+            "by-file",
+            "by-crate"
+          ],
+          "description": "How a sweep groups the rule's flags: one finding per file, or per crate or package (the nearest directory above the file with a Cargo.toml or package.json). Absent means one finding per flag."
+        },
         "sweep": {
           "enum": [
             "discuss",
@@ -238,6 +261,15 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "exclude": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Paths or globs the entry never covers, whatever `paths` or `matching` say."
         },
         "matching": {
           "type": "string",
