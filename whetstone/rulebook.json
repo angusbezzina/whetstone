@@ -3,7 +3,38 @@
   "mission": {
     "statement": "Give every repository a rulebook in a committed file: rules with a rationale, enforced mechanically at pre-commit, pre-push and CI, with findings any agent or host can act on."
   },
-  "principles": [],
+  "principles": [
+    {
+      "id": "principle.minimize-reader-load",
+      "statement": "Count layers between question and answer, and hidden state in the reader's head; collapse one-caller wrappers and shrink mutable scope.",
+      "source": {
+        "kind": "pstack",
+        "id": "minimize-reader-load",
+        "version": "0.15.5"
+      },
+      "rationale": "Whetstone is read by agents and people between tasks; every layer and every surprise in the source costs the reader before it costs the product."
+    },
+    {
+      "id": "principle.prove-it-works",
+      "statement": "Verify against the real artifact before declaring done: run the feature, read the actual value, inspect the diff, not a proxy.",
+      "source": {
+        "kind": "pstack",
+        "id": "prove-it-works",
+        "version": "0.15.5"
+      },
+      "rationale": "A gate that ships unfinished work or an unverified claim is worse than no gate; the repository has to hold itself to the standard it enforces."
+    },
+    {
+      "id": "principle.subtract-before-you-add",
+      "statement": "Remove dead weight, redundant validators, and stub references first, then build on the simpler base.",
+      "source": {
+        "kind": "pstack",
+        "id": "subtract-before-you-add",
+        "version": "0.15.5"
+      },
+      "rationale": "The product was narrowed to the rulebook by deletion; keeping it small is how it stays simple, the first of its five priorities."
+    }
+  ],
   "rules": [
     {
       "id": "rule.rust-formatted",
@@ -15,7 +46,8 @@
         "tool": "cargo fmt --all --check"
       },
       "source": {
-        "kind": "owner"
+        "kind": "principle",
+        "reference": "principle.minimize-reader-load"
       },
       "paths": ["src/**"]
     },
@@ -30,7 +62,8 @@
         "code": "dead_code"
       },
       "source": {
-        "kind": "owner"
+        "kind": "principle",
+        "reference": "principle.subtract-before-you-add"
       },
       "paths": ["src/**"]
     },
@@ -45,7 +78,8 @@
         "language": "rust"
       },
       "source": {
-        "kind": "owner"
+        "kind": "principle",
+        "reference": "principle.prove-it-works"
       },
       "paths": ["src/**"]
     }
