@@ -17,10 +17,10 @@ use crate::rulebook::{
     self, PrincipleEntry, Revision, RuleEntry, Rulebook, RulebookError, RULEBOOK_PATH,
 };
 
-use super::change::{committed, draft, probes_json, rulebook_unreadable, Probing};
+use super::change::{draft, probes_json, rulebook_unreadable, Probing};
 use super::{
-    bounded_input, bounded_request_id, project_error, project_label, unknown_response, InitAction,
-    InitRequest, ServiceResponse, ServiceState,
+    bounded_input, bounded_request_id, project_error, unknown_response, InitAction, InitRequest,
+    ServiceResponse, ServiceState,
 };
 
 /// Where onboarding stands, from the rulebook in the working tree.
@@ -40,14 +40,10 @@ struct Progress {
 
 fn progress(layout: &ProjectLayout, book: Option<&Rulebook>) -> Progress {
     let root = layout.project_root();
-    let head = committed(root).and_then(Result::ok);
     let hooks = crate::wire::git_hooks(root);
-    let view = projection::dashboard_view(
+    let (established, onboarding) = projection::onboarding(
         book,
         projection::ProjectionInput {
-            project_label: project_label(root),
-            head: head.as_ref(),
-            drafts: Vec::new(),
             hooks: hooks.clone(),
             starters: crate::starter::starters(root),
             catalogue: crate::catalogue::catalogue(root),
@@ -56,11 +52,11 @@ fn progress(layout: &ProjectLayout, book: Option<&Rulebook>) -> Progress {
     let committed = book.is_some_and(|book| book.revision != Revision::Uncommitted);
     Progress {
         revision: book.map(|book| book.revision.label().to_string()),
-        agreement_complete: view.established,
-        setup_complete: view.established && committed && hooks.pre_commit && hooks.pre_push,
-        missing_decisions: view.onboarding.missing.clone(),
+        agreement_complete: established,
+        setup_complete: established && committed && hooks.pre_commit && hooks.pre_push,
+        missing_decisions: onboarding.missing.clone(),
         hooks,
-        onboarding: view.onboarding,
+        onboarding,
     }
 }
 

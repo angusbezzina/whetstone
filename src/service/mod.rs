@@ -27,7 +27,7 @@ mod snapshot;
 mod trail;
 
 pub use explain::ExplainRequest;
-pub use trail::{decision_trail, rulebook_log, RulebookCommit, TRAIL_HEADER};
+pub use trail::{decision_trail, rulebook_log, rulebook_texts, RulebookCommit, TRAIL_HEADER};
 
 /// Environment variables agent hosts set in the shells they run. Any of them
 /// makes the caller an agent, whatever else is true.

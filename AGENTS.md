@@ -115,9 +115,12 @@ commit messages or pull request text.
 
 ## Design work
 
-The dashboard follows [DESIGN.md](DESIGN.md) and [PRODUCT.md](PRODUCT.md):
-dependency-free HTML, CSS and JavaScript in `assets/dashboard/`, startup
-assets under 24 KiB, no third-party requests.
+The dashboard follows [DESIGN.md](DESIGN.md) and [PRODUCT.md](PRODUCT.md).
+Its source is `web/` (React, shadcn, Tailwind, Anime.js, Oswald, Vollkorn
+and JetBrains Mono); `cd web && npm ci && npm run build` writes
+`assets/dashboard/`, which `src/dashboard.rs` embeds. Commit the build with
+the source change: no gate runs Node. The page makes no third-party
+request, and its HTML, CSS and JavaScript stay under 600 KiB.
 
 ## Research
 

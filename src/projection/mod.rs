@@ -1,30 +1,19 @@
-//! Typed, human-labelled projection of the rulebook file for the
-//! dashboard's views: Home, Rules and Changelog, plus onboarding.
+//! Typed, human-labelled projections of the rulebook file: the one-page
+//! dashboard (`page`), the field-level diffs it shows (`diff`), and the
+//! onboarding `wh init` reports.
 //!
-//! The browser renders these fields verbatim. Every state carries a human
-//! label and a tone so the UI never invents state or shows raw enum names,
-//! and an edit not yet committed can never read as accepted.
+//! The browser renders these fields verbatim, so the UI never invents state
+//! or shows raw enum names, and an edit not yet committed can never read as
+//! accepted.
+
+pub mod diff;
+pub mod page;
 
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::domain::{Principle, PrincipleSource, Rule};
-use crate::rulebook::{self, RetiredEntry, Rulebook, RULEBOOK_PATH};
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct StateLabel {
-    pub tone: &'static str,
-    pub label: String,
-}
-
-impl StateLabel {
-    pub(crate) fn new(tone: &'static str, label: impl Into<String>) -> Self {
-        Self {
-            tone,
-            label: label.into(),
-        }
-    }
-}
+use crate::domain::Rule;
+use crate::rulebook::Rulebook;
 
 /// One onboarding step: mission, principles, starter rules, gates.
 #[derive(Debug, Clone, Serialize)]
@@ -50,13 +39,6 @@ pub struct StarterView {
     pub edit: EditBase,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct Detail {
-    pub key: &'static str,
-    pub value: String,
-    pub code: bool,
-}
-
 /// What an edit form starts from and sends back to `wh change`: the kind,
 /// the id (none for the mission), the text, the why and the definition.
 #[derive(Debug, Clone, Serialize)]
@@ -66,76 +48,6 @@ pub struct EditBase {
     pub content: String,
     pub rationale: Option<String>,
     pub definition: Value,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Header {
-    pub project: String,
-    pub agreement: &'static str,
-    /// The commit that last touched the rulebook, or `uncommitted`.
-    pub revision: String,
-    pub drafts: usize,
-}
-
-/// The mission, a principle or a rule as the working tree's rulebook holds
-/// it, and how that compares with the rulebook as last committed.
-#[derive(Debug, Clone, Serialize)]
-pub struct Entry {
-    pub id: String,
-    pub kind: &'static str,
-    pub title: String,
-    pub detail: Vec<Detail>,
-    /// `accepted` (as committed), `changed` (committed, edited since) or
-    /// `new` (never committed).
-    pub lifecycle: &'static str,
-    pub state: StateLabel,
-    pub edit: EditBase,
-}
-
-/// A rule as the Rules view shows it: strength, enforcer, where it runs and
-/// how a sweep works its flags.
-#[derive(Debug, Clone, Serialize)]
-pub struct RuleEntry {
-    #[serde(flatten)]
-    pub entry: Entry,
-    pub strength: &'static str,
-    pub enforcer: String,
-    pub command: String,
-    pub runs_at: &'static str,
-    pub source: String,
-    pub rationale: String,
-    pub paths: Vec<String>,
-    pub examples: Vec<Value>,
-    /// How a night sweep works this rule's flags: draft_pr, confirm_first or
-    /// discuss (the default).
-    pub sweep_class: &'static str,
-    /// How urgent its sweep findings are, 0 (most) to 4.
-    pub sweep_priority: u8,
-    /// Where its own flags are doubtful, with the reason each says.
-    pub sweep_unsure: Vec<crate::domain::SweepUnsure>,
-    pub digest: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Attention {
-    pub priority: u8,
-    pub tone: &'static str,
-    pub kind: &'static str,
-    pub kind_label: &'static str,
-    pub title: String,
-    pub text: String,
-    pub actor: String,
-    pub next: String,
-    pub route: &'static str,
-    pub focus: Option<String>,
-    pub action_label: &'static str,
-    pub agent_instruction: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LatestChange {
-    pub title: String,
-    pub at: String,
 }
 
 /// Onboarding on the rulebook file: the steps, the catalogue and the
@@ -155,27 +67,8 @@ pub struct Start {
     pub starters: Vec<StarterView>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct DashboardView {
-    pub established: bool,
-    pub header: Header,
-    pub onboarding: Start,
-    pub mission: Option<Entry>,
-    pub principles: Vec<Entry>,
-    pub rules: Vec<RuleEntry>,
-    /// The edits accepting would commit, as `wh change --accept` lists them.
-    pub drafts: Vec<String>,
-    pub retired: Vec<RetiredEntry>,
-    pub attention: Vec<Attention>,
-    pub latest_change: Option<LatestChange>,
-}
-
 /// Inputs the service computes before projecting.
-pub struct ProjectionInput<'a> {
-    pub project_label: String,
-    /// The rulebook as last committed, when it ever was.
-    pub head: Option<&'a Rulebook>,
-    pub drafts: Vec<String>,
+pub struct ProjectionInput {
     pub hooks: crate::wire::GitHooks,
     pub starters: Vec<crate::starter::Starter>,
     /// The principle packs the onboarding picker offers.
@@ -188,13 +81,6 @@ pub fn runs_at(rule: &Rule) -> &'static str {
         "pre-commit, pre-push and CI"
     } else {
         "pre-push and CI"
-    }
-}
-
-fn source_label(rule: &Rule) -> String {
-    match &rule.source.reference {
-        Some(reference) => format!("{}: {reference}", rule.source.kind.label()),
-        None => rule.source.kind.label().to_string(),
     }
 }
 
@@ -213,7 +99,7 @@ fn rule_definition(rule: &Rule) -> Value {
     })
 }
 
-fn rule_edit(id: &str, rule: &Rule) -> EditBase {
+pub(crate) fn rule_edit(id: &str, rule: &Rule) -> EditBase {
     EditBase {
         kind: "rule",
         record_id: Some(id.into()),
@@ -223,7 +109,7 @@ fn rule_edit(id: &str, rule: &Rule) -> EditBase {
     }
 }
 
-fn examples(rule: &Rule) -> Vec<Value> {
+pub(crate) fn examples(rule: &Rule) -> Vec<Value> {
     rule.examples
         .iter()
         .map(|example| {
@@ -257,158 +143,23 @@ pub fn starter_view(starter: &crate::starter::Starter, accepted: bool) -> Starte
     }
 }
 
-fn detail(key: &'static str, value: impl Into<String>, code: bool) -> Detail {
-    Detail {
-        key,
-        value: value.into(),
-        code,
-    }
-}
-
-fn principle_details(principle: &Principle) -> Vec<Detail> {
-    let mut details = vec![detail(
-        "source",
-        match &principle.source {
-            PrincipleSource::Pstack { id, version } => format!("pstack {id} ({version})"),
-            PrincipleSource::Pack { pack, id, version } => format!("{pack} {id} ({version})"),
-            PrincipleSource::Custom => "the owner's own".into(),
-        },
-        false,
-    )];
-    if let Some(rationale) = &principle.rationale {
-        details.push(detail("why", rationale.clone(), false));
-    }
-    details
-}
-
-fn state_of(lifecycle: &'static str) -> StateLabel {
-    match lifecycle {
-        "accepted" => StateLabel::new("pass", "accepted"),
-        "changed" => StateLabel::new("draft", "edited · not accepted"),
-        _ => StateLabel::new("draft", "new · not accepted"),
-    }
-}
-
-fn strength_order(strength: &str) -> u8 {
-    u8::from(strength != "must")
-}
-
-/// Build the dashboard projection from the working tree's rulebook (absent
-/// before the mission is first written).
-pub fn dashboard_view(book: Option<&Rulebook>, input: ProjectionInput<'_>) -> DashboardView {
-    let lifecycle = |id: &str| -> &'static str {
-        let now = book.and_then(|book| rulebook::entry(book, id));
-        match input.head.and_then(|head| rulebook::entry(head, id)) {
-            None => "new",
-            Some(then) if Some(&then) == now.as_ref() => "accepted",
-            Some(_) => "changed",
-        }
-    };
-    let entry = |id: &str, kind: &'static str, title: String, detail, edit| {
-        let lifecycle = lifecycle(id);
-        Entry {
-            id: id.into(),
-            kind,
-            title,
-            detail,
-            lifecycle,
-            state: state_of(lifecycle),
-            edit,
-        }
-    };
-    let mission = book
-        .filter(|book| !book.mission.statement.trim().is_empty())
-        .map(|book| {
-            entry(
-                "mission",
-                "mission",
-                book.mission.statement.clone(),
-                Vec::new(),
-                EditBase {
-                    kind: "mission",
-                    record_id: None,
-                    content: book.mission.statement.clone(),
-                    rationale: None,
-                    definition: Value::Null,
-                },
-            )
-        });
-    let principles = book
-        .map(|book| book.principles.as_slice())
-        .unwrap_or_default()
-        .iter()
-        .map(|principle| {
-            let id = principle.id.as_str();
-            let body = &principle.principle;
-            entry(
-                id,
-                "principle",
-                body.statement.clone(),
-                principle_details(body),
-                EditBase {
-                    kind: "principle",
-                    record_id: Some(id.into()),
-                    content: body.statement.clone(),
-                    rationale: body.rationale.clone(),
-                    definition: json!({
-                        "type": "principle",
-                        "principle": match &body.source {
-                            PrincipleSource::Pstack { id, .. } => Some(id.clone()),
-                            PrincipleSource::Pack { pack, id, .. } => Some(format!("{pack}/{id}")),
-                            PrincipleSource::Custom => None,
-                        },
-                        "rationale": body.rationale,
-                    }),
-                },
-            )
-        })
-        .collect::<Vec<_>>();
-    let mut rules = book
+/// Onboarding for `wh init`: whether the working tree's rulebook has a
+/// mission and a rule, and the steps, catalogue and starters.
+pub fn onboarding(book: Option<&Rulebook>, input: ProjectionInput) -> (bool, Start) {
+    let has_mission = book.is_some_and(|book| !book.mission.statement.trim().is_empty());
+    let has_principles = book.is_some_and(|book| !book.principles.is_empty());
+    let rule_ids = book
         .map(|book| book.rules.as_slice())
         .unwrap_or_default()
         .iter()
-        .map(|item| {
-            let id = item.id.as_str();
-            let rule = &item.rule;
-            let (mechanism, command) = crate::gates::mechanism_label(rule);
-            RuleEntry {
-                entry: entry(
-                    id,
-                    "rule",
-                    rule.statement.clone(),
-                    vec![
-                        detail("strength", rule.strength.label(), false),
-                        detail("enforcer", mechanism.clone(), false),
-                        detail("command", command.clone(), true),
-                        detail("runs at", runs_at(rule), false),
-                    ],
-                    rule_edit(id, rule),
-                ),
-                strength: rule.strength.label(),
-                enforcer: mechanism,
-                command,
-                runs_at: runs_at(rule),
-                source: source_label(rule),
-                rationale: rule.rationale.clone(),
-                paths: rule.paths.clone(),
-                examples: examples(rule),
-                sweep_class: rule.sweep_class().label(),
-                sweep_priority: rule.sweep_priority(),
-                sweep_unsure: rule.sweep_unsure.clone(),
-                digest: item.digest.as_str().into(),
-            }
-        })
+        .map(|entry| entry.id.as_str())
         .collect::<Vec<_>>();
-    rules.sort_by(|left, right| {
-        (strength_order(left.strength), left.entry.title.as_str())
-            .cmp(&(strength_order(right.strength), right.entry.title.as_str()))
-    });
-    let established = mission.is_some() && !rules.is_empty();
+    let established = has_mission && !rule_ids.is_empty();
     let mut missing = Vec::new();
-    if mission.is_none() {
+    if !has_mission {
         missing.push("mission".to_string());
     }
-    if rules.is_empty() {
+    if rule_ids.is_empty() {
         missing.push("rules".to_string());
     }
     let catalogue = input.catalogue;
@@ -418,21 +169,21 @@ pub fn dashboard_view(book: Option<&Rulebook>, input: ProjectionInput<'_>) -> Da
                 key: "mission",
                 label: "Mission",
                 hint: "what this project exists to do, in one sentence",
-                done: mission.is_some(),
+                done: has_mission,
                 optional: false,
             },
             OnboardingStep {
                 key: "principles",
                 label: "Principles",
                 hint: "the principles you hold from a pack, or your own",
-                done: !principles.is_empty(),
+                done: has_principles,
                 optional: true,
             },
             OnboardingStep {
                 key: "rules",
                 label: "Rules",
                 hint: "accept the starter rules and any proposed ones",
-                done: !rules.is_empty(),
+                done: !rule_ids.is_empty(),
                 optional: false,
             },
             OnboardingStep {
@@ -452,58 +203,8 @@ pub fn dashboard_view(book: Option<&Rulebook>, input: ProjectionInput<'_>) -> Da
         starters: input
             .starters
             .iter()
-            .map(|starter| {
-                starter_view(
-                    starter,
-                    rules.iter().any(|rule| rule.entry.id == starter.id),
-                )
-            })
+            .map(|starter| starter_view(starter, rule_ids.contains(&starter.id)))
             .collect(),
     };
-    let drafts = input.drafts.len();
-    let accepted = rules.iter().any(|rule| rule.entry.lifecycle != "new");
-    let attention = if drafts > 0 {
-        vec![Attention {
-            priority: if accepted { 2 } else { 1 },
-            tone: if accepted { "muted" } else { "warn" },
-            kind: "review",
-            kind_label: "review",
-            title: format!(
-                "{drafts} edit{} to {RULEBOOK_PATH} wait{} for you",
-                if drafts == 1 { "" } else { "s" },
-                if drafts == 1 { "s" } else { "" }
-            ),
-            text: "wh check already reads them on this machine; CI enforces only what is committed. Accepting commits the file.".into(),
-            actor: "the project owner".into(),
-            next: "Accept or withdraw them in Rules.".into(),
-            route: "rules",
-            focus: Some("drafts".into()),
-            action_label: "Review drafts",
-            agent_instruction: None,
-        }]
-    } else {
-        Vec::new()
-    };
-    DashboardView {
-        established,
-        header: Header {
-            project: input.project_label,
-            agreement: match (book, input.head) {
-                (None, _) => "not started",
-                (Some(_), None) => "drafted, not accepted",
-                (Some(_), Some(_)) if drafts > 0 => "accepted, with drafts",
-                (Some(_), Some(_)) => "accepted",
-            },
-            revision: book.map_or("none", |book| book.revision.label()).into(),
-            drafts,
-        },
-        onboarding,
-        mission,
-        principles,
-        rules,
-        drafts: input.drafts,
-        retired: book.map(|book| book.retired.clone()).unwrap_or_default(),
-        attention,
-        latest_change: None,
-    }
+    (established, onboarding)
 }

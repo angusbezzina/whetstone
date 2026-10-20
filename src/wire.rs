@@ -28,6 +28,25 @@ pub fn is_generated(path: &str) -> bool {
     path == CI_WORKFLOW
 }
 
+/// Whether a GitHub workflow runs Whetstone's check: the scaffolded one, or
+/// any workflow that runs `wh check --ci` or reports `whetstone/policy`.
+pub fn ci_wired(project_root: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(project_root.join(".github/workflows")) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("yml" | "yaml")
+        ) && fs::read_to_string(&path).is_ok_and(|text| {
+            text.contains("wh check --ci")
+                || text.contains("whetstone check --ci")
+                || text.contains("whetstone/policy")
+        })
+    })
+}
+
 fn digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }

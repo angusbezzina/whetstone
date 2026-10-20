@@ -8,10 +8,12 @@ web
 
 ## Stack
 
-Existing: a Rust binary (`wh`) serves a dependency-free local dashboard from
-`assets/dashboard/` (plain HTML, CSS and vanilla JS; startup assets under
-24 KiB; secondary views and editing are lazy modules). No framework, no build
-step, no third-party requests.
+A Rust binary (`wh`) serves the dashboard from files embedded at build
+time. The page is built from `web/` (Vite, React, TypeScript, Tailwind and
+shadcn components, Oswald and Vollkorn self-hosted, Anime.js) into
+`assets/dashboard/`, and that build is committed so no gate and no
+`cargo install` needs Node. The server sends nothing else, and the CSP
+allows only its own origin: no third-party request, font or script.
 
 ## What Whetstone is
 
@@ -60,20 +62,38 @@ tracker, a fleet console or a CI replacement.
 
 ## Surfaces
 
-The dashboard has three views:
+The dashboard is one page, `wh dash`, built around one job: a person
+reviewing or editing the rulebook understands what they are looking at
+within five seconds.
 
-1. **Home** (default): what needs the owner (drafts to accept), the rules in
-   force, setup still to do, and one primary action. Before there is a
-   rulebook, it shows only onboarding: mission, principles, starter rules and
-   gates.
-2. **Rules**: mission and principles, then rules grouped by strength, each
-   showing its enforcer, its paths and its sweep class, and whether it is
-   accepted, edited or new against the file's last commit. Edit, Retire,
-   Accept and Withdraw are `wh change` calls with an exact before/after
-   review; nothing overwrites the committed rulebook silently.
-3. **Changelog**: every commit that touched the rulebook, newest first,
-   grouped by day, with the retired entries and their reasons beneath, and a
-   TSV export of the decision trail.
+1. **Header** (one line): project, branch, the rulebook's revision, a
+   summary ("14 rules: 7 block push, 7 report"), the last change and its
+   author, and a mode badge (Editing or Read-only, with how to get edit
+   access).
+2. **Pending changes** (only when the working tree's rulebook differs from
+   its last commit): the count, a field-level before and after per entry,
+   the commit message accepting would use, Accept (commits the file and only
+   it) and Withdraw (restores it).
+3. **Health** (one line per problem): gates not installed with the fix
+   command, the file unreadable, rules that read nothing, source files no
+   rule reads; one healthy line when nothing is wrong, and nothing at all
+   before there is a rulebook.
+4. **The rulebook**: the mission as a sentence, the principles (with the
+   pack's principles to adopt), then rules grouped Hard rules (must) and
+   Soft rules (should), sorted by id. A row says the rule, how it is
+   checked, where it runs and what happens when it breaks; opened, it shows
+   the rationale, the exact command, the paths, examples, source, sweep
+   fields and the rule's own history. Every value is edited where it stands
+   and each edit writes a draft. Retired rules sit at the end. Principles,
+   both groups, Retired and the Changelog fold to one line as they grow.
+5. **Add rule**: starters detected for the repository, principles from the
+   loaded packs (as suggestions; principles are not enforced), a blank rule,
+   or rules compiled from pasted guidance.
+6. **Changelog**: every commit that touched the rulebook, newest first,
+   with a summary computed by diffing successive versions and the
+   field-level diff on demand; TSV export of the decision trail.
+7. **Setup**: only before a mission and a rule are committed, a short
+   guided page (mission, rules, gates) that ends in one commit.
 
 ## Durable constraints
 
@@ -83,7 +103,8 @@ The dashboard has three views:
   behaviour.
 - Keyboard navigation, focus management, live-region feedback, safe rendering
   of user content, and widths of 320, 390, 768 and 1024 px.
-- Startup HTML/CSS/JS stays dependency-free and under 24 KiB.
+- The page's HTML, CSS and JavaScript stay under 600 KiB and its fonts
+  under 200 KiB, all served by `wh` itself.
 - CLI and dashboard read the same typed projections; the UI invents no state.
 - The five public commands (`wh init`, `dash`, `change`, `check`, `explain`) support the
   UI and may be progressively disclosed; they are not the human information
@@ -98,11 +119,11 @@ finding, sweep, owner.
 
 ## Brand commitments
 
-Owner-pinned 2026-09-14: the Whetstone logo (a flat isometric orange stone
-on a black base; the wordmark set wide and tracked in caps, WHET in black
-and STONE in orange). Core colours are black and orange; light mode is white
-and orange. The design system uses ShadCN's token vocabulary (background,
-foreground, card, muted, border, input, ring, primary, destructive, radius)
-implemented in the dashboard's own dependency-free CSS; ShadCN's React
-components are not adopted. The feel is a minimal personal journal. The
-visual world chosen on 2026-09-14 is recorded in DESIGN.md.
+Owner-pinned 2026-09-14 and extended 2026-10-19: the Whetstone logo (a flat
+isometric orange stone on a black base; the wordmark set wide and tracked
+in caps, WHET in ink and STONE in orange). Core colours are black and orange
+#e66c3a; light mode is white and orange. Oswald sets titles, labels, buttons
+and numbers; Vollkorn sets body text; JetBrains Mono sets code, and any
+command or path in a sentence is wrapped as code. Components are shadcn's, restyled to
+the visual world; motion is Anime.js. The visual world chosen on 2026-10-19
+is The Standards Sheet, recorded in DESIGN.md.

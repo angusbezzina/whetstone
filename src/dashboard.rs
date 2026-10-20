@@ -17,15 +17,50 @@ const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 64 * 1024;
 const SESSION_COOKIE: &str = "whetstone_session";
 
-const INDEX_HTML: &str = include_str!("../assets/dashboard/index.html");
-
-const APP_CSS: &str = include_str!("../assets/dashboard/app.css");
-
-const APP_JS: &str = include_str!("../assets/dashboard/app.js");
-
-const EDIT_JS: &str = include_str!("../assets/dashboard/edit.js");
-const VIEWS_JS: &str = include_str!("../assets/dashboard/views.js");
-const VIEWS_CSS: &str = include_str!("../assets/dashboard/views.css");
+/// The page as `web/` builds it (`npm run build` writes assets/dashboard):
+/// path, content type and bytes. Nothing else is served from disk.
+const ASSETS: &[(&str, &str, &[u8])] = &[
+    (
+        "/",
+        "text/html; charset=utf-8",
+        include_bytes!("../assets/dashboard/index.html"),
+    ),
+    (
+        "/app.js",
+        "text/javascript; charset=utf-8",
+        include_bytes!("../assets/dashboard/app.js"),
+    ),
+    (
+        "/app.css",
+        "text/css; charset=utf-8",
+        include_bytes!("../assets/dashboard/app.css"),
+    ),
+    (
+        "/favicon.svg",
+        "image/svg+xml",
+        include_bytes!("../assets/dashboard/favicon.svg"),
+    ),
+    (
+        "/fonts/jetbrains-mono-latin-wght-normal.woff2",
+        "font/woff2",
+        include_bytes!("../assets/dashboard/fonts/jetbrains-mono-latin-wght-normal.woff2"),
+    ),
+    (
+        "/fonts/oswald-latin-wght-normal.woff2",
+        "font/woff2",
+        include_bytes!("../assets/dashboard/fonts/oswald-latin-wght-normal.woff2"),
+    ),
+    (
+        "/fonts/vollkorn-latin-wght-normal.woff2",
+        "font/woff2",
+        include_bytes!("../assets/dashboard/fonts/vollkorn-latin-wght-normal.woff2"),
+    ),
+    (
+        "/fonts/vollkorn-latin-wght-italic.woff2",
+        "font/woff2",
+        include_bytes!("../assets/dashboard/fonts/vollkorn-latin-wght-italic.woff2"),
+    ),
+];
 
 /// Adapter implemented by a thin wrapper over `CommandService`.
 ///
@@ -252,36 +287,17 @@ fn handle_connection(
     }
     let mut extra_headers = Vec::new();
     let response = match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/") => BackendResponse {
-            status: 200,
-            content_type: "text/html; charset=utf-8",
-            body: INDEX_HTML.as_bytes().to_vec(),
-        },
-        ("GET", "/app.css") => BackendResponse {
-            status: 200,
-            content_type: "text/css; charset=utf-8",
-            body: APP_CSS.as_bytes().to_vec(),
-        },
-        ("GET", "/app.js") => BackendResponse {
-            status: 200,
-            content_type: "text/javascript; charset=utf-8",
-            body: APP_JS.as_bytes().to_vec(),
-        },
-        ("GET", "/edit.js") => BackendResponse {
-            status: 200,
-            content_type: "text/javascript; charset=utf-8",
-            body: EDIT_JS.as_bytes().to_vec(),
-        },
-        ("GET", "/views.js") => BackendResponse {
-            status: 200,
-            content_type: "text/javascript; charset=utf-8",
-            body: VIEWS_JS.as_bytes().to_vec(),
-        },
-        ("GET", "/views.css") => BackendResponse {
-            status: 200,
-            content_type: "text/css; charset=utf-8",
-            body: VIEWS_CSS.as_bytes().to_vec(),
-        },
+        ("GET", path) if ASSETS.iter().any(|(served, _, _)| *served == path) => {
+            let (_, content_type, body) = ASSETS
+                .iter()
+                .find(|(served, _, _)| *served == path)
+                .expect("the guard found it");
+            BackendResponse {
+                status: 200,
+                content_type,
+                body: body.to_vec(),
+            }
+        }
         ("POST", "/session/bootstrap") => {
             if !same_origin(&request, expected_origin)
                 || request.header("sec-fetch-site") != Some("same-origin")
@@ -560,7 +576,7 @@ fn write_response(
     };
     write!(
         stream,
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\r\nX-Frame-Options: DENY\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nPermissions-Policy: camera=(), microphone=(), geolocation=()\r\nCross-Origin-Opener-Policy: same-origin\r\nCross-Origin-Resource-Policy: same-origin\r\n",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\r\nX-Frame-Options: DENY\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nPermissions-Policy: camera=(), microphone=(), geolocation=()\r\nCross-Origin-Opener-Policy: same-origin\r\nCross-Origin-Resource-Policy: same-origin\r\n",
         body.len()
     )?;
     for (name, value) in extra_headers {

@@ -116,7 +116,11 @@ fn the_whole_local_flow_runs_with_only_git_on_the_path() {
 
     let dash = json(&run(&["dash", "--json"], &root, &tools));
     assert_eq!(dash["state"], "success", "{dash}");
-    assert_eq!(dash["data"]["current"]["established"], true);
+    assert_eq!(
+        dash["data"]["current"]["setup"],
+        serde_json::Value::Null,
+        "{dash}"
+    );
     let checked = json(&run(
         &["check", "--json", "--rule", "rule.git-answers"],
         &root,

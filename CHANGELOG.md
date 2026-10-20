@@ -13,14 +13,35 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 - A starting set of principles. A pack marks the principles it offers as a
   starting point (`starting`), `wh init --action agree --principle starting`
-  drafts them, and onboarding ticks them until the rulebook holds a
-  principle. Each is an ordinary record, edited or retired with `wh change`;
+  drafts them, and the dashboard offers them with one button (Adopt the
+  starting set) until the rulebook holds a principle. Each is an ordinary record, edited or retired with `wh change`;
   a retired one is not drafted again.
 - A second built-in principle pack, `mattpocock`: the lessons of Matt
   Pocock's skills (deep modules, vertical slices, a feedback loop before a
   hypothesis, a shared domain language and more) in Whetstone's words, MIT,
   pinned to skills 1.3.1. The starting set takes six principles from pstack
   and four from this pack.
+
+### Changed
+
+- `wh dash` is one page: a one-line header, the pending changes with a
+  field-level diff and the commit message accepting writes, one health line
+  per problem, the mission, the principles (with the packs' principles to
+  adopt), rules grouped Hard rules (must) and Soft rules (should) with each
+  rule's own history, Add rule with starters and pack principles as
+  suggestions, and a Changelog with a summary of what each commit changed.
+  Setup shows only until a mission and a rule are committed, and every
+  section but the mission folds.
+- Values are edited where they stand: the mission, principles and every
+  field of a rule; each edit writes a draft, and the changed text is
+  redlined until it is accepted or withdrawn.
+- The dashboard is built from `web/` (React, shadcn, Tailwind, Anime.js,
+  Oswald, Vollkorn and JetBrains Mono) into `assets/dashboard/`, embedded
+  in the binary; it still makes no third-party request.
+- The `wh dash --json` view model changed shape: `current` holds `header`,
+  `pending`, `health`, `mission`, `principles`, `groups`, `retired`,
+  `suggestions`, `history`, `setup` and `coverage`. `rulebook`,
+  `changelog`, `workflows` and `read_only` are unchanged.
 
 ## [0.14.0] - 2026-10-19
 

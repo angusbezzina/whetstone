@@ -47,6 +47,11 @@ impl DashboardBackend for Backend {
 }
 
 fn send(address: SocketAddr, request: &str) -> String {
+    String::from_utf8(send_bytes(address, request)).expect("UTF-8 response")
+}
+
+/// The raw response, for binary assets such as fonts.
+fn send_bytes(address: SocketAddr, request: &str) -> Vec<u8> {
     let mut stream = TcpStream::connect(address).expect("connect dashboard");
     stream
         .set_read_timeout(Some(Duration::from_secs(120)))
@@ -63,7 +68,19 @@ fn send(address: SocketAddr, request: &str) -> String {
             Err(error) => panic!("read response: {error}"),
         }
     }
-    String::from_utf8(response).expect("UTF-8 response")
+    response
+}
+
+/// The head as text and the body as bytes.
+fn split_response(response: &[u8]) -> (String, &[u8]) {
+    let at = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("head");
+    (
+        String::from_utf8_lossy(&response[..at]).into_owned(),
+        &response[at + 4..],
+    )
 }
 
 fn host(handle: &DashboardHandle) -> String {
@@ -273,13 +290,21 @@ impl Session {
     }
 }
 
-fn rule_entry<'a>(view: &'a Value, id: &str) -> &'a Value {
-    view["rules"]
+/// Every rule on the page, blocks then reports.
+fn rules(view: &Value) -> Vec<&Value> {
+    view["groups"]
         .as_array()
-        .expect("rules")
+        .expect("groups")
         .iter()
+        .flat_map(|group| group["rules"].as_array().expect("rules"))
+        .collect()
+}
+
+fn rule_entry<'a>(view: &'a Value, id: &str) -> &'a Value {
+    rules(view)
+        .into_iter()
         .find(|rule| rule["id"] == id)
-        .unwrap_or_else(|| panic!("no rule {id} in {}", view["rules"]))
+        .unwrap_or_else(|| panic!("no rule {id} in {}", view["groups"]))
 }
 
 #[test]
@@ -443,39 +468,70 @@ fn traversal_oversize_and_security_header_fixtures_fail_closed() {
         .contains("access-control-allow-origin"));
     assert!(!page.contains("https://"));
 
-    // The shell and its startup assets stay within the startup budget and
-    // make no third-party request; lazy modules are bounded on their own.
+    assert!(
+        page.contains("font-src 'self'"),
+        "fonts are served by wh itself"
+    );
+
+    // The page, its script and stylesheet stay within the startup budget,
+    // the fonts within theirs, and nothing names a third-party host. The
+    // only URLs in the bundle are XML namespaces, React's error-page link
+    // and Tailwind's license header; none is a request, and the CSP above
+    // refuses any request to another origin.
     let body = |response: &str| response.split_once("\r\n\r\n").expect("body").1.to_string();
+    let not_requests = [
+        "http://www.w3.org/",
+        "https://react.dev/errors/",
+        "https://tailwindcss.com",
+    ];
     let mut startup_bytes = body(&page).len();
-    for (path, budget, lazy) in [
-        ("/app.css", 24 * 1024, false),
-        ("/app.js", 24 * 1024, false),
-        ("/edit.js", 16 * 1024, true),
-        ("/views.js", 16 * 1024, true),
-        ("/views.css", 12 * 1024, true),
+    let mut font_bytes = 0;
+    for (path, font) in [
+        ("/app.css", false),
+        ("/app.js", false),
+        ("/favicon.svg", false),
+        ("/fonts/oswald-latin-wght-normal.woff2", true),
+        ("/fonts/jetbrains-mono-latin-wght-normal.woff2", true),
+        ("/fonts/vollkorn-latin-wght-normal.woff2", true),
+        ("/fonts/vollkorn-latin-wght-italic.woff2", true),
     ] {
-        let asset = send(
+        let asset = send_bytes(
             handle.address(),
             &format!("GET {path} HTTP/1.1\r\nHost: {host}\r\n\r\n"),
         );
-        assert!(asset.starts_with("HTTP/1.1 200"), "{path}: {asset}");
-        assert!(asset.contains("Cache-Control: no-store"), "{path}");
-        let content = body(&asset);
-        assert!(content.len() < budget, "{path} exceeds {budget} bytes");
-        if !lazy {
-            startup_bytes += content.len();
+        let (head, content) = split_response(&asset);
+        assert!(head.starts_with("HTTP/1.1 200"), "{path}: {head}");
+        assert!(head.contains("Cache-Control: no-store"), "{path}");
+        if font {
+            assert!(head.contains("Content-Type: font/woff2"), "{path}: {head}");
+            font_bytes += content.len();
+            continue;
         }
-        let without_svg_namespace = content.replace("http://www.w3.org/2000/svg", "");
+        startup_bytes += content.len();
+        let mut text = String::from_utf8_lossy(content).into_owned();
+        for allowed in not_requests {
+            text = text.replace(allowed, "");
+        }
         assert!(
-            !without_svg_namespace.contains("http://")
-                && !without_svg_namespace.contains("https://"),
-            "{path} has a third-party request"
+            !text.contains("http://") && !text.contains("https://"),
+            "{path} names a third-party host"
         );
     }
     assert!(
-        startup_bytes < 24 * 1024,
-        "complete dashboard HTML, CSS, and JavaScript exceed 24 KiB"
+        startup_bytes < 600 * 1024,
+        "the dashboard's HTML, CSS and JavaScript exceed 600 KiB ({startup_bytes})"
     );
+    assert!(
+        font_bytes < 160 * 1024,
+        "the fonts exceed 160 KiB ({font_bytes})"
+    );
+    for gone in ["/edit.js", "/views.js", "/views.css"] {
+        let response = send(
+            handle.address(),
+            &format!("GET {gone} HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+        );
+        assert!(response.starts_with("HTTP/1.1 404"), "{gone}: {response}");
+    }
 }
 
 #[test]
@@ -509,26 +565,46 @@ fn the_shell_loads_under_its_csp_without_inline_code_or_markup_writes() {
         html.contains("/app.js") && html.contains("/app.css"),
         "the shell loads its startup assets"
     );
-    for path in ["/app.js", "/views.js", "/edit.js"] {
-        let script = get(path);
-        assert!(
-            script.to_ascii_lowercase().contains("javascript"),
-            "{path} is served as JavaScript"
-        );
-        let script = script.split_once("\r\n\r\n").expect("body").1;
-        assert!(
-            !script.contains("innerHTML"),
-            "{path} must build DOM without innerHTML"
-        );
-        assert!(
-            !script.contains("outerHTML"),
-            "{path} must not write markup"
-        );
-        assert!(
-            !script.contains("eval("),
-            "{path} must not evaluate strings"
-        );
+    let script = get("/app.js");
+    assert!(
+        script.to_ascii_lowercase().contains("javascript"),
+        "the bundle is served as JavaScript"
+    );
+    let script = script.split_once("\r\n\r\n").expect("body").1;
+    assert!(
+        !script.contains("eval("),
+        "the bundle must not evaluate strings"
+    );
+    assert!(
+        !script.contains("new Function"),
+        "the bundle must not compile strings"
+    );
+    // The page's own source builds DOM through React and never writes
+    // markup; the bundle is built from it (web/, `npm run build`).
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web/src");
+    let mut stack = vec![source];
+    let mut files = 0;
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("web/src") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("source");
+            files += 1;
+            for banned in [
+                "innerHTML",
+                "outerHTML",
+                "dangerouslySetInnerHTML",
+                "eval(",
+                "document.write",
+            ] {
+                assert!(!text.contains(banned), "{} uses {banned}", path.display());
+            }
+        }
     }
+    assert!(files > 5, "the dashboard source is in web/src");
 }
 
 #[test]
@@ -605,20 +681,31 @@ fn an_unestablished_project_shows_onboarding_and_no_removed_sections() {
     assert_eq!(body["workflow"], "dash");
     assert_eq!(body["data"]["rulebook"]["state"], "missing");
     let view = &body["data"]["current"];
-    assert_eq!(view["established"], false, "{view}");
-    assert_eq!(view["header"]["agreement"], "not started");
     assert_eq!(view["mission"], Value::Null);
     assert_eq!(view["principles"], json!([]));
-    assert_eq!(view["rules"], json!([]));
-    assert_eq!(view["drafts"], json!([]));
-    let steps = view["onboarding"]["steps"]
+    assert!(rules(view).is_empty());
+    assert_eq!(view["pending"], Value::Null);
+    assert_eq!(view["header"]["revision"], Value::Null);
+    assert_eq!(view["header"]["summary"], "0 rules: 0 hard, 0 soft");
+    // Nothing to judge yet, so nothing is called healthy.
+    assert_eq!(view["health"]["healthy"], Value::Null);
+    let setup = &view["setup"];
+    let steps = setup["steps"]
         .as_array()
-        .expect("onboarding steps")
+        .expect("setup steps")
         .iter()
-        .map(|step| step["key"].as_str().expect("key"))
+        .map(|step| {
+            (
+                step["key"].as_str().expect("key"),
+                step["state"].as_str().expect("state"),
+            )
+        })
         .collect::<Vec<_>>();
-    assert_eq!(steps, ["mission", "principles", "rules", "gates"]);
-    let starters = view["onboarding"]["starters"].as_array().expect("starters");
+    assert_eq!(
+        steps,
+        [("mission", "todo"), ("rules", "todo"), ("gates", "todo")]
+    );
+    let starters = setup["starters"].as_array().expect("starters");
     let ids = starters
         .iter()
         .map(|starter| starter["id"].as_str().expect("id"))
@@ -633,21 +720,26 @@ fn an_unestablished_project_shows_onboarding_and_no_removed_sections() {
         prove["edit"]["definition"]["enforcer"],
         json!({"kind": "test", "command": "cargo test"})
     );
+    // Add rule offers the starter and the pack's principles, saying how
+    // each would be checked; the catalogue is nowhere else on the page.
+    let suggestions = view["suggestions"].as_array().expect("suggestions");
+    assert_eq!(suggestions[0]["kind"], "starter");
+    assert_eq!(suggestions[0]["check"], "Checked by a test");
     assert!(
-        view["onboarding"]["catalogue"]
-            .as_array()
-            .expect("catalogue")
+        suggestions
             .iter()
-            .any(|entry| entry["id"] == "prove-it-works"),
-        "the pstack principle catalogue is offered"
+            .any(|entry| entry["kind"] == "principle" && entry["id"] == "principle.prove-it-works"),
+        "the pstack principles are offered as suggestions"
     );
+    assert!(view.get("onboarding").is_none());
+    assert!(view.get("attention").is_none());
     // The removed direction and the record store have no place in the view.
     assert!(view.get("stages").is_none(), "stages were removed");
     assert!(
-        view["onboarding"].get("decisions").is_none(),
+        view["setup"].get("decisions").is_none(),
         "the eight decisions were removed"
     );
-    assert!(view["onboarding"].get("tools").is_none());
+    assert!(view["setup"].get("tools").is_none());
     for gone in ["store", "sync", "progress", "history"] {
         assert!(
             body["data"].get(gone).is_none(),
@@ -671,7 +763,7 @@ fn onboarding_drafts_the_starter_through_change_and_accepting_commits_it() {
     init_git(temp.path());
     with_test_command(temp.path());
     let session = Session::open(start(temp.path(), true));
-    let starter = session.inspect()["data"]["current"]["onboarding"]["starters"][0].clone();
+    let starter = session.inspect()["data"]["current"]["setup"]["starters"][0].clone();
     assert_eq!(starter["id"], "rule.prove-it-works");
 
     // What the onboarding form sends: the mission, a catalogue principle,
@@ -704,29 +796,30 @@ fn onboarding_drafts_the_starter_through_change_and_accepting_commits_it() {
         assert_eq!(drafted["state"], "success", "{body}: {drafted}");
     }
     let view = session.inspect()["data"]["current"].clone();
-    assert_eq!(view["established"], true, "{view}");
-    assert_eq!(view["header"]["agreement"], "drafted, not accepted");
-    assert_eq!(view["header"]["revision"], "uncommitted");
+    // Drafted but not committed: setup stays, and every edit is pending.
+    let steps = view["setup"]["steps"]
+        .as_array()
+        .expect("steps")
+        .iter()
+        .map(|step| step["state"].as_str().expect("state"))
+        .collect::<Vec<_>>();
+    assert_eq!(steps[..2], ["drafted", "drafted"]);
+    assert_eq!(view["header"]["revision"], Value::Null);
+    let pending = &view["pending"];
+    assert_eq!(pending["count"], 4, "{pending}");
     assert_eq!(
-        view["drafts"],
-        json!([
-            "set the mission",
-            "add principle.custom-evidence-before-assertion",
-            "add principle.prove-it-works",
-            format!(
-                "add rule.prove-it-works ({})",
-                rule_entry(&view, "rule.prove-it-works")["digest"]
-                    .as_str()
-                    .expect("digest")
-            )
-        ])
+        pending["summary"],
+        "added the mission, added `principle.custom-evidence-before-assertion`, added `principle.prove-it-works`, added `rule.prove-it-works`"
     );
-    assert_eq!(view["header"]["drafts"], 4);
-    assert_eq!(view["attention"][0]["focus"], "drafts");
+    assert_eq!(
+        pending["message"]["subject"],
+        "Change the rulebook: 4 edits"
+    );
     let prove = rule_entry(&view, "rule.prove-it-works");
     assert_eq!(prove["lifecycle"], "new");
-    assert_eq!(prove["state"]["tone"], "draft");
-    assert_eq!(view["onboarding"]["starters"][0]["accepted"], true);
+    assert_eq!(prove["history"], json!([]));
+    assert_eq!(prove["check"]["label"], "a test");
+    assert_eq!(view["setup"]["starters"][0]["accepted"], true);
     assert_eq!(
         rulebook(temp.path())["rules"][0]["id"],
         "rule.prove-it-works"
@@ -740,11 +833,13 @@ fn onboarding_drafts_the_starter_through_change_and_accepting_commits_it() {
     assert_eq!(accepted["state"], "success", "{accepted}");
     let body = session.inspect();
     let view = &body["data"]["current"];
-    assert_eq!(view["header"]["agreement"], "accepted");
-    assert_eq!(view["header"]["revision"], accepted["data"]["commit"]);
-    assert_eq!(view["drafts"], json!([]));
-    assert_eq!(view["attention"], json!([]));
-    assert_eq!(view["mission"]["title"], MISSION);
+    let commit = &accepted["data"]["commit"];
+    // A mission and a rule are committed, so setup is gone.
+    assert_eq!(view["setup"], Value::Null);
+    assert_eq!(view["header"]["revision"], *commit);
+    assert_eq!(view["header"]["last_change"]["author"], "Dashboard Owner");
+    assert_eq!(view["pending"], Value::Null);
+    assert_eq!(view["mission"]["statement"], MISSION);
     assert_eq!(view["mission"]["lifecycle"], "accepted");
     assert_eq!(view["mission"]["edit"]["record_id"], Value::Null);
     assert_eq!(view["principles"].as_array().map(Vec::len), Some(2));
@@ -753,11 +848,16 @@ fn onboarding_drafts_the_starter_through_change_and_accepting_commits_it() {
     assert!(prove["examples"]
         .as_array()
         .is_some_and(|examples| examples.len() >= 2));
+    assert_eq!(prove["history"][0]["commit"], *commit);
+    assert_eq!(prove["history"][0]["action"], "added");
+    let history = view["history"].as_array().expect("history");
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0]["commit"], *commit);
+    assert_eq!(history[0]["summary"], "added the mission, added `principle.custom-evidence-before-assertion`, added `principle.prove-it-works`, added `rule.prove-it-works`");
     let changelog = &body["data"]["changelog"];
     assert_eq!(changelog.as_array().map(Vec::len), Some(1));
-    assert_eq!(changelog[0]["commit"], accepted["data"]["commit"]);
+    assert_eq!(changelog[0]["commit"], *commit);
     assert_eq!(changelog[0]["owner"], "Dashboard Owner");
-    assert_eq!(view["latest_change"]["title"], changelog[0]["title"]);
 }
 
 #[test]
@@ -866,17 +966,16 @@ fn dashboard_queries_are_typed_filtered_and_match_the_cli_service() {
     );
     let current = &body["data"]["current"];
     assert_eq!(
-        current["mission"]["title"], MISSION,
+        current["mission"]["statement"], MISSION,
         "a filtered changelog must never replace the independent current-state projection"
     );
     assert_eq!(current["principles"].as_array().map(Vec::len), Some(2));
-    assert_eq!(current["rules"].as_array().map(Vec::len), Some(1));
-    assert_eq!(
-        current["checks"]["last_complete"],
-        Value::Null,
+    assert_eq!(rules(current).len(), 1);
+    assert!(
+        current.get("checks").is_none(),
         "no gate has run, so no completed check may be claimed"
     );
-    assert_eq!(current["header"]["revision"], "uncommitted");
+    assert_eq!(current["header"]["revision"], Value::Null);
     assert_eq!(body["data"]["rulebook"]["revision"], "uncommitted");
 }
 
@@ -1217,9 +1316,16 @@ fn the_rule_form_sets_the_sweep_fields_and_the_sweep_reads_them_back() {
 
     let view = session.inspect()["data"]["current"].clone();
     let rule = rule_entry(&view, "rule.no-print");
-    assert_eq!(rule["sweep_class"], "confirm_first");
-    assert_eq!(rule["sweep_priority"], 3);
-    assert_eq!(rule["sweep_unsure"][0]["reason"], "demos print on purpose");
+    assert_eq!(rule["sweep"]["class"], "confirm_first");
+    assert_eq!(
+        rule["sweep"]["label"],
+        "Fix once a person approves the plan"
+    );
+    assert_eq!(rule["sweep"]["priority"], 3);
+    assert_eq!(
+        rule["sweep"]["unsure"][0]["reason"],
+        "demos print on purpose"
+    );
     assert_eq!(rule["edit"]["definition"]["sweep"], "confirm_first");
     let findings = sweep_findings(temp.path());
     assert_eq!(findings.len(), 1, "{findings:?}");
@@ -1238,6 +1344,15 @@ fn the_rule_form_sets_the_sweep_fields_and_the_sweep_reads_them_back() {
     );
     let view = session.inspect()["data"]["current"].clone();
     assert_eq!(rule_entry(&view, "rule.no-print")["lifecycle"], "changed");
+    let pending = &view["pending"]["changes"][0];
+    assert_eq!(pending["action"], "changed");
+    assert_eq!(
+        pending["fields"],
+        json!([
+            {"field": "sweep", "before": "confirm_first", "after": "draft_pr"},
+            {"field": "sweep_priority", "before": "3", "after": "1"}
+        ])
+    );
     session.command(&json!({"workflow": "change", "accept": true}));
     let findings = sweep_findings(temp.path());
     assert_eq!(findings[0]["class"], "draft_pr");
@@ -1276,13 +1391,11 @@ fn retiring_from_the_dashboard_needs_a_reason_and_the_changelog_says_who_when_an
     }
     let view = session.inspect()["data"]["current"].clone();
     assert_eq!(
-        view["drafts"],
-        json!([
-            format!("retire principle.custom-evidence: {reason}"),
-            format!("retire rule.tests-pass: {reason}"),
-        ])
+        view["pending"]["summary"],
+        "retired `principle.custom-evidence`, retired `rule.tests-pass`"
     );
-    assert!(view["rules"].as_array().is_some_and(Vec::is_empty));
+    assert_eq!(view["pending"]["changes"][1]["reason"], reason);
+    assert!(rules(&view).is_empty());
     assert_eq!(view["principles"].as_array().map(Vec::len), Some(1));
     assert_eq!(
         rulebook(temp.path())["retired"],
@@ -1298,6 +1411,10 @@ fn retiring_from_the_dashboard_needs_a_reason_and_the_changelog_says_who_when_an
     let view = &body["data"]["current"];
     assert_eq!(view["retired"].as_array().map(Vec::len), Some(2));
     assert_eq!(view["retired"][1]["reason"], reason);
+    assert_eq!(
+        view["retired"][1]["retired_in"]["commit"],
+        accepted["data"]["commit"]
+    );
     let latest = &body["data"]["changelog"][0];
     assert_eq!(latest["commit"], accepted["data"]["commit"]);
     assert_eq!(latest["owner"], "Dashboard Owner");
@@ -1333,9 +1450,12 @@ fn withdrawing_restores_the_rulebook_as_last_committed() {
     }));
     assert_eq!(edited["state"], "success", "{edited}");
     let view = session.inspect()["data"]["current"].clone();
-    assert_eq!(view["header"]["agreement"], "accepted, with drafts");
     assert_eq!(view["mission"]["lifecycle"], "changed");
-    assert_eq!(view["drafts"], json!(["change the mission"]));
+    assert_eq!(view["pending"]["summary"], "edited the mission");
+    assert_eq!(
+        view["pending"]["changes"][0]["fields"][0],
+        json!({"field": "statement", "before": MISSION, "after": "A different mission."})
+    );
 
     let preview =
         session.command(&json!({"workflow": "change", "withdraw": true, "preview": true}));
@@ -1347,8 +1467,8 @@ fn withdrawing_restores_the_rulebook_as_last_committed() {
         committed
     );
     let view = session.inspect()["data"]["current"].clone();
-    assert_eq!(view["drafts"], json!([]));
-    assert_eq!(view["mission"]["title"], MISSION);
+    assert_eq!(view["pending"], Value::Null);
+    assert_eq!(view["mission"]["statement"], MISSION);
     let nothing = session.command(&json!({"workflow": "change", "withdraw": true}));
     assert_eq!(nothing["state"], "needs_input", "{nothing}");
 }

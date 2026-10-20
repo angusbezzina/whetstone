@@ -733,7 +733,7 @@ pub(super) fn changes(before: Option<&Rulebook>, after: &Rulebook) -> Vec<(Strin
 
 /// The commit message: a subject naming the edits and a body with the
 /// owner's reason, each edit, the new digests and the retirement reasons.
-fn message(edits: &[(String, String)], rationale: Option<&str>) -> (String, String) {
+pub(super) fn message(edits: &[(String, String)], rationale: Option<&str>) -> (String, String) {
     let subject = match edits {
         [(only, _)] => match only.split_once(' ') {
             Some(("add", id)) => format!("Add {id} to the rulebook"),

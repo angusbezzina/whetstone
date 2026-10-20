@@ -69,6 +69,66 @@ pub fn rulebook_log(project_root: &Path) -> Result<Vec<RulebookCommit>, String> 
         .collect())
 }
 
+/// The rulebook file's text at each of `commits`, in the same order, read
+/// with one `git cat-file --batch`; `None` where the file is absent there.
+pub fn rulebook_texts(
+    project_root: &Path,
+    commits: &[&str],
+) -> Result<Vec<Option<String>>, String> {
+    use std::io::Write as _;
+    if commits.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["cat-file", "--batch"])
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|error| format!("git could not start: {error}"))?;
+    let request = commits
+        .iter()
+        .map(|commit| format!("{commit}:{RULEBOOK_PATH}\n"))
+        .collect::<String>();
+    let mut stdin = child.stdin.take().ok_or("git cat-file has no stdin")?;
+    let writer = std::thread::spawn(move || stdin.write_all(request.as_bytes()));
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("git cat-file failed: {error}"))?;
+    let _ = writer.join();
+    let bytes = output.stdout;
+    let mut texts = Vec::with_capacity(commits.len());
+    let mut at = 0;
+    while texts.len() < commits.len() && at < bytes.len() {
+        let end = bytes[at..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|offset| at + offset)
+            .ok_or("git cat-file output ended early")?;
+        let header = String::from_utf8_lossy(&bytes[at..end]).into_owned();
+        at = end + 1;
+        let mut fields = header.split(' ');
+        match (fields.next(), fields.next(), fields.next()) {
+            (Some(_), Some("blob"), Some(size)) => {
+                let size = size
+                    .parse::<usize>()
+                    .map_err(|_| format!("git cat-file sent a bad size: {header}"))?;
+                let body = bytes
+                    .get(at..at + size)
+                    .ok_or("git cat-file output ended early")?;
+                texts.push(Some(String::from_utf8_lossy(body).into_owned()));
+                at += size + 1;
+            }
+            _ => texts.push(None),
+        }
+    }
+    texts.resize(commits.len(), None);
+    Ok(texts)
+}
+
 /// pstack show-me-your-work's header row, verbatim.
 pub const TRAIL_HEADER: &str = "ts\tphase\tdecision\twhy\tevidence\tresult";
 

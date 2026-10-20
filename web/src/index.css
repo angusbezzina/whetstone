@@ -1,0 +1,400 @@
+@import "tailwindcss";
+
+/* The Standards Sheet: the rulebook drawn as a controlled engineering
+   document. Ink on a sheet inside a 1px frame, square corners, hairline
+   rules, no shadows. Orange is spent on revisions, pending marks, the
+   primary action and focus. */
+
+@font-face {
+  font-family: "Oswald";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 700;
+  src: url("@fontsource-variable/oswald/files/oswald-latin-wght-normal.woff2") format("woff2-variations");
+}
+@font-face {
+  font-family: "Vollkorn";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400 900;
+  src: url("@fontsource-variable/vollkorn/files/vollkorn-latin-wght-normal.woff2") format("woff2-variations");
+}
+@font-face {
+  font-family: "Vollkorn";
+  font-style: italic;
+  font-display: swap;
+  font-weight: 400 900;
+  src: url("@fontsource-variable/vollkorn/files/vollkorn-latin-wght-italic.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2") format("woff2-variations");
+}
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  --desk: #e9e6df;
+  --background: #ffffff;
+  --foreground: #0a0a0a;
+  --ink-2: #47443f;
+  --ink-3: #6b675f;
+  --rule: #d8d4cb;
+  --frame: #0a0a0a;
+  --card: #f6f4ef;
+  --card-foreground: #0a0a0a;
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0a;
+  --muted: #f1eee8;
+  --muted-foreground: #5c5850;
+  --accent: #f1eee8;
+  --accent-foreground: #0a0a0a;
+  --secondary: #f1eee8;
+  --secondary-foreground: #0a0a0a;
+  --primary: #e66c3a;
+  --primary-hover: #d95f2d;
+  --primary-foreground: #0a0a0a;
+  --struck: #c2410c;
+  --wash: #fdf1eb;
+  --destructive: #c2410c;
+  --border: #d8d4cb;
+  --input: #c9c4ba;
+  --ring: #e66c3a;
+  --radius: 0px;
+  --code-weight: 420;
+  --stone-top: #e66c3a;
+  --stone-left: #c2410c;
+  --stone-right: #d95f2d;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --desk: #050506;
+    --background: #0b0c0f;
+    --foreground: #ece8df;
+    --ink-2: #bdb7ac;
+    --ink-3: #928c81;
+    --rule: #262830;
+    --frame: #8d877c;
+    --card: #121419;
+    --card-foreground: #ece8df;
+    --popover: #121419;
+    --popover-foreground: #ece8df;
+    --muted: #15171d;
+    --muted-foreground: #a8a297;
+    --accent: #1a1d24;
+    --accent-foreground: #ece8df;
+    --secondary: #1a1d24;
+    --secondary-foreground: #ece8df;
+    --primary-hover: #ef7d4e;
+    --primary-foreground: #0b0c0f;
+    --struck: #ef7d4e;
+    --wash: #1f1510;
+    --destructive: #ef7d4e;
+    --border: #262830;
+    --input: #343741;
+    --code-weight: 470;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --desk: #050506;
+  --background: #0b0c0f;
+  --foreground: #ece8df;
+  --ink-2: #bdb7ac;
+  --ink-3: #928c81;
+  --rule: #262830;
+  --frame: #8d877c;
+  --card: #121419;
+  --card-foreground: #ece8df;
+  --popover: #121419;
+  --popover-foreground: #ece8df;
+  --muted: #15171d;
+  --muted-foreground: #a8a297;
+  --accent: #1a1d24;
+  --accent-foreground: #ece8df;
+  --secondary: #1a1d24;
+  --secondary-foreground: #ece8df;
+  --primary-hover: #ef7d4e;
+  --primary-foreground: #0b0c0f;
+  --struck: #ef7d4e;
+  --wash: #1f1510;
+  --destructive: #ef7d4e;
+  --border: #262830;
+  --input: #343741;
+  --code-weight: 470;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-display: "Oswald", "Arial Narrow", sans-serif;
+  --font-serif: "Vollkorn", Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --color-desk: var(--desk);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-rule: var(--rule);
+  --color-frame: var(--frame);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-struck: var(--struck);
+  --color-wash: var(--wash);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    background: var(--desk);
+    scrollbar-color: var(--ink-3) var(--desk);
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-desk text-foreground font-serif antialiased;
+    font-size: 16px;
+    line-height: 1.55;
+    font-variant-numeric: lining-nums tabular-nums;
+    caret-color: var(--primary);
+  }
+  ::selection {
+    background: var(--primary);
+    color: var(--primary-foreground);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  a {
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+  }
+  /* Code is literal: one mono, no ligatures (a typed -> stays two
+     characters), slightly heavier on the dark sheet. */
+  code,
+  kbd,
+  pre {
+    font-family: var(--font-mono);
+    font-weight: var(--code-weight);
+    font-variant-ligatures: none;
+    font-feature-settings: "calt" 0, "zero" 1;
+    letter-spacing: 0;
+  }
+  /* Code inside prose sits on a chip: the card plane, a hairline, square. */
+  :where(p, li, span, dd, label, h2, h3, td, footer) > code:not(.bare) {
+    font-size: 0.875em;
+    padding: 0.05em 0.32em;
+    background: var(--card);
+    border: 1px solid var(--rule);
+    white-space: nowrap;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+    }
+  }
+}
+
+@layer components {
+  /* A title-block or callout label: Oswald caps beside or inside a cell. */
+  .label {
+    font-family: var(--font-display);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    line-height: 1.2;
+  }
+  .display {
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  /* The fixed stage cell: a square that is filled when the rule runs there. */
+  .stage {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-family: var(--font-display);
+    font-size: 0.6875rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .stage::before {
+    content: "";
+    width: 0.55rem;
+    height: 0.55rem;
+    border: 1px solid currentColor;
+  }
+  .stage[data-runs="true"] {
+    color: var(--foreground);
+  }
+  .stage[data-runs="true"]::before {
+    background: currentColor;
+  }
+  .ins {
+    text-decoration: underline;
+    text-decoration-color: var(--primary);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+    color: var(--foreground);
+  }
+  /* Text edited where it stands: a dotted rule on hover says it can be
+     written on. */
+  .editable {
+    cursor: text;
+    outline: none;
+    border-radius: 0;
+    text-decoration: underline dotted transparent;
+    text-underline-offset: 4px;
+    transition: text-decoration-color 150ms, box-shadow 150ms, background-color 150ms;
+  }
+  .editable:hover {
+    text-decoration-color: var(--ink-3);
+  }
+  /* Writing on the page: no box and no ground, only the caret and a faint
+     dotted rule under the line being written, so focus is still visible. */
+  .editable:focus,
+  .editable:focus-visible {
+    outline: none;
+    box-shadow: none;
+    background: none;
+    text-decoration-line: underline;
+    text-decoration-style: dotted;
+    text-decoration-color: var(--ink-3);
+  }
+  .editable[data-empty]::before {
+    content: attr(data-placeholder);
+    color: var(--ink-3);
+  }
+  /* The redline: the drafting mark for a change not yet accepted, an
+     orange rule under each line of the changed text. It comes up when the
+     change lands. */
+  .redline {
+    text-decoration-line: underline;
+    text-decoration-style: solid;
+    text-decoration-color: var(--primary);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 5px;
+    text-decoration-skip-ink: none;
+    animation: redline-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .editable.redline:hover {
+    text-decoration-color: var(--primary);
+  }
+  @keyframes redline-in {
+    from {
+      text-decoration-color: transparent;
+      text-underline-offset: 9px;
+    }
+  }
+  .stage::before {
+    content: "";
+    width: 0.55rem;
+    height: 0.55rem;
+    border: 1px solid currentColor;
+  }
+  .stage[data-runs="true"] {
+    color: var(--foreground);
+  }
+  .stage[data-runs="true"]::before {
+    background: currentColor;
+  }
+  .ins {
+    text-decoration: underline;
+    text-decoration-color: var(--primary);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+    color: var(--foreground);
+  }
+  /* Text edited where it stands: a dotted rule on hover says it can be
+     written on. */
+  .editable {
+    cursor: text;
+    outline: none;
+    border-radius: 0;
+    text-decoration: underline dotted transparent;
+    text-underline-offset: 4px;
+    transition: text-decoration-color 150ms, box-shadow 150ms, background-color 150ms;
+  }
+  .editable:hover {
+    text-decoration-color: var(--ink-3);
+  }
+  /* Writing on the page: no box and no ground, only the caret and a faint
+     dotted rule under the line being written, so focus is still visible. */
+  .editable:focus,
+  .editable:focus-visible {
+    outline: none;
+    box-shadow: none;
+    background: none;
+    text-decoration-line: underline;
+    text-decoration-style: dotted;
+    text-decoration-color: var(--ink-3);
+  }
+  .editable[data-empty]::before {
+    content: attr(data-placeholder);
+    color: var(--ink-3);
+  }
+  /* The redline: the drafting mark for a change not yet accepted. It draws
+     left to right when the change lands. */
+  .redline {
+    background-image: linear-gradient(var(--primary), var(--primary));
+    background-repeat: no-repeat;
+    background-position: 0 100%;
+    background-size: 100% 2px;
+    padding-bottom: 2px;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    animation: redline-draw 480ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes redline-draw {
+    from {
+      background-size: 0% 2px;
+    }
+  }
+  .stage::before {
+    transition: background-color 140ms ease-out;
+  }
+  .stage[data-unlit]::before {
+    background: transparent;
+  }
+  .del {
+    text-decoration: line-through;
+    text-decoration-color: var(--struck);
+    color: var(--ink-3);
+  }
+}

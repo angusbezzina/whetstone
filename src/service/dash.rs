@@ -5,12 +5,12 @@
 use serde_json::{json, Value};
 
 use crate::layout::ProjectLayout;
-use crate::projection;
+use crate::projection::{diff, page};
 use crate::rulebook::{self, Revision, RulebookError, RULEBOOK_PATH};
 
-use super::change::{changes, committed};
+use super::change::{changes, committed, message};
 use super::{
-    bounded_request_id, decision_trail, project_error, project_label, rulebook_log,
+    bounded_request_id, decision_trail, project_error, project_label, rulebook_log, rulebook_texts,
     unknown_response, utc_now, DashRequest, RulebookCommit, ServiceEvidence, ServiceResponse,
     ServiceState, TRAIL_HEADER,
 };
@@ -60,45 +60,68 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
         Err(RulebookError::Missing) => Ok(None),
         Err(error) => Err(error),
     };
+    let history = match &log {
+        Ok(log) => history(root, log),
+        Err(_) => Vec::new(),
+    };
     let current = match &book {
         Ok(book) => {
             let head = committed(root).and_then(Result::ok);
-            let drafts = match book {
+            let message = match book {
                 Some(book) if book.revision == Revision::Uncommitted => {
-                    changes(head.as_ref(), book)
-                        .into_iter()
-                        .map(|(edit, detail)| format!("{edit}{detail}"))
-                        .collect()
+                    let edits = changes(head.as_ref(), book);
+                    (!edits.is_empty()).then(|| message(&edits, None))
                 }
-                _ => Vec::new(),
+                _ => None,
             };
-            let mut view = projection::dashboard_view(
+            let book_json = std::fs::read_to_string(root.join(RULEBOOK_PATH))
+                .ok()
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+            let head_json = match &log {
+                Ok(log) if !log.is_empty() => rulebook_texts(root, &["HEAD"])
+                    .ok()
+                    .and_then(|texts| texts.into_iter().next().flatten())
+                    .and_then(|text| serde_json::from_str::<Value>(&text).ok()),
+                _ => None,
+            };
+            if !book
+                .as_ref()
+                .is_some_and(|book| !book.mission.statement.trim().is_empty())
+            {
+                response
+                    .blocking_questions
+                    .push("What should the project's mission be?".into());
+            }
+            if !book.as_ref().is_some_and(|book| !book.rules.is_empty()) {
+                response
+                    .blocking_questions
+                    .push("What should the project's rules be?".into());
+            }
+            let coverage = book
+                .as_ref()
+                .map(|book| crate::coverage::coverage(root, book));
+            let view = page::page_view(
                 book.as_ref(),
-                projection::ProjectionInput {
+                page::PageInput {
                     project_label: project_label(root),
+                    branch: branch(root),
                     head: head.as_ref(),
-                    drafts,
+                    head_json: head_json.as_ref(),
+                    book_json: book_json.as_ref(),
+                    message,
                     hooks: crate::wire::git_hooks(root),
+                    ci_wired: crate::wire::ci_wired(root),
+                    coverage: coverage.clone(),
                     starters: crate::starter::starters(root),
                     catalogue: crate::catalogue::catalogue(root),
+                    history,
                 },
             );
-            view.latest_change = changelog.first().map(|entry| projection::LatestChange {
-                title: entry["title"].as_str().unwrap_or_default().to_string(),
-                at: entry["recorded_at"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string(),
-            });
-            response.blocking_questions = view
-                .onboarding
-                .missing
-                .iter()
-                .map(|decision| format!("What should the project's {decision} be?"))
-                .collect();
             let mut value = serde_json::to_value(&view).unwrap_or(Value::Null);
-            if let (Some(book), Some(view)) = (book, value.as_object_mut()) {
-                view.insert("coverage".into(), crate::coverage::coverage(root, book));
+            // The full coverage stays in the envelope for agents; the page
+            // shows only its problems, in the health strip.
+            if let (Some(coverage), Some(object)) = (coverage, value.as_object_mut()) {
+                object.insert("coverage".into(), coverage);
             }
             Some(value)
         }
@@ -144,6 +167,57 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
         });
     }
     response
+}
+
+/// Every commit that touched the rulebook, newest first, with what it
+/// changed against the version before it.
+fn history(root: &std::path::Path, log: &[RulebookCommit]) -> Vec<page::HistoryEntry> {
+    let commits = log
+        .iter()
+        .map(|commit| commit.commit.as_str())
+        .collect::<Vec<_>>();
+    let versions = rulebook_texts(root, &commits)
+        .unwrap_or_else(|_| vec![None; commits.len()])
+        .into_iter()
+        .map(|text| text.and_then(|text| serde_json::from_str::<Value>(&text).ok()))
+        .collect::<Vec<_>>();
+    log.iter()
+        .enumerate()
+        .map(|(index, commit)| {
+            let after = versions[index].as_ref();
+            let before = versions.get(index + 1).and_then(Option::as_ref);
+            let changes = after
+                .map(|after| diff::diff(before, after))
+                .unwrap_or_default();
+            page::HistoryEntry {
+                commit: commit.commit.clone(),
+                short: commit.commit[..12.min(commit.commit.len())].to_string(),
+                author: commit.author.clone(),
+                at: commit.date.clone(),
+                subject: commit.subject.clone(),
+                body: commit.body.clone(),
+                summary: match after {
+                    Some(_) => diff::summary(&changes),
+                    None => format!("{RULEBOOK_PATH} was removed or is not JSON at this commit"),
+                },
+                changes,
+                readable: after.is_some(),
+            }
+        })
+        .collect()
+}
+
+/// The checked-out branch, `None` on a detached HEAD or outside Git.
+fn branch(root: &std::path::Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()
+        .ok()?;
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (output.status.success() && !name.is_empty()).then_some(name)
 }
 
 /// `YYYY-MM-DDTHH:MM:SSZ`, the form Git's log dates are written in here.

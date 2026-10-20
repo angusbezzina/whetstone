@@ -17,3 +17,6 @@ Thumbs.db
 
 # Rust build artifacts
 target/
+
+# Dashboard source dependencies (the build is committed under assets/dashboard)
+web/node_modules/
