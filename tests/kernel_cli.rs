@@ -332,7 +332,10 @@ fn init_inspects_read_only_then_drafts_the_agreement_once() {
     assert_eq!(ids.len(), 4, "{agreed}");
     assert_eq!(ids[0], "mission");
     assert!(ids.contains(&"principle.prove-it-works".to_string()));
-    assert!(ids.iter().any(|id| id.starts_with("principle.custom-")));
+    assert!(
+        ids.contains(&"principle.leave-the-campsite-cleaner".to_string()),
+        "a custom principle's id is its statement's words: {ids:?}"
+    );
     assert!(ids.contains(&"rule.prove-it-works".to_string()));
     assert_eq!(agreed["data"]["progress"]["agreement_complete"], true);
     assert_eq!(agreed["data"]["progress"]["revision"], "uncommitted");
@@ -481,6 +484,63 @@ fn init_needs_a_mission_and_names_only_catalogue_principles_and_starters() {
         "a refused agreement wrote the rulebook"
     );
     assert!(!repo.root.join("executed").exists());
+}
+
+#[test]
+fn a_custom_principle_is_named_by_its_words_and_serves_a_rule() {
+    let repo = Repo::new();
+    repo.write("Cargo.toml", "[package]\nname = \"x\"\n");
+    repo.commit("base");
+    let first = repo.agree(&[
+        "--mission",
+        "Keep work aligned.",
+        "--custom-principle",
+        "Leave the campsite cleaner.",
+    ]);
+    assert_eq!(
+        drafted(&first),
+        ["mission", "principle.leave-the-campsite-cleaner"]
+    );
+    // The same words again draft nothing new; different words with the same
+    // slug are numbered instead of overwriting it.
+    let again = repo.agree(&[
+        "--mission",
+        "Keep work aligned.",
+        "--custom-principle",
+        "Leave the campsite cleaner.",
+        "--custom-principle",
+        "Leave the campsite cleaner!",
+    ]);
+    assert_eq!(drafted(&again), ["principle.leave-the-campsite-cleaner-2"]);
+    // The id is short enough to type into --serves.
+    let served = repo.wh_json(&[
+        "change",
+        "--kind",
+        "rule",
+        "--record-id",
+        "rule.manifest-kept",
+        "--content",
+        "The manifest stays put.",
+        "--rationale",
+        "A clean campsite starts with its manifest.",
+        "--definition",
+        r#"{"type":"rule","strength":"should","enforcer":{"kind":"validator","command":"test -f Cargo.toml"}}"#,
+        "--serves",
+        "leave-the-campsite-cleaner",
+    ]);
+    assert_eq!(served["state"], "success", "{served}");
+    let book: serde_json::Value =
+        serde_json::from_slice(&repo.rulebook().expect("rulebook")).expect("rulebook JSON");
+    let rule = book["rules"]
+        .as_array()
+        .expect("rules")
+        .iter()
+        .find(|rule| rule["id"] == "rule.manifest-kept")
+        .expect("rule");
+    assert_eq!(
+        rule["source"]["reference"],
+        "principle.leave-the-campsite-cleaner"
+    );
 }
 
 #[test]

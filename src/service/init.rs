@@ -8,7 +8,6 @@
 
 use serde::Serialize;
 use serde_json::json;
-use sha2::{Digest, Sha256};
 
 use crate::domain::{Mission, Principle, PrincipleSource, RecordId};
 use crate::layout::ProjectLayout;
@@ -284,9 +283,28 @@ fn agree(
             Ok(statement) => statement,
             Err(question) => return ask(request_id, question),
         };
-        let slug = format!("{:x}", Sha256::digest(statement.as_bytes()));
+        // The id is the statement's first words, so it can be typed into
+        // --serves. The same statement again keeps its id (and is skipped
+        // below); a different one that slugs the same way is numbered.
+        let base = format!("principle.{}", super::packs::principle_slug(&statement));
+        let mut id = base.clone();
+        let mut n = 2;
+        loop {
+            let same = after
+                .principles
+                .iter()
+                .any(|entry| entry.id.as_str() == id && entry.principle.statement == statement);
+            let taken = principles.iter().any(|(taken, _)| *taken == id)
+                || after.principles.iter().any(|entry| entry.id.as_str() == id)
+                || after.rules.iter().any(|entry| entry.id.as_str() == id);
+            if same || !taken {
+                break;
+            }
+            id = format!("{base}-{n}");
+            n += 1;
+        }
         principles.push((
-            format!("principle.custom-{}", &slug[..12]),
+            id,
             Principle {
                 statement,
                 source: PrincipleSource::Custom,

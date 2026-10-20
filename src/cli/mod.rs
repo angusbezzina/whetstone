@@ -234,7 +234,8 @@ enum Command {
         /// With --sweep: `findings` (the default) or `json` for the envelope.
         /// `annotations` prints each flag as a GitHub workflow command
         /// (::error for must, ::warning for should), only on lines the change
-        /// touched when --base is given.
+        /// touched when --base is given; must flags outside them get one
+        /// ::error per rule that names where they are.
         #[arg(long, value_enum)]
         format: Option<CheckFormatArg>,
         /// Per-rule time bound in seconds (default 900).

@@ -103,7 +103,9 @@ A repository adds its own packs as `whetstone/principles/<name>.json`
 ([schema](references/principle-pack-v1.schema.json)). Name one with
 `--principle <id>` or `--principle <pack>/<id>`, take the ten the packs
 offer as a starting point with `--principle starting` (the dashboard ticks
-them for you), or write your own with `--custom-principle`. Every picked
+them for you), or write your own with `--custom-principle`; its id is the
+statement's first words (`principle.leave-the-campsite-cleaner`), so it is
+easy to name with `--serves`. Every picked
 principle is a record you can edit or retire like a rule.
 
 Drafts are edits in the working tree; `wh change --accept` commits the
@@ -227,8 +229,8 @@ A plain check and pre-push also report the chain from principle to rule
 none). That line never changes the verdict and never appears in
 `findings.json`.
 
-A must finding fails the check; a should finding is reported and never
-blocks. Unknown or unavailable evidence (a query that compiles for no
+A must finding fails the check and reads FAIL in the summary; a should
+finding reads WARN, is reported and never blocks. Unknown or unavailable evidence (a query that compiles for no
 language, a missing tool, a timeout) is never a pass. Each failure names its
 repair route and the command that rechecks it.
 
@@ -245,7 +247,9 @@ as the `scan-findings` artifact on every push to main.
 
 `--format annotations` prints each flag as a GitHub workflow command
 (`::error` for a must rule, `::warning` for a should rule); with `--base`
-only lines the change touched are annotated. The CI workflow runs the
+only lines the change touched are annotated, and a must rule that flags
+only outside them gets one annotation that names where, since it still
+fails the check. The CI workflow runs the
 required check this way, so a reviewer sees the rule beside the code.
 
 ## The GitHub Action

@@ -3,8 +3,10 @@
 //! should rule. With a base revision only
 //! flags on lines the change added or modified are annotated (a flag about a
 //! whole file lands on line 1 of a changed file); a flag with no file is
-//! annotated without one. A gate that listed only its first flags gets one
-//! more annotation saying how many were left out.
+//! annotated without one. A must rule that flags only outside the change
+//! still fails the check, so its flags there get one annotation without a
+//! file that names where they are. A gate that listed only its first flags
+//! gets one more annotation saying how many were left out.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -45,6 +47,7 @@ pub fn render(project_root: &Path, data: &Value, base: Option<&str>) -> String {
             command(&mut out, level, None, &title, summary, id);
             continue;
         }
+        let mut outside = Vec::new();
         for failure in failures {
             let location = failure
                 .get("location")
@@ -71,7 +74,26 @@ pub fn render(project_root: &Path, data: &Value, base: Option<&str>) -> String {
                     message,
                     id,
                 );
+            } else if level == "error" {
+                outside.push(location.to_string());
             }
+        }
+        if !outside.is_empty() {
+            const NAMED: usize = 3;
+            let mut places = outside
+                .iter()
+                .take(NAMED)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            if outside.len() > NAMED {
+                let _ = write!(places, " and {} more", outside.len() - NAMED);
+            }
+            let note = format!(
+                "{} flag(s) of this must rule are on lines this change did not touch, and they still fail the check: {places}.",
+                outside.len()
+            );
+            command(&mut out, level, None, &title, &note, id);
         }
         let omitted = gate.get("omitted").and_then(Value::as_u64).unwrap_or(0);
         if omitted > 0 {
@@ -211,6 +233,51 @@ mod tests {
             "::error file=src/a.rs,line=2,title=rule.must%3A No unwrap%2C ever::x.unwrap() (wh explain rule.must)\n\
              ::warning file=src/a.rs,line=1,title=rule.should%3A Short files::100%25 too long (wh explain rule.should)\n\
              ::error title=rule.repo%3A Tests pass::failed (wh explain rule.repo)\n"
+        );
+    }
+
+    #[test]
+    fn a_must_flag_outside_the_change_is_still_annotated() {
+        let temp = tempfile::tempdir().expect("temp");
+        let root = temp.path();
+        let git = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .status()
+                .expect("git");
+            assert!(status.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        std::fs::create_dir_all(root.join("src")).expect("src");
+        std::fs::write(root.join("src/a.rs"), "a\nb\n").expect("a");
+        std::fs::write(root.join("src/old.rs"), "x\n").expect("old");
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "base"]);
+        std::fs::write(root.join("src/a.rs"), "a\nb\nc\n").expect("a");
+        let data = serde_json::json!({"gates": [
+            {"id": "rule.must", "name": "No unwrap", "strength": "must", "state": "fail",
+             "failures": [
+                {"location": "src/a.rs:3", "message": "in the change"},
+                {"location": "src/a.rs:1", "message": "above the change"},
+                {"location": "src/old.rs:1", "message": "in an untouched file"}
+             ]},
+            {"id": "rule.should", "name": "Short", "strength": "should", "state": "fail",
+             "failures": [{"location": "src/old.rs:1", "message": "long"}]}
+        ]});
+        assert_eq!(
+            render(root, &data, Some("HEAD")),
+            "::error file=src/a.rs,line=3,title=rule.must%3A No unwrap::in the change (wh explain rule.must)\n\
+             ::error title=rule.must%3A No unwrap::2 flag(s) of this must rule are on lines this change did not touch, and they still fail the check: src/a.rs:1, src/old.rs:1. (wh explain rule.must)\n"
         );
     }
 }

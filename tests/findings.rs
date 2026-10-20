@@ -695,9 +695,10 @@ fn a_change_s_flags_become_annotations_on_the_lines_it_touched() {
         commands,
         [
             "::error file=src/main.rs,line=3,title=rule.no-unwrap%3A No unwrap.::new().unwrap() (wh explain rule.no-unwrap)",
+            "::error title=rule.no-unwrap%3A No unwrap.::1 flag(s) of this must rule are on lines this change did not touch, and they still fail the check: src/main.rs:2. (wh explain rule.no-unwrap)",
             "::warning file=src/main.rs,line=4,title=rule.no-dbg%3A No dbg!%2C ever.::dbg!(1) (wh explain rule.no-dbg)",
         ],
-        "the unchanged line 2 is not annotated:\n{stdout}"
+        "the unchanged line 2 is not annotated in place, but the must rule still names it:\n{stdout}"
     );
 
     // Annotations are a change's; findings and the envelope are a sweep's.

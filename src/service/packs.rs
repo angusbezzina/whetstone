@@ -266,7 +266,7 @@ pub(super) fn export(
 
 /// A pack id for a principle written in the owner's words: the first words
 /// of its statement as a slug, at most 48 characters.
-fn principle_slug(statement: &str) -> String {
+pub(crate) fn principle_slug(statement: &str) -> String {
     let mut slug = String::new();
     let mut dash = false;
     for character in statement.chars().flat_map(char::to_lowercase) {

@@ -122,6 +122,18 @@ pub(crate) struct CheckResult {
     pub(crate) recheck_command: String,
 }
 
+impl CheckResult {
+    /// The word the summary shows: a should rule that flags reports and
+    /// never blocks, so it reads WARN rather than a blocking FAIL.
+    fn label(&self) -> &'static str {
+        if self.state == CheckState::Violated && !self.required {
+            "WARN"
+        } else {
+            self.state.label()
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct CheckReport {
     pub(crate) schema: &'static str,
@@ -227,14 +239,14 @@ impl CheckReport {
             if result.state == CheckState::Success {
                 lines.push(format!(
                     "{} {}: {}",
-                    result.state.label(),
+                    result.label(),
                     result.requirement_id,
                     result.summary
                 ));
             } else {
                 lines.push(format!(
                     "{} {}: {} — next: {}",
-                    result.state.label(),
+                    result.label(),
                     result.requirement_id,
                     result.summary,
                     result.permitted_next_action
@@ -505,6 +517,24 @@ mod tests {
             permitted_next_action: format!("repair {id}"),
             recheck_command: "wh check".into(),
         }
+    }
+
+    #[test]
+    fn a_should_flag_reads_warn_and_a_must_flag_reads_fail() {
+        let report = CheckReport::new(
+            "subject".into(),
+            snapshot(),
+            vec![
+                result("rule.must", true, CheckState::Violated),
+                result("rule.should", false, CheckState::Violated),
+                result("rule.ok", true, CheckState::Success),
+            ],
+            1,
+        );
+        let summary = report.human_summary();
+        assert!(summary.contains("\nFAIL rule.must: ran"), "{summary}");
+        assert!(summary.contains("\nWARN rule.should: ran"), "{summary}");
+        assert!(summary.contains("\nPASS rule.ok: ran"), "{summary}");
     }
 
     #[test]

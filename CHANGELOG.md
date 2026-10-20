@@ -9,6 +9,20 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+### Changed
+
+- The check summary labels a should rule's flag WARN instead of FAIL, so
+  only a blocking failure reads FAIL.
+- `--custom-principle` names the principle by its statement's first words
+  (`principle.leave-the-campsite-cleaner`) instead of a hash, so it is easy
+  to type into `--serves`. Different words that slug the same are numbered.
+
+### Fixed
+
+- `wh check --ci --base ... --format annotations` failed on a must flag
+  outside the change without printing an annotation for it. Each such rule
+  now gets one `::error` that names where its flags are.
+
 ## [0.15.0] - 2026-10-19
 
 ### Added
