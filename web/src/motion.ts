@@ -30,9 +30,12 @@ export function plotSheet(root: HTMLElement) {
   });
 }
 
-/** The zone marks in the margin drift: every few seconds one of them runs
- * through a handful of characters from its own set, lit orange, and settles
- * back on its label. Paused while the tab is hidden; still under reduced
+/** Drafting and proof marks a zone mark flickers through. */
+const GLYPHS = "§¶†‡※◊∆∑∂≈≠±∞⊕⊗◇◆○△▽⌖⌗⍟⎔⌀∴∵";
+
+/** The zone marks in the margin drift: every second or so one of them
+ * flickers through drafting symbols, lit orange, and settles back on its
+ * label. Paused while the tab is hidden; still under reduced
  * motion. Returns the stop function. */
 export function drift(root: HTMLElement) {
   if (reduced()) return () => {};
@@ -47,22 +50,26 @@ export function drift(root: HTMLElement) {
   };
   const shift = (mark: HTMLElement) => {
     const label = mark.dataset.zone!;
-    const glyphs = /\d/.test(label) ? "0123456789" : "ABCDEFGHJKLMNPRSTUVWXYZ";
-    const steps = 5 + Math.floor(Math.random() * 4);
+    const steps = 6 + Math.floor(Math.random() * 5);
     mark.dataset.shifting = "";
     for (let step = 0; step < steps; step++) {
-      later(() => (mark.textContent = glyphs[Math.floor(Math.random() * glyphs.length)]), step * 70);
+      // Mostly symbols, with the label flickering through near the end.
+      const glyph = step > steps / 2 && Math.random() < 0.35 ? label : GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+      later(() => (mark.textContent = glyph), step * 60);
     }
     later(() => {
       mark.textContent = label;
       delete mark.dataset.shifting;
-    }, steps * 70);
+    }, steps * 60);
   };
   const tick = () => {
-    if (!document.hidden && marks.length) shift(marks[Math.floor(Math.random() * marks.length)]);
-    later(tick, 2200 + Math.random() * 2600);
+    if (!document.hidden && marks.length) {
+      shift(marks[Math.floor(Math.random() * marks.length)]);
+      if (Math.random() < 0.3) shift(marks[Math.floor(Math.random() * marks.length)]);
+    }
+    later(tick, 500 + Math.random() * 1000);
   };
-  later(tick, 1800);
+  later(tick, 900);
   return () => {
     timers.forEach((id) => window.clearTimeout(id));
     marks.forEach((mark) => {
