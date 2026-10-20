@@ -19,7 +19,7 @@ pub struct FieldChange {
 /// What happened to one entry (the mission, a principle or a rule).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct EntryChange {
-    /// `mission`, `principle` or `rule`.
+    /// `mission`, `principle`, `rule` or `setting` (`require_served`).
     pub kind: &'static str,
     /// The record id; `mission` for the mission.
     pub id: String,
@@ -216,6 +216,25 @@ pub fn diff(before: Option<&Value>, after: &Value) -> Vec<EntryChange> {
             };
             changes.push(change);
         }
+    }
+    // Strict mode is a setting of the whole file; absent is false.
+    let strict = |book: Option<&Value>| {
+        book.and_then(|book| book["require_served"].as_bool())
+            .unwrap_or(false)
+    };
+    if strict(before) != strict(Some(after)) {
+        changes.push(EntryChange {
+            kind: "setting",
+            id: "require_served".into(),
+            action: "changed",
+            title: "Every principle served before accepting (require_served)".into(),
+            fields: vec![FieldChange {
+                field: "require_served".into(),
+                before: Some(strict(before).to_string()),
+                after: Some(strict(Some(after)).to_string()),
+            }],
+            reason: None,
+        });
     }
     changes
 }

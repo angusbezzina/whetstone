@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 
 const KEY = "wh-collapsed";
@@ -22,6 +22,7 @@ export function Section({
   meta,
   folded,
   collapsible = true,
+  reveal,
   children,
 }: {
   id: string;
@@ -31,9 +32,15 @@ export function Section({
   /** The one line beside the heading that sums up the content. */
   folded?: React.ReactNode;
   collapsible?: boolean;
+  /** A new value opens a folded band for this visit, without changing the
+   * remembered fold (a link into the band). */
+  reveal?: number | null;
   children: React.ReactNode;
 }) {
   const [closed, setClosed] = useState(() => collapsible && remembered().has(id));
+  useEffect(() => {
+    if (reveal) setClosed(false);
+  }, [reveal]);
   // The body clips only while it is folded or moving, so focus rings and
   // overhanging marks show once it has opened.
   const [moving, setMoving] = useState(false);

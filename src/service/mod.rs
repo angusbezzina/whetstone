@@ -218,6 +218,8 @@ pub struct ChangeRequest {
     /// Import a rule pack's rules and principles as drafts, or install a
     /// principle pack: a file, an https URL or a built-in pack name.
     pub import_pack: Option<String>,
+    /// Draft the rulebook's strict mode (`require_served`) on or off.
+    pub require_served: Option<bool>,
 }
 
 /// Which in-force rules a check runs.

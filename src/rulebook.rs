@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 
 use crate::domain::{
     ContentDigest, DomainError, Enforcer, Mission, Principle, PrincipleSource, RecordId, Rule,
-    RuleExample, RuleSource, Strength, SweepClass, SweepUnsure, RULE_SCHEMA_V2,
+    RuleExample, RuleSource, RuleSourceKind, Strength, SweepClass, SweepUnsure, RULE_SCHEMA_V2,
 };
 
 pub const RULEBOOK_SCHEMA: &str = "whetstone.rulebook.v1";
@@ -34,7 +34,49 @@ pub struct Rulebook {
     pub rules: Vec<RuleEntry>,
     /// Rules and principles taken out of the rulebook, with the reason.
     pub retired: Vec<RetiredEntry>,
+    /// Strict mode: `wh change --accept` refuses a rulebook in which a
+    /// principle has no rule or a rule serves no principle.
+    pub require_served: bool,
     pub revision: Revision,
+}
+
+/// Where the chain from principle to rule breaks: held principles no rule
+/// serves, and rules that serve no held principle. Derived, never stored.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Coverage {
+    pub unserved: Vec<RecordId>,
+    pub unanchored: Vec<RecordId>,
+}
+
+impl Coverage {
+    pub fn is_complete(&self) -> bool {
+        self.unserved.is_empty() && self.unanchored.is_empty()
+    }
+
+    /// One sentence for the health strip and the check summary, or None
+    /// when the chain holds.
+    pub fn sentence(&self) -> Option<String> {
+        let count =
+            |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        let parts = [
+            (!self.unserved.is_empty()).then(|| {
+                count(
+                    self.unserved.len(),
+                    "principle has no rule",
+                    "principles have no rule",
+                )
+            }),
+            (!self.unanchored.is_empty()).then(|| {
+                count(
+                    self.unanchored.len(),
+                    "rule serves no principle",
+                    "rules serve no principle",
+                )
+            }),
+        ];
+        let parts = parts.into_iter().flatten().collect::<Vec<_>>();
+        (!parts.is_empty()).then(|| parts.join("; "))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,8 +90,42 @@ impl Rulebook {
     /// id (`principle.prove-it-works`), the bare id or a pack's
     /// `pstack:prove-it-works`. None when the source names nothing held here.
     pub fn principle_for(&self, rule: &Rule) -> Option<&PrincipleEntry> {
+        if rule.source.kind != RuleSourceKind::Principle {
+            return None;
+        }
         let reference = rule.source.reference.as_deref()?;
         self.principle_named(reference)
+    }
+
+    /// The rules that serve a principle, in file order.
+    pub fn served_by(&self, principle: &RecordId) -> Vec<&RuleEntry> {
+        self.rules
+            .iter()
+            .filter(|entry| {
+                self.principle_for(&entry.rule)
+                    .is_some_and(|served| &served.id == principle)
+            })
+            .collect()
+    }
+
+    /// The breaks in the chain from principle to rule, ids in file order.
+    /// Retired entries are not in the rulebook and never count; a rule
+    /// that names a retired principle serves nothing.
+    pub fn coverage(&self) -> Coverage {
+        Coverage {
+            unserved: self
+                .principles
+                .iter()
+                .filter(|principle| self.served_by(&principle.id).is_empty())
+                .map(|principle| principle.id.clone())
+                .collect(),
+            unanchored: self
+                .rules
+                .iter()
+                .filter(|entry| self.principle_for(&entry.rule).is_none())
+                .map(|entry| entry.id.clone())
+                .collect(),
+        }
     }
 
     /// The principle a reference names, by its record id, its bare id or the
@@ -141,6 +217,8 @@ struct RulebookFile {
     rules: Vec<RuleFile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     retired: Vec<RetiredEntry>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    require_served: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -378,6 +456,7 @@ pub fn parse(text: &str, revision: Revision) -> Result<Rulebook, RulebookError> 
         principles,
         rules,
         retired: file.retired,
+        require_served: file.require_served,
         revision,
     })
 }
@@ -430,6 +509,7 @@ fn to_json(book: &Rulebook) -> Result<Value, RulebookError> {
         principles,
         rules,
         retired,
+        require_served: book.require_served,
     })
     .map_err(|error| RulebookError::Invalid(format!("the rulebook cannot be encoded: {error}")))
 }
@@ -679,6 +759,61 @@ mod tests {
         let mut renamed = rulebook();
         renamed["rules"][0]["id"] = json!("rule.no-dbg-macro");
         assert_ne!(first, read(&renamed).expect("valid").rules[0].digest);
+    }
+
+    fn ids(ids: &[RecordId]) -> Vec<&str> {
+        ids.iter().map(RecordId::as_str).collect()
+    }
+
+    #[test]
+    fn coverage_is_complete_when_every_principle_has_a_rule_and_every_rule_a_principle() {
+        let mut value = rulebook();
+        value["rules"][0]["source"] =
+            json!({"kind": "principle", "reference": "principle.prove-it-works"});
+        let book = read(&value).expect("valid");
+        let coverage = book.coverage();
+        assert!(coverage.is_complete(), "{coverage:?}");
+        assert_eq!(coverage.sentence(), None);
+        assert_eq!(book.served_by(&book.principles[0].id).len(), 1);
+    }
+
+    #[test]
+    fn coverage_names_an_unserved_principle_and_an_unanchored_rule() {
+        let book = read(&rulebook()).expect("valid");
+        let coverage = book.coverage();
+        assert_eq!(ids(&coverage.unserved), ["principle.prove-it-works"]);
+        assert_eq!(ids(&coverage.unanchored), ["rule.no-dbg"]);
+        assert_eq!(
+            coverage.sentence().as_deref(),
+            Some("1 principle has no rule; 1 rule serves no principle")
+        );
+    }
+
+    #[test]
+    fn a_rule_naming_a_retired_principle_serves_nothing() {
+        let mut value = rulebook();
+        value["principles"] = json!([]);
+        value["retired"] =
+            json!([{"id": "principle.prove-it-works", "reason": "Folded into the mission."}]);
+        value["rules"][0]["source"] =
+            json!({"kind": "principle", "reference": "principle.prove-it-works"});
+        let coverage = read(&value).expect("valid").coverage();
+        assert!(coverage.unserved.is_empty());
+        assert_eq!(ids(&coverage.unanchored), ["rule.no-dbg"]);
+    }
+
+    #[test]
+    fn require_served_round_trips_and_is_left_out_when_false() {
+        let book = read(&rulebook()).expect("valid");
+        assert!(!book.require_served);
+        assert!(!render(&book).expect("render").contains("require_served"));
+        let mut value = rulebook();
+        value["require_served"] = json!(true);
+        let strict = read(&value).expect("valid");
+        assert!(strict.require_served);
+        assert!(render(&strict)
+            .expect("render")
+            .contains("\"require_served\": true"));
     }
 
     #[test]

@@ -49,7 +49,7 @@ pub(crate) fn explain(request: ExplainRequest) -> ServiceResponse {
     if target.is_empty() || target.len() > 300 {
         return needs(
             request_id,
-            "Name a finding fingerprint or a rule id to explain.".into(),
+            "Name a finding fingerprint, a rule id or a principle id to explain.".into(),
         );
     }
     let root = layout.project_root();
@@ -76,6 +76,8 @@ pub(crate) fn explain(request: ExplainRequest) -> ServiceResponse {
                 retired.reason
             ),
         );
+    } else if let Some(principle) = book.principle_named(&target) {
+        return explain_principle(request_id, &book, principle);
     } else if looks_like_fingerprint(&target) {
         let fingerprint = normalize(&target);
         let found = match from_findings_file(root, request.findings.as_deref(), &fingerprint) {
@@ -105,7 +107,7 @@ pub(crate) fn explain(request: ExplainRequest) -> ServiceResponse {
         return needs(
             request_id,
             format!(
-                "{target} is neither a rule in {RULEBOOK_PATH} nor a finding fingerprint (sha256:...). Rules here: {}.",
+                "{target} is not a rule or a principle in {RULEBOOK_PATH}, nor a finding fingerprint (sha256:...). Rules here: {}.",
                 rule_ids.join(", ")
             ),
         );
@@ -177,6 +179,72 @@ pub(crate) fn explain(request: ExplainRequest) -> ServiceResponse {
         "text": text,
     });
     response
+}
+
+/// A held principle: its statement and rationale, the rules that serve it
+/// and, when none does, the command that would add one.
+fn explain_principle(
+    request_id: String,
+    book: &Rulebook,
+    principle: &rulebook::PrincipleEntry,
+) -> ServiceResponse {
+    let id = principle.id.as_str();
+    let rules = book
+        .served_by(&principle.id)
+        .into_iter()
+        .map(|entry| {
+            json!({
+                "id": entry.id.as_str(),
+                "title": entry.rule.statement,
+                "strength": entry.rule.strength.label(),
+                "enforcer": entry.rule.enforcer.kind(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let unserved = rules.is_empty();
+    let add = format!("wh change --kind rule --record-id <rule id> ... --serves {id}");
+    let mut text = format!("Principle {id}\n  {}\n", principle.principle.statement);
+    if let Some(rationale) = &principle.principle.rationale {
+        text.push_str(&format!("Why: {rationale}\n"));
+    }
+    if unserved {
+        text.push_str(&format!("No rule serves this principle yet; {add}\n"));
+    } else {
+        text.push_str("Served by:\n");
+        for rule in &rules {
+            text.push_str(&format!(
+                "  {} ({}, {}): {}\n",
+                rule["id"].as_str().unwrap_or_default(),
+                rule["strength"].as_str().unwrap_or_default(),
+                rule["enforcer"].as_str().unwrap_or_default(),
+                rule["title"].as_str().unwrap_or_default()
+            ));
+        }
+    }
+    let mut response = ServiceResponse::new(
+        request_id,
+        "explain",
+        ServiceState::Success,
+        if unserved {
+            format!("{id}: no rule serves this principle yet.")
+        } else {
+            format!("{id}: served by {}.", plural_rules(rules.len()))
+        },
+    );
+    response.permitted_actions = vec![format!("{add} (a person accepts)")];
+    response.data = json!({
+        "target": id,
+        "resolved": {"kind": "principle", "principle": id},
+        "principle": rulebook::principle_value(principle),
+        "rules": rules,
+        "unserved": unserved,
+        "text": text,
+    });
+    response
+}
+
+fn plural_rules(count: usize) -> String {
+    format!("{count} rule{}", if count == 1 { "" } else { "s" })
 }
 
 fn needs(request_id: String, summary: String) -> ServiceResponse {

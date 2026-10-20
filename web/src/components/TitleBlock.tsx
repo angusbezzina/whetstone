@@ -109,6 +109,18 @@ export function TitleBlock() {
               : (readOnlyReason ?? "This tab can read but not edit.") + " Run wh dash in the repository to open an editing tab."}
           </TooltipContent>
         </Tooltip>
+        {data?.current?.principle_coverage.require_served ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge className="border-frame bg-transparent text-foreground" tabIndex={0}>
+                Every principle served
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-72">
+              Strict mode (require_served): accepting refuses a rulebook in which a principle has no rule or a rule serves no principle. Change it with wh change --require-served false.
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
         <div className="flex items-center gap-3">
           <label className="flex cursor-pointer items-center gap-1.5">
             <Switch checked={showIds} onCheckedChange={setShowIds} aria-label="Show ids and digests" />

@@ -258,6 +258,19 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             flags.join(", ")
         ));
     }
+    // The chain from principle to rule is a fact about the rulebook, not the
+    // code: it is reported beside the result and never changes the state.
+    // Pre-commit stays fast, and the sweep's findings keep their shape.
+    let coverage =
+        matches!(request.gate_mode, GateMode::All | GateMode::Changed).then(|| rulebook.coverage());
+    if let Some(sentence) = coverage
+        .as_ref()
+        .and_then(crate::rulebook::Coverage::sentence)
+    {
+        summary.push_str(&format!(
+            "\nPrinciples: {sentence} (wh explain <principle id>; wh change --kind rule ... --serves <principle id>)."
+        ));
+    }
     let mut response = ServiceResponse::new(request_id, "check", state, summary);
     response.required_snapshot = Some(RequiredSnapshot {
         code_digest: Some(report.snapshot.code_tree.as_str().into()),
@@ -295,8 +308,26 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         "rulebook": rulebook_json(&rulebook),
         "selection": selection_json(&request, &selection),
     });
+    if let Some(coverage) = &coverage {
+        response.data["coverage"] = coverage_json(coverage);
+    }
     attach_findings(&mut response, sweep_findings.as_deref());
     response
+}
+
+/// The breaks in the chain from principle to rule, as the envelope carries
+/// them.
+fn coverage_json(coverage: &crate::rulebook::Coverage) -> Value {
+    let ids = |ids: &[crate::domain::RecordId]| {
+        ids.iter()
+            .map(|id| id.as_str().to_string())
+            .collect::<Vec<_>>()
+    };
+    json!({
+        "unserved": ids(&coverage.unserved),
+        "unanchored": ids(&coverage.unanchored),
+        "complete": coverage.is_complete(),
+    })
 }
 
 /// Why there is nothing to check: the rulebook is missing or not a rulebook.
@@ -304,7 +335,7 @@ fn rulebook_error(request_id: String, error: &RulebookError) -> ServiceResponse 
     let (summary, action) = match error {
         RulebookError::Missing => (
             format!("{RULEBOOK_PATH} does not exist, so no rule was checked, which is not a pass."),
-            format!("create {RULEBOOK_PATH} with wh change --kind mission and add rules with wh change --kind rule, or export the record store with wh init --action export, then wh check"),
+            format!("draft {RULEBOOK_PATH} with wh init --action agree (or wh change --kind mission, then wh change --kind rule), accept it with wh change --accept, then wh check"),
         ),
         other => (
             format!("{other}; no rule was checked, which is not a pass."),

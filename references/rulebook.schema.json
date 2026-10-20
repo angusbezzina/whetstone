@@ -46,6 +46,10 @@
         "$ref": "#/$defs/retired"
       },
       "description": "Rules and principles taken out of the rulebook, with the reason; absent when none. An id is never both retired and in force."
+    },
+    "require_served": {
+      "type": "boolean",
+      "description": "Strict mode: when true, wh change --accept refuses a rulebook in which a principle has no rule serving it or a rule serves no principle. Absent means false."
     }
   },
   "$defs": {

@@ -35,7 +35,7 @@ pub(super) fn dash(request: DashRequest) -> ServiceResponse {
         request_id,
         "dash",
         ServiceState::Success,
-        "Read-only project shape and decision history are ready.",
+        "The rulebook and its changelog are ready (read-only).",
     );
     response.permitted_actions = vec!["wh change".into(), "wh check".into()];
     let (changelog, changelog_truncated) = match &log {

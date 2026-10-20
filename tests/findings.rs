@@ -309,7 +309,7 @@ fn a_check_without_a_rulebook_or_with_a_malformed_one_never_passes() {
             response["permitted_actions"][0]
                 .as_str()
                 .is_some_and(|action| action.contains("wh change")
-                    && action.contains("wh init --action export")),
+                    && action.contains("wh init --action agree")),
             "{response}"
         );
     }

@@ -1,79 +1,97 @@
 # Agent instructions for Whetstone
 
-Whetstone is a repository's rulebook: enforced rules with a rationale and an
-agent protocol, between `AGENTS.md` (prose, unenforced) and a linter
-(enforced, no rationale). Read [README.md](README.md) for the commands and
-[planning/direction.md](planning/direction.md) for the fixed decisions before
-planning any work.
+This file is for an agent or a person working on Whetstone itself. What
+Whetstone is, and how to use it, is stated once, at the top of
+[README.md](README.md). Where it is going is fixed in
+[planning/direction.md](planning/direction.md). Read both before planning
+any work.
 
-## The product in one screen
+## Document map
 
-- **The rulebook is a file.** `whetstone/rulebook.json`
-  (`whetstone.rulebook.v1`, [schema](references/rulebook.schema.json)) holds
-  the mission, the principles (from a principle pack: pstack and one
-  distilled from Matt Pocock's skills are compiled into `wh`, a repository
-  adds packs under `whetstone/principles/`, and `--principle starting` picks
-  the set the packs offer as a starting point; or the owner's own) and the
-  rules. A revision is the commit that last touched the
-  file, a rule's digest is the sha256 of its canonical JSON, the decision log
-  is Git history, a draft is an uncommitted edit, and a rule change on a team
-  is a pull request.
-- **One strength, one enforcer per rule.** `must` blocks the gate; `should`
-  reports, never blocks, and becomes a sweep finding. The enforcer is
-  mechanical: `ast`, `lint`, `formatter`, `test` or `validator`. A
-  `validator` or `test` command that names a script under `whetstone/checks/`
-  is a script enforcer (contract in `whetstone/checks/README.md`).
-- **Probed on every write.** Every rule `wh change` writes (onboarding, prose
-  compilation and pack imports included) has its enforcer run once over the
-  repository first; a rule that cannot be checked here is not written
-  without `--allow-unvalidated`.
-- **Sweep fields.** `sweep` (`discuss`, `confirm_first`, `draft_pr`; absent
-  is discuss), `sweep_priority` (0 to 4, default 2) and `sweep_unsure`
-  (paths or a pattern, with a reason).
-- **Gates.** Pre-commit runs `wh check --staged` (AST and script rules on
-  the staged index), pre-push runs `wh check` for the pushed commits, and CI
-  runs the required status `whetstone/policy` (`wh check --ci --base
-  --format annotations`, so each flag shows beside the code).
-- **Findings.** `wh check --sweep` prints `findings.json`: one finding per
-  flag with `fingerprint`, `subjectDigest`, `class`, `priority`, `title`,
-  `responsibility`, `principle` (when the rule serves one), `unsure` and,
-  for a tool that can rewrite files, `fix`
-  ([schema](references/findings-v1.schema.json)). Its shape is a contract;
-  do not change it. `wh explain <fingerprint>` resolves a finding to its
-  rule, the principle it serves and the commits that accepted it.
-- **Hosts.** A host (Virgil's Messo, a GitHub Action, an agent session)
-  consumes three things: the rulebook file, `findings.json` and the
-  `whetstone.command-response.v1` envelope. Whetstone keeps no store and no
-  host-specific code; hosts own memory, tasks and the agent. The reusable
-  Action (`action.yml`) is one such host: it works `findings.json` by class
-  with `gh`.
-- **The agent contract.** `wh init --action wire` writes a short block into
-  the repository's `AGENTS.md` between `whetstone:agent-contract` markers
-  (`src/contract.rs`); text outside them is the team's. Keep it under 25
-  lines and true to the commands.
-- **Packs.** A principle pack (`whetstone.principle-pack.v1`) lists
-  principles; a rule pack (`whetstone.rule-pack.v1`, `wh change
-  --export-pack` / `--import-pack`) carries accepted rules with a digest and
-  arrives as drafts.
+| Question | Answered in |
+| --- | --- |
+| What is Whetstone, and how do I install and use it? | [README.md](README.md) |
+| How do I work on this repository (gates, tracker, release)? | this file |
+| What does Claude Code read first? | [CLAUDE.md](CLAUDE.md), a pointer to this file |
+| Which decisions are fixed, and what was removed for good? | [planning/direction.md](planning/direction.md) |
+| What does Whetstone own, what do hosts own, and what are the contracts between them? | [planning/skill-cli-boundary.md](planning/skill-cli-boundary.md) |
+| Who uses the dashboard, what is on it, and what must it never do? | [PRODUCT.md](PRODUCT.md) |
+| What does the dashboard look like? | [DESIGN.md](DESIGN.md) |
+| What changed, and what is not released yet? | [CHANGELOG.md](CHANGELOG.md) |
+| What exact shape do the file, the envelope, the findings and a principle pack have? | [references/](references) (`*.schema.json`) |
+| Which enforcer fits a concern? | [references/signal-strategies.md](references/signal-strategies.md) |
+| What is a script enforcer's contract? | `whetstone/checks/README.md` in a wired repository, written from `src/scripts.rs` |
+| What is open now? | `bd ready` |
+
+## Where the product lives in the code
+
+The README describes the behaviour. This section says where each part is
+and what must not move.
+
+- **The file.** `src/rulebook.rs` reads and writes `whetstone/rulebook.json`
+  ([schema](references/rulebook.schema.json)). The reader is strict and the
+  writer keeps entries sorted by id. A revision is the commit that last
+  touched the file. A rule's digest is the sha256 of its canonical JSON.
+- **Rules.** `src/domain/rule.rs` defines the two strengths and the five
+  enforcers. `Rulebook::coverage()` in `src/rulebook.rs` is the one
+  computation of the chain from principle to rule; `wh check`, `wh dash`,
+  `wh explain` and `wh change` all read it. Every rule `wh change` writes is probed first (`src/probe.rs`),
+  including those from onboarding, prose compilation and pack imports.
+- **Gates.** `src/wire.rs` installs the pre-commit hook (`wh check --staged`,
+  AST and script rules) and the pre-push hook (`wh check` for the pushed
+  commits). It also scaffolds `assets/ci/whetstone.yml`, which runs the
+  required status `whetstone/policy` as
+  `wh check --ci --base … --format annotations`.
+- **Findings.** `src/service/check/findings.rs` writes `findings.json`
+  ([schema](references/findings-v1.schema.json)): `fingerprint`,
+  `subjectDigest`, `class`, `priority`, `title`, `responsibility`, and when
+  present `principle`, `unsure` and `fix`. The shape is a contract: add
+  fields, never change one.
+- **The envelope.** `src/service/mod.rs` builds
+  `whetstone.command-response.v1`
+  ([schema](references/command-response-v1.schema.json)) for every command.
+- **The agent contract.** `src/contract.rs` is the block `wh init --action
+  wire` writes between the `whetstone:agent-contract` markers in a
+  repository's `AGENTS.md`. Keep it under 25 lines and true to the commands.
+- **Packs.** The principle packs pstack and mattpocock are
+  `assets/pstack/principles.json` and `assets/mattpocock/principles.json`,
+  loaded by `src/catalogue.rs`. Rule packs, including the built-in rust,
+  typescript and python packs, live in `src/service/packs.rs`.
+- **Hosts.** `action.yml` is the reusable Action. Its hidden runner is
+  `wh act` (`src/act.rs`). The Action is a host like any other: it uses only
+  the three contracts in
+  [planning/skill-cli-boundary.md](planning/skill-cli-boundary.md).
 
 The public surface is exactly `wh init`, `wh dash`, `wh change`, `wh check`
 and `wh explain`. New behaviour goes into these five, never into a new
-top-level command. Bare `wh` is read-only orientation. The one hidden
-command is `wh act`, the runner the reusable Action calls; it is not for
-people.
+top-level command. `wh act` is not for people.
+
+## How this repository checks itself
+
+Whetstone is wired by hand, not by `wh init --action wire`. There are three
+reasons:
+
+- **The gates are wider than the wired hook.** They run clippy, the tests
+  and the build. `.githooks/pre-push` runs all three gates below.
+  `scripts/self-check.sh` is the third gate: it runs `wh check --ci` against
+  Whetstone's own `whetstone/rulebook.json`.
+- **This file is the agent contract here.** A wired contract block would
+  repeat less than this file says.
+- **There is no pre-commit hook.** Pre-push and CI are the gates.
+
+The rulebook holds a mission and three must rules. It holds no principles,
+so its rules name none they serve. Changing any of this is the owner's
+decision. Record it here when it changes.
 
 ## Product invariants
 
-- Every rule has exactly one strength and one mechanical enforcer.
-- Unknown, stale, skipped or unavailable evidence is never success, and a
-  check where no rule ran is not green.
-- The JSON envelope and the dashboard describe the same file.
-- A rule change is an edit to the file that a person commits; nothing changes
-  a rule on its own.
-- Team review is the platform's branch protection plus the required
-  `whetstone/policy` status; Whetstone keeps no second trust root.
-- Whetstone keeps no store: the rulebook file and Git are its only state. A
-  check's evidence goes under `.git/whetstone/` and is never a record.
+The fixed decisions in [planning/direction.md](planning/direction.md) hold
+in every change. Three more that the code keeps:
+
+- The JSON envelope and the dashboard describe the same file: both read the
+  typed projections in `src/projection/`, and the page invents no state.
+- A rule changes only by an edit to the file that a person commits.
+- A check's evidence goes under `.git/whetstone/` and is never a record.
 
 ## High confidence or silence
 
@@ -87,14 +105,12 @@ people.
 
 ## Do not restore
 
-Removed paths stay removed: the record store and every adapter for it, team
-sync commands, the hidden developer commands, the rule-file scanner, agent
-host hooks, judgment enforcers and their receipts, the generated verification
-skill, memory records and the Python tooling. The last revision of the
-earlier product is `1b7fd8c341b8a5aaea742c564092fbcca26b51bb`; inspect it
-read-only. Do not restore old modules, commands, fixtures or compatibility
-paths as shortcuts. Preserve `whetstone/rulebook.json`, `.beads/` and
-`.git/info/exclude`.
+What was removed for good is listed under "Removed from direction" in
+[planning/direction.md](planning/direction.md), and the Python tooling went
+with it. Do not restore old modules, commands, fixtures or compatibility
+paths as shortcuts. The last revision of the earlier product is
+`1b7fd8c341b8a5aaea742c564092fbcca26b51bb`; inspect it read-only. Preserve
+`whetstone/rulebook.json`, `.beads/` and `.git/info/exclude`.
 
 ## Issue tracking
 
@@ -122,6 +138,13 @@ and JetBrains Mono); `cd web && npm ci && npm run build` writes
 `assets/dashboard/`, which `src/dashboard.rs` embeds. Commit the build with
 the source change: no gate runs Node. The page makes no third-party
 request, and its HTML, CSS and JavaScript stay under 600 KiB.
+
+Design changes go through the impeccable skill, which reads PRODUCT.md and
+DESIGN.md. The skill is not part of the repository. Where the owner has
+installed it, it sits under `.claude/skills/` and `.agents/skills/` in the
+main checkout, and its working files go in `.impeccable/`. A fresh clone or
+worktree has none of these, and none of them is committed. A checkout may also hold `whetstone/.personal/`, left behind
+by the earlier product. `wh` never reads it; leave it uncommitted.
 
 ## Research
 
@@ -183,7 +206,8 @@ Before ending a work session:
 6. Report the change, the automated evidence, any manual evidence, the
    tracker state and what was published, separately.
 
-Work is not complete until the push succeeds.
+Work is not complete until the push succeeds. A session that changed no
+file and no issue has nothing to commit or push; it reports what it found.
 
 ## Release protocol
 

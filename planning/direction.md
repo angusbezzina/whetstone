@@ -1,8 +1,10 @@
 # Direction: rules as files
 
 Decided by the owner on 2026-10-19. This file records the direction and the
-fixed decisions. It is not a backlog: tasks, order and acceptance live in the
-project's tracker.
+fixed decisions. [README.md](../README.md) states the product and how to use
+it, and the document map at the top of [AGENTS.md](../AGENTS.md) says where
+everything else is. This file is not a backlog: tasks, order and acceptance
+live in the project's tracker.
 
 ## Goal
 
@@ -27,7 +29,8 @@ order, simple, customisable, versatile, strong and scalable.
      code it reports), `formatter`, `test` or `validator` (a command).
 3. **Gate where every tool passes.** Every tool commits and pushes through
    Git, so the gates sit there:
-   - pre-commit: `wh check --staged`, AST rules on the staged index;
+   - pre-commit: `wh check --staged`, AST and script rules on the staged
+     index;
    - pre-push: `wh check` for the commits being pushed;
    - CI: the required status `whetstone/policy`, `wh check --ci --base`,
      which reads only the committed rulebook.
@@ -66,6 +69,18 @@ Whetstone keeps no other store.
   sweep class.
 - Unknown, stale, skipped or unavailable evidence is never a pass, and a
   check where no must rule ran is not green.
+
+### Principles
+No tool checks a principle, and a model never judges one. What is enforced
+is the chain: every held principle is served by at least one rule (the
+rule's source names it), and every rule serves a principle. When the chain
+holds, the gates enforce the principles through the rules.
+- `wh check`, `wh dash` and `wh explain <principle id>` report the gaps; a
+  gap never changes a check's verdict and never enters `findings.json`.
+- A principle that rules serve cannot be retired until they serve another.
+- The optional `require_served` field (strict mode) makes
+  `wh change --accept` refuse a rulebook with a gap.
+- Principles carry no strength, priority or metric.
 
 ### Findings
 The contract does not change shape. One finding per flag:
@@ -119,4 +134,5 @@ These are out of the product and must not come back:
   and
   [../references/command-response-v1.schema.json](../references/command-response-v1.schema.json):
   the file and the envelope.
-- `PRODUCT.md` and `DESIGN.md`: product truth and the dashboard's design.
+- [../PRODUCT.md](../PRODUCT.md) and [../DESIGN.md](../DESIGN.md): product
+  truth and the dashboard's design.

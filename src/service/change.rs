@@ -44,6 +44,9 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
     if let Some(target) = request.retire.as_deref() {
         return retire(root, request_id, target, &request);
     }
+    if let Some(strict) = request.require_served {
+        return require_served(root, request_id, strict, &request);
+    }
     if let Some(target) = request.export_pack.as_deref() {
         return super::packs::export(&layout, request_id, target, &request);
     }
@@ -257,7 +260,7 @@ pub(super) fn draft(
         response.blocking_questions =
             vec!["Does this exact before-and-after change express the intended decision?".into()];
         response.permitted_actions = vec![
-            "repeat this exact request without --dry-run to write it".into(),
+            "repeat this exact request without --preview to write it".into(),
             "cancel without changing the rulebook".into(),
         ];
         return Ok((checked, response, probes));
@@ -328,6 +331,7 @@ fn edit(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceResp
             principles: Vec::new(),
             rules: Vec::new(),
             retired: Vec::new(),
+            require_served: false,
             revision: Revision::Uncommitted,
         },
         (None, _) => {
@@ -647,6 +651,35 @@ fn retire(
             },
         );
     };
+    // A principle that rules still serve stays until they serve another
+    // or are retired themselves: the chain never breaks silently.
+    let serving = before
+        .served_by(&id)
+        .iter()
+        .map(|entry| entry.id.as_str().to_string())
+        .collect::<Vec<_>>();
+    if !serving.is_empty() {
+        let mut response = ask(
+            request_id,
+            format!(
+                "{target} is served by {}; point {} at another principle with --serves, or retire {}, before retiring it.",
+                serving.join(", "),
+                if serving.len() == 1 { "that rule" } else { "those rules" },
+                if serving.len() == 1 { "it" } else { "them" },
+            ),
+        );
+        response.permitted_actions = serving
+            .iter()
+            .flat_map(|rule| {
+                [
+                    format!("wh change --kind rule --record-id {rule} ... --serves <another principle id>"),
+                    format!("wh change --retire {rule} --rationale <why>"),
+                ]
+            })
+            .collect();
+        response.data = json!({"retire": target, "served_by": serving});
+        return response;
+    }
     let mut after = before.clone();
     after.rules.retain(|entry| entry.id != id);
     after.principles.retain(|entry| entry.id != id);
@@ -676,6 +709,53 @@ fn retire(
         "revision": written.revision,
         "diff": {"before": entry_json(&before, target), "after": Value::Null},
         "digest": {"before": digest_of(&before, target), "after": Value::Null},
+    });
+    response
+}
+
+/// Draft strict mode on or off. It is read only when the drafts are
+/// accepted, so drafting stays free.
+fn require_served(
+    root: &Path,
+    request_id: String,
+    strict: bool,
+    request: &ChangeRequest,
+) -> ServiceResponse {
+    let before = match rulebook::load(root) {
+        Ok(book) => book,
+        Err(error) => return rulebook_unreadable(request_id, &error),
+    };
+    if before.require_served == strict {
+        return ask(
+            request_id,
+            format!("require_served is already {strict} in {RULEBOOK_PATH}."),
+        );
+    }
+    let mut after = before.clone();
+    after.require_served = strict;
+    let gaps = after.coverage().sentence();
+    let (written, mut response, _) = match draft(
+        root,
+        request_id,
+        request.preview,
+        &after,
+        Probing::default(),
+        format!("Review the exact effect before require_served is set to {strict}."),
+        match (strict, &gaps) {
+            (true, Some(gaps)) => format!("require_served is drafted as true. Until the gaps are closed ({gaps}), wh change --accept refuses the rulebook."),
+            (true, None) => "require_served is drafted as true: wh change --accept will refuse a principle without a rule or a rule without a principle.".into(),
+            (false, _) => "require_served is drafted as false: --accept no longer checks that every principle is served.".into(),
+        },
+    ) {
+        Ok(drafted) => drafted,
+        Err(response) => return *response,
+    };
+    response.data = json!({
+        "require_served": strict,
+        "path": RULEBOOK_PATH,
+        "preview_only": request.preview,
+        "written": !request.preview,
+        "revision": written.revision,
     });
     response
 }
@@ -769,6 +849,27 @@ pub(super) fn changes(before: Option<&Rulebook>, after: &Rulebook) -> Vec<(Strin
             lines.push((format!("change {id}"), detail));
         }
     }
+    // A draft retired before it was ever committed leaves only its retired
+    // entry behind; the commit still names it.
+    let live = ids(before).union(&ids(after)).cloned().collect::<Vec<_>>();
+    for retired in &after.retired {
+        let id = retired.id.as_str();
+        if !live.iter().any(|live| live == id)
+            && !before.retired.iter().any(|entry| entry.id.as_str() == id)
+        {
+            lines.push((format!("retire {id}"), format!(": {}", retired.reason)));
+        }
+    }
+    if before.require_served != after.require_served {
+        lines.push((
+            if after.require_served {
+                "require every principle served".into()
+            } else {
+                "stop requiring every principle served".into()
+            },
+            String::new(),
+        ));
+    }
     lines
 }
 
@@ -849,6 +950,51 @@ fn accept(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceRe
         Ok(book) => book,
         Err(error) => return rulebook_unreadable(request_id, &error),
     };
+    // Strict mode holds the chain at the moment the rulebook is committed.
+    let coverage = current.coverage();
+    if current.require_served && !coverage.is_complete() {
+        let listed = |ids: &[RecordId]| {
+            ids.iter()
+                .map(RecordId::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let mut gaps = Vec::new();
+        if !coverage.unserved.is_empty() {
+            gaps.push(format!("no rule serves {}", listed(&coverage.unserved)));
+        }
+        if !coverage.unanchored.is_empty() {
+            gaps.push(format!(
+                "{} {} no principle",
+                listed(&coverage.unanchored),
+                if coverage.unanchored.len() == 1 {
+                    "serves"
+                } else {
+                    "serve"
+                }
+            ));
+        }
+        let mut response = ask(
+            request_id,
+            format!(
+                "{RULEBOOK_PATH} requires every principle served (require_served), and {}; close the gaps, then accept.",
+                gaps.join("; ")
+            ),
+        );
+        response.permitted_actions = vec![
+            "wh change --kind rule ... --serves <principle id>".into(),
+            "wh change --retire <id> --rationale <why>".into(),
+            "wh change --require-served false".into(),
+        ];
+        response.data = json!({
+            "require_served": true,
+            "coverage": {
+                "unserved": coverage.unserved.iter().map(RecordId::as_str).collect::<Vec<_>>(),
+                "unanchored": coverage.unanchored.iter().map(RecordId::as_str).collect::<Vec<_>>(),
+            },
+        });
+        return response;
+    }
     let edits = match committed(root) {
         Some(Ok(head)) => changes(Some(&head), &current),
         Some(Err(_)) => vec![(
@@ -873,7 +1019,7 @@ fn accept(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceRe
             ServiceState::NeedsDecision,
             format!("Review the commit before {RULEBOOK_PATH} is accepted."),
         );
-        response.permitted_actions = vec!["repeat without --dry-run to commit it".into()];
+        response.permitted_actions = vec!["repeat without --preview to commit it".into()];
         response.data = json!({
             "preview_only": true,
             "path": RULEBOOK_PATH,
@@ -949,7 +1095,7 @@ fn withdraw(root: &Path, request_id: String, request: &ChangeRequest) -> Service
             ServiceState::NeedsDecision,
             format!("Review the edits that withdrawing discards from {RULEBOOK_PATH}."),
         );
-        response.permitted_actions = vec!["repeat without --dry-run to withdraw them".into()];
+        response.permitted_actions = vec!["repeat without --preview to withdraw them".into()];
         response.data = json!({"preview_only": true, "path": RULEBOOK_PATH, "discards": listed});
         return response;
     }

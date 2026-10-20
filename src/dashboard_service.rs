@@ -233,6 +233,7 @@ impl DashboardCommand {
             include_paths: false,
             principles: false,
             import_pack: None,
+            require_served: None,
         })
     }
 }

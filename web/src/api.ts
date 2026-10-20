@@ -4,7 +4,7 @@
 
 export type FieldChange = { field: string; before: string | null; after: string | null };
 export type EntryChange = {
-  kind: "mission" | "principle" | "rule";
+  kind: "mission" | "principle" | "rule" | "setting";
   id: string;
   action: "added" | "changed" | "retired" | "reinstated" | "removed";
   title: string;
@@ -105,6 +105,23 @@ export type SetupStep = {
   state: "done" | "drafted" | "todo";
   command: string | null;
 };
+export type Principle = {
+  id: string;
+  statement: string;
+  rationale: string | null;
+  source: string;
+  lifecycle: string;
+  edit: EditBase;
+  /** The ids of the rules that serve it. */
+  served_by: string[];
+  enforcer_hint: string | null;
+  hint: string;
+};
+export type Coverage = {
+  unserved: { id: string; statement: string }[];
+  unanchored: { id: string; statement: string }[];
+  require_served: boolean;
+};
 export type Page = {
   header: {
     project: string;
@@ -117,7 +134,8 @@ export type Page = {
   pending: { count: number; summary: string; changes: EntryChange[]; message: { subject: string; body: string } } | null;
   health: { items: HealthItem[]; healthy: string | null };
   mission: { statement: string; lifecycle: string; edit: EditBase } | null;
-  principles: { id: string; statement: string; rationale: string | null; source: string; lifecycle: string; edit: EditBase }[];
+  principles: Principle[];
+  principle_coverage: Coverage;
   groups: RuleGroup[];
   retired: { id: string; reason: string; retired_in: LastChange | null }[];
   suggestions: Suggestion[];

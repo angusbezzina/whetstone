@@ -96,7 +96,8 @@ fn the_published_schema_names_exactly_the_fields_the_reader_accepts() {
         "mission": {"statement": "Ship code people can trust."},
         "principles": [full_principle],
         "rules": [full_rule],
-        "retired": [{"id": "rule.retired", "reason": "Superseded by rule.full."}]
+        "retired": [{"id": "rule.retired", "reason": "Superseded by rule.full."}],
+        "require_served": true
     });
     rulebook::parse(&book.to_string(), Revision::Uncommitted).expect("every field parses");
     assert_eq!(keys(&schema["properties"]), keys(&book));

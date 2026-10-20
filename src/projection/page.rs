@@ -78,7 +78,7 @@ pub struct Pending {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct HealthItem {
-    /// `gates`, `ci`, `rulebook` or `coverage`.
+    /// `gates`, `ci`, `rulebook`, `coverage` or `principles`.
     pub kind: &'static str,
     /// `fail` (the rulebook cannot be read) or `warn`.
     pub tone: &'static str,
@@ -111,6 +111,29 @@ pub struct PrincipleView {
     pub lifecycle: &'static str,
     /// The principle as `wh change` takes it, for editing in place.
     pub edit: EditBase,
+    /// The ids of the rules that serve it, in file order.
+    pub served_by: Vec<String>,
+    /// Its pack's enforcer hint (`ast`, `lint`, `formatter`, `test`,
+    /// `validator` or `none`), when it came from a loaded pack.
+    pub enforcer_hint: Option<String>,
+    /// What kind of rule could serve it, in plain words.
+    pub hint: String,
+}
+
+/// Where the chain from principle to rule breaks (`Rulebook::coverage`).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CoverageView {
+    pub unserved: Vec<CoverageEntry>,
+    pub unanchored: Vec<CoverageEntry>,
+    /// Whether `wh change --accept` refuses a rulebook with gaps.
+    pub require_served: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CoverageEntry {
+    pub id: String,
+    /// The principle's or the rule's statement.
+    pub statement: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -244,6 +267,7 @@ pub struct PageView {
     pub health: Health,
     pub mission: Option<MissionView>,
     pub principles: Vec<PrincipleView>,
+    pub principle_coverage: CoverageView,
     pub groups: Vec<RuleGroup>,
     pub retired: Vec<RetiredView>,
     pub suggestions: Vec<Suggestion>,
@@ -465,10 +489,85 @@ fn health(input: &PageInput<'_>, book: Option<&Rulebook>) -> Health {
             });
         }
     }
+    if let Some(sentence) = book.and_then(|book| book.coverage().sentence()) {
+        items.push(HealthItem {
+            kind: "principles",
+            tone: "warn",
+            text: format!("{sentence}."),
+            fix: None,
+            detail: Vec::new(),
+        });
+    }
     let healthy = (book.is_some() && items.is_empty()).then(|| {
         "Gates installed at commit, push and CI; every rule reads files here.".to_string()
     });
     Health { items, healthy }
+}
+
+/// The enforcer hint a held principle's pack gives it, when the pack is
+/// loaded.
+fn pack_hint(input: &PageInput<'_>, source: &PrincipleSource) -> Option<String> {
+    let (pack, id) = match source {
+        PrincipleSource::Pstack { id, .. } => (crate::catalogue::DEFAULT_PACK, id.as_str()),
+        PrincipleSource::Pack { pack, id, .. } => (pack.as_str(), id.as_str()),
+        PrincipleSource::Custom => return None,
+    };
+    input
+        .catalogue
+        .principles
+        .iter()
+        .find(|entry| entry.pack == pack && entry.id == id)
+        .map(|entry| entry.enforcer_hint.clone())
+}
+
+/// What kind of rule could serve a principle with this enforcer hint.
+fn hint_text(hint: &str) -> String {
+    match hint {
+        "none" => {
+            "No tool checks this; keep it as a principle, or write a rule that serves it".into()
+        }
+        hint => format!(
+            "Could become a rule checked by {}",
+            match hint {
+                "lint" => "a lint",
+                "test" => "a test",
+                "ast" => "a code pattern",
+                "formatter" => "a formatter",
+                _ => "a script",
+            }
+        ),
+    }
+}
+
+/// The chain from principle to rule as the page shows it.
+fn coverage_view(book: Option<&Rulebook>) -> CoverageView {
+    let Some(book) = book else {
+        return CoverageView::default();
+    };
+    let coverage = book.coverage();
+    let principle = |id: &crate::domain::RecordId| CoverageEntry {
+        id: id.as_str().into(),
+        statement: book
+            .principles
+            .iter()
+            .find(|entry| &entry.id == id)
+            .map(|entry| entry.principle.statement.clone())
+            .unwrap_or_default(),
+    };
+    let rule = |id: &crate::domain::RecordId| CoverageEntry {
+        id: id.as_str().into(),
+        statement: book
+            .rules
+            .iter()
+            .find(|entry| &entry.id == id)
+            .map(|entry| entry.rule.statement.clone())
+            .unwrap_or_default(),
+    };
+    CoverageView {
+        unserved: coverage.unserved.iter().map(principle).collect(),
+        unanchored: coverage.unanchored.iter().map(rule).collect(),
+        require_served: book.require_served,
+    }
 }
 
 fn suggestions(input: &PageInput<'_>, book: Option<&Rulebook>) -> Vec<Suggestion> {
@@ -504,22 +603,7 @@ fn suggestions(input: &PageInput<'_>, book: Option<&Rulebook>) -> Vec<Suggestion
             title: entry.text.clone(),
             detail: format!("{} {}", entry.pack, entry.pack_version),
             strength: None,
-            check: match entry.enforcer_hint.as_str() {
-                "none" => {
-                    "No tool checks this; keep it as a principle, or write a rule that serves it"
-                        .into()
-                }
-                hint => format!(
-                    "Could become a rule checked by {}",
-                    match hint {
-                        "lint" => "a lint",
-                        "test" => "a test",
-                        "ast" => "a code pattern",
-                        "formatter" => "a formatter",
-                        _ => "a script",
-                    }
-                ),
-            },
+            check: hint_text(&entry.enforcer_hint),
             group: Some(entry.group.clone()),
             starting: entry.starting,
             edit: EditBase {
@@ -608,6 +692,18 @@ pub fn page_view(book: Option<&Rulebook>, input: PageInput<'_>) -> PageView {
                     "rationale": entry.principle.rationale,
                 }),
             },
+            served_by: book
+                .map(|book| book.served_by(&entry.id))
+                .unwrap_or_default()
+                .iter()
+                .map(|rule| rule.id.as_str().to_string())
+                .collect(),
+            enforcer_hint: pack_hint(&input, &entry.principle.source),
+            hint: hint_text(
+                pack_hint(&input, &entry.principle.source)
+                    .as_deref()
+                    .unwrap_or("none"),
+            ),
         })
         .collect::<Vec<_>>();
     let mut rules = book
@@ -778,6 +874,7 @@ pub fn page_view(book: Option<&Rulebook>, input: PageInput<'_>) -> PageView {
         health: health(&input, book),
         mission,
         principles,
+        principle_coverage: coverage_view(book),
         groups,
         retired,
         suggestions: suggestions(&input, book),

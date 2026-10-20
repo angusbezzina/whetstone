@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ChevronDown } from "lucide-react";
 import { useDash } from "@/state";
-import { BLANK, RuleForm } from "./RuleForm";
+import { BLANK, RuleForm, blankServing } from "./RuleForm";
 
 function Adopt({ suggestion }: { suggestion: Suggestion }) {
   const { run } = useDash();
@@ -155,7 +155,8 @@ function Guidelines() {
 /** Add rule: suggestions detected for this repository, principles from the
  * loaded packs, a blank rule, or rules compiled from prose. */
 export function AddRule({ onClose }: { onClose: () => void }) {
-  const { data } = useDash();
+  const { data, composing } = useDash();
+  const definition = composing ? blankServing(composing.serves, composing.enforcer) : BLANK;
   const suggestions = data?.current?.suggestions ?? [];
   const starters = suggestions.filter((suggestion) => suggestion.kind === "starter");
   const principles = suggestions.filter((suggestion) => suggestion.kind === "principle");
@@ -168,7 +169,7 @@ export function AddRule({ onClose }: { onClose: () => void }) {
           Close
         </Button>
       </div>
-      <Tabs defaultValue={starters.length ? "suggested" : "write"}>
+      <Tabs defaultValue={composing || !starters.length ? "write" : "suggested"}>
         <TabsList variant="line" className="mb-3 h-auto w-full justify-start gap-4 border-b border-rule p-0">
           {[
             ["suggested", `Suggested (${suggestions.length})`],
@@ -219,7 +220,7 @@ export function AddRule({ onClose }: { onClose: () => void }) {
           ) : null}
         </TabsContent>
         <TabsContent value="write">
-          <RuleForm initial={{ id: null, statement: "", rationale: "", definition: BLANK }} submitLabel="Add as a draft" onDone={onClose} onCancel={onClose} />
+          <RuleForm initial={{ id: null, statement: "", rationale: "", definition }} submitLabel="Add as a draft" onDone={onClose} onCancel={onClose} />
         </TabsContent>
         <TabsContent value="guidelines">
           <Guidelines />

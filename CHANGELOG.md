@@ -11,6 +11,26 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ### Added
 
+- Principle coverage: the chain from principle to rule is checked.
+  `wh check` (but not `--staged` or `--sweep`) reports the principles no rule
+  serves and the rules that serve none, in its summary and as
+  `data.coverage`. The verdict and `findings.json` do not change.
+  `wh dash --json` carries it as `data.current.principle_coverage`, and
+  each principle carries `served_by`. The dashboard lists the rules that
+  serve each principle as links, marks an unserved principle with a button
+  that opens Add rule pre-filled, marks a rule that serves no principle,
+  and adds a health line.
+- `wh explain <principle id>` answers for a principle: its statement, the
+  rules that serve it, or the `wh change ... --serves` command that would
+  add one.
+- `wh change --retire` refuses a principle that rules still serve and names
+  them.
+- Strict mode: an optional `require_served` field in the rulebook, drafted
+  with `wh change --require-served true|false`. When it is on,
+  `wh change --accept` refuses a rulebook with a gap and lists the gap. The
+  dashboard shows it in the header, and the pending bar announces the
+  refusal.
+
 - A rule names the principle it serves. `wh change --kind rule ... --serves
   <principle id>` writes it as the rule's source (the id has to be a
   principle the rulebook holds), the dashboard's rule form has a Serves
@@ -37,6 +57,13 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ### Changed
 
+- A rule serves a principle only when its source kind is `principle`.
+- `wh change --accept` names a draft that was retired before it was ever
+  committed, instead of writing an empty commit subject.
+- A check without a rulebook points at `wh init --action agree` instead of a
+  removed command.
+- `wh dash --search`, `--as-of` and `--page-size` say in their help what
+  they do: they narrow the changelog that `wh dash --json` returns.
 - `wh dash` is one page: a one-line header, the pending changes with a
   field-level diff and the commit message accepting writes, one health line
   per problem, the mission, the principles (with the packs' principles to

@@ -9,7 +9,7 @@ import { Command, Delta, Prose } from "./marks";
 
 /** The uncommitted edits to the rulebook, shown only when there are some. */
 export function PendingBar() {
-  const { data, editable, run } = useDash();
+  const { data, editable, run, announce } = useDash();
   const pending = data?.current?.pending;
   const [open, setOpen] = useState(false);
   const [confirm, setConfirm] = useState<"accept" | "withdraw" | null>(null);
@@ -28,6 +28,9 @@ export function PendingBar() {
       setConfirm(null);
       setWhy("");
       setOpen(false);
+    } else if (outcome.needsInput) {
+      // Strict mode, for one, refuses with the gaps to close.
+      announce(outcome.response?.blocking_questions[0] ?? outcome.response?.summary ?? "Nothing was committed.", "warn");
     }
   };
   return (

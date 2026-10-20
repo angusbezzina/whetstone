@@ -18,7 +18,16 @@ type Dash = {
   notice: { text: string; tone: "ok" | "warn"; key: number } | null;
   /** The commit a just-accepted change produced, for the revision stamp. */
   stamped: string | null;
+  /** The rule a principle asked to open, once per request. */
+  focused: { id: string; key: number } | null;
+  focusRule: (id: string) => void;
+  /** A rule to write for a principle: Add rule opens with Serves and the
+   * enforcer set. */
+  composing: Compose | null;
+  compose: (next: Omit<Compose, "key"> | null) => void;
 };
+
+export type Compose = { serves: string; enforcer: string | null; key: number };
 
 const Context = createContext<Dash | null>(null);
 
@@ -45,7 +54,17 @@ export function DashProvider({ children }: { children: ReactNode }) {
   });
   const [notice, setNotice] = useState<Dash["notice"]>(null);
   const [stamped, setStamped] = useState<string | null>(null);
+  const [focused, setFocused] = useState<Dash["focused"]>(null);
+  const [composing, setComposing] = useState<Compose | null>(null);
   const counter = useRef(0);
+  const focusRule = useCallback((id: string) => {
+    counter.current += 1;
+    setFocused({ id, key: counter.current });
+  }, []);
+  const compose = useCallback((next: Omit<Compose, "key"> | null) => {
+    counter.current += 1;
+    setComposing(next ? { ...next, key: counter.current } : null);
+  }, []);
 
   const announce = useCallback((text: string, tone: "ok" | "warn" = "ok") => {
     counter.current += 1;
@@ -108,8 +127,8 @@ export function DashProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ data, error, loading, editable, readOnlyReason, showIds, setShowIds, run, reload, announce, notice, stamped }),
-    [data, error, loading, editable, readOnlyReason, showIds, setShowIds, run, reload, announce, notice, stamped],
+    () => ({ data, error, loading, editable, readOnlyReason, showIds, setShowIds, run, reload, announce, notice, stamped, focused, focusRule, composing, compose }),
+    [data, error, loading, editable, readOnlyReason, showIds, setShowIds, run, reload, announce, notice, stamped, focused, focusRule, composing, compose],
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

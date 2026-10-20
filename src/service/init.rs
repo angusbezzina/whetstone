@@ -198,6 +198,7 @@ fn agree(
         principles: Vec::new(),
         rules: Vec::new(),
         retired: Vec::new(),
+        require_served: false,
         revision: Revision::Uncommitted,
     });
     let mut drafted = Vec::new();

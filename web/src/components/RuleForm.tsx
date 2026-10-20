@@ -40,6 +40,19 @@ export const BLANK: RuleDefinition = {
   sweep_unsure: [],
 };
 
+const KINDS: Enforcer["kind"][] = ["ast", "lint", "formatter", "test", "validator"];
+
+/** A blank rule that serves a principle, checked by the enforcer its pack
+ * hints at when the hint names one. */
+export function blankServing(serves: string, hint: string | null): RuleDefinition {
+  const kind = KINDS.find((candidate) => candidate === hint);
+  return {
+    ...BLANK,
+    enforcer: kind ? enforcerFor(kind, BLANK.enforcer) : BLANK.enforcer,
+    source: { kind: "principle", reference: serves },
+  };
+}
+
 function enforcerFor(kind: Enforcer["kind"], from: Enforcer): Enforcer {
   if (kind === from.kind) return from;
   const text = "command" in from ? from.command : "tool" in from ? from.tool : "";

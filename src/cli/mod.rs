@@ -84,13 +84,16 @@ enum Command {
         project_dir: PathBuf,
         #[arg(long)]
         request_id: Option<String>,
-        /// Filter the durable decision history without changing active context.
+        /// With --json, keep only the changelog commits whose subject, body,
+        /// author or hash contains this text.
         #[arg(long)]
         search: Option<String>,
-        /// Inspect current context and history at an RFC 3339 UTC instant.
+        /// With --json, keep only the changelog commits made at or before
+        /// this UTC instant (YYYY-MM-DDTHH:MM:SSZ).
         #[arg(long)]
         as_of: Option<String>,
-        /// Bound the decision-history page returned by the shared service.
+        /// With --json, return at most this many changelog commits (1 to
+        /// 200); data.changelog_truncated says when more matched.
         #[arg(long, default_value_t = 100, value_parser = parse_page_size)]
         page_size: usize,
         /// Keep the dashboard read-only, including for the launched session.
@@ -196,6 +199,11 @@ enum Command {
         /// (rust, typescript, python).
         #[arg(long, conflicts_with_all = ["export_pack", "kind", "accept", "withdraw", "retire", "from_text", "from_file", "from_finding"])]
         import_pack: Option<String>,
+        /// Draft strict mode on or off: when true, --accept refuses a
+        /// rulebook in which a principle has no rule or a rule serves no
+        /// principle.
+        #[arg(long, value_name = "true|false", conflicts_with_all = ["kind", "accept", "withdraw", "retire", "from_text", "from_file", "from_finding", "export_pack", "import_pack"])]
+        require_served: Option<bool>,
     },
 
     /// Run the rules and return actionable findings.
@@ -247,10 +255,13 @@ enum Command {
         pushed: Option<String>,
     },
 
-    /// Explain a finding or a rule: the rule, its exact enforcer, what it
-    /// covers, the principle it serves and the commits that accepted it.
+    /// Explain a finding, a rule or a principle: the rule, its exact
+    /// enforcer, what it covers, the principle it serves and the commits that
+    /// accepted it; for a principle, the rules that serve it.
     Explain {
-        /// A finding's fingerprint (from findings.json or a pull request) or a rule id.
+        /// A finding's fingerprint (from findings.json or a pull request), a
+        /// rule id, or a principle id (the rules that serve it, or that none
+        /// does yet).
         target: String,
         #[arg(long, default_value = ".")]
         project_dir: PathBuf,
@@ -471,6 +482,7 @@ pub fn run() -> i32 {
             include_paths,
             principles,
             import_pack,
+            require_served,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
             project_dir,
             request_id,
@@ -494,6 +506,7 @@ pub fn run() -> i32 {
             include_paths,
             principles,
             import_pack,
+            require_served,
         })),
         Some(Command::Check {
             project_dir,

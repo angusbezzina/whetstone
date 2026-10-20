@@ -1,7 +1,8 @@
-import { useLayoutEffect, useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { CircleAlert, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cascade } from "@/motion";
+import type { Principle } from "@/api";
 import { day, useDash } from "@/state";
 import { AddRule, StartingSet, SuggestionRow } from "./AddRule";
 import { InlineText } from "./InlineText";
@@ -34,6 +35,41 @@ function Mission() {
   );
 }
 
+/** The rules that serve a principle, each a link that opens its row; or,
+ * when none does, the mark and the way to write one. */
+function ServedBy({ principle }: { principle: Principle }) {
+  const { data, editable, focusRule, compose } = useDash();
+  const rules = (data?.current?.groups ?? []).flatMap((group) =>
+    group.rules.map((rule, position) => ({ rule, number: (group.strength === "must" ? "H" : "S") + (position + 1) })),
+  );
+  if (principle.served_by.length) {
+    return (
+      <span className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[0.8125rem] text-ink-2">
+        <span className="label">Served by</span>
+        {principle.served_by.map((id) => {
+          const found = rules.find((entry) => entry.rule.id === id);
+          return (
+            <button key={id} type="button" onClick={() => focusRule(id)} className="cursor-pointer text-left underline decoration-rule underline-offset-4 hover:decoration-foreground">
+              {found ? `${found.number} ${found.rule.statement}` : id}
+            </button>
+          );
+        })}
+      </span>
+    );
+  }
+  return (
+    <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem] text-ink-2">
+      <CircleAlert className="size-3.5 shrink-0 text-primary" aria-label="No rule serves this" />
+      <span>No rule serves this yet. {principle.hint}.</span>
+      {editable ? (
+        <Button variant="outline" size="sm" className="h-7" onClick={() => compose({ serves: principle.id, enforcer: principle.enforcer_hint })}>
+          <Plus /> Write a rule for it
+        </Button>
+      ) : null}
+    </span>
+  );
+}
+
 function Principles() {
   const { data, editable, showIds, run } = useDash();
   const principles = data?.current?.principles ?? [];
@@ -46,7 +82,7 @@ function Principles() {
     <Section
       id="principles"
       title={<span className={heading}>Principles</span>}
-      meta={<p className="text-[0.875rem] text-ink-2">What the rules serve. Principles guide people and agents; no tool checks them.</p>}
+      meta={<p className="text-[0.875rem] text-ink-2">What the rules serve. No tool checks a principle; the rules that serve it do.</p>}
       folded={`${principles.length} ${principles.length === 1 ? "principle" : "principles"}`}
     >
       {principles.length ? (
@@ -79,6 +115,7 @@ function Principles() {
                   {principle.source}
                   {showIds ? ` · ${principle.id}` : ""}
                 </span>
+                <ServedBy principle={principle} />
               </span>
             </li>
           ))}
@@ -113,10 +150,25 @@ function Principles() {
 }
 
 function Groups() {
-  const { data, editable } = useDash();
+  const { data, editable, composing, compose, focused } = useDash();
   const groups = data?.current?.groups ?? [];
   const [adding, setAdding] = useState(false);
   const list = useRef<HTMLDivElement>(null);
+  const form = useRef<HTMLDivElement>(null);
+  // A principle's "Write a rule for it" opens Add rule, pre-filled.
+  useEffect(() => {
+    if (composing) setAdding(true);
+  }, [composing]);
+  // Once the form is on the page, bring it into view.
+  useEffect(() => {
+    if (composing && adding) {
+      form.current?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    }
+  }, [composing, adding]);
+  const close = () => {
+    setAdding(false);
+    compose(null);
+  };
   const played = useRef(false);
   useLayoutEffect(() => {
     if (!played.current && list.current && groups.some((group) => group.rules.length)) {
@@ -130,6 +182,13 @@ function Groups() {
         <Section
           key={group.strength}
           id={"group-" + group.strength}
+          reveal={
+            focused && group.rules.some((rule) => rule.id === focused.id)
+              ? focused.key
+              : index === 0 && composing
+                ? composing.key
+                : null
+          }
           title={
             <span className={heading}>
               {group.label} <span className="text-[1rem] text-ink-3">({group.strength})</span>
@@ -140,14 +199,14 @@ function Groups() {
         >
           {index === 0 && editable ? (
             <div className="mb-3 flex justify-end">
-              <Button size="sm" variant={adding ? "outline" : "default"} aria-expanded={adding} onClick={() => setAdding(!adding)}>
+              <Button size="sm" variant={adding ? "outline" : "default"} aria-expanded={adding} onClick={() => (adding ? close() : setAdding(true))}>
                 <Plus /> Add rule
               </Button>
             </div>
           ) : null}
           {index === 0 && adding ? (
-            <div className="mb-4">
-              <AddRule onClose={() => setAdding(false)} />
+            <div ref={form} className="mb-4 scroll-mt-4">
+              <AddRule key={composing?.key ?? "blank"} onClose={close} />
             </div>
           ) : null}
           <div className="label mb-1 hidden grid-cols-[2.5rem_minmax(0,1fr)_5.5rem_11.5rem_6rem_1.25rem] gap-x-3 border-b border-frame pr-1 pb-1.5 lg:grid">

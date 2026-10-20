@@ -1,5 +1,5 @@
-import { useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ChevronDown, CircleAlert } from "lucide-react";
 import type { Enforcer, Rule, RuleDefinition } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -406,11 +406,23 @@ function Detail({ rule, edit, changed }: { rule: Rule; edit: ReturnType<typeof u
 /** One rule: a single line collapsed; a callout with a leader line open,
  * where every field is edited in place. */
 export function RuleRow({ rule, number }: { rule: Rule; number: string }) {
-  const { data, editable, showIds } = useDash();
+  const { data, editable, showIds, focused } = useDash();
   const [open, setOpen] = useState(false);
   const [retiring, setRetiring] = useState(false);
+  const row = useRef<HTMLLIElement>(null);
   const line = useRef<SVGPathElement>(null);
   const callout = useRef<HTMLDivElement>(null);
+  // A principle's "served by" link opens this rule and brings it into view.
+  useEffect(() => {
+    if (focused?.id !== rule.id) return;
+    setOpen(true);
+    row.current?.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    row.current?.querySelector<HTMLElement>("button[aria-controls]")?.focus({ preventScroll: true });
+  }, [focused, rule.id]);
+  // With principles in the rulebook, a rule that serves none is marked.
+  const unanchored =
+    (data?.current?.principles.length ?? 0) > 0 &&
+    (data?.current?.principle_coverage.unanchored ?? []).some((entry) => entry.id === rule.id);
   const edit = useRuleEdit(rule);
   const panel = "rule-" + rule.id.replace(/[^a-z0-9-]/gi, "-");
   useLayoutEffect(() => {
@@ -446,7 +458,7 @@ export function RuleRow({ rule, number }: { rule: Rule; number: string }) {
     <ChevronDown aria-hidden="true" className={"size-4 text-ink-3 transition-transform group-hover:text-foreground " + extra + (open ? " rotate-180" : "")} />
   );
   return (
-    <li data-row className="relative border-b border-rule last:border-b-0">
+    <li ref={row} data-row className="relative border-b border-rule last:border-b-0">
       {open ? (
         <div className={columns}>
           {marks}
@@ -474,6 +486,12 @@ export function RuleRow({ rule, number }: { rule: Rule; number: string }) {
           {marks}
           <span className="min-w-0">
             <span className={"block text-[1.0625rem] leading-snug font-medium " + (changed.has("statement") ? "redline" : "")}>{rule.statement}</span>
+            {unanchored ? (
+              <span className="mt-0.5 flex items-center gap-1 text-[0.8125rem] text-ink-2">
+                <CircleAlert className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+                Serves no principle
+              </span>
+            ) : null}
             {showIds ? <code className="bare mt-0.5 block text-[0.75rem] text-ink-3">{rule.id}</code> : null}
           </span>
           {chevron("mt-1 lg:hidden")}
