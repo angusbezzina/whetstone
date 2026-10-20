@@ -31,6 +31,9 @@ const FIELD: Record<string, string> = {
   strength: "strength",
   enforcer: "check",
   paths: "paths",
+  exclude: "excluded paths",
+  mode: "mode",
+  batch: "batching",
   examples: "examples",
   source: "source",
   sweep: "sweep class",
@@ -263,10 +266,21 @@ function Detail({ rule, edit, changed }: { rule: Rule; edit: ReturnType<typeof u
         ) : (
           <span className="text-ink-2">The whole repository</span>
         )}
+        {rule.exclude.length ? (
+          <span className="mt-1 flex flex-wrap items-baseline gap-1.5 text-[0.875rem] text-ink-2">
+            except
+            {rule.exclude.map((path) => (
+              <code key={path} className="bare border border-rule bg-card px-1.5 text-[0.8125rem]">
+                {path}
+              </code>
+            ))}
+          </span>
+        ) : null}
       </Field>
       <Field label="Runs at">
         <Stages rule={rule} pass />
         <span className="ml-3 text-[0.875rem] text-ink-3">
+          {rule.mode === "change" ? "on the change since the base only, " : ""}
           {rule.strength === "must" ? "and fails the gate on a violation" : "and reports, never blocks"}
         </span>
       </Field>
@@ -310,6 +324,11 @@ function Detail({ rule, edit, changed }: { rule: Rule; edit: ReturnType<typeof u
               {rule.sweep.label} <span className="text-ink-3">· priority {rule.sweep.priority}</span>
             </span>
           )}
+          {rule.mode === "change" ? (
+            <span className="mt-1 block text-[0.875rem] text-ink-2">A sweep counts its flags and files no finding.</span>
+          ) : rule.batch ? (
+            <span className="mt-1 block text-[0.875rem] text-ink-2">One finding per {rule.batch === "by-file" ? "file" : "crate or package"}, listing its sites.</span>
+          ) : null}
           {rule.sweep.unsure.length ? (
             <ul className="mt-1 grid gap-0.5 text-[0.875rem] text-ink-2">
               {rule.sweep.unsure.map((unsure, index) => (
