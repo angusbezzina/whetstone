@@ -43,6 +43,32 @@ pub struct PrincipleEntry {
     pub principle: Principle,
 }
 
+impl Rulebook {
+    /// The principle a rule serves: the one its source names, as the record
+    /// id (`principle.prove-it-works`), the bare id or a pack's
+    /// `pstack:prove-it-works`. None when the source names nothing held here.
+    pub fn principle_for(&self, rule: &Rule) -> Option<&PrincipleEntry> {
+        let reference = rule.source.reference.as_deref()?;
+        self.principle_named(reference)
+    }
+
+    /// The principle a reference names, by its record id, its bare id or the
+    /// id it has in its pack.
+    pub fn principle_named(&self, reference: &str) -> Option<&PrincipleEntry> {
+        let tail = reference.rsplit(':').next().unwrap_or(reference);
+        self.principles.iter().find(|entry| {
+            let pack_id = match &entry.principle.source {
+                PrincipleSource::Pstack { id, .. } | PrincipleSource::Pack { id, .. } => {
+                    Some(id.as_str())
+                }
+                PrincipleSource::Custom => None,
+            };
+            let id = entry.id.as_str();
+            id == reference || id == format!("principle.{tail}") || pack_id == Some(tail)
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleEntry {
     pub id: RecordId,

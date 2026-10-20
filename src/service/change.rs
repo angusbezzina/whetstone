@@ -372,10 +372,11 @@ fn edit(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceResp
             }
             if kind == ChangeKind::Rule {
                 let current = after.rules.iter().find(|entry| entry.id == id);
-                let entry = match rule_of(request, content, current.map(|entry| &entry.rule)) {
-                    Ok(rule) => RuleEntry::new(id.clone(), rule),
-                    Err(question) => return ask(request_id, question),
-                };
+                let entry =
+                    match rule_of(request, content, current.map(|entry| &entry.rule), &after) {
+                        Ok(rule) => RuleEntry::new(id.clone(), rule),
+                        Err(question) => return ask(request_id, question),
+                    };
                 match entry {
                     Ok(entry) => {
                         after.rules.retain(|entry| entry.id != id);
@@ -510,6 +511,7 @@ fn rule_of(
     request: &ChangeRequest,
     content: String,
     current: Option<&Rule>,
+    book: &Rulebook,
 ) -> Result<Rule, String> {
     let Some(ChangeDefinition::Rule {
         strength,
@@ -529,6 +531,45 @@ fn rule_of(
     {
         crate::gates::parse_command(command)?;
     }
+    // The principle the rule serves: `--serves` wins over the definition's
+    // source, and either has to name a principle the rulebook holds, so a
+    // rule never cites an idea that is not there.
+    let source = match request.serves.as_deref().map(str::trim) {
+        Some(serves) if !serves.is_empty() => RuleSource {
+            kind: crate::domain::RuleSourceKind::Principle,
+            reference: Some(serves.to_string()),
+            provenance: Vec::new(),
+        },
+        _ => source.clone().unwrap_or_else(RuleSource::owner),
+    };
+    let source = match (&source.kind, source.reference.as_deref()) {
+        (crate::domain::RuleSourceKind::Principle, reference) => {
+            let named = reference.and_then(|reference| book.principle_named(reference));
+            let Some(entry) = named else {
+                let held = book
+                    .principles
+                    .iter()
+                    .map(|entry| entry.id.as_str())
+                    .collect::<Vec<_>>();
+                return Err(format!(
+                    "{} is not a principle in the rulebook{}; adopt it first (wh init --action agree --principle <id>) or leave --serves out.",
+                    reference.unwrap_or("(none)"),
+                    if held.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (held: {})", held.join(", "))
+                    }
+                ));
+            };
+            // Stored as the record id, so the link survives a pack rename.
+            RuleSource {
+                kind: crate::domain::RuleSourceKind::Principle,
+                reference: Some(entry.id.as_str().to_string()),
+                provenance: source.provenance.clone(),
+            }
+        }
+        _ => source,
+    };
     let rule = Rule {
         schema: RULE_SCHEMA_V2.into(),
         statement: content,
@@ -536,7 +577,7 @@ fn rule_of(
         strength: *strength,
         enforcer: enforcer.clone(),
         examples: examples.clone(),
-        source: source.clone().unwrap_or_else(RuleSource::owner),
+        source,
         paths: paths.clone(),
         sweep: *sweep,
         sweep_priority: *sweep_priority,

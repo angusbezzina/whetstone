@@ -166,7 +166,8 @@ function Retire({ rule, onDone }: { rule: Rule; onDone: () => void }) {
 }
 
 function Detail({ rule, edit, changed }: { rule: Rule; edit: ReturnType<typeof useRuleEdit>; changed: Set<string> }) {
-  const { showIds, editable } = useDash();
+  const { showIds, editable, data } = useDash();
+  const principles = data?.current?.principles ?? [];
   const definition = rule.edit.definition as RuleDefinition;
   const enforcer = definition.enforcer;
   const saveEnforcer = (next: Partial<Record<string, string>>) =>
@@ -335,10 +336,41 @@ function Detail({ rule, edit, changed }: { rule: Rule; edit: ReturnType<typeof u
           </ul>
         </Field>
       ) : null}
+      {editable && principles.length ? (
+        <Field label="Serves">
+          <select
+            aria-label="The principle this rule serves"
+            value={rule.serves?.id ?? ""}
+            onChange={(e) =>
+              e.target.value !== (rule.serves?.id ?? "") &&
+              edit.save(
+                { definition: { source: e.target.value ? { kind: "principle", reference: e.target.value } : { kind: "owner" } } },
+                e.target.value ? "The principle it serves is drafted." : "The rule serves no named principle now.",
+              )
+            }
+            className={"h-8 max-w-full border border-rule bg-background px-2 text-[0.9375rem] text-foreground " + (changed.has("source") ? "redline" : "")}
+          >
+            <option value="">No principle</option>
+            {principles.map((principle) => (
+              <option key={principle.id} value={principle.id}>
+                {principle.statement.length > 90 ? principle.statement.slice(0, 87) + "…" : principle.statement}
+              </option>
+            ))}
+          </select>
+          {rule.serves && showIds ? <code className="ml-2 text-[0.8125rem] text-ink-3">{rule.serves.id}</code> : null}
+        </Field>
+      ) : rule.serves ? (
+        <Field label="Serves">
+          <span>
+            {rule.serves.statement}
+            {showIds ? <code className="ml-2 text-[0.8125rem] text-ink-3">{rule.serves.id}</code> : null}
+          </span>
+        </Field>
+      ) : null}
       <Field label="Source">
         <span>
           {rule.source.label}
-          {rule.source.reference ? <code className="ml-2 text-[0.8125rem] text-ink-3">{rule.source.reference}</code> : null}
+          {rule.source.reference && !rule.serves ? <code className="ml-2 text-[0.8125rem] text-ink-3">{rule.source.reference}</code> : null}
         </span>
       </Field>
       <Field label="History">

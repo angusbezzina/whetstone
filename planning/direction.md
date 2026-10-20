@@ -71,8 +71,9 @@ Whetstone keeps no other store.
 The contract does not change shape. One finding per flag:
 `fingerprint` (sha256 of rule, repository origin and subject, numbered in
 source order for repeats), `subjectDigest`, `class`, `priority`, `title`,
-`responsibility` and, where `sweep_unsure` covers the flag, `unsure` with
-its reason.
+`responsibility`, `principle` (the id of the principle the rule serves,
+when the rulebook names one) and, where `sweep_unsure` covers the flag,
+`unsure` with its reason.
 
 ### Hosts
 A host is anything that acts on the rulebook: Virgil's Messo, a GitHub

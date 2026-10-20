@@ -68,6 +68,8 @@ export type Rule = {
   paths: string[];
   examples: Example[];
   source: { kind: string; label: string; reference: string | null };
+  /** The principle the rule serves, when its source names one held in the rulebook. */
+  serves: { id: string; statement: string } | null;
   sweep: { class: string; label: string; priority: number; unsure: SweepUnsure[] };
   lifecycle: "accepted" | "changed" | "new";
   digest: string;

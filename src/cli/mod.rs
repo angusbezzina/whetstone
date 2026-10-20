@@ -153,6 +153,12 @@ enum Command {
         /// be checked here). Write it anyway; --rationale says why.
         #[arg(long)]
         allow_unvalidated: bool,
+        /// The principle this rule serves: a principle id held in the
+        /// rulebook (principle.prove-it-works, or prove-it-works). It is
+        /// written as the rule's source, and wh explain and every sweep
+        /// finding name it.
+        #[arg(long, requires = "kind")]
+        serves: Option<String>,
         /// Compile rules from prose: list items and sentences that say must,
         /// never, should, avoid or prefer. What names its enforcer (a
         /// formatter, a lint code, a command, a script, a known construct) is
@@ -178,6 +184,12 @@ enum Command {
         /// With --export-pack: keep each rule's repository paths.
         #[arg(long, requires = "export_pack")]
         include_paths: bool,
+        /// With --export-pack: write the rulebook's own principles as a
+        /// principle pack (whetstone.principle-pack.v1), the shape pstack
+        /// ships in, instead of a rule pack. Another repository installs it
+        /// with --import-pack and picks from it in wh init.
+        #[arg(long, requires = "export_pack", conflicts_with = "include_paths")]
+        principles: bool,
         /// Import a rule pack's rules and principles as probed drafts (nothing
         /// is accepted), or install a principle pack under
         /// whetstone/principles: a file, an https URL, or a built-in pack
@@ -207,8 +219,8 @@ enum Command {
         staged: bool,
         /// Run only the rules below must and print one finding per flag
         /// {fingerprint, subjectDigest, class, priority, title, responsibility,
-        /// unsure?, fix?}, a JSON array one per line, for a sweep's controller
-        /// (findings.json).
+        /// principle?, unsure?, fix?}, a JSON array one per line, for a sweep's
+        /// controller (findings.json).
         #[arg(long)]
         sweep: bool,
         /// With --sweep: `findings` (the default) or `json` for the envelope.
@@ -450,12 +462,14 @@ pub fn run() -> i32 {
             withdraw,
             retire,
             allow_unvalidated,
+            serves,
             from_text,
             from_file,
             from_finding,
             findings,
             export_pack,
             include_paths,
+            principles,
             import_pack,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
             project_dir,
@@ -471,12 +485,14 @@ pub fn run() -> i32 {
             retire,
             actor: crate::service::detect_actor(),
             allow_unvalidated,
+            serves,
             from_text,
             from_file,
             from_finding,
             findings,
             export_pack,
             include_paths,
+            principles,
             import_pack,
         })),
         Some(Command::Check {

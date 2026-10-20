@@ -213,7 +213,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         }
     }
     let sweep_findings = (request.gate_mode == GateMode::Sweep).then(|| {
-        let mut found = findings::findings(&project, &selection.rules, &outcomes);
+        let mut found = findings::findings(&project, &rulebook, &selection.rules, &outcomes);
         fixes::attach(&project, &selection.rules, &mut found);
         found
     });

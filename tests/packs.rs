@@ -216,3 +216,177 @@ fn a_starter_pack_and_a_principle_pack_arrive_by_name_and_file() {
     let inspect = repo.wh(&["init"]);
     assert!(inspect.to_string().contains("team/ship-small"), "{inspect}");
 }
+
+#[test]
+fn a_rule_names_the_principle_it_serves_and_the_owners_principles_export_as_a_pack() {
+    let a = Repo::new(&[("src/main.rs", "fn main() {}\n")]);
+    // One principle in the owner's words and one picked from pstack.
+    let own = a.wh(&[
+        "change",
+        "--kind",
+        "principle",
+        "--record-id",
+        "principle.ship-small",
+        "--content",
+        "Ship the smallest change that solves the problem.",
+        "--rationale",
+        "Small changes review fast.",
+    ]);
+    assert_eq!(own["state"], "success", "{own}");
+    let picked = a.wh(&[
+        "change",
+        "--kind",
+        "principle",
+        "--record-id",
+        "principle.prove-it-works",
+        "--content",
+        "Prove it works.",
+        "--definition",
+        r#"{"type":"principle","principle":"prove-it-works"}"#,
+    ]);
+    assert_eq!(picked["state"], "success", "{picked}");
+
+    // A rule that serves a principle the rulebook does not hold is refused.
+    let failing =
+        r#"{"type":"rule","strength":"should","enforcer":{"kind":"test","command":"false"}}"#;
+    let refused = a.wh(&[
+        "change",
+        "--kind",
+        "rule",
+        "--record-id",
+        "rule.small-diffs",
+        "--content",
+        "A change stays small.",
+        "--rationale",
+        "Serves ship-small.",
+        "--definition",
+        failing,
+        "--serves",
+        "no-such-principle",
+    ]);
+    assert_eq!(refused["state"], "needs_input", "{refused}");
+    assert!(
+        refused["blocking_questions"][0]
+            .as_str()
+            .expect("question")
+            .contains("not a principle in the rulebook"),
+        "{refused}"
+    );
+    // Named by its bare id, it is stored as the record id.
+    let served = a.wh(&[
+        "change",
+        "--kind",
+        "rule",
+        "--record-id",
+        "rule.small-diffs",
+        "--content",
+        "A change stays small.",
+        "--rationale",
+        "Serves ship-small.",
+        "--definition",
+        failing,
+        "--serves",
+        "ship-small",
+    ]);
+    assert_eq!(served["state"], "success", "{served}");
+    let rule = a.rulebook()["rules"]
+        .as_array()
+        .expect("rules")
+        .iter()
+        .find(|rule| rule["id"] == "rule.small-diffs")
+        .cloned()
+        .expect("the rule");
+    assert_eq!(
+        rule["source"],
+        serde_json::json!({"kind": "principle", "reference": "principle.ship-small"})
+    );
+    let explained = a.wh(&["explain", "rule.small-diffs"]);
+    assert_eq!(
+        explained["data"]["principle"]["id"], "principle.ship-small",
+        "{explained}"
+    );
+    // The dashboard says what the rule serves.
+    let dash = a.wh(&["dash"]);
+    let shown = dash["data"]["current"]["groups"]
+        .as_array()
+        .expect("groups")
+        .iter()
+        .flat_map(|group| group["rules"].as_array().cloned().unwrap_or_default())
+        .find(|shown| shown["id"] == "rule.small-diffs")
+        .expect("the rule on the dashboard");
+    assert_eq!(shown["serves"]["id"], "principle.ship-small", "{shown}");
+    // A sweep finding carries the principle, so the why travels with it.
+    let sweep = Command::new(env!("CARGO_BIN_EXE_whetstone"))
+        .args(["check", "--sweep"])
+        .current_dir(&a.root)
+        .output()
+        .expect("whetstone");
+    let findings: Value = serde_json::from_slice(&sweep.stdout).unwrap_or_else(|error| {
+        panic!(
+            "no findings ({error}): {}{}",
+            String::from_utf8_lossy(&sweep.stdout),
+            String::from_utf8_lossy(&sweep.stderr)
+        )
+    });
+    let finding = findings
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|finding| finding["responsibility"] == "rule.small-diffs")
+        .expect("the finding");
+    assert_eq!(finding["principle"], "principle.ship-small", "{finding}");
+
+    // The owner's own principles leave as a principle pack; pstack's stays
+    // with pstack.
+    assert_eq!(a.wh(&["change", "--accept"])["state"], "success");
+    let pack_path = a.root.parent().expect("parent").join("team.json");
+    let pack_arg = pack_path.to_str().expect("path");
+    let before = a.rulebook();
+    let exported = a.wh(&["change", "--export-pack", pack_arg, "--principles"]);
+    assert_eq!(exported["state"], "success", "{exported}");
+    assert_eq!(a.rulebook(), before, "exporting changed the rulebook");
+    let pack: Value =
+        serde_json::from_str(&std::fs::read_to_string(&pack_path).expect("pack")).expect("json");
+    assert_eq!(pack["schema"], "whetstone.principle-pack.v1");
+    assert_eq!(pack["name"], "project");
+    let ids = pack["principles"]
+        .as_array()
+        .expect("principles")
+        .iter()
+        .map(|principle| principle["id"].as_str().expect("id").to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        vec!["ship-the-smallest-change-that-solves-the-problem"]
+    );
+    assert_eq!(pack["principles"][0]["enforcer_hint"], "none");
+    assert_eq!(
+        pack["principles"][0]["rationale"],
+        "Small changes review fast."
+    );
+    assert_eq!(
+        exported["data"]["left_out"][0]["principle"], "principle.prove-it-works",
+        "{exported}"
+    );
+
+    // Another repository installs it and picks from it like any pack.
+    let b = Repo::new(&[("src/lib.rs", "pub fn f() {}\n")]);
+    let installed = b.wh(&["change", "--import-pack", pack_arg]);
+    assert_eq!(installed["state"], "success", "{installed}");
+    assert!(b.root.join("whetstone/principles/project.json").is_file());
+    let adopted = b.wh(&[
+        "change",
+        "--kind",
+        "principle",
+        "--record-id",
+        "principle.project.ship-small",
+        "--content",
+        "Ship the smallest change that solves the problem.",
+        "--definition",
+        r#"{"type":"principle","principle":"project/ship-the-smallest-change-that-solves-the-problem"}"#,
+    ]);
+    assert_eq!(adopted["state"], "success", "{adopted}");
+    let record = b.rulebook()["principles"][0].clone();
+    assert_eq!(record["source"]["kind"], "pack");
+    assert_eq!(record["source"]["pack"], "project");
+}

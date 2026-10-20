@@ -108,6 +108,11 @@ wh change --accept --rationale "Why these edits."   # commit whetstone/rulebook.
 wh change --withdraw        # restore the file's last commit
 ```
 
+Add `--serves <principle id>` to a rule change to name the principle the
+rule serves (one the rulebook holds). It becomes the rule's source;
+`wh explain` prints it, the dashboard shows it under Serves, and every
+sweep finding carries it, so a host can quote the why with the flag.
+
 Every rule a change adds or re-aims (a new enforcer or new paths) is probed
 before it is written: its enforcer runs once over the repository, and the
 envelope's `data.probes` says whether it ran, how many files are in scope,
@@ -133,6 +138,7 @@ Rules can also start from prose or from elsewhere:
 wh change --from-file CONTRIBUTING.md   # probed drafts where the text names its check
 wh change --from-finding <fingerprint>  # a must rule from a finding that keeps coming back
 wh change --export-pack rules.pack.json # the committed rules, for another repository
+wh change --export-pack team.json --principles  # your own principles as a principle pack, like pstack
 wh change --import-pack rust            # a pack (a file, an https URL, rust, typescript or python) as drafts
 ```
 
@@ -143,6 +149,12 @@ and the rest come back as needing one. A rule pack
 (`whetstone.rule-pack.v1`) carries a content digest; an import verifies it,
 probes each rule here and writes the rules as drafts. A principle pack
 imported the same way is installed under `whetstone/principles/`.
+`--export-pack <file> --principles` writes the accepted rulebook's
+principles in your own words as such a pack
+(`whetstone.principle-pack.v1`, the shape pstack and `mattpocock` ship in),
+named after the repository and versioned by the rulebook's commit; set its
+license, groups and enforcer hints in the file. Principles picked from a
+pack are left out, because they already have one.
 
 ## Script enforcers
 
@@ -178,7 +190,8 @@ repair route and the command that rechecks it.
 `--sweep` runs only the rules below must and prints a JSON array with one
 finding per flag, one per line: `fingerprint` (sha256 of the rule, the
 repository's origin and the subject, stable across runs), `subjectDigest`,
-`class`, `priority`, `title`, `responsibility` (the rule) and, where
+`class`, `priority`, `title`, `responsibility` (the rule), `principle` (the
+principle the rule serves, when the rulebook names one) and, where
 `sweep_unsure` covers the flag, `unsure` with its reason. A formatter or lint
 rule whose tool can rewrite files also carries `fix`, the tool's own diff,
 which applies with `git apply` (the check never applies it). The shape is in

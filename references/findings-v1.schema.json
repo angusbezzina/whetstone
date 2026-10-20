@@ -26,6 +26,7 @@
       "priority": { "type": "integer", "minimum": 0, "maximum": 4, "description": "0 is most urgent." },
       "title": { "type": "string", "description": "The rule's statement and where it flagged." },
       "responsibility": { "type": "string", "description": "The rule id that raised the finding." },
+      "principle": { "type": "string", "description": "The id of the principle the rule serves, when its source names one in the rulebook; `wh explain` gives the statement. A runner quotes it so the why travels with the finding." },
       "unsure": { "type": "string", "description": "Present only where the rule doubts its own flag; a runner parks such a finding until a person raises it." },
       "fix": {
         "type": "string",

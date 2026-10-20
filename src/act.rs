@@ -61,6 +61,9 @@ pub struct Finding {
     pub priority: u8,
     pub title: String,
     pub responsibility: String,
+    /// The principle the rule serves, when the rulebook names one.
+    #[serde(default)]
+    pub principle: Option<String>,
     #[serde(default)]
     pub unsure: Option<String>,
     #[serde(default)]
@@ -310,8 +313,11 @@ fn body(finding: &Finding, explained: &str) -> String {
         format!("**Rule:** `{}`", finding.responsibility),
         format!("**Finding:** {}", finding.title),
         format!("**Priority:** {} (0 is most urgent)", finding.priority),
-        String::new(),
     ];
+    if let Some(principle) = &finding.principle {
+        lines.push(format!("**Serves:** `{principle}`"));
+    }
+    lines.push(String::new());
     if !explained.is_empty() {
         lines.extend([
             "<details><summary>wh explain</summary>".to_string(),

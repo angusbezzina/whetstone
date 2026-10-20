@@ -13,7 +13,7 @@ use std::process::Command;
 
 use serde_json::{json, Value};
 
-use crate::domain::{PrincipleSource, Rule};
+use crate::domain::Rule;
 use crate::layout::ProjectLayout;
 use crate::rulebook::{self, RuleEntry, Rulebook, RulebookError, RULEBOOK_PATH};
 
@@ -319,19 +319,7 @@ fn lifecycle(root: &Path, entry: &RuleEntry) -> &'static str {
 
 /// The principle a rule serves, when its source names one in the rulebook.
 fn principle_of(book: &Rulebook, rule: &Rule) -> Option<Value> {
-    let reference = rule.source.reference.as_deref()?;
-    let tail = reference.rsplit(':').next().unwrap_or(reference);
-    book.principles.iter().find_map(|entry| {
-        let source_id = match &entry.principle.source {
-            PrincipleSource::Pstack { id, .. } | PrincipleSource::Pack { id, .. } => {
-                Some(id.as_str())
-            }
-            PrincipleSource::Custom => None,
-        };
-        let id = entry.id.as_str();
-        let named = id == reference || id == format!("principle.{tail}") || source_id == Some(tail);
-        named.then(|| rulebook::principle_value(entry))
-    })
+    book.principle_for(rule).map(rulebook::principle_value)
 }
 
 /// The rule's entry in the rulebook at a revision, as plain JSON (an older

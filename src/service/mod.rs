@@ -195,6 +195,9 @@ pub struct ChangeRequest {
     /// Write a rule even when its probe says the enforcer cannot be checked
     /// on this repository.
     pub allow_unvalidated: bool,
+    /// The principle the rule serves, by a principle id held in the
+    /// rulebook; written as the rule's source.
+    pub serves: Option<String>,
     /// Compile rules from this prose: probed drafts for what names an
     /// enforcer, and the rest returned as needing one.
     pub from_text: Option<String>,
@@ -209,6 +212,9 @@ pub struct ChangeRequest {
     pub export_pack: Option<String>,
     /// With `export_pack`: keep each rule's repository paths.
     pub include_paths: bool,
+    /// With `export_pack`: write the rulebook's own principles as a
+    /// principle pack instead of a rule pack.
+    pub principles: bool,
     /// Import a rule pack's rules and principles as drafts, or install a
     /// principle pack: a file, an https URL or a built-in pack name.
     pub import_pack: Option<String>,

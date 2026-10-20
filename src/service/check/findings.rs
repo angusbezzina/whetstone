@@ -2,10 +2,12 @@
 //! to work (Messo's, inside Virgil).
 //!
 //! A finding is `{fingerprint, subjectDigest, class, priority, title,
-//! responsibility, unsure?, fix?}`: `priority` (0 most urgent to 4) is the
-//! rule's, `unsure` says why, only where the rule doubts its own flag (the
-//! consumer parks such a finding until a person raises it), and `fix` is the
-//! rule's tool's own diff, only where the tool can rewrite files.
+//! responsibility, principle?, unsure?, fix?}`: `priority` (0 most urgent to
+//! 4) is the rule's, `principle` is the id of the principle the rule serves
+//! when the rulebook names one, `unsure` says why, only where the rule doubts
+//! its own flag (the consumer parks such a finding until a person raises it),
+//! and `fix` is the rule's tool's own diff, only where the tool can rewrite
+//! files.
 //! The fingerprint (rule id, repository and subject) stays the same across
 //! runs for the same subject, so a dismissed finding stays quiet until its
 //! subject changes; the subject digest changes exactly when the flagged
@@ -20,6 +22,7 @@ use sha2::{Digest, Sha256};
 
 use crate::domain::{Rule, Strength};
 use crate::gates::{GateOutcome, GateState};
+use crate::rulebook::Rulebook;
 
 use super::SelectedRule;
 
@@ -33,6 +36,10 @@ pub(crate) struct SweepFinding {
     pub(crate) priority: u8,
     pub(crate) title: String,
     pub(crate) responsibility: String,
+    /// The principle the rule serves, when its source names one held in the
+    /// rulebook, so the why travels with the finding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) principle: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) unsure: Option<String>,
     /// The tool's own fix, as a unified diff that applies at the repository
@@ -155,6 +162,7 @@ fn flagged_content(project: &Path, path: &str, line: Option<usize>) -> Vec<u8> {
 /// One finding per flag of every swept rule, sorted.
 pub(crate) fn findings(
     project: &Path,
+    book: &Rulebook,
     selected: &[SelectedRule],
     outcomes: &[GateOutcome],
 ) -> Vec<SweepFinding> {
@@ -225,6 +233,9 @@ pub(crate) fn findings(
                     .take(300)
                     .collect(),
                 responsibility: outcome.id.clone(),
+                principle: book
+                    .principle_for(rule)
+                    .map(|entry| entry.id.as_str().to_string()),
                 unsure: flag.unsure,
             });
         }
@@ -303,6 +314,7 @@ mod tests {
             priority: 2,
             title: "Print is a smell. (src/app.py)".into(),
             responsibility: "rule.print-doubtful".into(),
+            principle: None,
             unsure: unsure.map(str::to_owned),
             fix: None,
             subject: "src/app.py".into(),

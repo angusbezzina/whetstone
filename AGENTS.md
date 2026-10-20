@@ -36,10 +36,11 @@ planning any work.
   --format annotations`, so each flag shows beside the code).
 - **Findings.** `wh check --sweep` prints `findings.json`: one finding per
   flag with `fingerprint`, `subjectDigest`, `class`, `priority`, `title`,
-  `responsibility`, `unsure` and, for a tool that can rewrite files, `fix`
+  `responsibility`, `principle` (when the rule serves one), `unsure` and,
+  for a tool that can rewrite files, `fix`
   ([schema](references/findings-v1.schema.json)). Its shape is a contract;
   do not change it. `wh explain <fingerprint>` resolves a finding to its
-  rule and the commits that accepted it.
+  rule, the principle it serves and the commits that accepted it.
 - **Hosts.** A host (Virgil's Messo, a GitHub Action, an agent session)
   consumes three things: the rulebook file, `findings.json` and the
   `whetstone.command-response.v1` envelope. Whetstone keeps no store and no

@@ -224,12 +224,14 @@ impl DashboardCommand {
             retire,
             actor,
             allow_unvalidated,
+            serves: None,
             from_text,
             from_file: None,
             from_finding,
             findings: None,
             export_pack: None,
             include_paths: false,
+            principles: false,
             import_pack: None,
         })
     }

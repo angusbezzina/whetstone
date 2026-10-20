@@ -169,12 +169,20 @@ pub struct RuleView {
     pub paths: Vec<String>,
     pub examples: Vec<Value>,
     pub source: SourceView,
+    /// The principle the rule serves, when its source names one held here.
+    pub serves: Option<ServesView>,
     pub sweep: SweepView,
     /// `accepted` (as committed), `changed` (edited since) or `new`.
     pub lifecycle: &'static str,
     pub digest: String,
     pub history: Vec<RuleEvent>,
     pub edit: EditBase,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ServesView {
+    pub id: String,
+    pub statement: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -619,6 +627,12 @@ pub fn page_view(book: Option<&Rulebook>, input: PageInput<'_>) -> PageView {
                 paths: rule.paths.clone(),
                 examples: examples(rule),
                 source: source(rule),
+                serves: book
+                    .and_then(|book| book.principle_for(rule))
+                    .map(|entry| ServesView {
+                        id: entry.id.as_str().into(),
+                        statement: entry.principle.statement.clone(),
+                    }),
                 sweep: SweepView {
                     class: rule.sweep_class().label(),
                     label: sweep_label(rule.sweep_class()),

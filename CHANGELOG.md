@@ -11,6 +11,19 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ### Added
 
+- A rule names the principle it serves. `wh change --kind rule ... --serves
+  <principle id>` writes it as the rule's source (the id has to be a
+  principle the rulebook holds), the dashboard's rule form has a Serves
+  picker and each rule shows it, `wh explain` prints it, and every sweep
+  finding carries it as `principle`, so a host can quote the why with the
+  flag. The reusable Action adds a Serves line to what it opens.
+- The agent contract tells an agent to read the rulebook's principles before
+  planning and that `wh explain` names the principle a rule serves.
+- `wh change --export-pack <file> --principles` writes the accepted
+  rulebook's own principles as a principle pack
+  (`whetstone.principle-pack.v1`, the shape pstack and `mattpocock` ship in)
+  for another repository to install with `--import-pack`.
+
 - A starting set of principles. A pack marks the principles it offers as a
   starting point (`starting`), `wh init --action agree --principle starting`
   drafts them, and the dashboard offers them with one button (Adopt the

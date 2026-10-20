@@ -85,8 +85,9 @@ export function RuleForm({
   onCancel: () => void;
   withStrength?: boolean;
 }) {
-  const { run } = useDash();
+  const { run, data } = useDash();
   const uid = useId();
+  const principles = data?.current?.principles ?? [];
   const [statement, setStatement] = useState(initial.statement);
   const [rationale, setRationale] = useState(initial.rationale);
   const [definition, setDefinition] = useState<RuleDefinition>(initial.definition);
@@ -96,6 +97,15 @@ export function RuleForm({
   const enforcer = definition.enforcer;
   const setEnforcer = (next: Partial<Record<string, string>>) =>
     setDefinition({ ...definition, enforcer: { ...enforcer, ...next } as Enforcer });
+  // The principle the rule serves is its source. Clearing it falls back to
+  // the source the rule had before, or to the owner for a new rule.
+  const sourceOf = (value: unknown) => (value && typeof value === "object" ? (value as { kind?: string; reference?: string | null }) : null);
+  const serves = sourceOf(definition.source)?.kind === "principle" ? (sourceOf(definition.source)?.reference ?? "") : "";
+  const setServes = (id: string) => {
+    const before = sourceOf(initial.definition.source);
+    const fallback = before && before.kind !== "principle" ? initial.definition.source : { kind: "owner" };
+    setDefinition({ ...definition, source: id ? { kind: "principle", reference: id } : fallback });
+  };
 
   const save = async (allowUnvalidated: boolean) => {
     setBusy(true);
@@ -194,6 +204,30 @@ export function RuleForm({
         ) : (
           <Input aria-label="Command" placeholder={enforcer.kind === "test" ? "cargo test" : "sh whetstone/checks/my-check.sh"} value={enforcer.command} onChange={(e) => setEnforcer({ command: e.target.value })} className="font-mono text-[0.8125rem]" required />
         )}
+      </Row>
+      <Row
+        label="Serves"
+        htmlFor={uid + "v"}
+        hint={
+          principles.length
+            ? "The principle this rule exists for. Explain and every sweep finding name it."
+            : "No principle is held yet. Adopt one under Principles and the rule can name it."
+        }
+      >
+        <select
+          id={uid + "v"}
+          value={serves}
+          onChange={(e) => setServes(e.target.value)}
+          disabled={!principles.length}
+          className="h-9 w-full min-w-0 border border-rule bg-background px-2 text-[0.9375rem] text-foreground disabled:text-ink-3"
+        >
+          <option value="">No principle</option>
+          {principles.map((principle) => (
+            <option key={principle.id} value={principle.id}>
+              {principle.statement.length > 90 ? principle.statement.slice(0, 87) + "…" : principle.statement}
+            </option>
+          ))}
+        </select>
       </Row>
       <Row label="Applies to" htmlFor={uid + "p"} hint="One glob per line. Leave empty for the whole repository.">
         <Textarea id={uid + "p"} value={paths} onChange={(e) => setPaths(e.target.value)} rows={2} placeholder="(empty: the whole repository)" className="font-mono text-[0.8125rem]" />

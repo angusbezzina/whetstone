@@ -160,6 +160,9 @@ pub(super) fn export(
             )
         }
     };
+    if request.principles {
+        return export_principles(root, request_id, target, request, &book);
+    }
     let principles = book
         .principles
         .iter()
@@ -255,6 +258,186 @@ pub(super) fn export(
         "rules": pack.rules.iter().map(|rule| rule.id.as_str()).collect::<Vec<_>>(),
         "principles": pack.principles.iter().map(|principle| principle.id.as_str()).collect::<Vec<_>>(),
         "includes_paths": request.include_paths,
+        "left_out": left_out,
+        "preview_only": request.preview,
+    });
+    response
+}
+
+/// A pack id for a principle written in the owner's words: the first words
+/// of its statement as a slug, at most 48 characters.
+fn principle_slug(statement: &str) -> String {
+    let mut slug = String::new();
+    let mut dash = false;
+    for character in statement.chars().flat_map(char::to_lowercase) {
+        if slug.len() >= 48 {
+            break;
+        }
+        if character.is_ascii_alphanumeric() {
+            slug.push(character);
+            dash = false;
+        } else if !dash && !slug.is_empty() {
+            slug.push('-');
+            dash = true;
+        }
+    }
+    let slug = slug.trim_end_matches('-').to_string();
+    if slug.is_empty() || slug == crate::catalogue::STARTING {
+        "principle".into()
+    } else {
+        slug
+    }
+}
+
+/// `wh change --export-pack <file> --principles`: the committed rulebook's
+/// own principles as a principle pack (`whetstone.principle-pack.v1`), the
+/// shape pstack and mattpocock ship in, for another repository to install
+/// with `--import-pack` and pick from in `wh init`. A principle picked from
+/// a pack is left out: it already has a pack, and a second pack repeating
+/// its id would be refused beside the first.
+fn export_principles(
+    root: &Path,
+    request_id: String,
+    target: &str,
+    request: &ChangeRequest,
+    book: &Rulebook,
+) -> ServiceResponse {
+    let mut principles = Vec::new();
+    let mut left_out = Vec::new();
+    let mut taken = std::collections::BTreeSet::new();
+    for entry in &book.principles {
+        match &entry.principle.source {
+            PrincipleSource::Pstack { id, .. } => {
+                left_out.push(json!({"principle": entry.id.as_str(), "reason": format!("it is pstack's {id}; share that pack instead")}));
+                continue;
+            }
+            PrincipleSource::Pack { pack, id, .. } => {
+                left_out.push(json!({"principle": entry.id.as_str(), "reason": format!("it is {pack}'s {id}; share that pack instead")}));
+                continue;
+            }
+            PrincipleSource::Custom => {}
+        }
+        let base = principle_slug(&entry.principle.statement);
+        let mut id = base.clone();
+        let mut n = 2;
+        while !taken.insert(id.clone()) {
+            id = format!("{base}-{n}");
+            n += 1;
+        }
+        principles.push(json!({
+            "id": id,
+            "group": "team",
+            "text": entry.principle.statement,
+            "enforcer_hint": "none",
+            "rationale": entry.principle.rationale,
+            "starting": false,
+        }));
+    }
+    if principles.is_empty() {
+        let mut response = needs(
+            request_id,
+            "The accepted rulebook holds no principle in your own words, so there is nothing to put in a pack; write one (wh init --action agree --custom-principle <text>), accept it, then export.".into(),
+        );
+        response.data = json!({"left_out": left_out});
+        return response;
+    }
+    let name = {
+        let raw = root
+            .file_name()
+            .map(|name| name.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        let slug = principle_slug(&raw);
+        if slug == "principle" {
+            "principles".to_string()
+        } else {
+            slug
+        }
+    };
+    let commit = match &book.revision {
+        rulebook::Revision::Commit(hash) => Some(hash.clone()),
+        rulebook::Revision::Uncommitted => None,
+    };
+    let version = commit
+        .as_deref()
+        .map(|hash| hash.chars().take(12).collect::<String>())
+        .unwrap_or_else(|| "1".into());
+    let mut pack = json!({
+        "schema": crate::catalogue::PACK_SCHEMA,
+        "name": name,
+        "version": version,
+        "source": super::check::findings::repository_identity(root),
+        "license": "unspecified",
+        "principles": principles,
+    });
+    if let Some(commit) = &commit {
+        pack["commit"] = json!(commit);
+    }
+    let text = serde_json::to_string_pretty(&pack).unwrap_or_default() + "\n";
+    let path = if Path::new(target).is_absolute() {
+        Path::new(target).to_path_buf()
+    } else {
+        root.join(target)
+    };
+    if !request.preview {
+        if let Err(error) = std::fs::write(&path, &text) {
+            return unknown_response(
+                "change",
+                request_id,
+                format!("{} could not be written: {error}", path.display()),
+            );
+        }
+    }
+    let ids = pack["principles"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item["id"].as_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut response = ServiceResponse::new(
+        request_id,
+        "change",
+        if request.preview {
+            ServiceState::NeedsDecision
+        } else {
+            ServiceState::Success
+        },
+        format!(
+            "{} principle(s) {} {} as the principle pack {} {}{}; set its license, groups and enforcer hints in the file. The rulebook was not changed.",
+            ids.len(),
+            if request.preview {
+                "would be written to"
+            } else {
+                "were written to"
+            },
+            path.display(),
+            pack["name"].as_str().unwrap_or_default(),
+            pack["version"].as_str().unwrap_or_default(),
+            if left_out.is_empty() {
+                String::new()
+            } else {
+                format!(" ({} left out: picked from a pack)", left_out.len())
+            }
+        ),
+    );
+    response.permitted_actions = vec![
+        format!(
+            "in another repository: wh change --import-pack {} (installs it under whetstone/principles)",
+            path.display()
+        ),
+        format!(
+            "then: wh init --action agree --principle {}/<id>",
+            pack["name"].as_str().unwrap_or_default()
+        ),
+    ];
+    response.data = json!({
+        "pack": path.display().to_string(),
+        "schema": crate::catalogue::PACK_SCHEMA,
+        "name": pack["name"],
+        "version": pack["version"],
+        "principles": ids,
         "left_out": left_out,
         "preview_only": request.preview,
     });
