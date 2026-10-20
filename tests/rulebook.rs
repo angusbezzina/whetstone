@@ -27,7 +27,31 @@ fn whetstones_own_rulebook_holds_its_three_shared_must_rules() {
         book.mission.statement,
         "Give every repository a rulebook in a committed file: rules with a rationale, enforced mechanically at pre-commit, pre-push and CI, with findings any agent or host can act on."
     );
-    assert!(book.principles.is_empty());
+    // The repository holds the chain it enforces: every principle is served
+    // and every rule serves one.
+    let principles = book
+        .principles
+        .iter()
+        .map(|entry| entry.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        principles,
+        [
+            "principle.minimize-reader-load",
+            "principle.prove-it-works",
+            "principle.subtract-before-you-add"
+        ]
+    );
+    for entry in &book.rules {
+        assert!(
+            book.principle_for(&entry.rule).is_some(),
+            "{} serves a principle",
+            entry.id.as_str()
+        );
+    }
+    let coverage = book.coverage();
+    assert!(coverage.unserved.is_empty(), "{:?}", coverage.unserved);
+    assert!(coverage.unanchored.is_empty(), "{:?}", coverage.unanchored);
     let ids = book
         .rules
         .iter()
