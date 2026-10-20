@@ -66,6 +66,7 @@
   --ring: #e66c3a;
   --radius: 0px;
   --code-weight: 420;
+  --code-ink: #c2410c;
   --stone-top: #e66c3a;
   --stone-left: #c2410c;
   --stone-right: #d95f2d;
@@ -99,6 +100,7 @@
     --border: #262830;
     --input: #343741;
     --code-weight: 470;
+    --code-ink: #ef7d4e;
     color-scheme: dark;
   }
 }
@@ -128,6 +130,7 @@
   --border: #262830;
   --input: #343741;
   --code-weight: 470;
+  --code-ink: #ef7d4e;
   color-scheme: dark;
 }
 
@@ -210,6 +213,7 @@
   :where(p, li, span, dd, label, h2, h3, td, footer) > code:not(.bare) {
     font-size: 0.875em;
     padding: 0.05em 0.32em;
+    color: var(--code-ink);
     background: var(--card);
     border: 1px solid var(--rule);
     white-space: nowrap;

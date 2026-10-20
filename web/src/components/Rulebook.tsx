@@ -46,14 +46,7 @@ function Principles() {
     <Section
       id="principles"
       title={<span className={heading}>Principles</span>}
-      meta={
-        <>
-          <p className="text-[0.875rem] text-ink-2">What the rules serve. Principles guide people and agents; no tool checks them.</p>
-          <p className="label mt-2">
-            {principles.length} {principles.length === 1 ? "principle" : "principles"}
-          </p>
-        </>
-      }
+      meta={<p className="text-[0.875rem] text-ink-2">What the rules serve. Principles guide people and agents; no tool checks them.</p>}
       folded={`${principles.length} ${principles.length === 1 ? "principle" : "principles"}`}
     >
       {principles.length ? (
@@ -142,15 +135,8 @@ function Groups() {
               {group.label} <span className="text-[1rem] text-ink-3">({group.strength})</span>
             </span>
           }
-          meta={
-            <>
-              <p className="text-[0.875rem] text-ink-2">{group.hint}</p>
-              <p className="label mt-2">
-                {group.rules.length} {group.rules.length === 1 ? "rule" : "rules"}
-              </p>
-            </>
-          }
-          folded={`${group.rules.length} ${group.label.toLowerCase()}`}
+          meta={<p className="text-[0.875rem] text-ink-2">{group.hint}</p>}
+          folded={`${group.rules.length} ${group.label.toLowerCase().slice(0, group.rules.length === 1 ? -1 : undefined)}`}
         >
           {index === 0 && editable ? (
             <div className="mb-3 flex justify-end">
@@ -198,7 +184,6 @@ function Retired() {
     <Section
       id="retired"
       title={<span className={heading}>Retired</span>}
-      meta={<p className="label">{count}</p>}
       folded={count}
     >
       <ul className="border-t border-frame">
