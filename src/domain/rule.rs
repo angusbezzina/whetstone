@@ -225,13 +225,18 @@ const MAX_SWEEP_UNSURE: usize = 16;
 
 /// Where a rule's own flags are doubtful: a flag on one of `paths` (globs),
 /// or whose flagged text matches `matching`, is reported `unsure` with the
-/// reason, so a sweep parks it until a person raises it. It never covers
-/// every flag; a rule that doubts all its flags is a rule to demote.
+/// reason, so a sweep parks it until a person raises it, unless the flag is
+/// on one of `exclude` (globs). It never covers every flag; a rule that
+/// doubts all its flags is a rule to demote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SweepUnsure {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
+    /// Paths (globs) the entry never covers, whatever `paths` or `matching`
+    /// say.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
     /// A regular expression over the flagged line (or the failure message).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matching: Option<String>,
@@ -253,12 +258,8 @@ impl SweepUnsure {
             ));
         }
         bounded_paths(&self.paths)?;
-        let everything = ["*", "**", "**/*", ".", "./", "./**"];
-        if self
-            .paths
-            .iter()
-            .any(|path| everything.contains(&path.trim()))
-        {
+        bounded_paths(&self.exclude)?;
+        if covers_everything(&self.paths) {
             return Err(DomainError::InvalidField(
                 "an unsure path covers every flag; a rule that doubts all its flags is a rule to demote",
             ));
@@ -278,17 +279,65 @@ impl SweepUnsure {
 
     /// Whether a flag on `path` (when it names one) with `text` is doubtful.
     pub fn covers(&self, path: Option<&str>, text: &str) -> bool {
-        let on_path = path.is_some_and(|path| {
-            self.paths
-                .iter()
-                .any(|pattern| super::entry_point_matches(pattern.trim_start_matches("./"), path))
-        });
+        if path.is_some_and(|path| any_matches(&self.exclude, path)) {
+            return false;
+        }
+        let on_path = path.is_some_and(|path| any_matches(&self.paths, path));
         let matched = self
             .matching
             .as_deref()
             .and_then(|pattern| regex::Regex::new(pattern).ok())
             .is_some_and(|regex| regex.is_match(text));
         on_path || matched
+    }
+}
+
+/// What a rule's `exclude` is when the rule has none: generated code, which no
+/// person edits, is out of scope unless the rule says `exclude: []`.
+pub const DEFAULT_EXCLUDE: &[&str] = &["**/generated/**"];
+
+/// What a rule checks: the whole tree it applies to, or only what a change
+/// touched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleMode {
+    /// Every check runs the rule, and its sweep flags become findings.
+    #[default]
+    Tree,
+    /// Only a check against a base (pre-push, `wh check --ci --base`) runs
+    /// the rule; a sweep counts its flags and files no finding.
+    Change,
+}
+
+impl RuleMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Tree => "tree",
+            Self::Change => "change",
+        }
+    }
+
+    pub fn is_tree(&self) -> bool {
+        *self == Self::Tree
+    }
+}
+
+/// How a sweep groups a rule's flags into findings: one per file, or one per
+/// crate or package (the nearest directory above the file holding a
+/// `Cargo.toml` or a `package.json`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Batch {
+    ByFile,
+    ByCrate,
+}
+
+impl Batch {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ByFile => "by-file",
+            Self::ByCrate => "by-crate",
+        }
     }
 }
 
@@ -307,6 +356,18 @@ pub struct Rule {
     /// Repository paths or globs the rule applies to; empty means everywhere.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
+    /// Repository paths or globs the rule never applies to, whatever `paths`
+    /// says. Absent means [`DEFAULT_EXCLUDE`]; an empty list excludes
+    /// nothing, so the file keeps the difference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<Vec<String>>,
+    /// Whether the rule checks the tree or only a change; absent means tree.
+    #[serde(default, skip_serializing_if = "RuleMode::is_tree")]
+    pub mode: RuleMode,
+    /// How a sweep groups this rule's flags into findings; absent means one
+    /// finding per flag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch: Option<Batch>,
     /// How a night sweep works this rule's flags; absent means discuss.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sweep: Option<SweepClass>,
@@ -344,6 +405,14 @@ impl Rule {
             }
         }
         bounded_paths(&self.paths)?;
+        if let Some(exclude) = &self.exclude {
+            bounded_paths(exclude)?;
+            if covers_everything(exclude) {
+                return Err(DomainError::InvalidField(
+                    "an exclude path covers every file; a rule that applies nowhere is a rule to retire",
+                ));
+            }
+        }
         if let Some(reference) = &self.source.reference {
             require_text(reference)?;
         }
@@ -366,13 +435,26 @@ impl Rule {
         Ok(())
     }
 
-    /// Whether this rule applies to a repository-relative path.
+    /// Whether this rule applies to a repository-relative path: one its
+    /// `paths` cover (all, when it names none) and its exclusions do not.
     pub fn applies_to(&self, path: &str) -> bool {
-        self.paths.is_empty()
-            || self
-                .paths
-                .iter()
-                .any(|pattern| super::entry_point_matches(pattern.trim_start_matches("./"), path))
+        (self.paths.is_empty() || any_matches(&self.paths, path)) && !self.excludes(path)
+    }
+
+    /// The paths this rule never applies to: its `exclude`, or
+    /// [`DEFAULT_EXCLUDE`] when it has none.
+    pub fn exclusions(&self) -> Vec<&str> {
+        match &self.exclude {
+            Some(exclude) => exclude.iter().map(String::as_str).collect(),
+            None => DEFAULT_EXCLUDE.to_vec(),
+        }
+    }
+
+    /// Whether `path` is one this rule's exclusions take out of scope.
+    pub fn excludes(&self, path: &str) -> bool {
+        self.exclusions()
+            .into_iter()
+            .any(|pattern| super::entry_point_matches(pattern.trim_start_matches("./"), path))
     }
 
     /// How a sweep works this rule's flags (discuss when unset).
@@ -392,6 +474,18 @@ impl Rule {
             .find(|unsure| unsure.covers(path, text))
             .map(|unsure| unsure.reason.trim())
     }
+}
+
+fn any_matches(patterns: &[String], path: &str) -> bool {
+    patterns
+        .iter()
+        .any(|pattern| super::entry_point_matches(pattern.trim_start_matches("./"), path))
+}
+
+/// Whether a path list names every path in the repository.
+fn covers_everything(paths: &[String]) -> bool {
+    let everything = ["*", "**", "**/*", ".", "./", "./**"];
+    paths.iter().any(|path| everything.contains(&path.trim()))
 }
 
 fn bounded_paths(paths: &[String]) -> Result<(), DomainError> {

@@ -123,8 +123,9 @@ pub fn probe(layout: &ProjectLayout, id: &RecordId, rule: &Rule) -> ProbeReport 
     // paths is about the whole repository, files or not.
     if in_scope == 0 && !rule.paths.is_empty() {
         return report.refuse(format!(
-            "no file in the repository matches the rule's paths ({})",
-            rule.paths.join(", ")
+            "no file in the repository matches the rule's paths ({}) outside its exclusions ({})",
+            rule.paths.join(", "),
+            rule.exclusions().join(", ")
         ));
     }
     match &rule.enforcer {

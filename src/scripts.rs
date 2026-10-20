@@ -29,12 +29,16 @@ and Go toolchain variables, `SSL_CERT_FILE` and `XDG_CACHE_HOME` are kept) plus:
 | --- | --- |
 | `WH_MODE` | `staged` (pre-commit), `base` (changed since `WH_BASE`: pre-push and CI), `changed` (working-tree changes), `sweep` (a sweep of the whole repository for findings) or `all` (the whole repository: a plain `wh check` or a probe) |
 | `WH_RULE` | the rule's id |
-| `WH_PATHS` | a file listing the files in scope, one repository path per line, after the rule's `paths` filter; read only these |
+| `WH_PATHS` | a file listing the files in scope, one repository path per line, after the rule's `paths` and `exclude` filters; read only these |
 | `WH_BASE` | the base revision in `base` mode, empty otherwise |
 | `WH_EVIDENCE_DIR` | a directory kept with the run, for any extra evidence |
 
 In `staged` mode a file on disk can differ from what is staged; read the
 staged content with `git show ":$path"` when that matters.
+
+A script that judges only a change needs no `WH_MODE` guard: give its rule
+`"mode": "change"`, and only a check against a base runs it (a sweep runs
+it in `sweep` mode to count its flags, and files no finding).
 
 ## What the script reports
 

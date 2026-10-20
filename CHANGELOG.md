@@ -9,7 +9,38 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+### Added
+
+- `exclude` on a rule and on a `sweep_unsure` entry: globs or prefixes,
+  matched like `paths`, that the rule (or the doubt) never covers. An
+  excluded path is out of scope in every mode: pre-commit, a base check, a
+  plain check and the sweep. `wh explain`, the dashboard and the schema name
+  it.
+- `mode: change` on a rule: it runs only in a check against a base
+  (pre-push, `wh check --ci --base`), and a sweep runs it to count its flags
+  but files no finding. `wh check --sweep --format json` lists the counts as
+  `data.counts` (`{rule, state, count}`), and `findings.json` is unchanged.
+  `wh explain` says the mode. A plain check names the rules it left to a
+  base in `data.selection.change_only`. Scripts still get `WH_MODE` and
+  `WH_BASE`; the `[ "$WH_MODE" = base ] || exit 0` guard is no longer
+  needed.
+- `batch: by-file | by-crate` on a rule: a sweep files one finding per file,
+  or per crate or package (the nearest directory above the file with a
+  `Cargo.toml` or `package.json`). The finding's new `sites` field lists
+  each flag as `{path, line, text}`; its fingerprint is the rule and the
+  batch (`by-file:<path>` or `by-crate:<directory>`), and its
+  `subjectDigest` covers every site's content. Doubtful sites are batched
+  apart, each batch carrying its `unsure` reason. Unbatched rules keep their
+  exact findings, and `wh explain` resolves a batch's fingerprint.
+
 ### Changed
+
+- A rule without `exclude` no longer applies to `**/generated/**`. A rule
+  that wants generated code says `"exclude": []`. Rules that name none of
+  the new fields keep their digest.
+- A lint or formatter rule's flags on files outside its scope (its `paths`
+  and exclusions) are dropped; when every flag is outside it, the rule
+  passes.
 
 - The check summary labels a should rule's flag WARN instead of FAIL, so
   only a blocking failure reads FAIL.

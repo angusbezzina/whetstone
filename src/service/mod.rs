@@ -147,6 +147,16 @@ pub enum ChangeDefinition {
         source: Option<RuleSource>,
         #[serde(default)]
         paths: Vec<String>,
+        /// Paths the rule never applies to; absent (or null) means generated
+        /// code, and an empty list excludes nothing.
+        #[serde(default)]
+        exclude: Option<Vec<String>>,
+        /// `tree` (the default) or `change`: checked only against a base.
+        #[serde(default)]
+        mode: crate::domain::RuleMode,
+        /// `by-file` or `by-crate`: how a sweep groups its flags.
+        #[serde(default)]
+        batch: Option<crate::domain::Batch>,
         /// How a night sweep works the rule's flags (discuss when absent).
         #[serde(default)]
         sweep: Option<SweepClass>,

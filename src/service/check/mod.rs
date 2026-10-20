@@ -13,7 +13,7 @@ use std::path::Path;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::domain::{ContentDigest, Enforcer, RecordId, Rule, Strength};
+use crate::domain::{ContentDigest, Enforcer, RecordId, Rule, RuleMode, Strength};
 use crate::gates::{ArtifactFailure, FileSet, GateOutcome, GateState};
 use crate::layout::ProjectLayout;
 use crate::rulebook::{Revision, Rulebook, RulebookError, RULEBOOK_PATH};
@@ -43,6 +43,8 @@ pub(crate) struct Selection {
     pub(crate) rules: Vec<SelectedRule>,
     pub(crate) rule_ids: BTreeSet<String>,
     pub(crate) changed_paths: Vec<String>,
+    /// Change-mode rules this check leaves to a check against a base.
+    pub(crate) change_only: Vec<String>,
 }
 
 fn invalid(summary: &str) -> ServiceResponse {
@@ -213,13 +215,13 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         }
     }
     let sweep_findings = (request.gate_mode == GateMode::Sweep).then(|| {
-        let mut found = findings::findings(&project, &rulebook, &selection.rules, &outcomes);
-        fixes::attach(&project, &selection.rules, &mut found);
-        found
+        let mut sweep = findings::findings(&project, &rulebook, &selection.rules, &outcomes);
+        fixes::attach(&project, &selection.rules, &mut sweep.findings);
+        sweep
     });
     if results.is_empty() {
         let mut response = nothing_ran(request_id, &request, &rulebook, &selection, &outcomes);
-        attach_findings(&mut response, sweep_findings.as_deref());
+        attach_findings(&mut response, sweep_findings.as_ref());
         return response;
     }
     let required = results.iter().any(|result| result.required);
@@ -256,6 +258,13 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             "\n{} should-rule flag(s) to repair: {}.",
             flags.len(),
             flags.join(", ")
+        ));
+    }
+    if !selection.change_only.is_empty() {
+        summary.push_str(&format!(
+            "\n{} change-mode rule(s) run only against a base: {}.",
+            selection.change_only.len(),
+            selection.change_only.join(", ")
         ));
     }
     // The chain from principle to rule is a fact about the rulebook, not the
@@ -311,7 +320,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
     if let Some(coverage) = &coverage {
         response.data["coverage"] = coverage_json(coverage);
     }
-    attach_findings(&mut response, sweep_findings.as_deref());
+    attach_findings(&mut response, sweep_findings.as_ref());
     response
 }
 
@@ -434,14 +443,27 @@ fn gate_finding(selected: &SelectedRule, failure: &ArtifactFailure) -> Finding {
     }
 }
 
-/// What a sweep adds beside its gates: its findings.
-fn attach_findings(
-    response: &mut ServiceResponse,
-    sweep_findings: Option<&[findings::SweepFinding]>,
-) {
-    if let Some(found) = sweep_findings {
-        response.data["findings"] = json!(found);
-        response.data["findings_json"] = json!(findings::json_array(found));
+/// What a sweep adds beside its gates: its findings, and how many times
+/// each change-mode rule flagged, which files no finding.
+fn attach_findings(response: &mut ServiceResponse, sweep: Option<&findings::Sweep>) {
+    if let Some(sweep) = sweep {
+        response.data["findings"] = json!(sweep.findings);
+        response.data["findings_json"] = json!(findings::json_array(&sweep.findings));
+        response.data["counts"] = json!(sweep.counts);
+        let counted = sweep
+            .counts
+            .iter()
+            .map(|count| match count.state {
+                GateState::Unknown => format!("{} unknown", count.rule),
+                _ => format!("{} {}", count.rule, count.count),
+            })
+            .collect::<Vec<_>>();
+        if !counted.is_empty() {
+            response.summary.push_str(&format!(
+                "\nChange-mode rules, counted and not filed: {}.",
+                counted.join(", ")
+            ));
+        }
     }
 }
 
@@ -449,6 +471,7 @@ fn selection_json(request: &CheckRequest, selection: &Selection) -> Value {
     json!({
         "mode": format!("{:?}", request.gate_mode).to_ascii_lowercase(),
         "rules": selection.rules.iter().map(|rule| rule.id.as_str()).collect::<Vec<_>>(),
+        "change_only": selection.change_only,
         "changed_paths": selection.changed_paths,
         "base": request.base,
     })
@@ -481,14 +504,21 @@ fn nothing_ran(
     outcomes: &[GateOutcome],
 ) -> ServiceResponse {
     // The rulebook has rules, but none runs at pre-commit (command rules run
-    // at pre-push): the commit is not blocked on them.
+    // at pre-push), or every rule checks only a change against a base: the
+    // commit or push is not blocked on them.
     let deferred = request.gate_mode == GateMode::Staged
         && selection.rules.is_empty()
         && !selection.rule_ids.is_empty();
+    let change_only = selection.rules.is_empty() && !selection.change_only.is_empty();
     let (state, summary) = if deferred {
         (
             ServiceState::Success,
             "No fast mechanical rule applies at pre-commit; the other rules run at pre-push and in CI.",
+        )
+    } else if change_only {
+        (
+            ServiceState::Success,
+            "Every rule this check would run is change-mode: they run only against a base (pre-push, wh check --ci --base).",
         )
     } else {
         (
@@ -610,6 +640,16 @@ pub(crate) fn select_rules(
             continue;
         }
         if request.gate_mode == GateMode::Sweep && !findings::sweepable(&entry.rule) {
+            continue;
+        }
+        // A change-mode rule checks only what changed since a base; a sweep
+        // runs it to count its flags.
+        let against_base = request.gate_mode == GateMode::Changed && request.base.is_some();
+        if entry.rule.mode == RuleMode::Change
+            && !against_base
+            && request.gate_mode != GateMode::Sweep
+        {
+            selection.change_only.push(entry.id.as_str().to_string());
             continue;
         }
         selection.rules.push(SelectedRule {

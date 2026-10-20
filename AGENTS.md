@@ -45,8 +45,8 @@ and what must not move.
 - **Findings.** `src/service/check/findings.rs` writes `findings.json`
   ([schema](references/findings-v1.schema.json)): `fingerprint`,
   `subjectDigest`, `class`, `priority`, `title`, `responsibility`, and when
-  present `principle`, `unsure` and `fix`. The shape is a contract: add
-  fields, never change one.
+  present `principle`, `unsure`, `sites` (a batched rule's finding) and
+  `fix`. The shape is a contract: add fields, never change one.
 - **The envelope.** `src/service/mod.rs` builds
   `whetstone.command-response.v1`
   ([schema](references/command-response-v1.schema.json)) for every command.

@@ -33,8 +33,10 @@ host-specific code. A check's evidence (command output) is written under
   version) or the owner's own;
 - `rules`: each with an id, a statement, a rationale, one `strength`
   (`must`, `should`), one `enforcer`, optional labelled `examples`, a
-  `source`, optional `paths`, and the sweep fields `sweep`,
-  `sweep_priority` and `sweep_unsure`;
+  `source`, optional `paths` and `exclude` (absent: `**/generated/**`),
+  `mode` (`tree`, or `change`: checked only against a base), and the sweep
+  fields `sweep`, `sweep_priority`, `sweep_unsure` and `batch` (`by-file`,
+  `by-crate`);
 - `retired`: the ids taken out of the rulebook, each with its reason;
 - `require_served` (optional, default false): strict mode, under which
   `wh change --accept` refuses a rulebook in which a principle has no rule
@@ -50,7 +52,9 @@ host reads the file directly; it never needs `wh` to do so.
 ### findings.json
 
 `wh check --sweep` runs the rules below must and prints a JSON array, one
-finding per flag and one per line:
+finding per flag (one per batch for a rule with `batch`) and one per line.
+A change-mode rule files nothing; the `--format json` envelope counts its
+flags in `data.counts`.
 
 | Field | Meaning |
 | --- | --- |
@@ -62,6 +66,7 @@ finding per flag and one per line:
 | `responsibility` | the rule id |
 | `principle` | present when the rulebook names the principle the rule serves: its id |
 | `unsure` | present when the rule's `sweep_unsure` covers the flag: the reason |
+| `sites` | present on a batched rule's finding: every flag in the batch as `{path, line, text}` (the fingerprint's subject is the batch, `subjectDigest` covers every site) |
 | `fix` | present when the rule's formatter or linter can rewrite the file: the tool's own diff, which applies with `git apply` (the check never applies it) |
 
 The class bounds a host's reach: `draft_pr` is a mechanical fix the host

@@ -183,6 +183,7 @@ pub(super) fn export(
         if !request.include_paths {
             rule.paths.clear();
             rule.sweep_unsure.clear();
+            rule.exclude = rule.exclude.filter(Vec::is_empty);
             for example in &mut rule.examples {
                 example.path = None;
             }
@@ -736,6 +737,9 @@ fn starter_rule(
         sweep: None,
         sweep_priority: None,
         sweep_unsure: Vec::new(),
+        exclude: None,
+        mode: crate::domain::RuleMode::Tree,
+        batch: None,
     }
 }
 

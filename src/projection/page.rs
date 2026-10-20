@@ -11,7 +11,9 @@ use serde_json::{json, Value};
 
 use super::diff::{self, EntryChange, FieldChange};
 use super::{examples, rule_edit, starter_view, EditBase, StarterView};
-use crate::domain::{Enforcer, PrincipleSource, Rule, Strength, SweepClass, SweepUnsure};
+use crate::domain::{
+    Batch, Enforcer, PrincipleSource, Rule, RuleMode, Strength, SweepClass, SweepUnsure,
+};
 use crate::rulebook::{self, Rulebook};
 
 /// One commit that touched the rulebook, with what it changed.
@@ -190,6 +192,13 @@ pub struct RuleView {
     pub check: Check,
     pub stages: Vec<Stage>,
     pub paths: Vec<String>,
+    /// The paths the rule never applies to: its own, or generated code when
+    /// it names none.
+    pub exclude: Vec<String>,
+    /// `tree`, or `change`: checked only against a base, counted by a sweep.
+    pub mode: &'static str,
+    /// `by-file` or `by-crate` when a sweep groups the rule's flags.
+    pub batch: Option<&'static str>,
     pub examples: Vec<Value>,
     pub source: SourceView,
     /// The principle the rule serves, when its source names one held here.
@@ -322,7 +331,7 @@ fn stages(rule: &Rule) -> Vec<Stage> {
         Stage {
             key: "commit",
             label: "commit",
-            runs: rule.enforcer.runs_staged(),
+            runs: rule.enforcer.runs_staged() && rule.mode == RuleMode::Tree,
         },
         Stage {
             key: "push",
@@ -721,6 +730,9 @@ pub fn page_view(book: Option<&Rulebook>, input: PageInput<'_>) -> PageView {
                 check: check(rule),
                 stages: stages(rule),
                 paths: rule.paths.clone(),
+                exclude: rule.exclusions().into_iter().map(str::to_owned).collect(),
+                mode: rule.mode.label(),
+                batch: rule.batch.map(Batch::label),
                 examples: examples(rule),
                 source: source(rule),
                 serves: book

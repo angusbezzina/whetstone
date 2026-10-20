@@ -112,6 +112,9 @@ fn prove_it_works(root: &Path) -> Option<Starter> {
         sweep: None,
         sweep_priority: None,
         sweep_unsure: Vec::new(),
+        exclude: None,
+        mode: crate::domain::RuleMode::Tree,
+        batch: None,
     };
     Some(Starter {
         id: PROVE_IT_WORKS,
@@ -158,6 +161,9 @@ fn conflict_markers() -> Rule {
         sweep: None,
         sweep_priority: None,
         sweep_unsure: Vec::new(),
+        exclude: None,
+        mode: crate::domain::RuleMode::Tree,
+        batch: None,
     }
 }
 

@@ -12,13 +12,14 @@ use serde_json::json;
 
 use crate::compile::{self, Candidate};
 use crate::domain::{
-    Enforcer, ExampleVerdict, RecordId, Rule, RuleExample, RuleSource, RuleSourceKind, Strength,
-    RULE_SCHEMA_V2,
+    Batch, Enforcer, ExampleVerdict, RecordId, Rule, RuleExample, RuleSource, RuleSourceKind,
+    Strength, RULE_SCHEMA_V2,
 };
 use crate::layout::ProjectLayout;
 use crate::rulebook::{self, RuleEntry, Rulebook, RulebookError, RULEBOOK_PATH};
 
 use super::change::{draft, probes_json, rulebook_unreadable, Probed, Probing};
+use super::check::findings;
 use super::{ChangeKind, ChangeRequest, ServiceResponse, ServiceState};
 
 /// Where the candidates came from, for rationales and provenance.
@@ -312,6 +313,9 @@ fn rule_of(candidate: &Candidate, enforcer: Enforcer, origin: &Origin) -> Rule {
         sweep: None,
         sweep_priority: None,
         sweep_unsure: Vec::new(),
+        exclude: None,
+        mode: crate::domain::RuleMode::Tree,
+        batch: None,
     }
 }
 
@@ -324,28 +328,39 @@ fn from_finding(
     findings_file: Option<&Path>,
 ) -> Result<(Origin, Vec<Candidate>), String> {
     let root = layout.project_root();
-    let rule_ids = book
-        .rules
-        .iter()
-        .map(|entry| entry.id.as_str().to_string())
-        .collect::<Vec<_>>();
+    // A batched finding names a file or a crate; a crate narrows the rule
+    // to its directory.
+    let mut crate_directory = None;
     let (rule_id, location) = if let Some((rule, location)) = finding.split_once('@') {
         (rule.to_string(), location.to_string())
     } else if super::explain::looks_like_fingerprint(finding) {
         let fingerprint = super::explain::normalize(finding);
         let found = super::explain::from_findings_file(root, findings_file, &fingerprint)?
-            .or_else(|| super::explain::recompute(root, &rule_ids, &fingerprint))
+            .or_else(|| super::explain::recompute(root, book, &fingerprint))
             .ok_or_else(|| format!("No rule here produces the finding {fingerprint}."))?;
-        let subject = found.1.split('#').next().unwrap_or_default().to_string();
+        let subject = |found: &str| {
+            if findings::batch_of(found).is_some() {
+                found.to_string()
+            } else {
+                found.split('#').next().unwrap_or_default().to_string()
+            }
+        };
         // A findings file gives a title, not a path: recompute the subject.
-        let subject = if root.join(&subject).is_file() {
-            subject
+        let subject = if root.join(subject(&found.1)).is_file() {
+            subject(&found.1)
         } else {
-            super::explain::recompute(root, &rule_ids, &fingerprint)
-                .map(|(_, subject, _)| subject.split('#').next().unwrap_or_default().to_string())
+            super::explain::recompute(root, book, &fingerprint)
+                .map(|(_, recomputed, _)| subject(&recomputed))
                 .unwrap_or_default()
         };
-        (found.0, subject)
+        match findings::batch_of(&subject) {
+            Some((Batch::ByFile, file)) => (found.0, file.to_string()),
+            Some((Batch::ByCrate, directory)) => {
+                crate_directory = Some(directory.to_string());
+                (found.0, String::new())
+            }
+            None => (found.0, subject),
+        }
     } else {
         return Err(format!(
             "{finding} is neither a finding fingerprint nor <rule id>@<path[:line]>."
@@ -379,8 +394,9 @@ fn from_finding(
         .parent()
         .map(|parent| parent.display().to_string())
         .filter(|parent| !parent.is_empty());
-    let paths = match directory {
-        Some(directory) if !path.is_empty() => vec![format!("{directory}/**")],
+    let paths = match (directory, crate_directory) {
+        (Some(directory), _) if !path.is_empty() => vec![format!("{directory}/**")],
+        (_, Some(directory)) if directory != "." => vec![format!("{directory}/**")],
         _ => rule.paths.clone(),
     };
     let candidate = Candidate {

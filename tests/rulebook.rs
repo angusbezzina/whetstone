@@ -105,9 +105,12 @@ fn the_published_schema_names_exactly_the_fields_the_reader_accepts() {
             {"system": "git", "locator": "README.md"}
         ]},
         "paths": ["src/**"],
+        "exclude": ["src/vendor/**"],
+        "mode": "change",
+        "batch": "by-crate",
         "sweep": "draft_pr",
         "sweep_priority": 0,
-        "sweep_unsure": [{"paths": ["tests/**"], "matching": "fixture", "reason": "fixtures may flag"}]
+        "sweep_unsure": [{"paths": ["tests/**"], "exclude": ["tests/golden/**"], "matching": "fixture", "reason": "fixtures may flag"}]
     });
     let full_principle = json!({
         "id": "principle.prove-it-works",

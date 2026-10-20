@@ -144,7 +144,8 @@ pub(super) fn probes_json(probes: &[Probed]) -> Value {
         .collect::<Vec<_>>())
 }
 
-/// Probe each rule `after` adds or re-aims (a new enforcer or new paths),
+/// Probe each rule `after` adds or re-aims (a new enforcer, new paths or new
+/// exclusions),
 /// compared with the rulebook on disk. A probe in `known` of the same rule is
 /// reused rather than run again.
 pub(super) fn probe_changed(root: &Path, after: &Rulebook, known: &[Probed]) -> Vec<Probed> {
@@ -161,6 +162,7 @@ pub(super) fn probe_changed(root: &Path, after: &Rulebook, known: &[Probed]) -> 
                     old.id == entry.id
                         && old.rule.enforcer == entry.rule.enforcer
                         && old.rule.paths == entry.rule.paths
+                        && old.rule.exclude == entry.rule.exclude
                 })
             })
         })
@@ -523,6 +525,9 @@ fn rule_of(
         examples,
         source,
         paths,
+        exclude,
+        mode,
+        batch,
         sweep,
         sweep_priority,
         sweep_unsure,
@@ -583,6 +588,9 @@ fn rule_of(
         examples: examples.clone(),
         source,
         paths: paths.clone(),
+        exclude: exclude.clone(),
+        mode: *mode,
+        batch: *batch,
         sweep: *sweep,
         sweep_priority: *sweep_priority,
         sweep_unsure: sweep_unsure.clone(),
