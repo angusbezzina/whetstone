@@ -9,6 +9,8 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-21
+
 ### Added
 
 - `exclude` on a rule and on a `sweep_unsure` entry: globs or prefixes,
