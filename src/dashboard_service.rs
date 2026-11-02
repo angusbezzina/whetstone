@@ -234,6 +234,7 @@ impl DashboardCommand {
             principles: false,
             import_pack: None,
             require_served: None,
+            ..ChangeRequest::default()
         })
     }
 }

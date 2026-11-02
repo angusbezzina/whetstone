@@ -48,10 +48,10 @@ pub(super) fn change(request: ChangeRequest) -> ServiceResponse {
         return require_served(root, request_id, strict, &request);
     }
     if let Some(target) = request.export_pack.as_deref() {
-        return super::packs::export(&layout, request_id, target, &request);
+        return super::pack_export::export(&layout, request_id, target, &request);
     }
-    if let Some(source) = request.import_pack.as_deref() {
-        return super::packs::import(&layout, request_id, source, &request);
+    if request.import_pack.is_some() || request.import_text.is_some() {
+        return super::pack_import::import(&layout, request_id, &request);
     }
     if request.from_text.is_some() || request.from_file.is_some() || request.from_finding.is_some()
     {
@@ -75,7 +75,7 @@ fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String
         request.retire,
         layout.project_id(),
     ) + &format!(
-        "\0{}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{}\0{:?}",
+        "\0{}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{:?}\0{}",
         request.allow_unvalidated,
         request.from_text,
         request.from_file,
@@ -83,7 +83,15 @@ fn default_request_id(layout: &ProjectLayout, request: &ChangeRequest) -> String
         request.findings,
         request.export_pack,
         request.include_paths,
-        request.import_pack
+        request.import_pack,
+        request.import_text,
+        request.only,
+        request.keep_paths,
+        request.with_files,
+        request.pack_name,
+        request.pack_version,
+        request.map_paths,
+        request.allow_commands,
     );
     format!(
         "change-{}",
@@ -942,6 +950,102 @@ fn uncommitted(root: &Path) -> Result<bool, String> {
     .map(|status| !status.trim().is_empty())
 }
 
+/// Quote a path for a command a person pastes.
+fn shell_quoted(path: &str) -> String {
+    let plain = !path.is_empty()
+        && path
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "._-/+@".contains(character));
+    if plain {
+        path.to_string()
+    } else {
+        format!("'{}'", path.replace('\'', "'\\''"))
+    }
+}
+
+/// The files the commands of `rule` name that are on disk.
+fn named_files(root: &Path, rule: &Rule) -> Vec<String> {
+    rule.enforcer
+        .command()
+        .and_then(|command| crate::gates::parse_command(command).ok())
+        .map(|sequences| crate::probe::named_paths(&sequences))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|path| root.join(path).is_file())
+        .collect()
+}
+
+/// Whether Git holds `path` as it stands. A file the command itself names
+/// has to be committed even when it is ignored; a file only mentioned may be
+/// a build output, so ignoring it is the repository's call.
+fn differs_from_head(root: &Path, path: &str, named: bool) -> bool {
+    let mut args = vec!["status", "--porcelain", "--untracked-files=all"];
+    if named {
+        args.push("--ignored=matching");
+    }
+    args.extend(["--", path]);
+    git(root, &args).map_or(true, |status| !status.trim().is_empty())
+}
+
+/// The files the rules a draft adds or re-aims run, and those the scripts
+/// mention, that are not committed as they stand. Accepting commits the
+/// rulebook and only it, so such a rule would pass here and fail in CI, where
+/// the file does not exist. A rule whose enforcer is already committed is not
+/// judged again.
+fn uncommitted_files(root: &Path, head: Option<&Rulebook>, current: &Rulebook) -> Vec<String> {
+    let named = current
+        .rules
+        .iter()
+        .filter(|entry| {
+            !head.is_some_and(|head| {
+                head.rules
+                    .iter()
+                    .any(|old| old.id == entry.id && old.rule.enforcer == entry.rule.enforcer)
+            })
+        })
+        .flat_map(|entry| named_files(root, &entry.rule))
+        .collect::<Vec<_>>();
+    let mut files = super::pack_files::support_files(root, &named)
+        .into_iter()
+        .filter(|path| differs_from_head(root, path, false))
+        .collect::<Vec<_>>();
+    files.extend(
+        named
+            .into_iter()
+            .filter(|path| differs_from_head(root, path, true)),
+    );
+    files.sort();
+    files.dedup();
+    files
+}
+
+/// Accepting refused until the files the drafted rules run are committed.
+fn files_first(request_id: String, files: Vec<String>) -> ServiceResponse {
+    let quoted = files
+        .iter()
+        .map(|path| shell_quoted(path))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let add = format!("git add {quoted} && git commit -m \"Add the files the rules run\"");
+    let mut response = ask(
+        request_id,
+        format!(
+            "The drafted rules run {}, which {} not committed, and accepting commits {RULEBOOK_PATH} and only it. Commit {} first: {add}, then wh change --accept.",
+            files.join(", "),
+            if files.len() == 1 { "is" } else { "are" },
+            if files.len() == 1 { "it" } else { "them" },
+        ),
+    );
+    response.summary = format!(
+        "Nothing was committed: {} must be committed before the rules that run {} are accepted.",
+        files.join(", "),
+        if files.len() == 1 { "it" } else { "them" },
+    );
+    response.permitted_actions = vec![add.clone(), "wh change --accept".into()];
+    response.data = json!({"uncommitted_files": files, "commands": [add, "wh change --accept"]});
+    response
+}
+
 /// Accept the drafted edits: commit the rulebook file, and only it.
 fn accept(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceResponse {
     match uncommitted(root) {
@@ -1003,7 +1107,16 @@ fn accept(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceRe
         });
         return response;
     }
-    let edits = match committed(root) {
+    let head = committed(root);
+    let waiting = match &head {
+        Some(Err(_)) => Vec::new(),
+        Some(Ok(head)) => uncommitted_files(root, Some(head), &current),
+        None => uncommitted_files(root, None, &current),
+    };
+    if !waiting.is_empty() {
+        return files_first(request_id, waiting);
+    }
+    let edits = match head {
         Some(Ok(head)) => changes(Some(&head), &current),
         Some(Err(_)) => vec![(
             "replace the unreadable committed rulebook".into(),
@@ -1068,6 +1181,29 @@ fn accept(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceRe
     response
 }
 
+/// The untracked files that only rules being withdrawn run or mention: what
+/// an import wrote and withdrawing leaves in place.
+fn untracked_after_withdraw(root: &Path, head: &Rulebook, current: &Rulebook) -> Vec<String> {
+    let named = current
+        .rules
+        .iter()
+        .filter(|entry| !head.rules.iter().any(|old| old.id == entry.id))
+        .flat_map(|entry| named_files(root, &entry.rule))
+        .collect::<Vec<_>>();
+    let mut files = super::pack_files::support_files(root, &named);
+    files.extend(named);
+    files.retain(|path| {
+        git(
+            root,
+            &["status", "--porcelain", "--untracked-files=all", "--", path],
+        )
+        .is_ok_and(|status| status.starts_with("??"))
+    });
+    files.sort();
+    files.dedup();
+    files
+}
+
 /// Withdraw the drafted edits: restore the rulebook to its last commit.
 fn withdraw(root: &Path, request_id: String, request: &ChangeRequest) -> ServiceResponse {
     let Some(head) = committed(root) else {
@@ -1088,8 +1224,12 @@ fn withdraw(root: &Path, request_id: String, request: &ChangeRequest) -> Service
         }
         Err(error) => return git_failed(request_id, error),
     }
+    let mut left_behind = Vec::new();
     let edits = match (head, rulebook::load(root)) {
-        (Ok(head), Ok(current)) => changes(Some(&head), &current),
+        (Ok(head), Ok(current)) => {
+            left_behind = untracked_after_withdraw(root, &head, &current);
+            changes(Some(&head), &current)
+        }
         _ => vec![("restore the rulebook as committed".into(), String::new())],
     };
     let listed = edits
@@ -1104,7 +1244,7 @@ fn withdraw(root: &Path, request_id: String, request: &ChangeRequest) -> Service
             format!("Review the edits that withdrawing discards from {RULEBOOK_PATH}."),
         );
         response.permitted_actions = vec!["repeat without --preview to withdraw them".into()];
-        response.data = json!({"preview_only": true, "path": RULEBOOK_PATH, "discards": listed});
+        response.data = json!({"preview_only": true, "path": RULEBOOK_PATH, "discards": listed, "left_behind": left_behind});
         return response;
     }
     if let Err(error) = git(
@@ -1124,12 +1264,20 @@ fn withdraw(root: &Path, request_id: String, request: &ChangeRequest) -> Service
         request_id,
         "change",
         ServiceState::Success,
-        format!("The drafted edits were withdrawn; {RULEBOOK_PATH} is as last committed."),
+        if left_behind.is_empty() {
+            format!("The drafted edits were withdrawn; {RULEBOOK_PATH} is as last committed.")
+        } else {
+            format!(
+                "The drafted edits were withdrawn; {RULEBOOK_PATH} is as last committed. Nothing else was touched, so these files are still here: {}.",
+                left_behind.join(", ")
+            )
+        },
     );
     response.permitted_actions = vec!["wh check".into()];
     response.data = json!({
         "path": RULEBOOK_PATH,
         "discarded": listed,
+        "left_behind": left_behind,
         "revision": rulebook::revision(root),
     });
     response

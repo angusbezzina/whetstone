@@ -55,6 +55,17 @@ pub struct ProbeReport {
 }
 
 impl ProbeReport {
+    /// The command ran and failed without pointing at a place, so it will
+    /// fail the same way on every check until something changes.
+    pub fn fails_today(&self) -> bool {
+        self.ran
+            && self.exit_code.is_some_and(|code| code != 0)
+            && self
+                .samples
+                .iter()
+                .all(|sample| sample.location.starts_with("exit code"))
+    }
+
     fn new(rule: &Rule, files_in_scope: usize) -> Self {
         let (_, target) = gates::mechanism_label(rule);
         Self {
@@ -102,7 +113,7 @@ impl ProbeReport {
 
 /// The repository's files a check reads: tracked and untracked, without
 /// Whetstone's own wiring.
-fn repository_files(root: &Path) -> Result<FileSet, String> {
+pub fn repository_files(root: &Path) -> Result<FileSet, String> {
     FileSet::repository(root).map(|files| files.retain(|path| !crate::wire::is_generated(path)))
 }
 
@@ -147,12 +158,16 @@ pub fn probe(layout: &ProjectLayout, id: &RecordId, rule: &Rule) -> ProbeReport 
             }
         }
         Enforcer::Lint { tool, code } => {
-            let argv = match gates::parse_command(tool) {
-                Ok(sequences) => sequences.last().cloned().unwrap_or_default(),
+            let sequences = match gates::parse_command(tool) {
+                Ok(sequences) => sequences,
                 Err(error) => {
                     return report.refuse(format!("the lint command is not usable: {error}"))
                 }
             };
+            if let Some(file) = missing_file(&sequences, |path| root.join(path).exists()) {
+                return report.refuse(missing_reason(&file));
+            }
+            let argv = sequences.last().cloned().unwrap_or_default();
             match known_code(root, &argv, code) {
                 Ok(how) => {
                     let mut report = run_command(layout, &files, id, rule, report);
@@ -165,11 +180,8 @@ pub fn probe(layout: &ProjectLayout, id: &RecordId, rule: &Rule) -> ProbeReport 
         Enforcer::Formatter { tool: command }
         | Enforcer::Test { command }
         | Enforcer::Validator { command } => match gates::parse_command(command) {
-            Ok(sequences) => match missing_script(root, &sequences) {
-                Some(script) => report.refuse(format!(
-                    "the script {script} does not exist; write it first (see {})",
-                    crate::scripts::README
-                )),
+            Ok(sequences) => match missing_file(&sequences, |path| root.join(path).exists()) {
+                Some(file) => report.refuse(missing_reason(&file)),
                 None => run_command(layout, &files, id, rule, report),
             },
             Err(error) => report.refuse(format!("the command is not usable: {error}")),
@@ -177,15 +189,110 @@ pub fn probe(layout: &ProjectLayout, id: &RecordId, rule: &Rule) -> ProbeReport 
     }
 }
 
-/// A script under `whetstone/checks/` that a command names but that is not
-/// there: running it would report the shell's error as a finding.
-fn missing_script(root: &Path, sequences: &[Vec<String>]) -> Option<String> {
-    sequences
+fn missing_reason(file: &str) -> String {
+    format!(
+        "the script {file} does not exist; write it first (see {})",
+        crate::scripts::README
+    )
+}
+
+/// What a command starts by file. A missing one would otherwise read as a
+/// tool that ran and failed.
+const SCRIPT_EXTENSIONS: [&str; 10] = [
+    ".sh", ".bash", ".mjs", ".cjs", ".js", ".ts", ".py", ".rb", ".pl", ".ps1",
+];
+/// Programs whose first argument is a script to run.
+const INTERPRETERS: [&str; 13] = [
+    "node", "bun", "deno", "sh", "bash", "zsh", "python", "python3", "ruby", "perl", "tsx",
+    "ts-node", "uv",
+];
+/// Flags after which an interpreter runs code or a module, not a file.
+const INLINE_FLAGS: [&str; 6] = ["-c", "-e", "-m", "-p", "--eval", "--print"];
+
+/// A token read as a path in the repository: relative, literal and inside
+/// it. Flags, globs, URLs, scoped packages and script names such as
+/// `records:check` are not paths.
+fn path_token(token: &str) -> Option<&str> {
+    let path = token.strip_prefix("./").unwrap_or(token);
+    let literal = !path.is_empty()
+        && path != "."
+        && !path.starts_with(['-', '@', '/', '~'].as_slice())
+        && !path.contains("..")
+        && !path.contains(['*', '?', '{', '}', '[', ']', '$', '%', ':', '=', '\\'].as_slice());
+    literal.then_some(path)
+}
+
+fn is_script(path: &str) -> bool {
+    SCRIPT_EXTENSIONS
         .iter()
-        .flatten()
-        .map(|token| token.trim_start_matches("./"))
-        .find(|token| token.starts_with(SCRIPTS_DIR) && !root.join(token).is_file())
-        .map(str::to_owned)
+        .any(|extension| path.ends_with(extension))
+}
+
+/// The paths a command cannot run without: its program when that is a path,
+/// the script an interpreter is given, anything with a script's extension
+/// and anything under `whetstone/checks/`. A command's other arguments are
+/// left alone, because a search pattern can look like a path.
+pub fn required_files(sequences: &[Vec<String>]) -> Vec<String> {
+    let mut files = Vec::new();
+    for argv in sequences {
+        for (index, token) in argv.iter().enumerate() {
+            let Some(path) = path_token(token) else {
+                continue;
+            };
+            if is_script(path) || path.starts_with(SCRIPTS_DIR) || index == 0 && path.contains('/')
+            {
+                files.push(path.to_owned());
+            }
+        }
+        let program = argv.first().map_or("", |program| {
+            program.rsplit('/').next().unwrap_or(program.as_str())
+        });
+        if INTERPRETERS.contains(&program) {
+            for token in argv.iter().skip(1).filter(|token| *token != "run") {
+                if INLINE_FLAGS.contains(&token.as_str()) {
+                    break;
+                }
+                if token.starts_with('-') {
+                    continue;
+                }
+                if let Some(path) = path_token(token).filter(|path| path.contains('/')) {
+                    files.push(path.to_owned());
+                }
+                break;
+            }
+        }
+    }
+    files.sort();
+    files.dedup();
+    files
+}
+
+/// Every token of a command that could name a file, with `--flag=value`
+/// read as its value: what a pack looks for among the tracked files.
+pub fn named_paths(sequences: &[Vec<String>]) -> Vec<String> {
+    let mut paths = required_files(sequences);
+    for token in sequences.iter().flatten() {
+        let value = match token.split_once('=') {
+            Some((flag, value)) if flag.starts_with('-') => value,
+            _ => token,
+        };
+        if let Some(path) = path_token(value) {
+            if path.contains('/') || is_script(path) {
+                paths.push(path.to_owned());
+            }
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+/// The first file a command needs that `exists` does not find. Static, so
+/// an import's review can ask it without running anything.
+pub fn missing_file(sequences: &[Vec<String>], exists: impl Fn(&str) -> bool) -> Option<String> {
+    required_files(sequences)
+        .into_iter()
+        .find(|path| !exists(path))
 }
 
 /// Run a command enforcer once over the whole repository, as the gate does.
@@ -338,6 +445,38 @@ mod tests {
 
     fn argv(line: &str) -> Vec<String> {
         line.split_whitespace().map(str::to_string).collect()
+    }
+
+    fn missing(line: &str) -> Option<String> {
+        let sequences = gates::parse_command(line).expect("command");
+        missing_file(&sequences, |path| path == "scripts/real.mjs")
+    }
+
+    #[test]
+    fn a_command_naming_a_file_that_is_not_there_says_which() {
+        for (line, file) in [
+            ("node scripts/missing.mjs", "scripts/missing.mjs"),
+            ("bun run scripts/missing.ts --strict", "scripts/missing.ts"),
+            ("sh tools/check", "tools/check"),
+            ("./tools/check --all", "tools/check"),
+            ("whetstone/checks/gone", "whetstone/checks/gone"),
+            ("python3 check.py", "check.py"),
+        ] {
+            assert_eq!(missing(line).as_deref(), Some(file), "{line}");
+        }
+        for line in [
+            "node scripts/real.mjs",
+            "cargo test",
+            "bun run records:check",
+            "python3 -m pytest tests/unit",
+            "go test ./...",
+            "rg -n foo/bar src",
+            "npx @biomejs/biome check src/",
+            "node -e console.log(1)",
+            "git diff origin/main",
+        ] {
+            assert_eq!(missing(line), None, "{line}");
+        }
     }
 
     #[test]

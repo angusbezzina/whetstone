@@ -1,13 +1,11 @@
 //! Rule packs: a self-describing JSON file of accepted, mission-independent
-//! rules and principles that another repository imports as drafts.
+//! rules and principles, with the files their commands run, that another
+//! repository imports as drafts.
 //!
-//! `wh change --export-pack <file>` exports what the committed rulebook holds
-//! (never a draft in the working tree, a rule derived from this repository's
-//! mission, or repository paths unless `--include-paths`), with a content
-//! digest. `wh change --import-pack <file|url|name>` verifies the digest,
-//! probes every rule on this repository and writes the rules and principles
-//! into `whetstone/rulebook.json` as drafts, with the pack as their source;
-//! nothing takes force until a person accepts it. A principle pack
+//! `pack_export` writes a pack from the committed rulebook and `pack_import`
+//! reviews and applies one. Reviewing runs nothing; a pack's commands run and
+//! its files arrive only with a person's consent, and nothing takes force
+//! until a person accepts it. A principle pack
 //! (`whetstone.principle-pack.v1`) imported the same way is installed under
 //! `whetstone/principles/`. Whetstone ships one starter rule pack per
 //! language it parses: `rust`, `typescript` and `python`.
@@ -15,22 +13,23 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::domain::{
-    Enforcer, ExampleVerdict, Principle, PrincipleSource, RecordId, Rule, RuleExample, RuleSource,
+    Enforcer, ExampleVerdict, PrincipleSource, RecordId, Rule, RuleExample, RuleSource,
     RuleSourceKind, Strength, RULE_SCHEMA_V2,
 };
-use crate::layout::ProjectLayout;
-use crate::rulebook::{self, PrincipleEntry, RuleEntry, Rulebook, RulebookError, RULEBOOK_PATH};
+use crate::rulebook::{self, Rulebook};
 
-use super::change::{committed, draft, probes_json, rulebook_unreadable, Probed, Probing};
-use super::{unknown_response, utc_now, ChangeRequest, ServiceResponse, ServiceState};
+use super::pack_files::{refused_path, PackedFile};
+use super::{unknown_response, ChangeRequest, ServiceResponse, ServiceState};
 
-pub const RULE_PACK_SCHEMA: &str = "whetstone.rule-pack.v1";
-/// The largest pack read, from a file or a URL.
-const MAX_PACK_BYTES: u64 = 1024 * 1024;
+pub const RULE_PACK_SCHEMA: &str = "whetstone.rule-pack.v2";
+/// The first shape: the same fields without the optional ones v2 adds.
+const RULE_PACK_SCHEMA_V1: &str = "whetstone.rule-pack.v1";
+/// The largest pack read or written, from a file, a URL or the dashboard.
+pub(super) const MAX_PACK_BYTES: u64 = 1024 * 1024;
 /// The packs that ship in the binary.
 pub const BUILT_IN: [&str; 3] = ["rust", "typescript", "python"];
 
@@ -42,14 +41,17 @@ pub struct RulePack {
     pub version: String,
     /// The repository (or `whetstone`) the pack was exported from.
     pub source: String,
-    /// `sha256:` of the JSON of `principles` and `rules`.
+    /// `sha256:` of the JSON of `principles`, `rules` and any `files`.
     pub digest: String,
-    /// Whether rules keep the exporting repository's paths.
+    /// Whether every rule keeps the exporting repository's paths.
     #[serde(default)]
     pub includes_paths: bool,
     #[serde(default)]
     pub principles: Vec<PackedPrinciple>,
     pub rules: Vec<PackedRule>,
+    /// The files the rules' commands need, one entry per path.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<PackedFile>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +61,9 @@ pub struct PackedPrinciple {
     pub statement: String,
     #[serde(default)]
     pub rationale: Option<String>,
+    /// Where it came from, when that is not the owner's own words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<PrincipleSource>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,42 +71,58 @@ pub struct PackedPrinciple {
 pub struct PackedRule {
     pub id: String,
     pub rule: Rule,
+    /// The rule had paths where it came from, and they stayed behind, so
+    /// here it covers every file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scoped_at_source: bool,
+    /// The paths in the pack's `files` this rule needs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
 }
 
-fn content_digest(principles: &[PackedPrinciple], rules: &[PackedRule]) -> String {
-    let bytes =
-        serde_json::to_vec(&json!({"principles": principles, "rules": rules})).unwrap_or_default();
+fn content_digest(
+    principles: &[PackedPrinciple],
+    rules: &[PackedRule],
+    files: &[PackedFile],
+) -> String {
+    let mut content = json!({"principles": principles, "rules": rules});
+    if !files.is_empty() {
+        content["files"] = json!(files);
+    }
+    let bytes = serde_json::to_vec(&content).unwrap_or_default();
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
 impl RulePack {
-    fn sealed(
+    pub(super) fn sealed(
         name: &str,
         version: &str,
         source: &str,
         includes_paths: bool,
         principles: Vec<PackedPrinciple>,
         rules: Vec<PackedRule>,
+        files: Vec<PackedFile>,
     ) -> Self {
         Self {
             schema: RULE_PACK_SCHEMA.into(),
             name: name.into(),
             version: version.into(),
             source: source.into(),
-            digest: content_digest(&principles, &rules),
+            digest: content_digest(&principles, &rules, &files),
             includes_paths,
             principles,
             rules,
+            files,
         }
     }
 
-    /// The pack is what it says: schema, digest, valid and unique ids, and
-    /// every rule valid.
+    /// The pack is what it says: schema, digest, valid and unique ids, every
+    /// rule valid, and every file allowed, intact and accounted for.
     pub fn verify(&self) -> Result<(), String> {
-        if self.schema != RULE_PACK_SCHEMA {
+        if self.schema != RULE_PACK_SCHEMA && self.schema != RULE_PACK_SCHEMA_V1 {
             return Err(format!("a rule pack's schema is {RULE_PACK_SCHEMA}"));
         }
-        let expected = content_digest(&self.principles, &self.rules);
+        let expected = content_digest(&self.principles, &self.rules, &self.files);
         if self.digest != expected {
             return Err(format!(
                 "the pack's digest {} does not match its content ({expected}); it was changed after export",
@@ -120,17 +141,42 @@ impl RulePack {
                 return Err(format!("the pack lists {id} twice"));
             }
         }
+        let mut paths = std::collections::BTreeSet::new();
+        for file in &self.files {
+            if let Some(reason) = refused_path(&file.path) {
+                return Err(format!("it carries {}, and {reason}", file.path));
+            }
+            if !paths.insert(file.path.as_str()) {
+                return Err(format!("the pack lists {} twice", file.path));
+            }
+            if !file.intact() {
+                return Err(format!(
+                    "the digest of {} does not match its text; it was changed after export",
+                    file.path
+                ));
+            }
+        }
         for packed in &self.rules {
             packed
                 .rule
                 .validate()
                 .map_err(|error| format!("{} is not a valid rule: {error}", packed.id))?;
+            if let Some(path) = packed
+                .files
+                .iter()
+                .find(|path| !paths.contains(path.as_str()))
+            {
+                return Err(format!(
+                    "{} names the file {path}, which the pack does not carry",
+                    packed.id
+                ));
+            }
         }
         Ok(())
     }
 }
 
-fn needs(request_id: String, summary: String) -> ServiceResponse {
+pub(super) fn needs(request_id: String, summary: String) -> ServiceResponse {
     let mut response = ServiceResponse::new(
         request_id,
         "change",
@@ -138,130 +184,6 @@ fn needs(request_id: String, summary: String) -> ServiceResponse {
         summary.clone(),
     );
     response.blocking_questions = vec![summary];
-    response
-}
-
-/// `wh change --export-pack <file>`: the committed rulebook's
-/// mission-independent rules and its principles as a pack.
-pub(super) fn export(
-    layout: &ProjectLayout,
-    request_id: String,
-    target: &str,
-    request: &ChangeRequest,
-) -> ServiceResponse {
-    let root = layout.project_root();
-    let book = match committed(root) {
-        Some(Ok(book)) => book,
-        Some(Err(error)) => return rulebook_unreadable(request_id, &error),
-        None => {
-            return needs(
-                request_id,
-                format!("{RULEBOOK_PATH} was never committed, so no rule is accepted yet; accept one first (wh change --accept)."),
-            )
-        }
-    };
-    if request.principles {
-        return export_principles(root, request_id, target, request, &book);
-    }
-    let principles = book
-        .principles
-        .iter()
-        .map(|entry| PackedPrinciple {
-            id: entry.id.as_str().into(),
-            statement: entry.principle.statement.clone(),
-            rationale: entry.principle.rationale.clone(),
-        })
-        .collect::<Vec<_>>();
-    let mut rules = Vec::new();
-    let mut left_out = Vec::new();
-    for entry in &book.rules {
-        let mut rule = entry.rule.clone();
-        if rule.source.kind == RuleSourceKind::Mission {
-            left_out.push(json!({"rule": entry.id.as_str(), "reason": "it is derived from this repository's mission"}));
-            continue;
-        }
-        if !request.include_paths {
-            rule.paths.clear();
-            rule.sweep_unsure.clear();
-            rule.exclude = rule.exclude.filter(Vec::is_empty);
-            for example in &mut rule.examples {
-                example.path = None;
-            }
-        }
-        rules.push(PackedRule {
-            id: entry.id.as_str().into(),
-            rule,
-        });
-    }
-    if rules.is_empty() {
-        let mut response = needs(
-            request_id,
-            "No accepted rule can leave this repository yet; accept one first (wh change --accept).".into(),
-        );
-        response.data = json!({"left_out": left_out});
-        return response;
-    }
-    let name = root
-        .file_name()
-        .map(|name| name.to_string_lossy().to_ascii_lowercase())
-        .unwrap_or_else(|| "rules".into());
-    let pack = RulePack::sealed(
-        &name,
-        &utc_now(),
-        &super::check::findings::repository_identity(root),
-        request.include_paths,
-        principles,
-        rules,
-    );
-    let text = serde_json::to_string_pretty(&pack).unwrap_or_default() + "\n";
-    let path = if Path::new(target).is_absolute() {
-        Path::new(target).to_path_buf()
-    } else {
-        root.join(target)
-    };
-    if !request.preview {
-        if let Err(error) = std::fs::write(&path, &text) {
-            return unknown_response(
-                "change",
-                request_id,
-                format!("{} could not be written: {error}", path.display()),
-            );
-        }
-    }
-    let mut response = ServiceResponse::new(
-        request_id,
-        "change",
-        if request.preview {
-            ServiceState::NeedsDecision
-        } else {
-            ServiceState::Success
-        },
-        format!(
-            "{} rule(s) and {} principle(s) {} {} (digest {}); the rulebook was not changed.",
-            pack.rules.len(),
-            pack.principles.len(),
-            if request.preview {
-                "would be written to"
-            } else {
-                "were written to"
-            },
-            path.display(),
-            pack.digest
-        ),
-    );
-    response.permitted_actions = vec![format!(
-        "in another repository: wh change --import-pack {}",
-        path.display()
-    )];
-    response.data = json!({
-        "pack": path.display().to_string(),
-        "digest": pack.digest,
-        "rules": pack.rules.iter().map(|rule| rule.id.as_str()).collect::<Vec<_>>(),
-        "principles": pack.principles.iter().map(|principle| principle.id.as_str()).collect::<Vec<_>>(),
-        "includes_paths": request.include_paths,
-        "left_out": left_out,
-        "preview_only": request.preview,
-    });
     response
 }
 
@@ -296,7 +218,7 @@ pub(crate) fn principle_slug(statement: &str) -> String {
 /// with `--import-pack` and pick from in `wh init`. A principle picked from
 /// a pack is left out: it already has a pack, and a second pack repeating
 /// its id would be refused beside the first.
-fn export_principles(
+pub(super) fn export_principles(
     root: &Path,
     request_id: String,
     target: &str,
@@ -445,161 +367,7 @@ fn export_principles(
     response
 }
 
-/// `wh change --import-pack <file|url|name>`: a pack's rules and principles
-/// as drafts in the rulebook, or a principle pack installed.
-pub(super) fn import(
-    layout: &ProjectLayout,
-    request_id: String,
-    source: &str,
-    request: &ChangeRequest,
-) -> ServiceResponse {
-    let root = layout.project_root();
-    let text = match read_pack(root, source) {
-        Ok(text) => text,
-        Err(error) => return needs(request_id, error),
-    };
-    let value: Value = match serde_json::from_str(&text) {
-        Ok(value) => value,
-        Err(error) => return needs(request_id, format!("{source} is not JSON: {error}")),
-    };
-    if value.get("schema").and_then(Value::as_str) == Some(crate::catalogue::PACK_SCHEMA) {
-        return install_principle_pack(root, request_id, &text, request.preview);
-    }
-    let pack: RulePack = match serde_json::from_value(value) {
-        Ok(pack) => pack,
-        Err(error) => return needs(request_id, format!("{source} is not a rule pack: {error}")),
-    };
-    if let Err(error) = pack.verify() {
-        return needs(request_id, format!("The pack was refused: {error}."));
-    }
-    let book = match rulebook::load(root) {
-        Ok(book) => book,
-        Err(RulebookError::Missing) => {
-            return needs(
-                request_id,
-                format!("{RULEBOOK_PATH} does not exist yet. Set the mission first: wh change --kind mission --content <text>."),
-            )
-        }
-        Err(error) => return rulebook_unreadable(request_id, &error),
-    };
-    let held = |book: &Rulebook, id: &RecordId| {
-        book.rules.iter().any(|entry| entry.id == *id)
-            || book.principles.iter().any(|entry| entry.id == *id)
-            || book.retired.iter().any(|entry| entry.id == *id)
-    };
-    let provenance = format!("{}@{}", pack.name, pack.version);
-    let mut after = book.clone();
-    let mut drafted = Vec::new();
-    let mut skipped = Vec::new();
-    let mut unvalidated = Vec::new();
-    let mut probes = Vec::new();
-    for principle in &pack.principles {
-        let Ok(id) = RecordId::new(principle.id.as_str()) else {
-            continue;
-        };
-        if held(&book, &id) {
-            skipped
-                .push(json!({"id": id.as_str(), "reason": "the rulebook already holds this id"}));
-            continue;
-        }
-        drafted.push(json!({"id": id.as_str(), "kind": "principle"}));
-        after.principles.push(PrincipleEntry {
-            id,
-            principle: Principle {
-                statement: principle.statement.clone(),
-                source: PrincipleSource::Custom,
-                rationale: Some(format!(
-                    "{} (imported from the {provenance} pack, {})",
-                    principle
-                        .rationale
-                        .as_deref()
-                        .unwrap_or("A principle the pack holds."),
-                    pack.source
-                )),
-            },
-        });
-    }
-    for packed in &pack.rules {
-        let Ok(id) = RecordId::new(packed.id.as_str()) else {
-            continue;
-        };
-        if held(&book, &id) {
-            skipped
-                .push(json!({"id": id.as_str(), "reason": "the rulebook already holds this id"}));
-            continue;
-        }
-        let mut rule = packed.rule.clone();
-        rule.rationale = format!(
-            "{} (imported from the {provenance} pack, {})",
-            rule.rationale, pack.source
-        );
-        rule.source = RuleSource {
-            kind: RuleSourceKind::Pack,
-            reference: Some(provenance.clone()),
-            provenance: Vec::new(),
-        };
-        let report = crate::probe::probe(layout, &id, &rule);
-        if !report.validatable && !request.allow_unvalidated {
-            unvalidated.push(json!({"id": id.as_str(), "probe": report}));
-            continue;
-        }
-        match RuleEntry::new(id.clone(), rule.clone()) {
-            Ok(entry) => after.rules.push(entry),
-            Err(error) => return rulebook_unreadable(request_id, &error),
-        }
-        drafted.push(json!({"id": id.as_str(), "kind": "rule", "probe": report}));
-        probes.push(Probed { id, rule, report });
-    }
-    let summary = format!(
-        "The {provenance} pack: {} draft(s) {}, {} skipped because the rulebook already holds the id, {} not validatable here. Nothing takes force until a person accepts it.",
-        drafted.len(),
-        if request.preview { "would be written" } else { "written" },
-        skipped.len(),
-        unvalidated.len(),
-    );
-    let data = |written: bool| {
-        json!({
-            "pack": {"name": pack.name, "version": pack.version, "source": pack.source, "digest": pack.digest},
-            "path": RULEBOOK_PATH,
-            "drafts": drafted,
-            "skipped": skipped,
-            "not_validatable": unvalidated,
-            "preview_only": request.preview,
-            "written": written,
-        })
-    };
-    if drafted.is_empty() {
-        let mut response =
-            ServiceResponse::new(request_id, "change", ServiceState::Success, summary);
-        response.data = data(false);
-        return response;
-    }
-    let (_, mut response, probed) = match draft(
-        root,
-        request_id,
-        request.preview,
-        &after,
-        Probing {
-            allow_unvalidated: request.allow_unvalidated,
-            known: &probes,
-        },
-        summary.clone(),
-        summary,
-    ) {
-        Ok(drafted) => drafted,
-        Err(response) => return *response,
-    };
-    response.permitted_actions = vec![
-        "wh change --accept (a person accepts the drafts, which commits the file)".into(),
-        "wh change --withdraw".into(),
-        "wh dash".into(),
-    ];
-    response.data = data(!request.preview);
-    response.data["probes"] = probes_json(&probed);
-    response
-}
-
-fn install_principle_pack(
+pub(super) fn install_principle_pack(
     root: &Path,
     request_id: String,
     text: &str,
@@ -658,7 +426,7 @@ fn install_principle_pack(
 }
 
 /// A pack's text: a built-in name, an https URL (fetched with curl) or a file.
-fn read_pack(root: &Path, source: &str) -> Result<String, String> {
+pub(super) fn read_pack(root: &Path, source: &str) -> Result<String, String> {
     if let Some(pack) = built_in(source) {
         return Ok(serde_json::to_string_pretty(&pack).unwrap_or_default());
     }
@@ -853,8 +621,11 @@ pub fn built_in(name: &str) -> Option<RulePack> {
             .map(|(id, rule)| PackedRule {
                 id: id.into(),
                 rule,
+                scoped_at_source: false,
+                files: Vec::new(),
             })
             .collect(),
+        Vec::new(),
     ))
 }
 

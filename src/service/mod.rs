@@ -22,11 +22,15 @@ mod dash;
 mod explain;
 pub(crate) mod export;
 mod init;
+mod pack_export;
+mod pack_files;
+mod pack_import;
 mod packs;
 mod snapshot;
 mod trail;
 
 pub use explain::ExplainRequest;
+pub use pack_export::{pack_plan, pack_text, PackChoice};
 pub use trail::{decision_trail, rulebook_log, rulebook_texts, RulebookCommit, TRAIL_HEADER};
 
 /// Environment variables agent hosts set in the shells they run. Any of them
@@ -58,6 +62,8 @@ pub fn detect_actor() -> ActorKind {
 
 pub const RESPONSE_SCHEMA: &str = "whetstone.command-response.v1";
 
+// A request lives for one call, so its size does not matter.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum ServiceRequest {
     Orientation,
@@ -228,6 +234,24 @@ pub struct ChangeRequest {
     /// Import a rule pack's rules and principles as drafts, or install a
     /// principle pack: a file, an https URL or a built-in pack name.
     pub import_pack: Option<String>,
+    /// A pack's text, handed over by the dashboard instead of `import_pack`.
+    pub import_text: Option<String>,
+    /// With a pack: only these rule or principle ids, and the principles
+    /// the rules serve.
+    pub only: Vec<String>,
+    /// With `export_pack`: the rules that keep their repository paths.
+    pub keep_paths: Vec<String>,
+    /// With `export_pack`: tracked files to carry beyond those a command names.
+    pub with_files: Vec<String>,
+    /// With `export_pack`: the pack's name.
+    pub pack_name: Option<String>,
+    /// With `export_pack`: the pack's version.
+    pub pack_version: Option<String>,
+    /// With an import: `<from>=<to>` path prefix rewrites.
+    pub map_paths: Vec<String>,
+    /// With an import: a person's consent for the pack's commands to run
+    /// and its files to be written.
+    pub allow_commands: bool,
     /// Draft the rulebook's strict mode (`require_served`) on or off.
     pub require_served: Option<bool>,
 }

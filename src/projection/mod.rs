@@ -7,6 +7,7 @@
 //! accepted.
 
 pub mod diff;
+pub mod pack;
 pub mod page;
 
 use serde::Serialize;

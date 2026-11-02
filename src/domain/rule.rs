@@ -51,6 +51,15 @@ pub enum Enforcer {
 }
 
 impl Enforcer {
+    /// The command line it starts: every enforcer but an AST query.
+    pub fn command(&self) -> Option<&str> {
+        match self {
+            Self::Ast { .. } => None,
+            Self::Lint { tool, .. } | Self::Formatter { tool } => Some(tool),
+            Self::Test { command } | Self::Validator { command } => Some(command),
+        }
+    }
+
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Ast { .. } => "ast",

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/angusbezzina/whetstone/references/rule-pack-v2.schema.json",
+  "title": "Whetstone rule pack",
+  "description": "Accepted rules and principles from one repository, with the files their commands run, for another repository to import as drafts. It is version 1 plus optional fields, each absent when empty, so whetstone.rule-pack.v1 packs are still read. The digest proves a pack is intact, not that it is trustworthy: a pack's commands run and its files arrive only with a person's consent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "name", "version", "source", "digest", "rules"],
+  "properties": {
+    "schema": { "enum": ["whetstone.rule-pack.v2", "whetstone.rule-pack.v1"] },
+    "name": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "minLength": 1, "description": "By default the short commit of the rulebook, so one revision and one selection make one pack." },
+    "source": { "type": "string", "description": "The repository the pack was exported from." },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "description": "sha256 of the JSON of principles, rules and, when there are any, files." },
+    "includes_paths": { "type": "boolean", "description": "Every rule kept the exporting repository's paths." },
+    "principles": { "type": "array", "items": { "$ref": "#/$defs/principle" } },
+    "rules": { "type": "array", "items": { "$ref": "#/$defs/packedRule" } },
+    "files": { "type": "array", "items": { "$ref": "#/$defs/file" } }
+  },
+  "$defs": {
+    "principle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "statement"],
+      "properties": {
+        "id": { "type": "string" },
+        "statement": { "type": "string", "minLength": 1 },
+        "rationale": { "type": ["string", "null"] },
+        "source": {
+          "description": "Where the principle came from; absent when it is the owner's own words.",
+          "type": "object",
+          "required": ["kind"]
+        }
+      }
+    },
+    "packedRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "rule"],
+      "properties": {
+        "id": { "type": "string" },
+        "rule": { "$ref": "rulebook.schema.json#/$defs/rule" },
+        "scoped_at_source": { "const": true, "description": "The rule had paths where it came from and they stayed behind, so it arrives covering every file." },
+        "files": { "type": "array", "items": { "type": "string" }, "description": "The paths in the pack's files this rule needs." }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "text"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._+@/-]+$",
+          "description": "Relative to the repository. Refused: absolute paths, any .. segment, a path through a symbolic link, and anything under .git, .githooks, .github or whetstone/principles, or whetstone/rulebook.json, in any case. A refused path refuses the pack."
+        },
+        "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "executable": { "const": true },
+        "text": { "type": "string", "description": "The file as committed. Binary files do not travel." }
+      }
+    }
+  }
+}

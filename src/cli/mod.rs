@@ -179,9 +179,10 @@ enum Command {
         /// With --from-finding: the sweep's findings file.
         #[arg(long, requires = "from_finding")]
         findings: Option<PathBuf>,
-        /// Write the committed rulebook's mission-independent rules and its
-        /// principles as a rule pack to this file, for another repository to
-        /// import as drafts. The rulebook is not changed.
+        /// Write the committed rulebook's mission-independent rules, its
+        /// principles and the files their commands name as a rule pack to
+        /// this file, for another repository to import as drafts. The
+        /// rulebook is not changed.
         #[arg(long, conflicts_with_all = ["import_pack", "kind", "accept", "withdraw", "retire", "from_text", "from_file", "from_finding"])]
         export_pack: Option<String>,
         /// With --export-pack: keep each rule's repository paths.
@@ -193,12 +194,49 @@ enum Command {
         /// with --import-pack and picks from it in wh init.
         #[arg(long, requires = "export_pack", conflicts_with = "include_paths")]
         principles: bool,
-        /// Import a rule pack's rules and principles as probed drafts (nothing
-        /// is accepted), or install a principle pack under
-        /// whetstone/principles: a file, an https URL, or a built-in pack
-        /// (rust, typescript, python).
+        /// Import a rule pack's rules and principles as drafts (nothing is
+        /// accepted), or install a principle pack under whetstone/principles:
+        /// a file, an https URL, or a built-in pack (rust, typescript,
+        /// python). With --preview it runs nothing and writes nothing. A
+        /// file or URL pack's commands and files need --allow-commands.
         #[arg(long, conflicts_with_all = ["export_pack", "kind", "accept", "withdraw", "retire", "from_text", "from_file", "from_finding"])]
         import_pack: Option<String>,
+        /// With --export-pack or --import-pack: only this rule or principle
+        /// id (repeatable). A chosen rule brings the principle it serves.
+        #[arg(long = "only", value_name = "ID", conflicts_with = "principles")]
+        only: Vec<String>,
+        /// With --export-pack: this rule keeps its repository paths
+        /// (repeatable); --include-paths keeps them for every rule.
+        #[arg(
+            long = "keep-paths",
+            value_name = "RULE ID",
+            requires = "export_pack",
+            conflicts_with = "principles"
+        )]
+        keep_paths: Vec<String>,
+        /// With --export-pack: carry this committed file too (repeatable):
+        /// a support file a carried script reads.
+        #[arg(
+            long = "with-file",
+            value_name = "PATH",
+            requires = "export_pack",
+            conflicts_with = "principles"
+        )]
+        with_files: Vec<String>,
+        /// With --export-pack: the pack's name.
+        #[arg(long, requires = "export_pack", conflicts_with = "principles")]
+        pack_name: Option<String>,
+        /// With --export-pack: the pack's version; the rulebook's commit by default.
+        #[arg(long, requires = "export_pack", conflicts_with = "principles")]
+        pack_version: Option<String>,
+        /// With --import-pack: rewrite a path prefix in the pack's rules
+        /// before they are probed (repeatable): --map-path apps/web/src=src.
+        #[arg(long = "map-path", value_name = "FROM=TO", requires = "import_pack")]
+        map_paths: Vec<String>,
+        /// With --import-pack: a person's consent for the pack's commands to
+        /// run and its files to be written, having read them with --preview.
+        #[arg(long, requires = "import_pack")]
+        allow_commands: bool,
         /// Draft strict mode on or off: when true, --accept refuses a
         /// rulebook in which a principle has no rule or a rule serves no
         /// principle.
@@ -483,6 +521,13 @@ pub fn run() -> i32 {
             include_paths,
             principles,
             import_pack,
+            only,
+            keep_paths,
+            with_files,
+            pack_name,
+            pack_version,
+            map_paths,
+            allow_commands,
             require_served,
         }) => service.execute(ServiceRequest::Change(ChangeRequest {
             project_dir,
@@ -507,6 +552,14 @@ pub fn run() -> i32 {
             include_paths,
             principles,
             import_pack,
+            import_text: None,
+            only,
+            keep_paths,
+            with_files,
+            pack_name,
+            pack_version,
+            map_paths,
+            allow_commands,
             require_served,
         })),
         Some(Command::Check {

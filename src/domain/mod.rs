@@ -236,7 +236,7 @@ pub(crate) fn require_text(value: &str) -> Result<(), DomainError> {
     }
 }
 
-pub(crate) fn safe_relative_path(value: &str) -> bool {
+pub fn safe_relative_path(value: &str) -> bool {
     let path = std::path::Path::new(value);
     !value.is_empty()
         && !path.is_absolute()
