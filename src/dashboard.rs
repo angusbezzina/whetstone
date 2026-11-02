@@ -15,6 +15,10 @@ use std::time::Duration;
 
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 64 * 1024;
+/// The one route that takes more: a 1 MiB pack's text inside a JSON body,
+/// where escaping can double it.
+const MAX_PACK_BODY_BYTES: usize = 3 * 1024 * 1024;
+const PACK_IMPORT_PATH: &str = "/api/pack/import";
 const SESSION_COOKIE: &str = "whetstone_session";
 
 /// The page as `web/` builds it (`npm run build` writes assets/dashboard):
@@ -76,6 +80,18 @@ pub trait DashboardBackend: Send + Sync + 'static {
             content_type: "text/plain; charset=utf-8",
             body: b"not_found".to_vec(),
         }
+    }
+    /// What each accepted rule needs to travel; read-only.
+    fn pack_plan(&self) -> BackendResponse {
+        denied_status(404, "not_found")
+    }
+    /// A chosen pack and its name; read-only, and nothing is written.
+    fn pack_export(&self, _request_body: &[u8]) -> (BackendResponse, Option<String>) {
+        (denied_status(404, "not_found"), None)
+    }
+    /// Review or apply an uploaded pack.
+    fn pack_import(&self, _request_body: &[u8]) -> BackendResponse {
+        denied_status(404, "not_found")
     }
 }
 
@@ -353,6 +369,23 @@ fn handle_connection(
             ));
             backend.trail()
         }
+        ("GET", "/api/pack/plan") => backend.pack_plan(),
+        ("POST", "/api/pack/export") => {
+            if !same_origin(&request, expected_origin)
+                || request.header("sec-fetch-site") != Some("same-origin")
+            {
+                denied("invalid_origin")
+            } else {
+                let (response, name) = backend.pack_export(&request.body);
+                if let Some(name) = name {
+                    extra_headers.push((
+                        "Content-Disposition",
+                        format!("attachment; filename=\"{name}.pack.json\""),
+                    ));
+                }
+                response
+            }
+        }
         ("POST", "/api/inspect") => {
             if !same_origin(&request, expected_origin)
                 || request.header("sec-fetch-site") != Some("same-origin")
@@ -374,26 +407,18 @@ fn handle_connection(
             Ok(_) => denied("read_only"),
             Err(response) => response,
         },
-        ("POST", "/api/command") => match authorized_mutation(&request, expected_origin, state) {
-            Ok(session_id) => {
-                let permitted = state
-                    .lock()
-                    .ok()
-                    .and_then(|locked| {
-                        locked
-                            .sessions
-                            .get(&session_id)
-                            .map(|session| session.can_mutate)
-                    })
-                    .unwrap_or(false);
-                if !mutations_enabled || !permitted {
-                    denied("read_only")
-                } else {
-                    backend.mutate(&request.body)
-                }
+        ("POST", "/api/command") => {
+            match editing_session(&request, expected_origin, mutations_enabled, state) {
+                Ok(()) => backend.mutate(&request.body),
+                Err(response) => response,
             }
-            Err(response) => response,
-        },
+        }
+        ("POST", PACK_IMPORT_PATH) => {
+            match editing_session(&request, expected_origin, mutations_enabled, state) {
+                Ok(()) => backend.pack_import(&request.body),
+                Err(response) => response,
+            }
+        }
         _ => denied_status(404, "not_found"),
     };
     let borrowed = extra_headers
@@ -407,6 +432,32 @@ fn handle_connection(
         &response.body,
         &borrowed,
     );
+}
+
+/// The request comes from a session in edit mode, on a dashboard that allows
+/// edits.
+fn editing_session(
+    request: &HttpRequest,
+    expected_origin: &str,
+    mutations_enabled: bool,
+    state: &Mutex<ServerState>,
+) -> Result<(), BackendResponse> {
+    let session_id = authorized_mutation(request, expected_origin, state)?;
+    let permitted = state
+        .lock()
+        .ok()
+        .and_then(|locked| {
+            locked
+                .sessions
+                .get(&session_id)
+                .map(|session| session.can_mutate)
+        })
+        .unwrap_or(false);
+    if mutations_enabled && permitted {
+        Ok(())
+    } else {
+        Err(denied("read_only"))
+    }
 }
 
 fn authorized_mutation(
@@ -536,7 +587,12 @@ fn read_request(stream: &mut TcpStream) -> Result<HttpRequest, (u16, String)> {
         })
         .transpose()?
         .unwrap_or(0);
-    if content_length > MAX_BODY_BYTES {
+    let limit = if path == PACK_IMPORT_PATH {
+        MAX_PACK_BODY_BYTES
+    } else {
+        MAX_BODY_BYTES
+    };
+    if content_length > limit {
         return Err((413, "payload_too_large".into()));
     }
     while bytes.len() - header_end < content_length {

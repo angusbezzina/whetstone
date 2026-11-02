@@ -222,7 +222,7 @@ fn path_token(token: &str) -> Option<&str> {
     literal.then_some(path)
 }
 
-fn is_script(path: &str) -> bool {
+pub fn is_script(path: &str) -> bool {
     SCRIPT_EXTENSIONS
         .iter()
         .any(|extension| path.ends_with(extension))

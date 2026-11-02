@@ -130,6 +130,104 @@ impl DashboardBackend for CommandDashboardBackend {
         }
         Self::response(response)
     }
+
+    fn pack_plan(&self) -> BackendResponse {
+        Self::response(crate::service::pack_plan(&self.project_dir))
+    }
+
+    fn pack_export(&self, request_body: &[u8]) -> (BackendResponse, Option<String>) {
+        let body = match serde_json::from_slice::<PackExportBody>(request_body) {
+            Ok(body) => body,
+            Err(error) => {
+                return (
+                    invalid_request(format!("invalid pack selection: {error}")),
+                    None,
+                )
+            }
+        };
+        match crate::service::pack_text(&self.project_dir, &body.into_choice()) {
+            Ok((text, name)) => (
+                BackendResponse {
+                    status: 200,
+                    content_type: "application/json; charset=utf-8",
+                    body: text.into_bytes(),
+                },
+                Some(name),
+            ),
+            Err(response) => (invalid_request(response.summary), None),
+        }
+    }
+
+    fn pack_import(&self, request_body: &[u8]) -> BackendResponse {
+        let body = match serde_json::from_slice::<PackImportBody>(request_body) {
+            Ok(body) => body,
+            Err(error) => return invalid_request(format!("invalid pack import: {error}")),
+        };
+        let response = self.service.execute(ServiceRequest::Change(ChangeRequest {
+            project_dir: self.project_dir.clone(),
+            actor: self.actor,
+            preview: matches!(body.mode, PackImportMode::Review),
+            import_text: Some(body.pack),
+            only: body.only,
+            map_paths: body.map_paths,
+            allow_commands: body.allow_commands,
+            ..ChangeRequest::default()
+        }));
+        if let Some(observer) = &self.observer {
+            observer(&response);
+        }
+        Self::response(response)
+    }
+}
+
+/// A selection only: ids and paths named in the rulebook. The server writes
+/// no file and takes no file name, so nothing here is a path to write.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct PackExportBody {
+    only: Vec<String>,
+    include_paths: bool,
+    keep_paths: Vec<String>,
+    with_files: Vec<String>,
+    name: Option<String>,
+    version: Option<String>,
+}
+
+impl PackExportBody {
+    fn into_choice(self) -> crate::service::PackChoice {
+        crate::service::PackChoice {
+            only: self.only,
+            include_paths: self.include_paths,
+            keep_paths: self.keep_paths,
+            with_files: self.with_files,
+            name: self.name,
+            version: self.version,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PackImportMode {
+    /// Report what the pack holds: nothing runs and nothing is written.
+    Review,
+    /// Write the drafts, and with consent the files.
+    Apply,
+}
+
+/// An upload: the pack's text itself, never a path or a URL. The backend
+/// sets who is asking, so a session an agent opened cannot consent.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackImportBody {
+    pack: String,
+    mode: PackImportMode,
+    #[serde(default)]
+    only: Vec<String>,
+    #[serde(default)]
+    map_paths: Vec<String>,
+    #[serde(default)]
+    allow_commands: bool,
 }
 
 #[derive(Debug, Deserialize)]

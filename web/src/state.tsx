@@ -39,6 +39,18 @@ export function useDash(): Dash {
 
 const IDS = "wh-show-ids";
 
+/** Which view of the sheet the address names. */
+export function useRoute(): "rulebook" | "share" {
+  const read = () => (location.hash === "#share" ? "share" : "rulebook");
+  const [route, setRoute] = useState<"rulebook" | "share">(read);
+  useEffect(() => {
+    const update = () => setRoute(read());
+    addEventListener("hashchange", update);
+    return () => removeEventListener("hashchange", update);
+  }, []);
+  return route;
+}
+
 export function DashProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<DashData | null>(null);
   const [error, setError] = useState<string | null>(null);

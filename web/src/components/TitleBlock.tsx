@@ -4,7 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { day, useDash } from "@/state";
+import { Button } from "@/components/ui/button";
+import { day, useDash, useRoute } from "@/state";
 import { Stone } from "./marks";
 
 const THEME = "wh-theme";
@@ -45,6 +46,7 @@ function Cell({ label, children, className, title, wrap }: { label: string; chil
 
 export function TitleBlock() {
   const { data, editable, readOnlyReason, showIds, setShowIds } = useDash();
+  const route = useRoute();
   const [theme, setTheme] = useTheme();
   const page = data?.current;
   const header = page?.header;
@@ -120,6 +122,11 @@ export function TitleBlock() {
               Strict mode (require_served): accepting refuses a rulebook in which a principle has no rule or a rule serves no principle. Change it with wh change --require-served false.
             </TooltipContent>
           </Tooltip>
+        ) : null}
+        {page && !page.setup ? (
+          <Button variant="ghost" size="sm" asChild>
+            <a href={route === "share" ? "#" : "#share"}>{route === "share" ? "Back to the rulebook" : "Share rules"}</a>
+          </Button>
         ) : null}
         <div className="flex items-center gap-3">
           <label className="flex cursor-pointer items-center gap-1.5">

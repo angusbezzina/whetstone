@@ -100,8 +100,9 @@ fn mentioned_paths(text: &str) -> impl Iterator<Item = &str> {
     .filter(|token| token.contains('/') && !token.starts_with('/'))
 }
 
-/// The files on disk that `files` mention, following what those mention in
-/// turn: what a script reads, which a rulebook does not record.
+/// The files on disk that `files` mention, following what mentioned scripts
+/// mention in turn: what a script reads, which a rulebook does not record.
+/// Documents are not followed: they mention half a repository.
 pub(super) fn support_files(root: &Path, files: &[String]) -> Vec<String> {
     let mut seen = files.iter().cloned().collect::<BTreeSet<_>>();
     let mut queue = files.to_vec();
@@ -114,7 +115,9 @@ pub(super) fn support_files(root: &Path, files: &[String]) -> Vec<String> {
             if !seen.contains(token) && !token.contains("..") && root.join(token).is_file() {
                 seen.insert(token.to_string());
                 found.push(token.to_string());
-                queue.push(token.to_string());
+                if crate::probe::is_script(token) {
+                    queue.push(token.to_string());
+                }
             }
         }
     }
@@ -203,8 +206,9 @@ impl<'a> Tree<'a> {
     }
 
     /// Every committed text file these files mention by its exact path,
-    /// following what those mention in turn: the allow-lists and ratchets a
-    /// script reads. Some are per-repository state, so a person picks.
+    /// following what mentioned scripts mention in turn: the allow-lists and
+    /// ratchets a script reads. Some are per-repository state, so a person
+    /// picks. Documents are not followed: they mention half a repository.
     pub(super) fn mentioned(&self, files: &[String]) -> Vec<String> {
         let mut seen = files.iter().cloned().collect::<BTreeSet<_>>();
         let mut queue = files.to_vec();
@@ -221,7 +225,9 @@ impl<'a> Tree<'a> {
                 {
                     seen.insert(token.to_string());
                     found.push(token.to_string());
-                    queue.push(token.to_string());
+                    if crate::probe::is_script(token) {
+                        queue.push(token.to_string());
+                    }
                 }
             }
         }

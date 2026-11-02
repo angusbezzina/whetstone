@@ -183,8 +183,8 @@ const TOKEN = "whetstone_csrf";
  * rights. Resolves to whether this tab may edit. */
 export async function startSession(): Promise<{ editable: boolean; reason: string | null }> {
   const fragment = new URLSearchParams(location.hash.slice(1)).get("bootstrap");
-  history.replaceState(null, "", location.pathname);
   if (fragment) {
+    history.replaceState(null, "", location.pathname);
     try {
       const session = await json<{ csrf_token: string }>(
         await fetch("/session/bootstrap", { method: "POST", headers: { "X-Whetstone-Bootstrap": fragment } }),
@@ -227,6 +227,125 @@ export async function change<T = Record<string, unknown>>(command: ChangeCommand
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Whetstone-CSRF": token },
       body: JSON.stringify({ workflow: "change", ...command }),
+    }),
+  );
+}
+
+// Sharing rules. These mirror src/projection/pack.rs and the review an
+// import returns; the page invents no state.
+export type PackRule = {
+  id: string;
+  statement: string;
+  strength: "must" | "should";
+  enforcer: Enforcer["kind"];
+  language: string | null;
+  target: string;
+  can_leave: boolean;
+  reason: string | null;
+  serves: { id: string; statement: string } | null;
+  files: string[];
+  suggested_files: string[];
+  tools: string[];
+  paths: string[];
+  portability: "stays" | "brings_files" | "needs_tools" | "scoped" | "portable";
+};
+export type PackPlan = {
+  revision: string | null;
+  name: string;
+  version: string;
+  rules: PackRule[];
+  principles: { id: string; statement: string; origin: string; rules: string[] }[];
+};
+export type PackChoice = {
+  only: string[];
+  keep_paths: string[];
+  with_files: string[];
+  name?: string;
+  version?: string;
+};
+export type ReviewPrinciple = {
+  id: string;
+  kind: "principle";
+  statement: string;
+  selected: boolean;
+  status: "ready" | "held" | "conflict";
+};
+export type ReviewRule = {
+  id: string;
+  kind: "rule";
+  statement: string;
+  strength: "must" | "should";
+  enforcer: Enforcer["kind"];
+  target: string;
+  runs_command: boolean;
+  paths: string[];
+  widened: boolean;
+  serves: string | null;
+  principle_conflict: boolean;
+  principle_missing: boolean;
+  files: string[];
+  selected: boolean;
+  status: "ready" | "needs_consent" | "needs_mapping" | "not_validatable" | "file_conflict" | "held";
+  reason: string | null;
+  suggestion: { from: string; to: string } | null;
+  probe: { status?: string; matched?: number; summary?: string };
+};
+export type ReviewFile = { path: string; bytes: number; executable: boolean; status: "new" | "present" | "conflict"; needed_by: string[] };
+export type PackReview = {
+  pack: { name: string; version: string; source: string; digest: string };
+  entries: (ReviewPrinciple | ReviewRule)[];
+  files: ReviewFile[];
+};
+export type PackImport = {
+  review?: PackReview;
+  principle_pack?: string;
+  drafts?: { id: string; kind: string }[];
+  skipped?: { id: string; reason: string }[];
+  not_validatable?: { id: string; reason: string | null }[];
+  needs_consent?: { id: string; command: string }[];
+  file_conflicts?: { id: string; files: string[] }[];
+  principle_conflicts?: { rule: string; principle: string; here: string; pack: string }[];
+  principle_missing?: { rule: string; principle: string }[];
+  fails_today?: { id: string; strength: string; reason: string }[];
+  widened?: string[];
+  files_written?: string[];
+};
+
+export async function packPlan(): Promise<Envelope<PackPlan>> {
+  return json(await fetch("/api/pack/plan"));
+}
+
+/** Ask for the pack and hand it to the browser as a download. */
+export async function downloadPack(choice: PackChoice): Promise<void> {
+  const response = await fetch("/api/pack/export", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(choice),
+  });
+  if (!response.ok) await json(response);
+  const name = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "")?.[1] ?? "rules.pack.json";
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function importPack(body: {
+  pack: string;
+  mode: "review" | "apply";
+  only?: string[];
+  map_paths?: string[];
+  allow_commands?: boolean;
+}): Promise<Envelope<PackImport>> {
+  const token = sessionStorage.getItem(TOKEN);
+  if (!token) throw new Error("This tab cannot edit.");
+  return json(
+    await fetch("/api/pack/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Whetstone-CSRF": token },
+      body: JSON.stringify(body),
     }),
   );
 }

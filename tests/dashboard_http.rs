@@ -274,6 +274,30 @@ impl Session {
         )
     }
 
+    fn pack_export(&self, body: &Value) -> String {
+        let (host, body) = (&self.host, body.to_string());
+        send(
+            self.handle.address(),
+            &format!("POST /api/pack/export HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nSec-Fetch-Site: same-origin\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()),
+        )
+    }
+
+    fn raw_pack_import(&self, body: &str) -> String {
+        let Self {
+            host, cookie, csrf, ..
+        } = self;
+        send(
+            self.handle.address(),
+            &format!("POST /api/pack/import HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nSec-Fetch-Site: same-origin\r\nCookie: {cookie}\r\nX-Whetstone-CSRF: {csrf}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()),
+        )
+    }
+
+    fn pack_import(&self, body: &Value) -> Value {
+        let response = self.raw_pack_import(&body.to_string());
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        response_body(&response)
+    }
+
     fn command(&self, body: &Value) -> Value {
         let response = self.raw_command(&body.to_string());
         assert!(response.starts_with("HTTP/1.1 200"), "{response}");
@@ -1471,4 +1495,280 @@ fn withdrawing_restores_the_rulebook_as_last_committed() {
     assert_eq!(view["mission"]["statement"], MISSION);
     let nothing = session.command(&json!({"workflow": "change", "withdraw": true}));
     assert_eq!(nothing["state"], "needs_input", "{nothing}");
+}
+
+/// A committed rulebook with a query rule that serves a principle, and a
+/// script rule with its script.
+fn sharing_repository() -> tempfile::TempDir {
+    let temp = tempfile::tempdir().expect("temp");
+    let root = temp.path();
+    init_git(root);
+    std::fs::create_dir_all(root.join("scripts")).expect("dir");
+    std::fs::write(root.join("scripts/check.sh"), "#!/bin/sh\ntrue\n").expect("script");
+    std::fs::write(root.join("src.rs"), "fn main() {}\n").expect("source");
+    let run = |args: &[&str]| {
+        assert!(Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .status()
+            .expect("git")
+            .success());
+    };
+    run(&["add", "-A"]);
+    run(&["commit", "--quiet", "-m", "base"]);
+    let write = |request: ChangeRequest| {
+        let response = change(root, request);
+        assert_eq!(
+            response.state,
+            whetstone::service::ServiceState::Success,
+            "{}",
+            response.summary
+        );
+    };
+    write(ChangeRequest {
+        kind: Some(ChangeKind::Mission),
+        content: Some("Ship.".into()),
+        ..ChangeRequest::default()
+    });
+    write(ChangeRequest {
+        kind: Some(ChangeKind::Principle),
+        record_id: Some("principle.small".into()),
+        content: Some("Ship small.".into()),
+        ..ChangeRequest::default()
+    });
+    let definition = |enforcer: Value| {
+        serde_json::from_value(json!({"type": "rule", "strength": "should", "enforcer": enforcer}))
+            .expect("definition")
+    };
+    write(ChangeRequest {
+        kind: Some(ChangeKind::Rule),
+        record_id: Some("rule.script".into()),
+        content: Some("The script passes.".into()),
+        rationale: Some("It must.".into()),
+        definition: Some(Box::new(definition(
+            json!({"kind": "validator", "command": "sh scripts/check.sh"}),
+        ))),
+        serves: Some("principle.small".into()),
+        ..ChangeRequest::default()
+    });
+    write(ChangeRequest {
+        kind: Some(ChangeKind::Rule),
+        record_id: Some("rule.query".into()),
+        content: Some("No dbg.".into()),
+        rationale: Some("It must.".into()),
+        definition: Some(Box::new(definition(
+            json!({"kind": "ast", "query": "((macro_invocation macro: (identifier) @name) @match (#eq? @name \"dbg\"))", "language": "rust"}),
+        ))),
+        ..ChangeRequest::default()
+    });
+    write(ChangeRequest {
+        accept: true,
+        ..ChangeRequest::default()
+    });
+    temp
+}
+
+#[test]
+fn the_plan_is_the_clis_and_a_chosen_pack_downloads_in_a_read_only_tab() {
+    let temp = sharing_repository();
+    let root = temp.path();
+    let handle = start(root, false);
+    let host = host(&handle);
+    let before = std::fs::read(root.join("whetstone/rulebook.json")).expect("rulebook");
+    let plan = send(
+        handle.address(),
+        &format!("GET /api/pack/plan HTTP/1.1\r\nHost: {host}\r\n\r\n"),
+    );
+    assert!(plan.starts_with("HTTP/1.1 200"), "{plan}");
+    let plan = response_body(&plan);
+    let cli = service(ServiceRequest::Change(ChangeRequest {
+        project_dir: root.to_path_buf(),
+        export_pack: Some("x.json".into()),
+        preview: true,
+        ..ChangeRequest::default()
+    }));
+    assert_eq!(
+        plan["data"], cli.data["plan"],
+        "the page and the CLI read one plan"
+    );
+    assert!(!root.join("x.json").exists());
+
+    let (cookie, csrf) = bootstrap(&handle);
+    let session = Session {
+        handle,
+        host: host.clone(),
+        cookie,
+        csrf,
+    };
+    let response = session.pack_export(&json!({"only": ["rule.script"], "name": "team"}));
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(
+        response.contains("attachment; filename=\"team.pack.json\""),
+        "{response}"
+    );
+    let pack = response_body(&response);
+    assert_eq!(pack["principles"][0]["id"], "principle.small");
+    assert_eq!(pack["files"][0]["path"], "scripts/check.sh");
+    let verified: whetstone::service::RulePack = serde_json::from_value(pack).expect("a pack");
+    verified.verify().expect("verifies");
+    assert_eq!(
+        std::fs::read(root.join("whetstone/rulebook.json")).expect("rulebook"),
+        before
+    );
+
+    // A name can never become a header or a path; another site cannot ask.
+    let refused = session.pack_export(&json!({"only": ["rule.script"], "name": "../x\"y"}));
+    assert!(refused.starts_with("HTTP/1.1 400"), "{refused}");
+    assert!(!refused.contains("Content-Disposition"), "{refused}");
+    let body = "{}";
+    let foreign = send(
+        session.handle.address(),
+        &format!("POST /api/pack/export HTTP/1.1\r\nHost: {host}\r\nOrigin: https://evil.example\r\nSec-Fetch-Site: cross-site\r\nContent-Length: {}\r\n\r\n{body}", body.len()),
+    );
+    assert!(foreign.starts_with("HTTP/1.1 403"), "{foreign}");
+    let unknown = session.pack_export(&json!({"path": "/etc/passwd"}));
+    assert!(unknown.starts_with("HTTP/1.1 400"), "{unknown}");
+}
+
+#[test]
+fn an_uploaded_pack_is_reviewed_inertly_and_applied_only_with_a_persons_consent() {
+    let source = sharing_repository();
+    let pack = whetstone::service::pack_text(source.path(), &Default::default())
+        .expect("pack")
+        .0;
+    let target = tempfile::tempdir().expect("temp");
+    let root = target.path();
+    init_git(root);
+    std::fs::write(root.join("main.rs"), "fn main() {}\n").expect("source");
+    change(
+        root,
+        ChangeRequest {
+            kind: Some(ChangeKind::Mission),
+            content: Some("Ship.".into()),
+            ..ChangeRequest::default()
+        },
+    );
+    let book = rulebook(root);
+
+    let session = Session::open(start_for_a_person(root));
+    let review = session.pack_import(&json!({"pack": pack, "mode": "review"}));
+    assert_eq!(review["state"], "needs_decision", "{review}");
+    assert_eq!(rulebook(root), book, "a review writes nothing");
+    assert!(!root.join("scripts").exists());
+    let entries = review["data"]["review"]["entries"]
+        .as_array()
+        .expect("entries");
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry["id"] == "rule.script" && entry["status"] == "needs_consent"),
+        "{review}"
+    );
+
+    // No path crosses from the browser.
+    let path = session.raw_pack_import(
+        &json!({"source": "/etc/passwd", "pack": pack, "mode": "review"}).to_string(),
+    );
+    assert!(path.starts_with("HTTP/1.1 400"), "{path}");
+
+    let without = session.pack_import(&json!({"pack": pack, "mode": "apply"}));
+    assert_eq!(
+        without["data"]["needs_consent"][0]["id"], "rule.script",
+        "{without}"
+    );
+    assert!(!root.join("scripts/check.sh").exists());
+    let consented =
+        session.pack_import(&json!({"pack": pack, "mode": "apply", "allow_commands": true}));
+    assert_eq!(consented["state"], "success", "{consented}");
+    assert!(root.join("scripts/check.sh").exists());
+    assert_eq!(
+        consented["data"]["files_written"],
+        json!(["scripts/check.sh"])
+    );
+
+    // Accepting names the files to commit first, through the same route the page uses.
+    let refused = session.command(&json!({"workflow": "change", "accept": true}));
+    assert_eq!(refused["state"], "needs_input", "{refused}");
+    assert!(refused["data"]["commands"][0]
+        .as_str()
+        .expect("command")
+        .starts_with("git add scripts/check.sh"));
+}
+
+#[test]
+fn a_dashboard_an_agent_opened_cannot_consent_and_a_read_only_one_cannot_import() {
+    let source = sharing_repository();
+    let pack = whetstone::service::pack_text(source.path(), &Default::default())
+        .expect("pack")
+        .0;
+    let target = tempfile::tempdir().expect("temp");
+    let root = target.path();
+    init_git(root);
+    std::fs::write(root.join("main.rs"), "fn main() {}\n").expect("source");
+    change(
+        root,
+        ChangeRequest {
+            kind: Some(ChangeKind::Mission),
+            content: Some("Ship.".into()),
+            ..ChangeRequest::default()
+        },
+    );
+    let session = Session::open(start(root, true));
+    let refused =
+        session.pack_import(&json!({"pack": pack, "mode": "apply", "allow_commands": true}));
+    assert_eq!(refused["state"], "needs_input", "{refused}");
+    assert!(refused["summary"]
+        .as_str()
+        .expect("summary")
+        .contains("Only a person"));
+    assert!(!root.join("scripts").exists());
+
+    let handle = start(root, false);
+    let host = host(&handle);
+    let (cookie, csrf) = bootstrap(&handle);
+    let read_only = Session {
+        handle,
+        host,
+        cookie,
+        csrf,
+    };
+    let denied = read_only.raw_pack_import(&json!({"pack": pack, "mode": "review"}).to_string());
+    assert!(denied.starts_with("HTTP/1.1 403"), "{denied}");
+    let host = &read_only.host;
+    let body = json!({"pack": pack, "mode": "review"}).to_string();
+    let no_token = send(
+        read_only.handle.address(),
+        &format!("POST /api/pack/import HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nSec-Fetch-Site: same-origin\r\nContent-Length: {}\r\n\r\n{body}", body.len()),
+    );
+    assert!(no_token.starts_with("HTTP/1.1 401"), "{no_token}");
+}
+
+#[test]
+fn only_the_import_route_takes_a_large_body() {
+    let temp = tempfile::tempdir().expect("temp");
+    init_git(temp.path());
+    let session = Session::open(start_for_a_person(temp.path()));
+    let large = "x".repeat(900 * 1024);
+    let accepted = session.raw_pack_import(&json!({"pack": large, "mode": "review"}).to_string());
+    assert!(
+        accepted.starts_with("HTTP/1.1 200"),
+        "{}",
+        &accepted[..accepted.len().min(200)]
+    );
+    assert!(response_body(&accepted)["summary"]
+        .as_str()
+        .expect("summary")
+        .contains("not JSON"));
+    // The length alone decides: the server answers before reading the body.
+    let declared = |route: &str, length: usize| {
+        let host = &session.host;
+        send(
+            session.handle.address(),
+            &format!("POST {route} HTTP/1.1\r\nHost: {host}\r\nOrigin: http://{host}\r\nSec-Fetch-Site: same-origin\r\nContent-Length: {length}\r\n\r\n"),
+        )
+    };
+    let refused = declared("/api/command", 65 * 1024);
+    assert!(refused.starts_with("HTTP/1.1 413"), "{refused}");
+    let over = declared("/api/pack/import", 3 * 1024 * 1024 + 1);
+    assert!(over.starts_with("HTTP/1.1 413"), "{over}");
 }

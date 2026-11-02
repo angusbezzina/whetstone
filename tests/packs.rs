@@ -1474,7 +1474,10 @@ fn accepting_waits_for_the_files_a_rule_runs_and_withdrawing_leaves_them() {
     let again = b.consent(&path, &[], &[]);
     assert_eq!(again["state"], "success", "{again}");
     git(&b.root, &["add", "config", "scripts"]);
-    git(&b.root, &["commit", "--quiet", "-m", "Add the files the rules run"]);
+    git(
+        &b.root,
+        &["commit", "--quiet", "-m", "Add the files the rules run"],
+    );
     let accepted = b.wh(&["change", "--accept"]);
     assert_eq!(accepted["state"], "success", "{accepted}");
     let checked = b.run(&["check", "--rule", "rule.allow-list"]);

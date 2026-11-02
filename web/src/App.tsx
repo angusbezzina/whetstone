@@ -6,9 +6,10 @@ import { Command } from "@/components/marks";
 import { PendingBar } from "@/components/PendingBar";
 import { Rulebook } from "@/components/Rulebook";
 import { Setup } from "@/components/Setup";
+import { ShareRules } from "@/components/Share";
 import { TitleBlock } from "@/components/TitleBlock";
 import { drift, drop, plotSheet } from "@/motion";
-import { DashProvider, useDash } from "@/state";
+import { DashProvider, useDash, useRoute } from "@/state";
 
 const COLUMNS = ["1", "2", "3", "4", "5", "6"];
 const ROWS = ["A", "B", "C", "D"];
@@ -115,6 +116,7 @@ function HealthUnlessSetup() {
 
 function Body() {
   const { data, error, loading } = useDash();
+  const route = useRoute();
   const page = data?.current;
   if (loading) return <p className="px-6 py-16 text-ink-3 italic">Reading the rulebook…</p>;
   if (!page)
@@ -125,6 +127,7 @@ function Body() {
       </div>
     );
   if (page.setup) return <Setup />;
+  if (route === "share") return <ShareRules />;
   return (
     <div className="grid gap-16 px-4 py-8 sm:px-8 lg:px-10 lg:py-10">
       <Rulebook />

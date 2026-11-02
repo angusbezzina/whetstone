@@ -201,7 +201,7 @@ components:
 
 **Creative North Star: "The Standards Sheet"**
 
-The dashboard draws the rulebook as a controlled engineering document. One sheet sits on a desk inside a 1px drawing frame with zone ticks in its margin: a title block across the top, then the purpose, then the principles, then numbered requirements grouped Hard rules then Soft rules, then the Changelog, a revision table that is the rulebook's Git history. Every value on the sheet is edited where it stands. It is not an admin console: there is no sidebar, no stat card and no data grid.
+The dashboard draws the rulebook as a controlled engineering document. One sheet sits on a desk inside a 1px drawing frame with zone ticks in its margin: a title block across the top, then the purpose, then the principles, then numbered requirements grouped Hard rules then Soft rules, then the Changelog, a revision table that is the rulebook's Git history. Every value on the sheet is edited where it stands. It is not an admin console: there is no sidebar, no stat card and no data grid. Sharing rules is the drawing office's transmittal: the same sheet, listing what is issued to another repository, with a transmittal block saying what goes.
 
 The sheet is ink on paper in light mode and bone on near-black in dark. Every division is a hairline. Corners are square, nothing casts a shadow, and nothing is a rounded card. Orange is the drawing's revision colour: it marks what differs from the last commit, the one primary action, and focus. Density is a drawing's density: the whole rulebook is visible as collapsed one-line rows, and opening a row draws a leader line into a framed callout.
 
@@ -319,7 +319,7 @@ Restyled shadcn primitives with Radix behaviour: square, hairline, Oswald on any
 - **Disabled:** 50% opacity.
 
 ### Navigation
-There is no navigation chrome. The title block's last cell holds the mode badge, the Ids switch (a square 32 by 18px track, `primary` when on) and a three-way theme toggle (system, light, dark) of 28px square icon items. A skip link goes to the rulebook.
+There is no navigation chrome beyond the Share rules link. The title block's last cell holds the mode badge, the Ids switch (a square 32 by 18px track, `primary` when on) and a three-way theme toggle (system, light, dark) of 28px square icon items. A skip link goes to the rulebook.
 
 ### Title Block
 A row of cells on a `rule` ground with 1px gaps. Each cell is a label over a 0.9375rem value, truncated with a title attribute; project is Oswald 500, branch and revision are mono. On load the cells fade up 4px in a 40ms stagger after the frame is plotted.
@@ -346,6 +346,15 @@ Shown only when the rulebook file differs from its last commit: a `wash` band un
 
 ### Diff
 Before and after per field in a table: old values struck through in `struck` on `ink-3` text, new values underlined 2px in `primary` with a 3px offset. The action label (Added, Changed, Retired) is a `struck` label.
+
+### Share Rules
+The `#share` view keeps the title block, pending band and health line and swaps the body. A Share rules link in the title block's last cell leads to it, a ghost button; on the view it reads Back to the rulebook. The view is one band: the head "Share rules" with an italic line, then the two tabs (the Add rule tab style, 2px `primary` underline on the active one).
+
+**Share out** is two columns from 1024px: the list, and a sticky 20rem transmittal block; below 1024px the block follows the list. A list row is a checkbox (square, 1rem, `frame` border, ink fill when checked), the statement in Statement type, the check-kind chip, and under them one `ink-2` line in 0.875rem naming what the rule needs, with paths and file names as code. The portability label is a quiet chip: Portable, Scoped, Needs tools, Brings files, Stays here. A chosen rule opens a hairline-indented block under it with Keep its paths and the suggested files as checkboxes. A rule that stays has a disabled checkbox, `ink-3` statement and its reason in place of the needs line. The filter is two toggle groups above the list. The transmittal block has a 1px `frame` border, hairline-separated rows of a label over a value (rules, principles, files), the name and version fields, and Download pack, the view's one primary button.
+
+**Bring in** starts as a dashed-free upload field: a 1px `frame` box with an Oswald Choose a pack file button and one line saying nothing runs yet. The review opens with a title-block strip for the pack (name, version, source, digest), then rows as in Share out with a status chip in place of the portability label. A status chip is quiet, except Needs consent and File differs, which are strong, because they ask for a decision. Command text sits in a `card` inset, wrapped. Each file is a row with its path and size that discloses its text in a `card` inset. Consent is a framed block under the list: one unticked checkbox sentence, then the primary button. The primary's label says what it will do: Import 12 drafts, or Import 4 drafts without commands. The result is the same rows as sentences in a framed block, and any git commands are Command components.
+
+**Pack text is literal.** Statements, commands and file text from a pack render as plain text. Nothing is interpreted, and `Prose` is not used on them.
 
 ### Command
 A copyable command: mono text on `card` inside a 1px `rule` border, with a copy button behind a `rule` divider that swaps to a check for 1.4s.

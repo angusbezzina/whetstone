@@ -15,6 +15,9 @@ export function PendingBar() {
   const [confirm, setConfirm] = useState<"accept" | "withdraw" | null>(null);
   const [why, setWhy] = useState("");
   const [busy, setBusy] = useState(false);
+  // The git commands a refused accept names: the files a drafted rule runs
+  // have to be committed first.
+  const [commands, setCommands] = useState<string[]>([]);
   if (!pending) return null;
   const noun = pending.count === 1 ? "uncommitted change" : "uncommitted changes";
   const act = async (verdict: "accept" | "withdraw") => {
@@ -24,6 +27,7 @@ export function PendingBar() {
       verdict === "accept" ? "Accepted: the rulebook was committed." : `Withdrawn: ${RULEBOOK} is as last committed.`,
     );
     setBusy(false);
+    setCommands((outcome.response?.data?.commands as string[] | undefined) ?? []);
     if (outcome.ok) {
       setConfirm(null);
       setWhy("");
@@ -82,6 +86,14 @@ export function PendingBar() {
                 <label htmlFor="accept-why" className="label">Why (added to the commit, optional)</label>
                 <Textarea id="accept-why" value={why} onChange={(event) => setWhy(event.target.value)} rows={2} />
                 <p className="text-[0.875rem] text-ink-2">Commits {RULEBOOK} and nothing else. Share it the way you share any commit.</p>
+                {commands.length ? (
+                  <div role="alert" className="grid gap-2 border border-frame p-3">
+                    <p className="text-[0.9375rem]">The drafted rules run files that are not committed. Commit them in a terminal, then accept again.</p>
+                    {commands.slice(0, 1).map((command) => (
+                      <Command key={command} text={command} />
+                    ))}
+                  </div>
+                ) : null}
                 <div className="flex gap-2">
                   <Button disabled={busy} onClick={() => act("accept")}>
                     {busy ? "Committing…" : "Commit to the rulebook"}

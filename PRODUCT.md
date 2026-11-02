@@ -57,7 +57,8 @@ tracker, a fleet console or a CI replacement.
 
 The dashboard is one page, `wh dash`, built around one job: a person
 reviewing or editing the rulebook understands what they are looking at
-within five seconds.
+within five seconds. The same sheet has one more view, Share rules, reached
+at `#share` from the title block and hidden during Setup.
 
 1. **Header** (one line): project, branch, the rulebook's revision, a
    summary ("14 rules: 7 block push, 7 report"), the last change and its
@@ -98,6 +99,31 @@ within five seconds.
    field-level diff on demand; TSV export of the decision trail.
 7. **Setup**: only before a mission and a rule are committed, a short
    guided page (mission, rules, gates) that ends in one commit.
+8. **Share rules** (`#share`), with two tabs. The header, pending band and
+   health line stay; the body swaps.
+   - Share out: the accepted rules grouped as on the rulebook, each with a
+     checkbox and a line on what it needs (a principle, files, tools,
+     paths), from `GET /api/pack/plan`. A filter by strength and by enforcer,
+     and Select shown. A chosen rule with paths offers Keep its paths; one
+     whose scripts mention other files offers those files. Beside the list
+     a running summary says what the pack holds, with the name and version,
+     and Download pack. A rule that cannot leave (one derived from the
+     mission, or one running a file that cannot travel) is shown disabled
+     with the reason. This tab works read-only, because nothing is written.
+   - Bring in: an upload, then the review, then consent, then the result.
+     The review lists every principle, every rule with its exact command,
+     every file with its text to read, and a status for each: Ready, Needs
+     consent, Needs a path mapping, Already held, File differs, Won't work
+     here. Rows are chosen with checkboxes, and a suggested mapping is one
+     click. Nothing has run at this point. Consent is one unticked checkbox
+     that says how many commands will run and how many files will be
+     written. Without it the import still drafts the principles and queries.
+     The result lists what was drafted, what fails today and what was left
+     out, then the pending band takes over for Accept and Withdraw. When
+     imported files must be committed first, the page shows the exact
+     commands to copy: this is the one terminal step, because accepting
+     commits the rulebook and only it. A read-only tab says how to open an
+     editing one.
 
 ## Durable constraints
 
@@ -105,6 +131,9 @@ within five seconds.
   green. Read-only inspection is not success.
 - No blended health score, no gamification, no tracker or fleet-console
   behaviour.
+- A pack is untrusted text. Everything from it renders as text, nothing from
+  it runs before consent, and the browser never sends a path or a URL for a
+  pack: export is a download and import an upload.
 - Keyboard navigation, focus management, live-region feedback, safe rendering
   of user content, and widths of 320, 390, 768 and 1024 px.
 - The page's HTML, CSS and JavaScript stay under 600 KiB and its fonts
@@ -119,7 +148,7 @@ within five seconds.
 Mission, principle (a catalogue principle or the owner's own), rule (one
 strength must/should and one mechanical enforcer), rulebook, draft (an
 uncommitted edit to the rulebook), accepted (committed), retired, check,
-finding, sweep, owner.
+finding, sweep, owner. A rule pack is the file; sharing rules is the act.
 
 ## Brand commitments
 

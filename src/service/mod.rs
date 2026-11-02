@@ -31,6 +31,7 @@ mod trail;
 
 pub use explain::ExplainRequest;
 pub use pack_export::{pack_plan, pack_text, PackChoice};
+pub use packs::RulePack;
 pub use trail::{decision_trail, rulebook_log, rulebook_texts, RulebookCommit, TRAIL_HEADER};
 
 /// Environment variables agent hosts set in the shells they run. Any of them
