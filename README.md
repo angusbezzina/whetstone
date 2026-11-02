@@ -209,7 +209,8 @@ the repository root without a shell and is given `WH_MODE` (`staged`,
 `base`, `changed`, `sweep` or `all`), `WH_RULE`, `WH_PATHS` (a file listing
 the files in scope, one per line, the rule's exclusions left out) and
 `WH_BASE`. A script that should judge only a change needs no guard on
-`WH_MODE`: give its rule `"mode": "change"`. It exits 0 to pass; a line
+`WH_MODE`: give its rule `"mode": "change"`. It exits 0 to pass, and 69 when
+it could not reach a verdict, which is unknown; any other exit fails. A line
 `path:line message` is a finding at that line and `path: message` one about
 the whole file. Scripts run at pre-commit on the staged files. The full
 contract is `whetstone/checks/README.md`, which wiring writes with a working

@@ -97,6 +97,9 @@ Every enforcer is mechanical:
 - `test`: a test command that must pass;
 - `validator`: any command whose exit status is the verdict.
 
+A `test` or `validator` command that exits 69 says it could not reach a
+verdict, and the rule is unknown.
+
 `must` blocks the gate. `should` reports, never blocks, and is what the
 sweep runs. How to choose an enforcer is in
 [signal-strategies.md](../references/signal-strategies.md).

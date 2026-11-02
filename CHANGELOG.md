@@ -9,6 +9,15 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+### Added
+
+- Exit 69 from a `test` or `validator` command means it could not reach a
+  verdict, for example because a tool, permission or service it needs is
+  unavailable. The rule is reported as unknown, never as a pass or a
+  violation, and the command's last line of output is the reason. Every
+  other non-zero exit still fails the rule. Repositories that are already
+  wired keep their `whetstone/checks/README.md`, which does not mention it.
+
 ## [0.16.0] - 2026-10-21
 
 ### Added

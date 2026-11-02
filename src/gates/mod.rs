@@ -398,6 +398,12 @@ pub struct GateOutcome {
     pub program_digest: Option<String>,
 }
 
+/// The exit status a test or validator command returns to say it could not
+/// reach a verdict, for example because a tool it needs is unavailable. It is
+/// `EX_UNAVAILABLE` from sysexits.h, which a failing check is unlikely to use
+/// by accident, and the gate reports it as unknown.
+pub const NO_VERDICT_EXIT: i32 = 69;
+
 impl GateOutcome {
     pub fn new(id: &RecordId, rule: &Rule) -> Self {
         let (mechanism, command) = mechanism_label(rule);
@@ -827,6 +833,17 @@ fn run_command_gate(
             Some(0) => {
                 outcome.state = GateState::Pass;
                 outcome.summary = format!("Passed in {:.1}s.", run.elapsed_ms as f64 / 1000.0);
+            }
+            Some(NO_VERDICT_EXIT)
+                if matches!(
+                    rule.enforcer,
+                    Enforcer::Test { .. } | Enforcer::Validator { .. }
+                ) =>
+            {
+                outcome = outcome.unknown(format!(
+                    "The command could not reach a verdict (exit {NO_VERDICT_EXIT}): {}",
+                    last_meaningful_line(&run.output)
+                ));
             }
             Some(code) => {
                 outcome.state = GateState::Fail;

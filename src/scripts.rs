@@ -42,7 +42,9 @@ it in `sweep` mode to count its flags, and files no finding).
 
 ## What the script reports
 
-- Exit 0 passes. Any other exit fails the rule.
+- Exit 0 passes. Exit 69 means the script could not reach a verdict (a tool,
+  permission or service it needs is unavailable): the rule is unknown, which
+  is never a pass, and no finding is read. Any other exit fails the rule.
 - A line `path:line[:col] message` is a finding at that line.
 - A line `path: message` is a finding about the whole file.
 - Paths are relative to the repository root and must name a file that exists.

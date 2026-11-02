@@ -1187,6 +1187,45 @@ fn a_script_enforcer_reads_the_in_scope_files_and_reports_located_findings() {
     assert!(log.contains("PATH=b.txt"), "{log}");
 }
 
+#[test]
+fn a_script_that_reaches_no_verdict_is_unknown_never_a_pass_or_a_violation() {
+    let repo = Repo::new();
+    repo.write(
+        "whetstone/checks/needs-a-tool.sh",
+        "#!/bin/sh\necho 'a.txt:1 not a finding'\necho 'the tool is unavailable'\nexit \"$(cat exit-status)\"\n",
+    );
+    repo.write("a.txt", "fine\n");
+    repo.write("exit-status", "0\n");
+    repo.commit("base");
+    for (id, strength) in [("rule.must", "must"), ("rule.should", "should")] {
+        repo.rule(
+            id,
+            &format!(
+                r#"{{"type":"rule","strength":"{strength}","enforcer":{{"kind":"validator","command":"sh whetstone/checks/needs-a-tool.sh"}}}}"#
+            ),
+        );
+    }
+    repo.commit("rulebook");
+
+    repo.write("exit-status", "69\n");
+    let (code, response) = repo.check(&[]);
+    assert_eq!(code, Some(3), "{response}");
+    assert_eq!(response["state"], "unknown", "{response}");
+    for id in ["rule.must", "rule.should"] {
+        let script = gate(&response, id);
+        assert_eq!(script["state"], "unknown", "{script}");
+        assert_eq!(script["failures"], serde_json::json!([]), "{script}");
+        let summary = script["summary"].as_str().expect("summary");
+        assert!(summary.contains("the tool is unavailable"), "{summary}");
+    }
+
+    // Any other exit is still a violation.
+    repo.write("exit-status", "68\n");
+    let (code, response) = repo.check(&[]);
+    assert_eq!(code, Some(1), "{response}");
+    assert_eq!(gate(&response, "rule.must")["state"], "fail", "{response}");
+}
+
 /// The gate's own output log, read from the evidence root.
 fn gate_log(response: &serde_json::Value, gate: &serde_json::Value) -> String {
     let root = PathBuf::from(response["data"]["evidence_root"].as_str().expect("root"));
