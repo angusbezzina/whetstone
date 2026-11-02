@@ -1772,3 +1772,48 @@ fn only_the_import_route_takes_a_large_body() {
     let over = declared("/api/pack/import", 3 * 1024 * 1024 + 1);
     assert!(over.starts_with("HTTP/1.1 413"), "{over}");
 }
+
+/// The same path through the routes the page uses, ending in the page's own
+/// accept and a check of the target.
+#[test]
+fn a_pack_travels_between_two_dashboards_and_holds() {
+    let source = sharing_repository();
+    let from = Session::open(start_for_a_person(source.path()));
+    let response = from.pack_export(&json!({"only": ["rule.script"]}));
+    let pack = response.split("\r\n\r\n").nth(1).expect("body").to_string();
+
+    let target = tempfile::tempdir().expect("temp");
+    let root = target.path();
+    init_git(root);
+    std::fs::write(root.join("main.rs"), "fn main() {}\n").expect("source");
+    change(
+        root,
+        ChangeRequest {
+            kind: Some(ChangeKind::Mission),
+            content: Some("Ship.".into()),
+            ..ChangeRequest::default()
+        },
+    );
+    let to = Session::open(start_for_a_person(root));
+    let applied = to.pack_import(&json!({"pack": pack, "mode": "apply", "allow_commands": true}));
+    assert_eq!(applied["state"], "success", "{applied}");
+    let add = |args: &[&str]| {
+        assert!(Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .status()
+            .expect("git")
+            .success());
+    };
+    add(&["add", "scripts"]);
+    add(&["commit", "--quiet", "-m", "Add the files the rules run"]);
+    let accepted = to.command(&json!({"workflow": "change", "accept": true}));
+    assert_eq!(accepted["state"], "success", "{accepted}");
+    let view = to.inspect();
+    let coverage = &view["data"]["current"]["principle_coverage"];
+    assert_eq!(
+        (&coverage["unserved"], &coverage["unanchored"]),
+        (&json!([]), &json!([])),
+        "{coverage}"
+    );
+}

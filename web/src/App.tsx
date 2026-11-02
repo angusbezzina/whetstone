@@ -126,8 +126,8 @@ function Body() {
         <p className="mt-2 text-ink-2">{error}</p>
       </div>
     );
-  if (page.setup) return <Setup />;
   if (route === "share") return <ShareRules />;
+  if (page.setup) return <Setup />;
   return (
     <div className="grid gap-16 px-4 py-8 sm:px-8 lg:px-10 lg:py-10">
       <Rulebook />

@@ -182,18 +182,49 @@ Rules can also start from prose or from elsewhere:
 ```bash
 wh change --from-file CONTRIBUTING.md   # probed drafts where the text names its check
 wh change --from-finding <fingerprint>  # a must rule from a finding that keeps coming back
-wh change --export-pack rules.pack.json # the committed rules and principles, for another repository
+wh change --export-pack rules.pack.json # the committed rules, principles and scripts, for another repository
 wh change --export-pack team.json --principles  # your own principles as a principle pack, like pstack
 wh change --import-pack rust            # a pack (a file, an https URL, rust, typescript or python) as drafts
 ```
 
+To pick rules by hand, open `wh dash` and choose Share rules: tick rules in
+one repository, download the pack, upload it in another, read what it brings,
+and import what you want.
+
 `--from-text` and `--from-file` never guess with a model: a rule is drafted
 only where the text names its enforcer (a formatter, a lint code, a command,
 a script under `whetstone/checks/`, or a construct with a known AST query),
-and the rest come back as needing one. A rule pack
-(`whetstone.rule-pack.v1`) carries a content digest; an import verifies it,
-probes each rule here and writes the rules as drafts. A principle pack
-imported the same way is installed under `whetstone/principles/`.
+and the rest come back as needing one.
+
+A rule pack (`whetstone.rule-pack.v2`, which still reads v1) holds the rules
+you choose, the principles they serve and the files their commands run, read
+from the commit. On export, `--only <id>` picks rules or principles (a rule
+brings the principle it serves), `--keep-paths <rule id>` or `--include-paths`
+keeps a rule's paths (otherwise it covers every file there), `--with-file
+<path>` adds a support file a script reads, and `--pack-name` and
+`--pack-version` name it. Without them it holds everything that can leave.
+
+A pack's digest proves it is intact, not that it is safe, so an import
+treats a file or URL pack as untrusted:
+
+```bash
+wh change --import-pack rules.pack.json --preview         # reads it: runs nothing, writes nothing
+wh change --import-pack rules.pack.json                   # drafts its principles and AST rules
+wh change --import-pack rules.pack.json --allow-commands  # a person lets its commands run and files arrive
+```
+
+Only a person can pass `--allow-commands`, because a draft's command runs on
+the next local check. `--allow-unvalidated` is not consent, and the built-in
+packs need none. `--only <id>` imports part of a pack and `--map-path
+<from>=<to>` rewrites a path prefix before a rule is probed. A pack never
+overwrites a file that differs: the rule that needs it is reported and left
+out. It never writes under `.git`, `.githooks`, `.github` or
+`whetstone/principles`, or over the rulebook. `wh change --accept` still
+commits the rulebook and only it, so it refuses until the files a drafted rule
+runs are committed, and it prints the `git` command. Withdrawing leaves those
+files in place and lists them. A principle pack imported the same way is
+installed under `whetstone/principles/`.
+
 `--export-pack <file> --principles` writes the accepted rulebook's
 principles in your own words as such a pack
 (`whetstone.principle-pack.v1`, the shape pstack and `mattpocock` ship in),

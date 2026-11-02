@@ -61,7 +61,7 @@ function toggled(list: string[], item: string, on: boolean): string[] {
 /** What a rule needs, in one line, from the plan's facts alone. */
 function Needs({ rule }: { rule: PackRule }) {
   const parts: React.ReactNode[] = [];
-  if (rule.serves) parts.push(<>serves {rule.serves.statement}</>);
+  if (rule.serves) parts.push(<>serves {rule.serves.statement.replace(/[.]+$/, "")}</>);
   if (rule.files.length) parts.push(<>brings {rule.files.map((file, index) => <span key={file}>{index ? ", " : ""}<code>{file}</code></span>)}</>);
   if (rule.tools.length) parts.push(<>needs {rule.tools.map((tool, index) => <span key={tool}>{index ? ", " : ""}<code>{tool}</code></span>)}</>);
   if (rule.paths.length) parts.push(<>{rule.paths.length} path{rule.paths.length === 1 ? "" : "s"} here</>);
@@ -153,12 +153,21 @@ function ShareOut() {
                           Keep its paths: {rule.paths.map((path, index) => <span key={path}>{index ? ", " : ""}<code>{path}</code></span>)}. Left off, it covers every file there.
                         </Tick>
                       ) : null}
-                      {rule.suggested_files.length ? <p className="label mt-1">Its scripts mention these. Some may be this repository's own state.</p> : null}
-                      {rule.suggested_files.map((file) => (
-                        <Tick key={file} checked={extra.includes(file)} onChange={(checked) => setExtra(toggled(extra, file, checked))}>
-                          <code>{file}</code>
-                        </Tick>
-                      ))}
+                      {rule.suggested_files.length ? (
+                        <details>
+                          <summary className="label cursor-pointer py-0.5">
+                            {rule.suggested_files.length} file{rule.suggested_files.length === 1 ? "" : "s"} its scripts mention
+                          </summary>
+                          <p className="mt-1 text-ink-2">Include what the script reads. Some may be this repository's own state.</p>
+                          <div className="mt-1 grid gap-1">
+                            {rule.suggested_files.map((file) => (
+                              <Tick key={file} checked={extra.includes(file)} onChange={(checked) => setExtra(toggled(extra, file, checked))}>
+                                <code>{file}</code>
+                              </Tick>
+                            ))}
+                          </div>
+                        </details>
+                      ) : null}
                     </div>
                   ) : null}
                 </li>
@@ -228,7 +237,7 @@ function Result({ result }: { result: Applied }) {
   return (
     <section role="status" className="grid gap-4 border border-frame p-4">
       <p>{result.summary}</p>
-      {result.blocking.map((question) => <p key={question} className="text-ink-2">{question}</p>)}
+      {result.blocking.filter((question) => question !== result.summary).map((question) => <p key={question} className="text-ink-2">{question}</p>)}
       {list("Fails today", (data.fails_today ?? []).map((item) => <><code>{item.id}</code> ({item.strength === "must" ? "blocks the gate once accepted" : "reports"}): {item.reason || "the command exited with a failure"}</>))}
       {list("Won't work here", (data.not_validatable ?? []).map((item) => <><code>{item.id}</code>: {item.reason}</>))}
       {list("Left out, a file here differs", (data.file_conflicts ?? []).map((item) => <><code>{item.id}</code>: {item.files.map((file) => <code key={file}>{file}</code>)}</>))}
@@ -489,13 +498,16 @@ function BringIn() {
 /** Share rules: choose rules from this repository into a pack, or bring a
  * pack in. The transmittal view of the same sheet. */
 export function ShareRules() {
+  const { data } = useDash();
+  // A new repository has nothing to share yet, and rules to bring in.
+  const fresh = Boolean(data?.current?.setup);
   return (
     <div className="grid gap-5 px-4 py-8 sm:px-8 lg:px-10 lg:py-10">
       <div>
         <h2 className="text-[1.375rem]">Share rules</h2>
         <p className="mt-1 text-ink-2 italic">A pack is one file. It takes rules from one repository to another, and a person reads it before anything runs.</p>
       </div>
-      <Tabs defaultValue="out">
+      <Tabs defaultValue={fresh ? "in" : "out"}>
         <TabsList variant="line" className="mb-5 h-auto w-full justify-start gap-4 border-b border-rule p-0">
           {[["out", "Share out"], ["in", "Bring in"]].map(([value, label]) => (
             <TabsTrigger key={value} value={value} className="display -mb-px flex-none rounded-none border-0 border-b-2 border-transparent px-0 pb-2 text-[0.8125rem] data-[state=active]:border-primary data-[state=active]:text-foreground">

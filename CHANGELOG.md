@@ -9,7 +9,36 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+### Security
+
+- `wh change --import-pack --preview` no longer runs a pack's commands. It
+  promised a look but probed every rule, so previewing a pack from any file
+  or URL ran its code. It now runs nothing and writes nothing, for every pack.
+- A file or URL pack's commands and files now need `--allow-commands`, which
+  only a person can pass. Without it, an import drafts the pack's principles
+  and AST rules and lists the commands under `needs_consent`. This changes
+  scripted imports, which must now ask a person. The built-in packs need
+  no consent.
+
 ### Added
+
+- Share rules in the dashboard (`#share`): tick rules into a pack and
+  download it in one repository, then upload it in another, read every
+  command and file, consent, and import what you choose. It also works in a
+  new repository, before Setup is finished.
+- Rule packs are now `whetstone.rule-pack.v2`
+  ([schema](references/rule-pack-v2.schema.json)); v1 packs are still read.
+  A pack carries the files its rules' commands name, from the commit, with
+  their executable bit. A path outside the repository or under `.git`,
+  `.githooks`, `.github` or `whetstone/principles` refuses the pack, and a
+  file that differs is never overwritten: the rule that needs it is left out.
+- `--only <id>` on export and import, `--keep-paths`, `--with-file`,
+  `--pack-name` and `--pack-version` on export, and `--map-path <from>=<to>`
+  on import. `--export-pack <file> --preview --json` returns what each rule
+  needs to travel.
+- An import reports `fails_today` for a rule whose command fails with no
+  location, `principle_conflicts`, `principle_missing`, and rules that arrive
+  covering every file.
 
 - Exit 69 from a `test` or `validator` command means it could not reach a
   verdict, for example because a tool, permission or service it needs is
@@ -17,6 +46,26 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   violation, and the command's last line of output is the reason. Every
   other non-zero exit still fails the rule. Repositories that are already
   wired keep their `whetstone/checks/README.md`, which does not mention it.
+
+### Changed
+
+- `wh change --accept` refuses while a drafted rule runs a file that is not
+  committed, and the scripts it mentions, and prints the `git` command. It
+  still commits the rulebook and only it. A rule already accepted is not
+  judged again. This applies to every rule, not only imported ones.
+- `wh change --withdraw` lists the untracked files only the withdrawn rules
+  run. It deletes nothing.
+- The default version of an exported pack is the rulebook's short commit
+  instead of a timestamp, so one revision and one selection give one pack,
+  byte for byte.
+
+### Fixed
+
+- An imported rule keeps the principle it serves, and a principle keeps its
+  origin, so coverage holds across repositories.
+- A command naming a file that does not exist is no longer validatable. A
+  missing `node scripts/x.mjs` used to read as a rule that ran and matched.
+- A rule that passes through several repositories keeps one provenance clause.
 
 ## [0.16.0] - 2026-10-21
 

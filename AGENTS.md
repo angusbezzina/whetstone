@@ -18,7 +18,7 @@ any work.
 | Who uses the dashboard, what is on it, and what must it never do? | [PRODUCT.md](PRODUCT.md) |
 | What does the dashboard look like? | [DESIGN.md](DESIGN.md) |
 | What changed, and what is not released yet? | [CHANGELOG.md](CHANGELOG.md) |
-| What exact shape do the file, the envelope, the findings and a principle pack have? | [references/](references) (`*.schema.json`) |
+| What exact shape do the file, the envelope, the findings, a rule pack and a principle pack have? | [references/](references) (`*.schema.json`) |
 | Which enforcer fits a concern? | [references/signal-strategies.md](references/signal-strategies.md) |
 | What is a script enforcer's contract? | `whetstone/checks/README.md` in a wired repository, written from `src/scripts.rs` |
 | What is open now? | `bd ready` |
@@ -56,7 +56,13 @@ and what must not move.
 - **Packs.** The principle packs pstack and mattpocock are
   `assets/pstack/principles.json` and `assets/mattpocock/principles.json`,
   loaded by `src/catalogue.rs`. Rule packs, including the built-in rust,
-  typescript and python packs, live in `src/service/packs.rs`.
+  typescript and python packs, live in `src/service/packs.rs`
+  ([schema](references/rule-pack-v2.schema.json)):
+  `src/service/pack_export.rs` writes one, `src/service/pack_import.rs`
+  reviews and applies one, `src/service/pack_files.rs` holds what a pack may
+  carry and where it may write, and `src/projection/pack.rs` is the plan the
+  page and the CLI share. Reading a pack runs nothing; its commands and files
+  need a person's consent.
 - **Hosts.** `action.yml` is the reusable Action. Its hidden runner is
   `wh act` (`src/act.rs`). The Action is a host like any other: it uses only
   the three contracts in

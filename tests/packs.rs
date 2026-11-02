@@ -1646,3 +1646,77 @@ fn an_exported_pack_has_the_shape_the_schema_publishes() {
         }
     }
 }
+
+/// The whole path once, with the CLI where a person would use it: a subset
+/// with its principle, a kept path and a support file leaves one repository,
+/// and in the next it reads inert, needs consent and a mapping, waits for its
+/// script to be committed, passes, and fails the right rule on a violation.
+#[test]
+fn a_chosen_subset_travels_and_holds_in_another_repository() {
+    let a = source_repository();
+    let path = a.pack_path("subset.json");
+    let exported = a.wh(&[
+        "change",
+        "--export-pack",
+        &path,
+        "--only",
+        "rule.no-unwrap",
+        "--only",
+        "rule.allow-list",
+        "--keep-paths",
+        "rule.no-unwrap",
+        "--with-file",
+        "config/allow.txt",
+    ]);
+    assert_eq!(exported["state"], "success", "{exported}");
+    assert_eq!(
+        exported["data"]["added_by_closure"],
+        json!(["principle.prove-it-works", "principle.ship-small"])
+    );
+
+    let b = Repo::new(&[(
+        "src/lib.rs",
+        "pub fn f(x: Option<u8>) -> u8 { x.unwrap_or(0) }\n",
+    )]);
+    assert_eq!(b.wh(&["change", "--accept"])["state"], "success");
+    let review = b.wh(&["change", "--import-pack", &path, "--preview"]);
+    assert_eq!(review["data"]["written"], false, "{review}");
+    assert!(!b.root.join("scripts").exists(), "the review wrote a file");
+
+    let imported = b.consent(&path, &[], &["apps/web/src=src"]);
+    assert_eq!(imported["state"], "success", "{imported}");
+    assert_eq!(
+        imported["data"]["files_written"],
+        json!(["config/allow.txt", "scripts/check.sh"])
+    );
+    assert_eq!(b.wh(&["change", "--accept"])["state"], "needs_input");
+    git(&b.root, &["add", "config", "scripts"]);
+    git(
+        &b.root,
+        &["commit", "--quiet", "-m", "Add the files the rules run"],
+    );
+    assert_eq!(b.wh(&["change", "--accept"])["state"], "success");
+
+    let dash = b.wh(&["dash"]);
+    let coverage = &dash["data"]["current"]["principle_coverage"];
+    assert_eq!(
+        (&coverage["unserved"], &coverage["unanchored"]),
+        (&json!([]), &json!([])),
+        "{coverage}"
+    );
+    let clean = b.run(&["check"]);
+    assert_eq!(
+        clean.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&clean.stdout)
+    );
+
+    b.write(
+        "src/lib.rs",
+        "pub fn f(x: Option<u8>) -> u8 { x.unwrap() }\n",
+    );
+    let seeded = b.run(&["check"]);
+    assert_eq!(seeded.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&seeded.stdout).contains("rule.no-unwrap"));
+}

@@ -160,16 +160,23 @@ the rulebook and the workflow. Whetstone keeps no second trust root.
 - `--from-finding <fingerprint>` drafts a must rule from a finding that
   keeps coming back;
 - `--import-pack <file, URL, or rust, typescript or python>` imports a rule
-  pack's rules as probed drafts, or installs a principle pack under
-  `whetstone/principles/`;
+  pack's principles and AST rules as drafts, or installs a principle pack
+  under `whetstone/principles/`. With `--preview` it runs nothing and writes
+  nothing, for any pack. `--allow-commands`, which only a person can pass,
+  lets a file or URL pack's commands run and its files arrive. `--only <id>`
+  and `--map-path <from>=<to>` choose and re-aim what arrives;
 - `--export-pack <file>` writes the committed rules as a rule pack
-  (`whetstone.rule-pack.v1`). With `--principles`, it writes the rulebook's
-  own principles as a principle pack (`whetstone.principle-pack.v1`)
-  instead.
+  (`whetstone.rule-pack.v2`), with `--only <id>`, `--keep-paths <rule id>`,
+  `--include-paths`, `--with-file <path>`, `--pack-name` and `--pack-version`.
+  With `--preview --json` it returns what each rule needs to travel. With
+  `--principles`, it writes the rulebook's own principles as a principle pack
+  (`whetstone.principle-pack.v1`) instead.
 
 Every rule a change adds or re-aims is probed first: its enforcer runs once
 here, and a rule that cannot be checked is not written without
-`--allow-unvalidated`.
+`--allow-unvalidated`. The exception is reading a pack, which runs no command
+until a person consents. `--accept` refuses while a drafted rule runs a file
+that is not committed.
 
 `wh init --action agree` drafts the mission, principles and starter rules the
 same way. The decision log is the file's Git history: `wh dash --trail`

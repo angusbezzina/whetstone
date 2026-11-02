@@ -123,7 +123,7 @@ export function TitleBlock() {
             </TooltipContent>
           </Tooltip>
         ) : null}
-        {page && !page.setup ? (
+        {page ? (
           <Button variant="ghost" size="sm" asChild>
             <a href={route === "share" ? "#" : "#share"}>{route === "share" ? "Back to the rulebook" : "Share rules"}</a>
           </Button>

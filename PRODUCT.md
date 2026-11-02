@@ -58,7 +58,8 @@ tracker, a fleet console or a CI replacement.
 The dashboard is one page, `wh dash`, built around one job: a person
 reviewing or editing the rulebook understands what they are looking at
 within five seconds. The same sheet has one more view, Share rules, reached
-at `#share` from the title block and hidden during Setup.
+at `#share` from the title block. It stays reachable during Setup, opening
+on Bring in, because a new repository is where rules arrive.
 
 1. **Header** (one line): project, branch, the rulebook's revision, a
    summary ("14 rules: 7 block push, 7 report"), the last change and its
