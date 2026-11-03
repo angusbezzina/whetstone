@@ -61,6 +61,16 @@ main() {
     print_success
 }
 
+# Write a new file beside the old one and rename it into place. Copying over
+# the installed binary reuses its inode, and macOS then kills the new binary
+# because the kernel still holds the old one's code signature.
+place_binary() {
+    staged="${INSTALL_DIR}/.${BINARY_NAME}.new.$$"
+    cp "$1" "$staged"
+    chmod +x "$staged"
+    mv -f "$staged" "${INSTALL_DIR}/${BINARY_NAME}"
+}
+
 install_from_local_source() {
     if [ ! -f "$WHETSTONE_INSTALL_LOCAL_SRC" ]; then
         echo "Error: WHETSTONE_INSTALL_LOCAL_SRC does not point at a file: $WHETSTONE_INSTALL_LOCAL_SRC" >&2
@@ -68,8 +78,7 @@ install_from_local_source() {
     fi
     VERSION="local-$(date +%Y%m%d%H%M%S)"
     mkdir -p "$INSTALL_DIR"
-    cp "$WHETSTONE_INSTALL_LOCAL_SRC" "${INSTALL_DIR}/${BINARY_NAME}"
-    chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
+    place_binary "$WHETSTONE_INSTALL_LOCAL_SRC"
     ln -sf "${INSTALL_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/wh"
     echo "Installed local binary to ${INSTALL_DIR}/${BINARY_NAME}"
 }
@@ -161,8 +170,7 @@ download_and_verify() {
 
 install_binary() {
     mkdir -p "$INSTALL_DIR"
-    cp "${TMPDIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
-    chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
+    place_binary "${TMPDIR}/${BINARY_NAME}"
     ln -sf "${INSTALL_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/wh"
     echo "Installed to ${INSTALL_DIR}/${BINARY_NAME} (also available as 'wh')"
 }

@@ -9,6 +9,12 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+### Fixed
+
+- `install.sh` renames the new binary into place instead of copying over the
+  old one. Copying over it reused the file, and macOS then killed the new
+  binary on launch (exit 137), most often when a `wh dash` was still running.
+
 ## [0.17.1] - 2026-11-03
 
 ### Changed
