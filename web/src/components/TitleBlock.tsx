@@ -4,7 +4,6 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Button } from "@/components/ui/button";
 import { day, useDash, useRoute } from "@/state";
 import { Stone } from "./marks";
 
@@ -117,9 +116,11 @@ export function TitleBlock() {
             </TooltipContent>
           </Tooltip>
           {page ? (
-            <Button size="sm" asChild>
-              <a href={route === "share" ? "#" : "#share"}>{route === "share" ? "Back to the rulebook" : "Share rules"}</a>
-            </Button>
+            <Badge className="border-primary" asChild>
+              <a href={route === "share" ? "#" : "#share"} aria-label={route === "share" ? "Back to the rulebook" : "Share rules"}>
+                {route === "share" ? "Back" : "Share"}
+              </a>
+            </Badge>
           ) : null}
         </div>
         {data?.current?.principle_coverage.require_served ? (

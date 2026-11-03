@@ -504,8 +504,8 @@ export function ShareRules() {
   return (
     <div className="grid gap-5 px-4 py-8 sm:px-8 lg:px-10 lg:py-10">
       <div>
-        <h2 className="text-[1.375rem]">Share rules</h2>
-        <p className="mt-1 text-ink-2 italic">A pack is one file. It takes rules from one repository to another, and a person reads it before anything runs.</p>
+        <h2 className="display text-[1.375rem] leading-none font-semibold">Share rules</h2>
+        <p className="mt-2 text-ink-2 italic">A pack is one file. It takes rules from one repository to another, and a person reads it before anything runs.</p>
       </div>
       <Tabs defaultValue={fresh ? "in" : "out"}>
         <TabsList variant="line" className="mb-5 h-auto w-full justify-start gap-4 border-b border-rule p-0">

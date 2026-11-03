@@ -319,7 +319,7 @@ Restyled shadcn primitives with Radix behaviour: square, hairline, Oswald on any
 - **Disabled:** 50% opacity.
 
 ### Navigation
-There is no navigation chrome beyond the Share rules link. The title block's last cell holds the mode badge with the Share rules button beside it, the Ids switch (a square 32 by 18px track, `primary` when on) and a three-way theme toggle (system, light, dark) of 28px square icon items. A skip link goes to the rulebook.
+There is no navigation chrome beyond the Share badge. The title block's last cell holds the mode badge with the Share badge beside it, the Ids switch (a square 32 by 18px track, `primary` when on) and a three-way theme toggle (system, light, dark) of 28px square icon items. A skip link goes to the rulebook.
 
 ### Title Block
 A row of cells on a `rule` ground with 1px gaps. Each cell is a label over a 0.9375rem value, truncated with a title attribute; project is Oswald 500, branch and revision are mono. On load the cells fade up 4px in a 40ms stagger after the frame is plotted.
@@ -348,7 +348,7 @@ Shown only when the rulebook file differs from its last commit: a `wash` band un
 Before and after per field in a table: old values struck through in `struck` on `ink-3` text, new values underlined 2px in `primary` with a 3px offset. The action label (Added, Changed, Retired) is a `struck` label.
 
 ### Share Rules
-The `#share` view keeps the title block and pending band, drops the health band, and swaps the body. It also inverts the theme (dark becomes light and light becomes dark) for as long as it is open, so leaving the rulebook is unmistakable; the stored theme choice is unchanged. A Share rules button sits inline to the right of the mode badge, a small primary button; on the view it reads Back to the rulebook. The view is one band: the head "Share rules" with an italic line, then the two tabs (the Add rule tab style, 2px `primary` underline on the active one).
+The `#share` view keeps the title block and pending band, drops the health band, and swaps the body. It also inverts the theme (dark becomes light and light becomes dark) for as long as it is open, so leaving the rulebook is unmistakable; the stored theme choice is unchanged. A Share badge sits inline to the right of the mode badge, the same size but filled `primary`; on the view it reads Back. The view's head "Share rules" uses the section heading style. The view is one band: the head with an italic line, then the two tabs (the Add rule tab style, 2px `primary` underline on the active one).
 
 **Share out** is two columns from 1024px: the list, and a sticky 20rem transmittal block; below 1024px the block follows the list. A list row is a checkbox (square, 1rem, `frame` border, ink fill when checked), the statement in Statement type, the check-kind chip, and under them one `ink-2` line in 0.875rem naming what the rule needs, with paths and file names as code. The portability label is a quiet chip: Portable, Scoped, Needs tools, Brings files, Stays here. A chosen rule opens a hairline-indented block under it with Keep its paths and the suggested files as checkboxes. A rule that stays has a disabled checkbox, `ink-3` statement and its reason in place of the needs line. The filter is two toggle groups above the list. The transmittal block has a 1px `frame` border, hairline-separated rows of a label over a value (rules, principles, files), the name and version fields, and Export pack, the view's one primary button.
 
