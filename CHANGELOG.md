@@ -9,6 +9,16 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-11-03
+
+### Changed
+
+- The dashboard's Share rules button is a primary button beside the
+  Editing badge instead of a quiet link.
+- The sharing view inverts the colour theme while it is open, so leaving
+  the rulebook is unmistakable, and hides the Needs attention band.
+- The export button reads Export pack.
+
 ## [0.17.0] - 2026-11-02
 
 ### Security
