@@ -187,8 +187,8 @@ wh change --export-pack team.json --principles  # your own principles as a princ
 wh change --import-pack rust            # a pack (a file, an https URL, rust, typescript or python) as drafts
 ```
 
-To pick rules by hand, open `wh dash` and choose Share rules: tick rules in
-one repository, download the pack, upload it in another, read what it brings,
+To pick rules by hand, open `wh dash` and choose Share / Import: on Share, tick rules
+in one repository and export the pack; on Import in another, upload it, read what it brings,
 and import what you want.
 
 `--from-text` and `--from-file` never guess with a model: a rule is drafted

@@ -401,7 +401,7 @@ function BringIn() {
                 {rules.map((rule) => (
                   <li key={rule.id} className="border-b border-rule py-2.5">
                     <Tick
-                      label={`Bring in ${rule.statement}`}
+                      label={`Import ${rule.statement}`}
                       checked={!blocked(rule) && !skipped.includes(rule.id)}
                       disabled={blocked(rule)}
                       onChange={(checked) => setSkipped(toggled(skipped, rule.id, !checked))}
@@ -495,23 +495,40 @@ function BringIn() {
   );
 }
 
-/** Share rules: choose rules from this repository into a pack, or bring a
- * pack in. The transmittal view of the same sheet. */
+const SIDES = [
+  { value: "out", hash: "#share", title: "Share", line: "Pick rules from this repository into a pack file." },
+  { value: "in", hash: "#import", title: "Import", line: "Bring a pack file in, read what it runs, and draft its rules." },
+] as const;
+
+/** Share and import: choose rules from this repository into a pack, or bring
+ * a pack in. The two sides have equal weight; the address names the side. */
 export function ShareRules() {
   const { data } = useDash();
   // A new repository has nothing to share yet, and rules to bring in.
   const fresh = Boolean(data?.current?.setup);
+  const [side, setSide] = useState<string>(() =>
+    location.hash === "#import" || fresh ? "in" : "out",
+  );
+  const choose = (value: string) => {
+    setSide(value);
+    history.replaceState(null, "", SIDES.find((s) => s.value === value)!.hash);
+  };
   return (
     <div className="grid gap-5 px-4 py-8 sm:px-8 lg:px-10 lg:py-10">
       <div>
-        <h2 className="display text-[1.375rem] leading-none font-semibold">Share rules</h2>
+        <h2 className="display text-[1.375rem] leading-none font-semibold">Share and import rules</h2>
         <p className="mt-2 text-ink-2 italic">A pack is one file. It takes rules from one repository to another, and a person reads it before anything runs.</p>
       </div>
-      <Tabs defaultValue={fresh ? "in" : "out"}>
-        <TabsList variant="line" className="mb-5 h-auto w-full justify-start gap-4 border-b border-rule p-0">
-          {[["out", "Share out"], ["in", "Bring in"]].map(([value, label]) => (
-            <TabsTrigger key={value} value={value} className="display -mb-px flex-none rounded-none border-0 border-b-2 border-transparent px-0 pb-2 text-[0.8125rem] data-[state=active]:border-primary data-[state=active]:text-foreground">
-              {label}
+      <Tabs value={side} onValueChange={choose}>
+        <TabsList className="mb-6 grid! h-auto! w-full grid-cols-1 gap-px rounded-none border border-frame bg-rule p-0! sm:grid-cols-2">
+          {SIDES.map(({ value, title, line }) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              className="h-auto! flex-col items-start! justify-start! gap-1 border-0! border-t-4! border-t-transparent! bg-background! px-4 py-3 text-left whitespace-normal! text-ink-2 shadow-none! hover:text-foreground data-[state=active]:border-t-primary! data-[state=active]:text-foreground after:hidden"
+            >
+              <span className="display text-[1.125rem] leading-none font-semibold">{title}</span>
+              <span className="text-[0.9375rem] font-normal normal-case tracking-normal">{line}</span>
             </TabsTrigger>
           ))}
         </TabsList>

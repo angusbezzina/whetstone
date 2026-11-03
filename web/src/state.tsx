@@ -39,9 +39,10 @@ export function useDash(): Dash {
 
 const IDS = "wh-show-ids";
 
-/** Which view of the sheet the address names. */
+/** Which view of the sheet the address names. `#share` and `#import` are
+ * the two sides of the one sharing view. */
 export function useRoute(): "rulebook" | "share" {
-  const read = () => (location.hash === "#share" ? "share" : "rulebook");
+  const read = () => (location.hash === "#share" || location.hash === "#import" ? "share" : "rulebook");
   const [route, setRoute] = useState<"rulebook" | "share">(read);
   useEffect(() => {
     const update = () => setRoute(read());

@@ -57,9 +57,10 @@ tracker, a fleet console or a CI replacement.
 
 The dashboard is one page, `wh dash`, built around one job: a person
 reviewing or editing the rulebook understands what they are looking at
-within five seconds. The same sheet has one more view, Share rules, reached
-at `#share` from the title block. It stays reachable during Setup, opening
-on Bring in, because a new repository is where rules arrive.
+within five seconds. The same sheet has one more view, Share and import, reached
+from the title block, with two equal sides: Share at `#share` and Import at
+`#import`. It stays reachable during Setup, opening on Import, because a new
+repository is where rules arrive.
 
 1. **Header** (one line): project, branch, the rulebook's revision, a
    summary ("14 rules: 7 block push, 7 report"), the last change and its
@@ -100,10 +101,10 @@ on Bring in, because a new repository is where rules arrive.
    field-level diff on demand; TSV export of the decision trail.
 7. **Setup**: only before a mission and a rule are committed, a short
    guided page (mission, rules, gates) that ends in one commit.
-8. **Share rules** (`#share`), with two tabs. The header and pending band
+8. **Share and import** (`#share`, `#import`), with two equal sides. The header and pending band
    stay, the health band steps aside, the body swaps, and the theme
    inverts while the view is open.
-   - Share out: the accepted rules grouped as on the rulebook, each with a
+   - Share: the accepted rules grouped as on the rulebook, each with a
      checkbox and a line on what it needs (a principle, files, tools,
      paths), from `GET /api/pack/plan`. A filter by strength and by enforcer,
      and Select shown. A chosen rule with paths offers Keep its paths; one
@@ -112,7 +113,7 @@ on Bring in, because a new repository is where rules arrive.
      and Download pack. A rule that cannot leave (one derived from the
      mission, or one running a file that cannot travel) is shown disabled
      with the reason. This tab works read-only, because nothing is written.
-   - Bring in: an upload, then the review, then consent, then the result.
+   - Import: an upload, then the review, then consent, then the result.
      The review lists every principle, every rule with its exact command,
      every file with its text to read, and a status for each: Ready, Needs
      consent, Needs a path mapping, Already held, File differs, Won't work
