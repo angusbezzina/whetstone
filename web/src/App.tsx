@@ -111,7 +111,8 @@ function ReadOnlyNote() {
 
 function HealthUnlessSetup() {
   const { data } = useDash();
-  return data?.current?.setup ? null : <Health />;
+  const route = useRoute();
+  return data?.current?.setup || route === "share" ? null : <Health />;
 }
 
 function Body() {

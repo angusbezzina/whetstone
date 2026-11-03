@@ -100,8 +100,9 @@ on Bring in, because a new repository is where rules arrive.
    field-level diff on demand; TSV export of the decision trail.
 7. **Setup**: only before a mission and a rule are committed, a short
    guided page (mission, rules, gates) that ends in one commit.
-8. **Share rules** (`#share`), with two tabs. The header, pending band and
-   health line stay; the body swaps.
+8. **Share rules** (`#share`), with two tabs. The header and pending band
+   stay, the health band steps aside, the body swaps, and the theme
+   inverts while the view is open.
    - Share out: the accepted rules grouped as on the rulebook, each with a
      checkbox and a line on what it needs (a principle, files, tools,
      paths), from `GET /api/pack/plan`. A filter by strength and by enforcer,

@@ -196,7 +196,7 @@ function ShareOut() {
             <label htmlFor="pack-version" className="label">Version</label>
             <Input id="pack-version" className="font-mono text-[0.8125rem]" placeholder={plan.version} value={version} onChange={(event) => setVersion(event.target.value)} />
           </div>
-          <Button disabled={busy || !picked.length} onClick={download}>{busy ? "Packing…" : "Download pack"}</Button>
+          <Button disabled={busy || !picked.length} onClick={download}>{busy ? "Exporting…" : "Export pack"}</Button>
           <p className="text-[0.875rem] text-ink-2">A pack holds what is committed. A chosen rule brings the principle it serves. Nothing here is written or changed.</p>
         </div>
       </aside>

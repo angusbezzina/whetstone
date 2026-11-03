@@ -11,8 +11,12 @@ import { Stone } from "./marks";
 const THEME = "wh-theme";
 type Theme = "system" | "light" | "dark";
 
-function applyTheme(theme: Theme) {
-  if (theme === "system") document.documentElement.removeAttribute("data-theme");
+/** Apply the chosen theme. Sharing inverts it, so leaving the rulebook is
+ * unmistakable; the stored choice stays the person's own. */
+function applyTheme(theme: Theme, invert: boolean) {
+  const dark = theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+  if (invert) document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+  else if (theme === "system") document.documentElement.removeAttribute("data-theme");
   else document.documentElement.setAttribute("data-theme", theme);
   try {
     localStorage.setItem(THEME, theme);
@@ -21,7 +25,7 @@ function applyTheme(theme: Theme) {
   }
 }
 
-function useTheme(): [Theme, (theme: Theme) => void] {
+function useTheme(invert: boolean): [Theme, (theme: Theme) => void] {
   const [theme, setTheme] = useState<Theme>(() => {
     try {
       return (localStorage.getItem(THEME) as Theme) || "system";
@@ -29,7 +33,7 @@ function useTheme(): [Theme, (theme: Theme) => void] {
       return "system";
     }
   });
-  useEffect(() => applyTheme(theme), [theme]);
+  useEffect(() => applyTheme(theme, invert), [theme, invert]);
   return [theme, setTheme];
 }
 
@@ -47,7 +51,7 @@ function Cell({ label, children, className, title, wrap }: { label: string; chil
 export function TitleBlock() {
   const { data, editable, readOnlyReason, showIds, setShowIds } = useDash();
   const route = useRoute();
-  const [theme, setTheme] = useTheme();
+  const [theme, setTheme] = useTheme(route === "share");
   const page = data?.current;
   const header = page?.header;
   const last = header?.last_change;
@@ -96,21 +100,28 @@ export function TitleBlock() {
         )}
       </Cell>
       <div data-plot className="col-span-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 bg-background px-3 py-2 sm:col-span-4 lg:col-span-1 lg:flex-col lg:items-end lg:justify-center">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Badge
-              className="border-frame bg-transparent text-foreground"
-              tabIndex={0}
-            >
-              {editable ? "Editing" : "Read-only"}
-            </Badge>
-          </TooltipTrigger>
-          <TooltipContent className="max-w-72">
-            {editable
-              ? "Edits are drafts in whetstone/rulebook.json until you accept them."
-              : (readOnlyReason ?? "This tab can read but not edit.") + " Run wh dash in the repository to open an editing tab."}
-          </TooltipContent>
-        </Tooltip>
+        <div className="flex items-center gap-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge
+                className="border-frame bg-transparent text-foreground"
+                tabIndex={0}
+              >
+                {editable ? "Editing" : "Read-only"}
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-72">
+              {editable
+                ? "Edits are drafts in whetstone/rulebook.json until you accept them."
+                : (readOnlyReason ?? "This tab can read but not edit.") + " Run wh dash in the repository to open an editing tab."}
+            </TooltipContent>
+          </Tooltip>
+          {page ? (
+            <Button size="sm" asChild>
+              <a href={route === "share" ? "#" : "#share"}>{route === "share" ? "Back to the rulebook" : "Share rules"}</a>
+            </Button>
+          ) : null}
+        </div>
         {data?.current?.principle_coverage.require_served ? (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -122,11 +133,6 @@ export function TitleBlock() {
               Strict mode (require_served): accepting refuses a rulebook in which a principle has no rule or a rule serves no principle. Change it with wh change --require-served false.
             </TooltipContent>
           </Tooltip>
-        ) : null}
-        {page ? (
-          <Button variant="ghost" size="sm" asChild>
-            <a href={route === "share" ? "#" : "#share"}>{route === "share" ? "Back to the rulebook" : "Share rules"}</a>
-          </Button>
         ) : null}
         <div className="flex items-center gap-3">
           <label className="flex cursor-pointer items-center gap-1.5">
