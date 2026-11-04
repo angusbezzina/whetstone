@@ -107,6 +107,20 @@ export function DashProvider({ children }: { children: ReactNode }) {
     })();
   }, [reload]);
 
+  // The rulebook can change outside this tab (a commit in a terminal, an
+  // agent), so read it again whenever the tab comes back into view.
+  useEffect(() => {
+    const again = () => {
+      if (document.visibilityState === "visible") void reload();
+    };
+    addEventListener("focus", again);
+    document.addEventListener("visibilitychange", again);
+    return () => {
+      removeEventListener("focus", again);
+      document.removeEventListener("visibilitychange", again);
+    };
+  }, [reload]);
+
   const run = useCallback(
     async (command: ChangeCommand, success?: string): Promise<Outcome> => {
       try {
@@ -117,8 +131,10 @@ export function DashProvider({ children }: { children: ReactNode }) {
           if (command.accept && typeof response.data?.commit === "string") setStamped(response.data.commit);
           announce(success ?? response.summary);
           await reload();
-        } else if (!needsInput) {
-          announce(response.summary, "warn");
+        } else {
+          if (!needsInput) announce(response.summary, "warn");
+          // A refusal can mean the page is behind the file; show the truth.
+          await reload();
         }
         return { ok, needsInput, response, error: ok ? null : response.summary };
       } catch (failure) {

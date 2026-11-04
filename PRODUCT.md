@@ -101,8 +101,8 @@ repository is where rules arrive.
    field-level diff on demand; TSV export of the decision trail.
 7. **Setup**: only before a mission and a rule are committed, a short
    guided page (mission, rules, gates) that ends in one commit.
-8. **Share and import** (`#share`, `#import`), with two equal sides. The header and pending band
-   stay, the health band steps aside, the body swaps, and the theme
+8. **Share and import** (`#share`, `#import`), with two equal sides. The header stays, the pending
+   and health bands step aside (an import links back to accept), the body swaps, and the theme
    inverts while the view is open.
    - Share: the accepted rules grouped as on the rulebook, each with a
      checkbox and a line on what it needs (a principle, files, tools,

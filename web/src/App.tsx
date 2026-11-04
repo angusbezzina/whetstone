@@ -109,6 +109,11 @@ function ReadOnlyNote() {
   );
 }
 
+/** Accepting belongs to the rulebook; the sharing view links back to it. */
+function PendingUnlessSharing() {
+  return useRoute() === "share" ? null : <PendingBar />;
+}
+
 function HealthUnlessSetup() {
   const { data } = useDash();
   const route = useRoute();
@@ -168,7 +173,7 @@ export function App() {
           <Sheet>
             <TitleBlock />
             <ReadOnlyNote />
-            <PendingBar />
+            <PendingUnlessSharing />
             <HealthUnlessSetup />
             <main id="content" tabIndex={-1} className="outline-none">
               <Body />

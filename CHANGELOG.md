@@ -9,6 +9,15 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+### Fixed
+
+- The dashboard reads the rulebook again whenever its tab comes back into
+  view and after any refused change, so a commit made in a terminal no
+  longer leaves a stale pending band whose Accept silently does nothing.
+- The sharing view no longer shows the pending band. An import's result says
+  to commit only the files it wrote, and links to the rulebook to review and
+  accept the drafts.
+
 ## [0.17.2] - 2026-11-03
 
 ### Changed

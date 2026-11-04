@@ -246,10 +246,18 @@ function Result({ result }: { result: Applied }) {
       {list("Now covers every file", (data.widened ?? []).map((id) => <code>{id}</code>))}
       {written.length ? (
         <div className="grid gap-2">
-          <h4 className="label">Commit these files, then accept</h4>
-          <p className="text-[0.9375rem] text-ink-2">Accepting commits the rulebook and only it, so the files go first.</p>
+          <h4 className="label">Commit these files first</h4>
+          <p className="text-[0.9375rem] text-ink-2">Commit only these files, not the rulebook: accepting commits the rulebook itself.</p>
           <Command text={`git add ${written.join(" ")} && git commit -m "Add the files the rules run"`} />
         </div>
+      ) : null}
+      {data.drafts?.length ? (
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[0.9375rem]">
+          <span>The rules are drafts until you accept them on the rulebook.</span>
+          <Button size="sm" asChild>
+            <a href="#">Review and accept</a>
+          </Button>
+        </p>
       ) : null}
     </section>
   );
