@@ -9,6 +9,8 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-11-03
+
 ### Fixed
 
 - The dashboard reads the rulebook again whenever its tab comes back into
