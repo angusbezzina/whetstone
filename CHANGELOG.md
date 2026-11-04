@@ -9,6 +9,18 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-11-03
+
+### Changed
+
+- The dashboard's sharing view is now one Share and import view. Share and
+  Import sit side by side as equal choices, each with a line saying what it
+  does, and the address names the side (`#share`, `#import`). Import is no
+  longer a tab under Share.
+- The title block's link to it is a Share / Import badge the size of the
+  Editing badge; on the view it reads Rulebook and returns there. The view's
+  title uses the section heading style.
+
 ### Fixed
 
 - `install.sh` renames the new binary into place instead of copying over the
