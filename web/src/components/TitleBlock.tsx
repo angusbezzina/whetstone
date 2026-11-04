@@ -118,7 +118,7 @@ export function TitleBlock() {
           {page ? (
             <Badge className="border-primary" asChild>
               <a href={route === "share" ? "#" : "#share"} aria-label={route === "share" ? "Back to the rulebook" : "Share or import rules"}>
-                {route === "share" ? "Back" : "Share / Import"}
+                {route === "share" ? "Rulebook" : "Share / Import"}
               </a>
             </Badge>
           ) : null}
