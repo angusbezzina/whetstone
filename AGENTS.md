@@ -19,7 +19,7 @@ any work.
 | What does the dashboard look like? | [DESIGN.md](DESIGN.md) |
 | What changed, and what is not released yet? | [CHANGELOG.md](CHANGELOG.md) |
 | What exact shape do the file, the envelope, the findings, a rule pack and a principle pack have? | [references/](references) (`*.schema.json`) |
-| Which enforcer fits a concern? | [references/signal-strategies.md](references/signal-strategies.md) |
+| Which enforcer fits a concern, and how does a check that needs an outside tool report? | [references/signal-strategies.md](references/signal-strategies.md) |
 | What is a script enforcer's contract? | `whetstone/checks/README.md` in a wired repository, written from `src/scripts.rs` |
 | What is open now? | `bd ready` |
 
