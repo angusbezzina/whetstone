@@ -9,6 +9,8 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-11
+
 ### Added
 
 - Rule commands keep the graphical session's `DISPLAY`, `WAYLAND_DISPLAY`,
@@ -21,6 +23,9 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   and reports one a person edited (`data.scripts.refreshed` and
   `data.scripts.out_of_date`) without touching it. A repository wired before
   this release learns that exit 69 means no verdict by wiring again.
+- `references/signal-strategies.md` explains how to write a check that needs
+  an outside tool, session or permission, with agent-desktop as the worked
+  example.
 
 ### Fixed
 
