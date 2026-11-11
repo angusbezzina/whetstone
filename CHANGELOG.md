@@ -9,6 +9,14 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+### Added
+
+- Rule commands keep the graphical session's `DISPLAY`, `WAYLAND_DISPLAY`,
+  `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS` and `XAUTHORITY` when the
+  caller has them, so a check that drives a desktop app through the
+  accessibility tree can reach the session on Linux. A variable the caller
+  does not have stays absent.
+
 ### Fixed
 
 - A rule that reached no verdict (a timeout, a missing tool, a command that

@@ -1226,6 +1226,49 @@ fn a_script_that_reaches_no_verdict_is_unknown_never_a_pass_or_a_violation() {
     assert_eq!(gate(&response, "rule.must")["state"], "fail", "{response}");
 }
 
+#[test]
+fn a_script_sees_the_graphical_session_when_the_caller_has_one() {
+    const SESSION: [&str; 5] = [
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XDG_RUNTIME_DIR",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "XAUTHORITY",
+    ];
+    let repo = Repo::new();
+    repo.write(
+        "whetstone/checks/session.sh",
+        "#!/bin/sh\nfor name in DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS XAUTHORITY; do\n  eval \"value=\\${$name-unset}\"\n  echo \"$name=$value\"\ndone\n",
+    );
+    repo.commit("base");
+    repo.rule(
+        "rule.session",
+        r#"{"type":"rule","strength":"must","enforcer":{"kind":"validator","command":"sh whetstone/checks/session.sh"}}"#,
+    );
+    repo.commit("rulebook");
+    let check = |set: bool| {
+        let mut command = Command::new(bin());
+        command
+            .args(["check", "--rule", "rule.session", "--json"])
+            .current_dir(&repo.root);
+        for name in SESSION {
+            if set {
+                command.env(name, format!("from-{name}"));
+            } else {
+                command.env_remove(name);
+            }
+        }
+        let response = json(&command.output().expect("run whetstone"));
+        gate_log(&response, gate(&response, "rule.session"))
+    };
+    let with = check(true);
+    let without = check(false);
+    for name in SESSION {
+        assert!(with.contains(&format!("{name}=from-{name}")), "{with}");
+        assert!(without.contains(&format!("{name}=unset")), "{without}");
+    }
+}
+
 /// The gate's own output log, read from the evidence root.
 fn gate_log(response: &serde_json::Value, gate: &serde_json::Value) -> String {
     let root = PathBuf::from(response["data"]["evidence_root"].as_str().expect("root"));

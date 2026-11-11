@@ -23,7 +23,10 @@ that runs before a rule is written.
 
 It runs from the repository root without a shell, with a cleared environment
 (only `PATH`, `HOME`, `USER`, `TMPDIR`, `LANG`, the Rust, Node, Python, Java
-and Go toolchain variables, `SSL_CERT_FILE` and `XDG_CACHE_HOME` are kept) plus:
+and Go toolchain variables, `SSL_CERT_FILE`, `XDG_CACHE_HOME` and the
+graphical session's `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`,
+`DBUS_SESSION_BUS_ADDRESS` and `XAUTHORITY` are kept, when the caller has
+them) plus:
 
 | Variable | Meaning |
 | --- | --- |

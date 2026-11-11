@@ -59,6 +59,13 @@ pub const ENV_ALLOWLIST: &[&str] = &[
     "GOROOT",
     "SSL_CERT_FILE",
     "XDG_CACHE_HOME",
+    // The graphical session, for a check that drives a desktop app through
+    // the accessibility tree; absent unless the caller has a session.
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_RUNTIME_DIR",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "XAUTHORITY",
 ];
 
 pub fn evidence_root(layout: &ProjectLayout) -> PathBuf {

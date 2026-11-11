@@ -117,7 +117,10 @@ sweep runs. How to choose an enforcer is in
 [signal-strategies.md](../references/signal-strategies.md).
 
 Rule execution is deliberately narrow: no shell (literal argv, `&&` chains
-only), an allowlisted environment, a repository-scoped working directory, and
+only), an allowlisted environment (the toolchains' variables, and the
+graphical session's `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`,
+`DBUS_SESSION_BUS_ADDRESS` and `XAUTHORITY` for a check that drives a desktop
+app), a repository-scoped working directory, and
 bounded time and output. A timeout, truncation, missing tool or a query that
 compiles for no language is unknown, never a pass. A check where no must rule
 ran is not green.
