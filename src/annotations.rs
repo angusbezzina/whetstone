@@ -1,6 +1,8 @@
 //! A check's flags as GitHub workflow commands, so a reviewer sees the rule
 //! beside the code it flags: `::error` for a must rule, `::warning` for a
-//! should rule. With a base revision only
+//! should rule. A rule that reached no verdict (unknown) gets one annotation
+//! without a file that gives the reason, since an unknown must rule fails the
+//! check as surely as a flag does. With a base revision only
 //! flags on lines the change added or modified are annotated (a flag about a
 //! whole file lands on line 1 of a changed file); a flag with no file is
 //! annotated without one. A must rule that flags only outside the change
@@ -14,7 +16,8 @@ use std::path::Path;
 
 use serde_json::Value;
 
-/// The workflow commands for the failed gates in a check's envelope data.
+/// The workflow commands for the failed and unknown gates in a check's
+/// envelope data.
 pub fn render(project_root: &Path, data: &Value, base: Option<&str>) -> String {
     let changed = base.and_then(|base| changed_lines(project_root, base));
     let mut out = String::new();
@@ -24,7 +27,8 @@ pub fn render(project_root: &Path, data: &Value, base: Option<&str>) -> String {
         .into_iter()
         .flatten()
     {
-        if gate.get("state").and_then(Value::as_str) != Some("fail") {
+        let state = gate.get("state").and_then(Value::as_str);
+        if !matches!(state, Some("fail" | "unknown")) {
             continue;
         }
         let level = match gate.get("strength").and_then(Value::as_str) {
@@ -34,6 +38,15 @@ pub fn render(project_root: &Path, data: &Value, base: Option<&str>) -> String {
         let id = gate.get("id").and_then(Value::as_str).unwrap_or_default();
         let name = gate.get("name").and_then(Value::as_str).unwrap_or_default();
         let title = format!("{id}: {name}");
+        if state == Some("unknown") {
+            let summary = gate
+                .get("summary")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let note = format!("The rule reached no verdict, which is not a pass: {summary}");
+            command(&mut out, level, None, &title, &note, id);
+            continue;
+        }
         let failures = gate
             .get("failures")
             .and_then(Value::as_array)
@@ -233,6 +246,23 @@ mod tests {
             "::error file=src/a.rs,line=2,title=rule.must%3A No unwrap%2C ever::x.unwrap() (wh explain rule.must)\n\
              ::warning file=src/a.rs,line=1,title=rule.should%3A Short files::100%25 too long (wh explain rule.should)\n\
              ::error title=rule.repo%3A Tests pass::failed (wh explain rule.repo)\n"
+        );
+    }
+
+    #[test]
+    fn an_unknown_rule_is_annotated_with_its_reason_by_strength() {
+        let temp = tempfile::tempdir().expect("temp");
+        let data = serde_json::json!({"gates": [
+            {"id": "rule.desktop", "name": "Buttons are named", "strength": "must", "state": "unknown",
+             "summary": "The command could not reach a verdict (exit 69): PERM_DENIED", "failures": []},
+            {"id": "rule.soft", "name": "Soft", "strength": "should", "state": "unknown",
+             "summary": "The gate timed out after 900s; a timeout is not a result.", "failures": []},
+            {"id": "rule.ok", "name": "Fine", "strength": "must", "state": "pass", "summary": "Passed.", "failures": []}
+        ]});
+        assert_eq!(
+            render(temp.path(), &data, None),
+            "::error title=rule.desktop%3A Buttons are named::The rule reached no verdict, which is not a pass: The command could not reach a verdict (exit 69): PERM_DENIED (wh explain rule.desktop)\n\
+             ::warning title=rule.soft%3A Soft::The rule reached no verdict, which is not a pass: The gate timed out after 900s; a timeout is not a result. (wh explain rule.soft)\n"
         );
     }
 

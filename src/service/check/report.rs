@@ -206,6 +206,7 @@ impl CheckReport {
             CheckState::Success => "Every applicable must rule holds.",
             CheckState::Violated => "A must rule is broken.",
             CheckState::Unavailable => "A must rule's enforcer is unavailable.",
+            CheckState::Unknown if required.is_empty() => "No must rule ran, which is not a pass.",
             CheckState::Unknown => {
                 "A must rule's evidence is missing, skipped or incomplete, which is not a pass."
             }

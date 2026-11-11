@@ -260,6 +260,20 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
             flags.join(", ")
         ));
     }
+    // A should rule that reached no verdict never changes the state, but it
+    // is not a pass either, so it is named beside the flags.
+    let no_verdict = outcomes
+        .iter()
+        .filter(|outcome| outcome.state == GateState::Unknown && outcome.strength != Strength::Must)
+        .map(|outcome| outcome.id.clone())
+        .collect::<Vec<_>>();
+    if !no_verdict.is_empty() {
+        summary.push_str(&format!(
+            "\n{} should rule(s) reached no verdict, which is not a pass: {}.",
+            no_verdict.len(),
+            no_verdict.join(", ")
+        ));
+    }
     if !selection.change_only.is_empty() {
         summary.push_str(&format!(
             "\n{} change-mode rule(s) run only against a base: {}.",
@@ -311,6 +325,7 @@ pub(super) fn check(mut request: CheckRequest) -> ServiceResponse {
         "report": report,
         "gates": outcomes,
         "flags": flags,
+        "no_verdict": no_verdict,
         "run_id": if selection.rules.is_empty() { None } else { Some(run_id) },
         "evidence_root": layout.as_ref().map(|layout| crate::gates::evidence_root(layout).display().to_string()),
         "ci": request.ci,

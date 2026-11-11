@@ -9,6 +9,21 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+### Fixed
+
+- A rule that reached no verdict (a timeout, a missing tool, a command that
+  exits 69) is never counted as holding. The hooks' line counted every rule
+  that ran, so `12 rule(s) hold; 2 should-rule flag(s)` meant 10; it now
+  counts only the rules that passed, and names any should rule that reached
+  no verdict. A check's summary names them too, and the envelope lists them
+  as `data.no_verdict`.
+- CI annotations name a rule that reached no verdict, with the reason:
+  `::error` for a must rule, which fails `whetstone/policy`, and `::warning`
+  for a should rule. Before, an unknown must rule failed the check with no
+  annotation.
+- A check in which no must rule ran no longer reports that a must rule's
+  evidence is missing.
+
 ## [0.17.3] - 2026-11-03
 
 ### Fixed

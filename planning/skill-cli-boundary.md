@@ -98,7 +98,19 @@ Every enforcer is mechanical:
 - `validator`: any command whose exit status is the verdict.
 
 A `test` or `validator` command that exits 69 says it could not reach a
-verdict, and the rule is unknown.
+verdict, and the rule is unknown. Unknown is never a pass, at every gate:
+
+- a must rule that reached no verdict blocks the pre-commit and pre-push
+  hooks and fails `whetstone/policy` (exit 3), and its annotation gives the
+  command's reason;
+- a should rule that reached no verdict never blocks and never changes the
+  state, like any should result, but it is not counted as holding: the
+  summary, the hook's line and `data.no_verdict` name it, and its CI
+  annotation is a warning with the reason;
+- a sweep files no finding for it and keeps every other rule's findings; a
+  change-mode rule's count has state `unknown`;
+- the probe before a rule is written refuses it with the reason, so a rule
+  that needs a tool is written on a machine that has the tool.
 
 `must` blocks the gate. `should` reports, never blocks, and is what the
 sweep runs. How to choose an enforcer is in
