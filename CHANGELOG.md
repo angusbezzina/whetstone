@@ -9,6 +9,14 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-11-11
+
+### Fixed
+
+- Release builds for macOS run on the `macos-15` runner. GitHub no longer
+  accepts `macos-14`, so v0.18.0 was tagged but never published; 0.18.1
+  holds everything listed under 0.18.0.
+
 ## [0.18.0] - 2026-11-11
 
 ### Added

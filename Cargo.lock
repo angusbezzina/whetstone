@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "whetstone"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "clap",
  "fs2",
