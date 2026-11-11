@@ -1269,6 +1269,68 @@ fn a_script_sees_the_graphical_session_when_the_caller_has_one() {
     }
 }
 
+#[test]
+fn wire_refreshes_an_unedited_script_contract_and_reports_an_edited_one() {
+    let repo = Repo::new();
+    // What v0.17.3 wrote, before the graphical session joined the contract.
+    let earlier = include_str!("fixtures/scripts-readme-0.17.3.md");
+    repo.write("whetstone/checks/README.md", earlier);
+    repo.write(
+        "whetstone/checks/no-conflict-markers.sh",
+        "#!/bin/sh\n# Our own version now.\nexit 0\n",
+    );
+    repo.commit("base");
+
+    let preview = repo.wh_json(&["init", "--action", "wire", "--hooks", "--dry-run"]);
+    assert_eq!(preview["state"], "needs_decision", "{preview}");
+    assert_eq!(
+        preview["data"]["scripts"]["refreshed"],
+        serde_json::json!(["whetstone/checks/README.md"]),
+        "{preview}"
+    );
+    assert_eq!(
+        preview["data"]["scripts"]["out_of_date"],
+        serde_json::json!(["whetstone/checks/no-conflict-markers.sh"]),
+        "{preview}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.root.join("whetstone/checks/README.md")).expect("README"),
+        earlier,
+        "a dry run writes nothing"
+    );
+
+    let wired = repo.wh_json(&["init", "--action", "wire", "--hooks"]);
+    assert_eq!(wired["state"], "success", "{wired}");
+    let readme =
+        std::fs::read_to_string(repo.root.join("whetstone/checks/README.md")).expect("README");
+    assert_ne!(readme, earlier);
+    assert!(readme.contains("DBUS_SESSION_BUS_ADDRESS"), "{readme}");
+    assert_eq!(
+        std::fs::read_to_string(repo.root.join("whetstone/checks/no-conflict-markers.sh"))
+            .expect("example"),
+        "#!/bin/sh\n# Our own version now.\nexit 0\n",
+        "an edited file is the team's"
+    );
+    assert!(
+        wired["data"]["integrations"]
+            .as_array()
+            .expect("integrations")
+            .iter()
+            .any(|note| note.as_str().is_some_and(
+                |note| note.starts_with("whetstone/checks/no-conflict-markers.sh was edited")
+            )),
+        "{wired}"
+    );
+
+    // Once current, wiring again leaves it alone.
+    let again = repo.wh_json(&["init", "--action", "wire", "--hooks"]);
+    assert_eq!(
+        again["data"]["scripts"]["refreshed"],
+        serde_json::json!([]),
+        "{again}"
+    );
+}
+
 /// The gate's own output log, read from the evidence root.
 fn gate_log(response: &serde_json::Value, gate: &serde_json::Value) -> String {
     let root = PathBuf::from(response["data"]["evidence_root"].as_str().expect("root"));

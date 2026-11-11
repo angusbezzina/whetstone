@@ -16,6 +16,11 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   caller has them, so a check that drives a desktop app through the
   accessibility tree can reach the session on Linux. A variable the caller
   does not have stays absent.
+- `wh init --action wire` brings `whetstone/checks/README.md` and the example
+  script up to date when they still hold a text an earlier release wrote,
+  and reports one a person edited (`data.scripts.refreshed` and
+  `data.scripts.out_of_date`) without touching it. A repository wired before
+  this release learns that exit 69 means no verdict by wiring again.
 
 ### Fixed
 

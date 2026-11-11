@@ -245,7 +245,8 @@ it could not reach a verdict, which is unknown; any other exit fails. A line
 `path:line message` is a finding at that line and `path: message` one about
 the whole file. Scripts run at pre-commit on the staged files. The full
 contract is `whetstone/checks/README.md`, which wiring writes with a working
-example.
+example. Wiring again brings either file up to date while no one has edited
+it, and only reports one a person changed.
 
 ## Checking
 

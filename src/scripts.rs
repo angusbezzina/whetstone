@@ -4,6 +4,8 @@
 
 use std::path::Path;
 
+use sha2::{Digest, Sha256};
+
 /// The directory scripts live in, relative to the repository root.
 pub const DIRECTORY: &str = "whetstone/checks";
 pub const README: &str = "whetstone/checks/README.md";
@@ -106,12 +108,63 @@ done < "$WH_PATHS"
 exit $found
 "#;
 
-/// The scaffold files not yet in the repository, with their contents.
-pub fn missing_scaffold(root: &Path) -> Vec<(&'static str, &'static str)> {
-    [(README, README_TEXT), (EXAMPLE, EXAMPLE_TEXT)]
-        .into_iter()
-        .filter(|(path, _)| !root.join(path).exists())
-        .collect()
+/// The sha256 of every text an earlier release wrote for each scaffold file,
+/// so wiring can tell a copy no one edited from one a person changed. Add the
+/// current text's digest here whenever that text changes.
+const EARLIER: &[(&str, &[&str])] = &[
+    (
+        README,
+        &[
+            "e754aa97e1fd1ab4c583c2d39c52c60d10f894a144ea2142e39513c7c81ee599",
+            "ec0d0b36c102c427ce8ac2dd681c961abaf4e32c983102193742a4cd41a22619",
+            "e9545e6dafcb916261665770e753919b7a03df324cea98293d3e8bc525d985b6",
+            "3bb7e65bddb08038d3a6784c92c444a0f5a6ae1802039601defa0db51aaa7f7c",
+        ],
+    ),
+    (EXAMPLE, &[]),
+];
+
+/// What wiring does with each scaffold file: write a missing one, refresh one
+/// that still holds a text an earlier release wrote, and leave one a person
+/// edited, reporting that it is out of date.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Scaffold {
+    pub missing: Vec<(&'static str, &'static str)>,
+    pub refreshed: Vec<(&'static str, &'static str)>,
+    pub edited: Vec<&'static str>,
+}
+
+impl Scaffold {
+    /// Every file wiring writes, with its contents.
+    pub fn writes(&self) -> impl Iterator<Item = &(&'static str, &'static str)> {
+        self.missing.iter().chain(&self.refreshed)
+    }
+}
+
+pub fn scaffold(root: &Path) -> Scaffold {
+    let mut plan = Scaffold::default();
+    for (path, text) in [(README, README_TEXT), (EXAMPLE, EXAMPLE_TEXT)] {
+        let Ok(existing) = std::fs::read(root.join(path)) else {
+            if !root.join(path).exists() {
+                plan.missing.push((path, text));
+            }
+            continue;
+        };
+        if existing == text.as_bytes() {
+            continue;
+        }
+        let digest = format!("{:x}", Sha256::digest(&existing));
+        let earlier = EARLIER
+            .iter()
+            .find(|(earlier, _)| *earlier == path)
+            .is_some_and(|(_, digests)| digests.contains(&digest.as_str()));
+        if earlier {
+            plan.refreshed.push((path, text));
+        } else {
+            plan.edited.push(path);
+        }
+    }
+    plan
 }
 
 #[cfg(test)]
@@ -123,7 +176,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp");
         let root = temp.path();
         std::fs::create_dir_all(root.join(DIRECTORY)).expect("dir");
-        for (path, text) in missing_scaffold(root) {
+        for (path, text) in scaffold(root).missing {
             std::fs::write(root.join(path), text).expect("write");
         }
         std::fs::write(
@@ -145,6 +198,60 @@ mod tests {
             stdout,
             "merged.txt:2 leftover merge conflict marker\nmerged.txt:6 leftover merge conflict marker\n"
         );
-        assert!(missing_scaffold(root).is_empty());
+        assert_eq!(scaffold(root), Scaffold::default());
+    }
+
+    #[test]
+    fn wiring_refreshes_an_earlier_text_and_leaves_an_edited_one() {
+        let temp = tempfile::tempdir().expect("temp");
+        let root = temp.path();
+        std::fs::create_dir_all(root.join(DIRECTORY)).expect("dir");
+        // The text releases wrote before exit 69 and the graphical session.
+        let earlier = README_TEXT
+            .replace(
+                "- Exit 0 passes. Exit 69 means the script could not reach a verdict (a tool,\n  permission or service it needs is unavailable): the rule is unknown, which\n  is never a pass, and no finding is read. Any other exit fails the rule.\n",
+                "- Exit 0 passes. Any other exit fails the rule.\n",
+            )
+            .replace(
+                "and Go toolchain variables, `SSL_CERT_FILE`, `XDG_CACHE_HOME` and the\ngraphical session's `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`,\n`DBUS_SESSION_BUS_ADDRESS` and `XAUTHORITY` are kept, when the caller has\nthem) plus:",
+                "and Go toolchain variables, `SSL_CERT_FILE` and `XDG_CACHE_HOME` are kept) plus:",
+            );
+        assert!(
+            EARLIER[0]
+                .1
+                .contains(&format!("{:x}", Sha256::digest(earlier.as_bytes())).as_str()),
+            "the fixture is a text an earlier release wrote"
+        );
+        std::fs::write(root.join(README), &earlier).expect("earlier");
+        std::fs::write(root.join(EXAMPLE), "#!/bin/sh\n# ours now\nexit 0\n").expect("edited");
+        assert_eq!(
+            scaffold(root),
+            Scaffold {
+                missing: Vec::new(),
+                refreshed: vec![(README, README_TEXT)],
+                edited: vec![EXAMPLE],
+            }
+        );
+        std::fs::write(root.join(README), README_TEXT).expect("current");
+        std::fs::remove_file(root.join(EXAMPLE)).expect("remove");
+        assert_eq!(
+            scaffold(root),
+            Scaffold {
+                missing: vec![(EXAMPLE, EXAMPLE_TEXT)],
+                ..Scaffold::default()
+            }
+        );
+    }
+
+    #[test]
+    fn no_earlier_digest_is_the_current_text() {
+        for (path, text) in [(README, README_TEXT), (EXAMPLE, EXAMPLE_TEXT)] {
+            let current = format!("{:x}", Sha256::digest(text.as_bytes()));
+            let (_, earlier) = EARLIER
+                .iter()
+                .find(|(earlier, _)| *earlier == path)
+                .expect("listed");
+            assert!(!earlier.contains(&current.as_str()), "{path}");
+        }
     }
 }

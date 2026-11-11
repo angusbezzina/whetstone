@@ -138,13 +138,27 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
             "merged; text outside the Whetstone markers is kept",
         ));
     }
-    // Script enforcers: the contract and one working example, once.
-    let scaffold = crate::scripts::missing_scaffold(root);
-    for (path, text) in &scaffold {
+    // Script enforcers: the contract and one working example. A copy that
+    // still holds a text an earlier release wrote is brought up to date; one
+    // a person edited is theirs, and is only reported.
+    let scaffold = crate::scripts::scaffold(root);
+    for (path, text) in &scaffold.missing {
         writes.push((
             (*path).to_string(),
             (*text).to_string(),
             "scaffolded once; team-owned",
+        ));
+    }
+    for (path, text) in &scaffold.refreshed {
+        writes.push((
+            (*path).to_string(),
+            (*text).to_string(),
+            "refreshed: it held an earlier release's text, unedited; team-owned",
+        ));
+    }
+    for path in &scaffold.edited {
+        integration_notes.push(format!(
+            "{path} was edited, so it was left as it is; it differs from this release's text. To take the current text, move your edits aside, delete the file and run wh init --action wire again."
         ));
     }
     let agent_contract = json!({
@@ -154,7 +168,9 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
     let scripts = json!({
         "directory": crate::scripts::DIRECTORY,
         "contract": crate::scripts::README,
-        "scaffolded": scaffold.iter().map(|(path, _)| *path).collect::<Vec<_>>(),
+        "scaffolded": scaffold.missing.iter().map(|(path, _)| *path).collect::<Vec<_>>(),
+        "refreshed": scaffold.refreshed.iter().map(|(path, _)| *path).collect::<Vec<_>>(),
+        "out_of_date": scaffold.edited,
     });
     let plan = writes
         .iter()
@@ -201,7 +217,7 @@ pub fn wire(layout: &ProjectLayout, request_id: String, request: &InitRequest) -
     }
     #[cfg(unix)]
     if scaffold
-        .iter()
+        .writes()
         .any(|(path, _)| *path == crate::scripts::EXAMPLE)
     {
         use std::os::unix::fs::PermissionsExt;
