@@ -400,7 +400,10 @@ pub(super) fn import(
     if request.allow_commands && request.actor != ActorKind::Person {
         let mut response = needs(
             request_id,
-            "Only a person can allow a pack's commands to run. Stop and ask them; nothing was changed.".into(),
+            format!(
+                "Only a person can allow a pack's commands to run. {} Stop and ask them; nothing was changed.",
+                crate::service::agent_note(request.agent_reason.as_deref())
+            ),
         );
         response.data = json!({"written": false});
         return response;

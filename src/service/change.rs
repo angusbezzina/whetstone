@@ -609,9 +609,10 @@ fn rule_of(
         let current = current.map(Rule::sweep_class).unwrap_or_default();
         if rule.sweep_class().reach() > current.reach() {
             return Err(format!(
-                "An agent cannot widen how a sweep works this rule (from {} to {}); a person sets the sweep class.",
+                "An agent cannot widen how a sweep works this rule (from {} to {}); a person sets the sweep class. {}",
                 current.label(),
-                rule.sweep_class().label()
+                rule.sweep_class().label(),
+                crate::service::agent_note(request.agent_reason.as_deref())
             ));
         }
     }

@@ -50,15 +50,43 @@ pub const AGENT_MARKERS: &[&str] = &[
 /// environment) is an agent, so an agent can never pass as a person by
 /// leaving something out.
 pub fn detect_actor() -> ActorKind {
-    use std::io::IsTerminal;
-    let marked = AGENT_MARKERS
-        .iter()
-        .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()));
-    if !marked && std::io::stdin().is_terminal() {
+    if agent_reason().is_none() {
         ActorKind::Person
     } else {
         ActorKind::Agent
     }
+}
+
+/// Why `detect_actor` treats the caller as an agent, in words a refusal can
+/// quote; `None` for a person at a terminal. It names an agent host's marker
+/// variable, never its value.
+pub fn agent_reason() -> Option<String> {
+    use std::io::IsTerminal;
+    if let Some(name) = AGENT_MARKERS
+        .iter()
+        .find(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
+    {
+        return Some(format!(
+            "{name} is set in its environment, as an agent host sets it in the shells it runs"
+        ));
+    }
+    if !std::io::stdin().is_terminal() {
+        return Some("its standard input is not a terminal".into());
+    }
+    None
+}
+
+/// What a person-only refusal says about who asked: why the caller counts
+/// as an agent, and where a person runs the command instead. The refusal
+/// itself is as strict whatever this says.
+pub fn agent_note(reason: Option<&str>) -> String {
+    let why = reason.map_or_else(
+        || "This request was made for an agent.".to_string(),
+        |reason| format!("This caller counts as an agent because {reason}."),
+    );
+    format!(
+        "{why} A person runs the same command in their own terminal, outside any agent's session."
+    )
 }
 
 pub const RESPONSE_SCHEMA: &str = "whetstone.command-response.v1";
@@ -209,6 +237,9 @@ pub struct ChangeRequest {
     /// Who is asking: a person, or an agent (the default, so nothing passes
     /// as a person by omission).
     pub actor: ActorKind,
+    /// Why the caller was taken for an agent, when the command line decided
+    /// it (`agent_reason`); a refusal quotes it.
+    pub agent_reason: Option<String>,
     /// Write a rule even when its probe says the enforcer cannot be checked
     /// on this repository.
     pub allow_unvalidated: bool,

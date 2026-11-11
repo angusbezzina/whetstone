@@ -552,14 +552,43 @@ fn reviewing_a_pack_runs_nothing_and_a_commands_rule_waits_for_a_person() {
         assert_eq!(rules[0]["id"], "rule.m-ast");
     }
 
-    // An agent's consent is refused and changes nothing.
-    let refused = target.wh(&["change", "--import-pack", &pack, "--allow-commands"]);
-    assert_eq!(refused["state"], "needs_input", "{refused}");
-    assert!(refused["summary"]
-        .as_str()
-        .expect("summary")
-        .contains("Only a person"));
-    assert!(no_markers(&marker));
+    // An agent's consent is refused, changes nothing and says why the caller
+    // counts as an agent: a host's marker variable, by name, or a standard
+    // input that is not a terminal.
+    for (marker_set, why) in [
+        (
+            Some("CLAUDECODE"),
+            "because CLAUDECODE is set in its environment",
+        ),
+        (None, "because its standard input is not a terminal"),
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_whetstone"));
+        command
+            .args([
+                "change",
+                "--import-pack",
+                &pack,
+                "--allow-commands",
+                "--json",
+            ])
+            .current_dir(&target.root)
+            .stdin(std::process::Stdio::null());
+        for name in whetstone::service::AGENT_MARKERS {
+            command.env_remove(name);
+        }
+        if let Some(name) = marker_set {
+            command.env(name, "1");
+        }
+        let output = command.output().expect("whetstone");
+        let refused: Value = serde_json::from_slice(&output.stdout).expect("envelope");
+        assert_eq!(refused["state"], "needs_input", "{refused}");
+        assert_eq!(output.status.code(), Some(6), "{refused}");
+        let summary = refused["summary"].as_str().expect("summary");
+        assert!(summary.starts_with("Only a person"), "{summary}");
+        assert!(summary.contains(why), "{summary}");
+        assert!(summary.contains("in their own terminal"), "{summary}");
+        assert!(no_markers(&marker));
+    }
 
     // A person's consent runs them and drafts them.
     let consented = target.consent(&pack, &[], &[]);

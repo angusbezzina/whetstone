@@ -36,6 +36,12 @@ product line (0.1.0 to 0.12.0) are in Git history: `git show 1b7fd8c:CHANGELOG.m
   annotation.
 - A check in which no must rule ran no longer reports that a must rule's
   evidence is missing.
+- A refusal only a person can get past (`--allow-commands`, widening a
+  sweep class) says why the caller counts as an agent: the agent host's
+  marker variable by name (for example `CLAUDECODE`, which a command typed
+  through an agent's `!` prefix inherits), or a standard input that is not a
+  terminal. It says to run the command in the person's own terminal; the
+  check is exactly as strict.
 
 ## [0.17.3] - 2026-11-03
 

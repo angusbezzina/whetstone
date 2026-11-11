@@ -542,6 +542,7 @@ pub fn run() -> i32 {
             withdraw,
             retire,
             actor: crate::service::detect_actor(),
+            agent_reason: crate::service::agent_reason(),
             allow_unvalidated,
             serves,
             from_text,
